@@ -3,30 +3,8 @@ Tensor flow is a platform for creating and using ML models. It contains a number
 common algorithms and patterns for ML and also supports ways to deploy models
 to the web, cloud, and to embedded systems.
 
-### Create virtual environment
-```console
-$ python3 -m venv tf 
-```
-
-### Activate the environment
-```console
-$ source tf/bin/activate
-```
-
-### Install requirements
-```console
-$ source tf/bin/activate
-(tf) pip install -r requirements
-```
-
-### Install Tensor flow (first time only)
-```console
-(tf) python -m pip install tensorflow
-```
-Run pip freeze to generate a requirements.txt file to check in.
-```console
-(tf) $ pip freeze > requirements.txt
-```
+Examples:
+* [Python](./python/README.md)
 
 ### Training models
 Training the model can be done by simply writing all the code ourselfes, or by
