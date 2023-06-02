@@ -30,9 +30,14 @@ Run pip freeze to generate a requirements.txt file to check in.
 
 ### Training models
 Training the model can be done by simply writing all the code ourselfes, or by
-using built-in estimators, or alternatively using [Keras] 
+using built-in estimators, or alternatively using [Keras].
 
 [Keras]: https://keras.io/
+
+TensorFlow supports the creation of models in a number of languages like Python,
+Swift, Java, [Rust], and others.
+
+[Rust]: https://github.com/tensorflow/rust
 
 
 ### Data Services
