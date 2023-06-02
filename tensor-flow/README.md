@@ -1,4 +1,5 @@
 ## Tensor flow example
+Tensor flow is a platform for creating and using ML models.
 
 ### Create virtual environment
 ```console
