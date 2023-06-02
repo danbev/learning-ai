@@ -62,7 +62,7 @@ weights = dense.get_weights()
 print(f'y = mx + b')
 print(f'y = {weights[0][0]}x + {weights[1]}\n')
 print("Expected:")
-print("y = 2x + 1\n")
+print("y = 2x - 1\n")
 
 x = 10.0
 print(f'Predict y value for {x}')
