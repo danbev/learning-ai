@@ -14,7 +14,7 @@ $ source tf/bin/activate
 ### Install requirements
 ```console
 $ source tf/bin/activate
-(tf) pip install -r requirements
+(tf) pip install -r requirements.txt
 ```
 
 ### Install Tensor flow (first time only)
