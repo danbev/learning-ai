@@ -3,6 +3,10 @@
 ### Create virtual environment
 ```console
 $ python3 -m venv tf 
+```
+
+### Activate the environment
+```console
 $ source tf/bin/activate
 ```
 
