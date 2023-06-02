@@ -3,6 +3,8 @@ import numpy as np
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Dense
 
+print(f'TensorFlow version: {tf.__version__}')
+
 dense = Dense(units=1, input_shape=[1])
 model = Sequential([dense])
 
