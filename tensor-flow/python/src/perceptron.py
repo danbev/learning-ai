@@ -13,7 +13,8 @@ def signum(s):
 
 
 # Only valid input values are 1 and -1
-xs = [1, -1.0, -1.0]
+bias = 1
+xs = [bias, -1.0, -1.0]
 ws = [0.9, -0.6, -0.5]
 
 output = perceptron_neuron(ws, xs)
