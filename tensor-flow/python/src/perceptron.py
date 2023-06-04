@@ -72,8 +72,7 @@ def show_learning(w):
 
 def training():
     random.seed(7)
-    #ws = [random.random(), random.random(), random.random()]
-    ws = [0.2, -0.6, -0.25]
+    ws = [random.random(), random.random(), random.random()]
     show_learning(ws)
     good_result = False;
     while not good_result:
