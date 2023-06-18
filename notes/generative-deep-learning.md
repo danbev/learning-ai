@@ -12,15 +12,15 @@ though the system again will return the same classification.
 ```
  p(y|x)
 ```
-The goal is to model the probablity of a label y given some x (called an
+The goal is to model the probability of a label y, given some x (called an
 observation).
 
 In generative deep learning the output is probabilistic and the output is
-sampled many time, we pass the input through the system multiple times that is
+sampled many time, we pass the input through the system multiple times that is,
 and want to have different "suggestions". And here the goal is to generate a
-new image and not classify an existing image.
+new image (or something like text, video, music etc) and not classify an
+existing image.
 
 ```
  p(x)
 ```
-
