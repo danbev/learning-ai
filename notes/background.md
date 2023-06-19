@@ -1,6 +1,19 @@
 ## AI/ML background
 This document contains notes about concepts related to AI/ML. 
 
+### Model
+The term model is often used interchangably with network and when we say we are
+training model it means that coming up with the weights for network.
+
+### Neural Networks
+A neuarl network is often descrived as consisting of a series of stacked layers
+which are connected to the previous layers through a set of weights.
+A fully connected or dense layer is one where it is connected to every unit in
+the layer before it.
+
+A neural network where all adjacent layers are fully connected is called are
+multi layer perceptron (MLP).
+
 ### ...
 Lets say that we have a neural network with two input values:
 ```
@@ -21,7 +34,7 @@ In this case y'₁ will be:
 y'₁ = activation_function(w₁₁x₁ + w₁₂x₂ + b₁)
 y'₂ = activation_function(w₂₁x₁ + w₂₂x₂ + b₁)
 ```
-If we write this in vector an matrix form we get:
+If we write this in vector and matrix form we get:
 ```
  xs = [x₁ x₂]
  ws = [w₁₁ w₁₂]
