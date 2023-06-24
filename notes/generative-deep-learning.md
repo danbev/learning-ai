@@ -1,5 +1,5 @@
 ## Generative Deep Learning
-
+The book I'm reading is Generative Deep Learning 2nd Edition by David Foster.
 
 ### Introduction
 The kind of deep learning that I'm familar with is called descrimative which
@@ -24,3 +24,16 @@ existing image.
 ```
  p(x)
 ```
+This is saying that the return value of this function is the probablity of
+observing an observation `x`.
+
+This was really interesting from the first chapter of the book
+```
+Current neuroscientific theory suggests that our perception of reality is not a
+highly complex discriminative model operating on our sensory input to produce
+predictions of what we are experiencing, but is instead a generative model that
+is trained from birth to produce simulations of our surroundings that accurately
+match the future. Some theories even suggest that the output from this
+generative model is what we directly perceive as reality
+```
+
