@@ -20,7 +20,7 @@ $ source tf/bin/activate
 ### Install Tensor flow (first time only)
 ```console
 (tf) python -m pip install tensorflow
-(rf) pytyon -m pip install tensorflow-cpu
+(rf) python -m pip install tensorflow-cpu
 ```
 Run pip freeze to generate a requirements.txt file to check in.
 ```console
