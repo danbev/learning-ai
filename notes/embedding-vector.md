@@ -2,14 +2,15 @@
 Is a way of representing data like strings, music, video as points in a
 n-dimension space. Doing this can allow similar data points to cluster together.
 
-Word to vector (Word2Vec) has invented by Google in 2013 which takes as input
-a word and outputs an n-dimensional coordinate, a vector. So simlar words would
+Word to vector (Word2Vec) was invented by Google in 2013 which takes as input
+a word and outputs an n-dimensional coordinate, a vector. So, simlar words would
 be closer to each other. Think of this as the tip of the vectors are in close
-proximity to each other.
+proximity to each other if the words are simliar.
 
-For songs simlar sounding songs would be nearby each other. And for images
+For songs similar sounding songs would be nearby each other. And for images
 simliar looking images would be closer to each other. This could be anything
 really so we don't have to think just in terms of words.
+
 How is this useful?  
 Well, we can look at vectors/points close to get similar words, songs, movies
 etc. This is called nearest neighbor search.
