@@ -1,6 +1,37 @@
 ## AI/ML background
 This document contains notes about concepts related to AI/ML. 
 
+### Auto-regressive models
+These only predict a future token/word and only take into consideration the
+previous tokens. For example:
+```
+Who let the dogs out ___
+```
+This is the kind I have on my iphone which auto completes/predict when I type a
+message for example. It does not have any context.
+
+Examples:
+* GPT family (Natural Language Generation)
+
+### Auto-encoding models
+These models take the whole sentence into account:
+```
+Vi is ___ to emacs.
+```
+
+Examples:
+* BERT family (Natural Language Understanding)
+
+### Large Language Models
+Are language models with may parameters, like over 100M, and are pre-trained
+on large collections of text (corpra).
+
+Examples:
+* BERT
+* GPT (GPT-3 has billions of parameters)
+* T5
+
+
 ### Model
 The term model is often used interchangably with network and when we say we are
 training model it means that coming up with the weights for network.
@@ -11,8 +42,20 @@ which are connected to the previous layers through a set of weights.
 A fully connected or dense layer is one where it is connected to every unit in
 the layer before it.
 
+The main usage/feature of a neural network is its ability to learn the weights
+for each of the layers and then be able to make acurate predications on input
+that it was not seen before (it will be trained on a different set of inputs
+which is used to adjust the weights).
+
 A neural network where all adjacent layers are fully connected is called are
 multi layer perceptron (MLP).
+
+### Multilayer Perceptron
+Is a discriminative model which can be used with supervised learning.
+Example: [mlp.py](../tensor-flow/src/mpl.py)
+
+
+
 
 ### ...
 Lets say that we have a neural network with two input values:
@@ -190,3 +233,9 @@ layers in between?  By the way these are called hidden layers as they are not
 hidden layers and how many neurons they contains can be arbitarlity chosen and
 is part of training I think to figure out they appropriate number.
 
+
+### Random Forest
+TODO
+
+### XGBoot 
+TODO
