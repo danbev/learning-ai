@@ -22,11 +22,11 @@ The first time we run this the values of m and b are just guesses, for example:
     3.0 --->  y = 10*( 3.0) + 10  ---> 40 <------>  5.0
     4.0 --->  y = 10*( 4.0) + 10  ---> 50 <------>  7.0
 
-The loss function is what determines the calculated y values with the know
-y values. And depending on the values returned from the loss function the
+The loss function is what determines the calculated y values with the known
+y values. And depending on the values returned from the loss function, the
 parameters to the function, called the optimizer, in the layer are adjusted.
-The this repeates until the values from the loss function are close to the
-expected know values.
+This repeates until the values from the loss function are close to the
+expected known values.
 """
 
 print(f'TensorFlow version: {tf.__version__}')
