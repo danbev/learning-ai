@@ -14,7 +14,8 @@ Examples:
 * GPT family (Natural Language Generation)
 
 ### Auto-encoding models
-These models take the whole sentence into account:
+These models take the whole sentence into account, both before and after the
+word of interest:
 ```
 Vi is ___ to emacs.
 ```
