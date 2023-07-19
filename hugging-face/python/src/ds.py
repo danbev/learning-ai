@@ -1,5 +1,6 @@
 from datasets import list_datasets
 from datasets import load_dataset
+import matplotlib.pyplot as plt
 #from huggingface_hub import list_datasets
 
 #from huggingface_hub import HfApi
@@ -41,3 +42,7 @@ def label_int2str(row):
 # The label_name will become a new column in the output dataframe
 df["label_name"] = df["label"].apply(label_int2str)
 print(df.head())
+
+df["label_name"].value_counts(ascending=True).plot.barh()
+plt.title("Frequency of Classes")
+plt.show()
