@@ -58,13 +58,20 @@ pre-trained models for your specific tasks with additional fine-tuning.
 """
 model_checkpoint = "distilbert-base-uncased"
 tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
+print(type(tokenizer))
 encoded_text = tokenizer(text)
-print(encoded_text)
+print(f'encoded_text: {encoded_text}')
+print(f'type of encoded_text: {type(encoded_text)}')
 tokens = tokenizer.convert_ids_to_tokens(encoded_text.input_ids)
-print(tokens)
-print(tokenizer.convert_tokens_to_string(tokens))
+
+print(f'tokens: {tokens}')
+print(f'tokens_to_string: {tokenizer.convert_tokens_to_string(tokens)}')
 print(f'vocab size: {tokenizer.vocab_size}')
 # print max length of tokenizer
 print(f'max length: {tokenizer.model_max_length}')
 # print input names of tokenizer
 print(f'input names: {tokenizer.model_input_names}')
+
+
+def tokenize(batch):
+    return tokenizer(batch["text"], padding=True, truncation=True)
