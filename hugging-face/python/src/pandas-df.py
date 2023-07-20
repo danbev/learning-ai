@@ -31,4 +31,5 @@ people3 = pd.DataFrame(data, columns = ["Name", "Age"])
 print(f'People3:\n {people3}')
 
 print(f'shape: {people3.shape}')
+print(f'size`: {people3.size}')
                        

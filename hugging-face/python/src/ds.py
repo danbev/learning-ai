@@ -46,3 +46,19 @@ print(df.head())
 df["label_name"].value_counts(ascending=True).plot.barh()
 plt.title("Frequency of Classes")
 plt.show()
+
+df["Words Per Tweet"] = df["text"].str.split().apply(len)
+df.boxplot("Words Per Tweet", by="label_name", grid=False,
+          showfliers=False, color="black")
+plt.suptitle("")
+plt.xlabel("")
+plt.show()
+
+
+# Reset the format from pandas to the default
+emotions.reset_format()
+
+# Tokens section
+text = "Tokenizing text is a core task of NLP."
+tokenized_text = list(text)
+print(tokenized_text)
