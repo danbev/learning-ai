@@ -71,7 +71,3 @@ print(f'vocab size: {tokenizer.vocab_size}')
 print(f'max length: {tokenizer.model_max_length}')
 # print input names of tokenizer
 print(f'input names: {tokenizer.model_input_names}')
-
-
-def tokenize(batch):
-    return tokenizer(batch["text"], padding=True, truncation=True)
