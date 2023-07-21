@@ -39,20 +39,30 @@ From ChatGPT4:
 It's important to note that despite the "classification" origin of its name, the
 "CLS" token is used in all tasks where we need an aggregate representation of
 the entire sequence, whether it's classification, named entity recognition, etc.
+
+For example, if we're classifying a sentence as positive or negative
+(sentiment analysis), we'd feed the sentence into BERT, which would add the
+"CLS" token to the start of the sentence. BERT processes the entire sequence and
+outputs a vector for each token, but we would only use the vector corresponding
+to the "CLS" token to make the positive/negative prediction.
 ```
 
+Bert-small has 4 encoders and 15M learnable parameters.
+Bert-base has 12 encoders and 110M learnable parameters.
+Bert-large has 24 encoders and 340M learnable parameters.
 
 ### T5
 
 
 ### Scaled dot product attention
 In standard attention uses 3 martixes, a query matrix, a key matrix, and a value
-matrix. The query and key matrixes contain wieghts, and the value matrix
-contains an embedding of the value.
+matrix. The query and key matrixes contain weights, and the value matrix
+contains an embedding of the value (the input).
 
 We start with our tokenized input, the embedded vector(s) that represents some
-text, to in this example we assume that the input has already been through
+text, so in this example we assume that the input has already been through
 BERT's preprocessing.
+
 We can call this vector X, and lets say the dimension of this is 4 and that we
 have two tokens:
 ```
@@ -63,7 +73,7 @@ token 2   |  |  |  |  |
           +--+--+--+--+
 ```
 
-So we will have the folling matrix multilications:
+So we will have the folling matrix multiplications:
 ```
        X                 W_Q              Q
   +--+--+--+--+      +--+--+--+
@@ -98,23 +108,26 @@ So we will have the folling matrix multilications:
                      |  |  |  |
                      +--+--+--+
 ```
-Notice that we are takeing the input matrix X and doing 3 linear transformations
-of the same vector. So we will have one result for multplying it with the query
-vector, one for the key vector, and one for the value vector. This will produce
-3 new vector spaces called the query space, the key space, and the value
+Notice that we are taking the input matrix X and doing 3 linear transformations
+using the same vector. So we will have one result for multplying it with the
+query vector, one for the key vector, and one for the value vector. This will
+produce 3 new vector spaces called the query space, the key space, and the value
 space.
 
 The Query vector is information that we are looking for, like the reason for
 saying something when we speak. So since we multiply X with W_Q to get Q, the
-Q vector has a context of sort which in the case of Query is the information
+Q vector has a context of sort, which in the case of Query is the information
 about the token and how it relates to the overall goal of the sentence.
 
-The Key vectors is the relevance of the word(s), represented by X to the query. 
-So the query, is to the query. Again since we mulitply X with W_K to get K, K
-also has a context which is the relevance of X to the query.
+The Key vectors is the relevance of the word(s), represented by X, to the query. 
+So the key vector how relevant this token is to the query.
+
+Again since we mulitply X with W_K to get K, K also has a context which is the
+relevance of X to the query.
 
 The Value vector is just a compressed version of the embedded value. This is
-called a context less version of the token.
+called a context less version of the token because it does not have any
+additional information apart from the token value itself.
 
 Scaled dot product attention:
 ```
