@@ -8,19 +8,39 @@ transformers outperformed in terms of translation quality and training cost.
 2018 ULMFit
 2018 GPT
 2018 BERT
-2019 GPT-2
+2019 GPT-2 (not publicy released)
 2019 RoBERTa
-2019 DistilBERT
+2019 DistilBERT (smaller version of BERT)
+2019 BART
 2020 GPT-3
 2020 DeBERTa
 2020 T5
 2021 GPT-Neo
 2021 GPT-J
 
+### Encoders
+Are used for classification and regression tasks.
+
+### Decoders
+Are used for text generation tasks.
+
+### Encoder-Decoder
+Are used for task like generative text like translation or summarization.
 
 ### Generative Pretrained Transformer (GPT)
 
 ### Bidirectional Encoder Representation from Transformers (BERT)
+
+#### CLS token
+This is a token in the embedding which stands for classification. This is used
+to represent the entire input sequence.
+From ChatGPT4: 
+````
+It's important to note that despite the "classification" origin of its name, the
+"CLS" token is used in all tasks where we need an aggregate representation of
+the entire sequence, whether it's classification, named entity recognition, etc.
+```
+
 
 ### T5
 
@@ -134,9 +154,42 @@ individual difference (not sure about the terminology here).
                  +--+--+    +--+--+--+     +--+--+--+
 
 ```
-Input: "I like icecream"
+
+Input sequence: "I like icecream"
+
+The query vector, which recall is the embedding input vector multiplied by
+W_q. Will this only a 
+
 Visualize Q vector space as vectors in two dimensions and we have three vectors,
 one for "I", one for "like", and one for "icecream".  And we also have a vector
 space for K with 3 vectors. When we calculate Q x Kᵗ we are getting a new square
-matrix, and the values in this matrix contain the attention scores.
+matrix, and the values in this matrix contain the attention scores. What this is
+doing is calculating the distances between the key matrix vectors to the query
+vector (just one?). This can be done by looking at the angle between the vectors
+or calculating the dot product.
+Smaller values in the attention score mean that we should pay less attention to
+them and larger values mean that we should pay more attention to those tokens.
 
+```
+         ("like")       ("like")
+         [0.23]         [0.22]
+ softmax([0.87] /√dₖ) = [0.42]
+         [0.70]         [0.36]
+
+  total  (!= 1)         (== 1)
+
+         [0.22]   [0.23 0.87 0.90 1.50]  ("I" value)
+         [0.42] x [0.80 0.28 0.38 0.61]  ("Like" value)
+         [0.36]   [1.10 0.56 0.43 0.88]  ("icecream" value)
+
+```
+
+Attention matrix:
+ 
+```
+                     +--+--+
+ values for token 1  |  |  | 
+ values for token 2  +--+--+
+                     |  |  |
+                     +--+--+
+```
