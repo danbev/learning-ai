@@ -129,6 +129,11 @@ The Value vector is just a compressed version of the embedded value. This is
 called a context less version of the token because it does not have any
 additional information apart from the token value itself.
 
+So the Query and Key vectors endode context, that is how this token relates to
+the entire sequence of tokens inputted to the model (this if after the encoders
+have processed it). And again the Value vector is just a compressed version of
+the token itself.
+
 Scaled dot product attention:
 ```
 scaleced_dot_product(Q, K, V) = softmax((Q x Kᵗ)/√embedding_dim) x V
@@ -206,3 +211,13 @@ Attention matrix:
                      |  |  |
                      +--+--+
 ```
+
+### Out of Vocabulary
+This is part of transformers which enable them to tokenize words that are not
+in their vocabulary. This is done by using a subword tokenizer where a word is
+split into two parts where both are part of the vocabulary but the complete word
+by itself.
+For example: `tokenization` would be spit into `token` `##ization` where `##`
+is a special token that indicates that the previous token is a subword of a
+complete word.
+
