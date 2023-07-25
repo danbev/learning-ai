@@ -66,4 +66,71 @@ pos₃₁ = cos(3 / 10000^((2*0)/4)) = cos(3 / 10000^(0/4) = cos(3/10000^0)    =
 pos₃₂ = sin(3 / 10000^((2*1)/4)) = sin(3 / 10000^(1/4) = sin(3/10000^0.25) = sin(3/10) = sin(0.3) = 0.0299955
 pos₃₃ = cos(3 / 10000^((2*1)/4)) = cos(3 / 10000^(1/4) = cos(3/10000^0.25) = cos(3/10) = cos(0.3) = 0.99955003
 ```
+So I can understand the formula and there is an example in
+positional-encoding.py but I'm not sure about the intuition behind it. If we
+think/visualize the sine and cosine waves stacked upon each other and there will
+be a a wave (either sine or cosine) for each token in the sequence. 
+![Sine/Cosine Waves](./pos-enc-waves.png)
 
+If we look at waves above and think of the first (bottom most) graph, the value
+y value for x=0 represents the positional encoding for the first token in the
+sequence of tokens (which is sine(1)=0):
+```
+Input sentence: "Dan loves icecream"
+
++---+ +---+ +---+     +---+ +---+ +---+     +---+ +---+ +---+
+| 0 | |   | |   |     |   | |   | |   |     |   | |   | |   |
++---+ +---+ +---+     +---+ +---+ +---+     +---+ +---+ +---+
+  0     1     2         0     1     2         0     1     2
+Token 1               Token 2               Token 3
+
+  D     l     i         D     l     i         D     l     i
+  a     o     c         a     o     c         a     o     c
+  n     v     e         n     v     e         n     v     e
+        e     c               e     c               e     c
+        s     r               s     r               s     r
+              e                     e                     e
+              a                     a                     a
+              m                     m                     m
+```
+The second positional encoding value is taken from the cosine wave above but
+also at position 0 which is 1 (cos(1)):
+```
++---+ +---+ +---+     +---+ +---+ +---+     +---+ +---+ +---+
+| 0 | | 1 | |   |     |   | |   | |   |     |   | |   | |   |
++---+ +---+ +---+     +---+ +---+ +---+     +---+ +---+ +---+
+  0     1     2         0     1     2         0     1     2
+Token 1               Token 2               Token 3
+
+  D     l     i         D     l     i         D     l     i
+  a     o     c         a     o     c         a     o     c
+  n     v     e         n     v     e         n     v     e
+        e     c               e     c               e     c
+        s     r               s     r               s     r
+              e                     e                     e
+              a                     a                     a
+              m                     m                     m
+
+If we turn our attention to the second entry, `Token 2` above, in our token
+sequence it will also get its first positional encoding value from sine wave
+at the bottom, but this time it will get the y value for x=1 (so that will be
+sine(1)=0.84147):
+```
++---+ +---+ +---+     +-------+ +---+ +---+     +---+ +---+ +---+
+| 0 | | 1 | |   |     |0.84147| |   | |   |     |   | |   | |   |
++---+ +---+ +---+     +-------+ +---+ +---+     +---+ +---+ +---+
+  0     1     2         0     1     2           0     1     2
+Token 1               Token 2                   Token 3
+
+  D     l     i         D     l     i           D     l     i
+  a     o     c         a     o     c           a     o     c
+  n     v     e         n     v     e           n     v     e
+        e     c               e     c                 e     c
+        s     r               s     r                 s     r
+              e                     e                       e
+              a                     a                       a
+              m                     m                       m
+```
+For token 3's second positional encoding value, it will get that value from
+the cosine wave above but at position 1 which is 0.54030231.
+```
