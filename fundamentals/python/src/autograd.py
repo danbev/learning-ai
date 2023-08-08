@@ -107,3 +107,24 @@ d2 = a*b + c
 print(f'{d1=}')
 print(f'{d2=}')
 print(f'slope: {(d2 - d1)/h}')
+
+class Value:
+    def __init__(self, data):
+        self.data = data
+
+    def __repr__(self):
+        return f'Value(data={self.data})'
+
+    def __add__(self, other):
+        return Value(self.data + other.data)
+
+    def __mul__(self, other):
+        return Value(self.data * other.data)
+
+a = Value(2.0)
+print(a)
+b = Value(-3.0)
+print(a+b)
+c = Value(10.0)
+d = a*b + c
+print(d)
