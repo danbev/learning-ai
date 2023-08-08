@@ -26,3 +26,5 @@ print(f'{ys=}')
 ys = np.array([f(x) for x in xs])
 print(f'{ys=}')
 
+plt.plot(xs, ys)
+plt.show()
