@@ -99,22 +99,27 @@ print(f'logits: {logits}, shape: {logits.shape}, {logits.dtype=}')
 # has been generalized to refer to the vector of raw scores output by the model
 # before applying the softmax function.
 
-print(logits[3, 13]) # or print(logits[3][13])
-print(x_hot_encoded[3])
-print(W[:,13])
-print((x_hot_encoded[3] * W[:,13]).sum())
+print("\nLets take a look at calculating one of the entries in the logits matrix.")
+print(f'{logits[3, 13]=}') # or print(logits[3][13])
+print(f'{x_hot_encoded[3]=}')
+# The following is using slicing and : is saying take everything along this
+# dimension, and then only take the elements in the 13th column (starting from
+# 0).
+print(f'{W[:,13]=}') # this is .m
+print(f'(x_hot_encoded[3] * W[:,13] = {(x_hot_encoded[3] * W[:,13]).sum()}')
 # We have 27 inputs and 27 neurons in the hidden layer.
 
 print('Notice that this matrix contains both negative and positive numbers.')
 print('We can use the exponential function to convert these numbers into positive number')
 counts = logits.exp() # exp is the exponential function, eˣ.
-# counts is similar to the N matrix in the bigrams.py example. Recll that the
+# counts is similar to the N matrix in the bigrams.py example. Recall that the
 # P matrix was the N matrix normalized.
-print(counts)
+print(f'{counts=}')
 probs = counts / counts.sum(dim=1, keepdim=True)
-# The following two functions are called the softmax function:
+# The following two functions together are called the softmax function:
 # counts = logits.exp()
 # probs = counts / counts.sum(dim=1, keepdim=True)
+
 print(f'{probs.shape=}')
 print(f'{probs[0]=}')
 print('The values in the above output are the probabilities that that character will come next')
