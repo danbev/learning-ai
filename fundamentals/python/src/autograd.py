@@ -114,6 +114,7 @@ class Value:
         self._prev = set(children)
         self._op = op
         self.label = label
+        self.grad = 0.0 # does not influence the output value intially
 
     def __repr__(self):
         return f'Value(data={self.data})'
@@ -137,6 +138,8 @@ print(f'{a+b=}')
 c = Value(10.0, label='c')
 e = a*b; e.label = 'e'
 d = e + c; d.label = 'd'
+f = Value(-2.0, label='f')
+L = d*f; L.label = 'L'
 print(f'{d=}')
 print(f'{d._prev=}')
 # By using _prev we can figure out which Value objects were used to create d.
@@ -163,7 +166,7 @@ def draw_dot(root):
     nodes, edges = trace(root)
     for n in nodes:
         uid = str(id(n))
-        dot.node(name = uid, label=f'Value(label={n.label}, data={n.data:.2f})', shape='record')
+        dot.node(name = uid, label=f'Value(label={n.label}, data={n.data:.2f}, grad={n.grad})', shape='record')
         if n._op:
             dot.node(name = uid + n._op, label=n._op)
             dot.edge(uid + n._op, uid)
@@ -172,7 +175,7 @@ def draw_dot(root):
         dot.edge(str(id(a)), str(id(b)) + b._op)
     return dot
 
-digraph = draw_dot(d)
+digraph = draw_dot(L)
 digraph.render('autograd', view=False, format='svg')
 # The generated file can then be opened using:
 # $ python -mwebbrowser autograd.svg
