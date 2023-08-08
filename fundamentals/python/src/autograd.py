@@ -162,4 +162,16 @@ def draw_dot(root):
     for n in nodes:
         uid = str(id(n))
         dot.node(name = uid, label="{ data %.4f }" % (n.data,), shape='record')
+        if n._op:
+            dot.node(name = uid + n._op, label=n._op)
+            dot.edge(uid + n._op, uid)
+
+    for a, b in edges:
+        dot.edge(str(id(a)), str(id(b)) + b._op)
     return dot
+
+digraph = draw_dot(d)
+digraph.render('autograd', view=False, format='svg')
+# The generated file can then be opened using:
+# $ python -mwebbrowser autograd.svg
+
