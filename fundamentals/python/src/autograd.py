@@ -109,22 +109,57 @@ print(f'{d2=}')
 print(f'slope: {(d2 - d1)/h}')
 
 class Value:
-    def __init__(self, data):
+    def __init__(self, data, children=(), op=''):
         self.data = data
+        self._prev = set(children)
+        self._op = op
 
     def __repr__(self):
         return f'Value(data={self.data})'
 
     def __add__(self, other):
-        return Value(self.data + other.data)
+        # Notice that we are returning a new Value object here, and in the
+        # process documenting which objects were used to create this new
+        # object, and also the operation which in this case is add.
+        return Value(self.data + other.data, (self, other), '+')
 
     def __mul__(self, other):
-        return Value(self.data * other.data)
+        # Notice that we are returning a new Value object here, and in the
+        # process documenting which objects were used to create this new
+        # object, and also the operation which in this case is mul.
+        return Value(self.data * other.data, (self, other), '*')
 
 a = Value(2.0)
-print(a)
+print(f'{a=}')
 b = Value(-3.0)
-print(a+b)
+print(f'{a+b=}')
 c = Value(10.0)
 d = a*b + c
-print(d)
+print(f'{d=}')
+print(f'{d._prev=}')
+# By using _prev we can figure out which Value objects were used to create d.
+ds = list(d._prev)
+# And we can go backwards to figure out how d was created.
+print(f'{ds[0]=}, {ds[0]._op=}')
+print(f'{ds[1]=}, {ds[1]._op=}, {ds[1]._prev=}')
+print(f'{d._op=}')
+
+from graphviz import Digraph
+def trace(root):
+    nodes, edges = set(), set()
+    def build(v):
+        if v not in nodes:
+            nodes.add(v)
+            for child in v._prev:
+                edges.add((child, v))
+                build(child)
+    build(root)
+    return nodes, edges
+
+def draw_dot(root):
+    dot = Digraph(format='svg', graph_attr={'rankdir': 'LR'})
+    nodes, edges = trace(root)
+    for n in nodes:
+        uid = str(id(n))
+        dot.node(name = uid, label="{ data %.4f }" % (n.data,), shape='record')
+    return dot
