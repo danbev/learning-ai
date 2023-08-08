@@ -161,7 +161,7 @@ def draw_dot(root):
     nodes, edges = trace(root)
     for n in nodes:
         uid = str(id(n))
-        dot.node(name = uid, label=f'data: {n.data:.4f}', shape='record')
+        dot.node(name = uid, label=f'Value(data={n.data:.2f})', shape='record')
         if n._op:
             dot.node(name = uid + n._op, label=n._op)
             dot.edge(uid + n._op, uid)
