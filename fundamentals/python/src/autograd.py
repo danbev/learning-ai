@@ -109,10 +109,11 @@ print(f'{d2=}')
 print(f'slope: {(d2 - d1)/h}')
 
 class Value:
-    def __init__(self, data, children=(), op=''):
+    def __init__(self, data, children=(), op='', label=''):
         self.data = data
         self._prev = set(children)
         self._op = op
+        self.label = label
 
     def __repr__(self):
         return f'Value(data={self.data})'
@@ -129,12 +130,13 @@ class Value:
         # object, and also the operation which in this case is mul.
         return Value(self.data * other.data, (self, other), '*')
 
-a = Value(2.0)
+a = Value(2.0, label='a')
 print(f'{a=}')
-b = Value(-3.0)
+b = Value(-3.0, label='b')
 print(f'{a+b=}')
-c = Value(10.0)
-d = a*b + c
+c = Value(10.0, label='c')
+e = a*b; e.label = 'e'
+d = e + c; d.label = 'd'
 print(f'{d=}')
 print(f'{d._prev=}')
 # By using _prev we can figure out which Value objects were used to create d.
@@ -161,7 +163,7 @@ def draw_dot(root):
     nodes, edges = trace(root)
     for n in nodes:
         uid = str(id(n))
-        dot.node(name = uid, label=f'Value(data={n.data:.2f})', shape='record')
+        dot.node(name = uid, label=f'Value(label={n.label}, data={n.data:.2f})', shape='record')
         if n._op:
             dot.node(name = uid + n._op, label=n._op)
             dot.edge(uid + n._op, uid)
