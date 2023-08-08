@@ -12,10 +12,10 @@ words = open('src/names.txt', 'r').read().splitlines()
 all_letters = ''.join(words)
 chars = sorted(list(set(all_letters)))
 
-# string to integer dictionary.
+# string to integer dictionary mapping.
 stoi = {ch: i+1 for i, ch in enumerate(chars)}
 stoi['.'] = 0
-# integer to string dictionary.
+# integer to string dictionary mapping.
 itos = {i: ch for ch, i in stoi.items()}
 
 # Training sets which consists of bigrams (x, y) where x is the first character
@@ -23,10 +23,7 @@ itos = {i: ch for ch, i in stoi.items()}
 xs = [] # inputs (ints)
 ys = [] # targets/labels (ints)
 
-# Create an empty matrix of size 27x27 with all zeros.
-N = torch.zeros((27, 27), dtype=torch.int32)
-# Instead of adding the counts to a matrix...
-#for word in words:
+# Just using one word for now
 for word in words[:1]:
   # Add bigrams for word
   chs = ['.'] + list(word) + ['.']
@@ -56,8 +53,80 @@ x_hot_encoded = torch.nn.functional.one_hot(xs, num_classes=27).float()
 print(f'Convert xs: {xs} into one-hot vectors:')
 print(f'{x_hot_encoded}, {x_hot_encoded.dtype=}')
 print(f'Notice that the shape of the one-hot vectors is {x_hot_encoded.shape}')
+print(f'which is the number of possible characters we have.')
 print(f'and {x_hot_encoded.dtype=}. We need to have floats to be able to feed')
 print(f'this into a neural network.')
 plt.imshow(x_hot_encoded)
-plt.show()
+#plt.show()
 print(f'We can feed this one-hot encoded tensor into a neural network.')
+
+g = torch.Generator().manual_seed(18)
+# randn is for random normal distribution.
+print(f'We generate random normaly distributed weights for the neural network.')
+W = torch.randn((27, 27), dtype=torch.float32, requires_grad=True, generator=g)
+# Recall that in our manual bigram version we had a matrix of size 27x27 and
+# the entries were the counts of each bigram. We have the name type of matrix
+# here but the entries are random numbers.
+print(f'Weights matrix W: {W}, shape: {W.shape}, {W.dtype=}')
+fig = plt.figure(figsize=(60,60), dpi=80)
+fig.suptitle('Bigram NN Table')
+## Display data as an image (imshow), i.e., on a 2D regular raster.
+image_axis = plt.imshow(W.detach().numpy(), cmap='Blues')
+print('Bigram Table lables (not showing counts):')
+for i in range(27):
+    for j in range(27):
+        chstr = itos[i] + itos[j]
+        print(chstr, ' ', end='', flush=True)
+        #print(float(f'{W[i, j].item():.2f}'), ' ', end='', flush=True)
+        plt.text(j, i, chstr, ha="center", va="bottom", color='gray')
+        plt.text(j, i, float(f'{W[i, j].item():.2f}'), ha="center", va="top", color='gray')
+    print("", flush=True)
+plt.axis('off');
+plt.show()
+
+# Multiply the weights by the one-hot encoded vectors, the inputs
+print('\nNow we multiply the weights by the one-hot encoded vectors (the inputs)')
+# The following are all equivalent:
+logits = x_hot_encoded.mm(W)
+logits = torch.mm(x_hot_encoded, W)
+logits = torch.matmul(x_hot_encoded, W)
+logits = x_hot_encoded @ W
+print(f'logits: {logits}, shape: {logits.shape}, {logits.dtype=}')
+# logits are the raw unnormalized predictions that a classification model
+# generates, before applying the activation function. So these are the values
+# before they are squashed through a function that makes them probabilities.
+# In deep learning, particularly in multi-class classification, the term "logits"
+# has been generalized to refer to the vector of raw scores output by the model
+# before applying the softmax function.
+
+print(logits[3, 13]) # or print(logits[3][13])
+print(x_hot_encoded[3])
+print(W[:,13])
+print((x_hot_encoded[3] * W[:,13]).sum())
+# We have 27 inputs and 27 neurons in the hidden layer.
+
+print('Notice that this matrix contains both negative and positive numbers.')
+print('We can use the exponential function to convert these numbers into positive number')
+counts = logits.exp() # exp is the exponential function, eˣ.
+# counts is similar to the N matrix in the bigrams.py example. Recll that the
+# P matrix was the N matrix normalized.
+print(counts)
+probs = counts / counts.sum(dim=1, keepdim=True)
+# The following two functions are called the softmax function:
+# counts = logits.exp()
+# probs = counts / counts.sum(dim=1, keepdim=True)
+print(f'{probs.shape=}')
+print(f'{probs[0]=}')
+print('The values in the above output are the probabilities that that character will come next')
+print(f'We have 27 characters remember: {chars=}, count: {len(chars)} + the "." character')
+print(probs[0, 5].data, probs[1, 13].data, probs[2, 13].data, probs[3, 1].data, probs[4, 0].data)
+print(torch.arange(5))
+print(f'{ys=}')
+# The following is using tensors to index into the probs tensor. This is a way
+# of selecting rows and columns that we are interested in.
+loss = -probs[torch.arange(5), ys].log().mean()
+print(f'loss: {loss.data}')
+print(W.grad)
+W.grad = None # reset the gradient to zero.
+loss.backward()
+print(probs[torch.tensor([0, 1, 2, 3, 4]), ys].data)
