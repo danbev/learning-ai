@@ -2,15 +2,18 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+"""
+Automatic gradient calculation example from:
+https://www.youtube.com/watch?v=VMj-3S1tku0&t=577s
+
+This might divert from the above example and contains comments about
+python in addition to the concepts of automatic gradient calculation.
+"""
+
 def f(x):
     return 3*x**2 - 4*x + 5
 
 print(f(3.0))
-# 3*3² - 4*3 + 5
-# 3*9 - 12 + 5
-# 27 - 12 + 5
-# 27 - 12 + 5
-# 15 + 5 = 20
 
 xs = np.arange(-5, 5, 0.25)
 print(f'{xs=}')
