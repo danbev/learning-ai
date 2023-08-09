@@ -129,8 +129,8 @@ class Value:
         out = Value(self.data + other.data, (self, other), '+')
         def _backward():
             # For addition the gradient of is just copied through
-            self.grad = 1.0 * out.grad
-            other.grad = 1.0 * out.grad
+            self.grad += 1.0 * out.grad
+            other.grad += 1.0 * out.grad
         out._backward = _backward
         return out
 
@@ -140,8 +140,8 @@ class Value:
         # object, and also the operation which in this case is mul.
         out = Value(self.data * other.data, (self, other), '*')
         def _backward():
-            self.grad = other.data * out.grad
-            other.grad = self.data * out.grad
+            self.grad += other.data * out.grad
+            other.grad += self.data * out.grad
         out._backward = _backward
         return out
 
@@ -154,7 +154,7 @@ class Value:
         tanh = (math.exp(2*x) - 1) / (math.exp(2*x) + 1)
         out = Value(tanh, (self,), 'tanh')
         def _backward():
-            self.grad = (1 - tanh**2) * out.grad
+            self.grad += (1 - tanh**2) * out.grad
         out._backward = _backward
         return out
 
