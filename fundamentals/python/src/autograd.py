@@ -123,6 +123,14 @@ class Value:
         return f'Value(label={self.label}, data={self.data}, grad={self.grad}'
 
     def __add__(self, other):
+        # This looked unfamiliar to me at first, but it is just checking if
+        # other is a Value object and if not it creates one.
+        # Like this would be equivalent to:
+        # if isinstance(other, Value):
+        #     other = other
+        # else:
+        #     other = Value(other)
+        other = other if isinstance(other, Value) else Value(other)
         # Notice that we are returning a new Value object here, and in the
         # process documenting which objects were used to create this new
         # object, and also the operation which in this case is add.
