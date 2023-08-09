@@ -132,6 +132,15 @@ class Value:
         # object, and also the operation which in this case is mul.
         return Value(self.data * other.data, (self, other), '*')
 
+    def exp(self, other):
+        return Value(self.data**other.data, (self, other), '**')
+
+    def tanh(self):
+        # tanh(x) = (e^(2*x) - 1) / (e^x(2*x) + 1
+        x = self.data
+        tanh = (math.exp(2*x) - 1) / (math.exp(2*x) + 1)
+        return Value(tanh, (self,), 'tanh')
+
 print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
 print(f'{a=}')
@@ -251,6 +260,21 @@ digraph.render('autograd', view=False, format='svg')
 # The generated file can then be opened using:
 # $ python -mwebbrowser autograd.svg
 
+# Notice that what we are doing is that we are going backwards through the nodes
+# and locally applying the chain rule. So we want to compute the derivative 
+# with respect to L and the nodes know there children nodes, that is if the
+# node was created through a computation like addition, multiplication, etc.
+# We calculate the local deriviative and multiply them with the derivative of
+# the parent node. This is called backpropagation.
+# This is a recursive application of the chain rule backwards through the graph.
+
+# So to recap this, we have a graph of nodes and edges. This far we have the
+# following nodes: a, b, c, d, e, f, L. And we have the following edges:
+# a -> e, b -> e, e -> d, c -> d, d -> L, f -> L.
+# The forward pass is what creates the values for e and d and L. Initially these
+# nodes only have a value. The backward pass is what computes the gradients for
+# each node. We will later see that we can also have weights and biases in the
+# graph. 
 
 def manual_checking():
     print('------ Manual verifying of the derivatives  ------')
@@ -344,13 +368,6 @@ def manual_checking():
 
 manual_checking()
 
-# Notice that what we are doing is that we are going backwards through the nodes
-# and locally applying the chain rule. So we want to compute the derivative 
-# with respect to L and the nodes know there children nodes, that is if the
-# node was created through a computation like addition, multiplication, etc.
-# We calculate the local deriviative and multiply them with the derivative of
-# the parent node. This is called backpropagation.
-# This is a recursive application of the chain rule backwards through the graph.
 
 print("------ Backpropagation ------")
 # What we want to do is nudge our inputs to make L increase. Which we do for all
@@ -373,10 +390,82 @@ L = d*f
 # step size. If we increase the step size, the value of L will increase more.
 print(f'{L=}')
 
-# Multi-layer perceptron (MLP) example
+print("------ Neural Network Example ------")
 
 # tahn activation function
 plt.figure()
 plt.plot(np.arange(-5, 5, 0.2), np.tanh(np.arange(-5, 5, 0.2)))
 plt.grid()
 plt.show()
+
+# inputs
+x1 = Value(2.0, label='x1')
+x2 = Value(0.0, label='x2')
+print(f'{x1=}, {x2=}')
+# weights
+w1 = Value(-3.0, label='w1')
+w2 = Value(1.0, label='w2')
+print(f'{w1=}, {w2=}')
+# bias
+#b = Value(6.7, label='b')
+#b = Value(9.0, label='b')
+b = Value(6.8813735870195432, label='b')
+print(f'{b=}')
+# This is the edge to the 'x1w1' node
+x1w1 = x1 * w1
+x1w1.label = 'x1w1'
+print(f'{x1w1=}')
+# This is the edge to the 'x2w2' node
+x2w2 = x2 * w2
+x2w2.label = 'x2w2'
+print(f'{x2w2=}')
+
+# This is the node and recall that the dot product is the sum of the products
+# of the elements of the vectors.
+# [x1, x2] . [w1, w2] = (x1 * w1) + (x2 * w2)
+x1w1x2w2 = x1w1 + x2w2 # this is just the sum part of the "dot" product.
+x1w1x2w2.label = 'x1w1x + 2w2'
+print(f'{x1w1x2w2=}')
+
+# Network but wihout the activation function.
+n = x1w1x2w2 + b
+n.label = 'n'
+print(f'{n=}')
+
+output = n.tanh() # this sould be n.tahn() but for that we need more funtions on the Value class
+output.label = 'output'
+print(f'{output=}')
+# namly exponential and division.
+digraph = draw_dot(output)
+digraph.render('autograd_nn', view=False, format='svg')
+
+# Alright, now we are doing to do the backpropagation.
+print("------ Neural Network Backpropagation ------")
+output.grad = 1.0 # dL/dL = 1.0
+print(f'{output.grad=}')
+# The next now in the graph, going backwards is the activation function node
+# which used tanh which we need to derive.
+# output = tanh(n)
+# do/dn = 1 - tanh(n)^2   # and we alreay have tanh(n) which is output.data.
+print(f'do/dn = 1 - tanh(n)^2 = {1 - output.data**2}')
+n.grad = 1 - output.data**2
+
+# Recall that an addtion node simply passes the gradient to all its inputs. So
+# we can set the b node grad to 0.5, as well as the x1w1x2w2 node to 0.5.
+b.grad = 0.5
+x1w1x2w2.grad = 0.5
+# And the moving backwards again we have another addition node, so we can set
+# the x1w1 and x2w2 nodes to 0.5.
+x1w1.grad = 0.5
+x2w2.grad = 0.5
+
+x1.grad = w1.data * x1w1.grad
+w1.grad = x1.data * x1w1.grad
+
+x2.grad = w2.data * x2w2.grad
+w2.grad = x2.data * x2w2.grad
+
+
+
+digraph = draw_dot(output)
+digraph.render('autograd_nn', view=False, format='svg')
