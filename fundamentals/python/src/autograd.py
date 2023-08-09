@@ -120,7 +120,7 @@ class Value:
         self.grad = 0.0 # does not influence the output value intially
 
     def __repr__(self):
-        return f'Value(data={self.data}, grad={self.grad}'
+        return f'Value(label={self.label}, data={self.data}, grad={self.grad}'
 
     def __add__(self, other):
         # Notice that we are returning a new Value object here, and in the
@@ -485,14 +485,42 @@ digraph.render('autograd_nn', view=False, format='svg')
 #digraph = draw_dot(output)
 #digraph.render('autograd_nn', view=False, format='svg')
 
+#print("------ Neural Network Manual Backpropagation ------")
+#output.grad = 1.0 # this is needed as if it is 0 it will not work.
+#output._backward()
+#n._backward()
+#b._backward()
+#x1w1x2w2._backward()
+#x1w1._backward()
+#x2w2._backward()
+#
+#digraph = draw_dot(output)
+#digraph.render('autograd_nn', view=False, format='svg')
+
 print("------ Neural Network Auto Backpropagation ------")
 output.grad = 1.0 # this is needed as if it is 0 it will not work.
-output._backward()
-n._backward()
-b._backward()
-x1w1x2w2._backward()
-x1w1._backward()
-x2w2._backward()
+
+topo = []
+visited = set()
+def build_topo(v):
+    if v not in visited:
+        visited.add(v)
+        for child in v._prev:
+            build_topo(child)
+        topo.append(v)
+
+build_topo(output)
+print('\n'.join(map(str, topo)))
+
+for node in reversed(topo):
+    node._backward()
+
+#output._backward()
+#n._backward()
+#b._backward()
+#x1w1x2w2._backward()
+#x1w1._backward()
+#x2w2._backward()
 
 digraph = draw_dot(output)
 digraph.render('autograd_nn', view=False, format='svg')
