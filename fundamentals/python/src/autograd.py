@@ -166,7 +166,7 @@ def draw_dot(root):
     nodes, edges = trace(root)
     for n in nodes:
         uid = str(id(n))
-        dot.node(name = uid, label=f'Value(label={n.label}, data={n.data:.2f}, grad={n.grad})', shape='record')
+        dot.node(name = uid, label=f'Value(label={n.label}, data={n.data:.4f}, grad={n.grad:.4f})', shape='record')
         if n._op:
             dot.node(name = uid + n._op, label=n._op)
             dot.edge(uid + n._op, uid)
@@ -175,8 +175,150 @@ def draw_dot(root):
         dot.edge(str(id(a)), str(id(b)) + b._op)
     return dot
 
+L.grad = 1.0
+f.grad = 4.0
+d.grad = -2.0
+
+# L = d*f
+# dL/dd = ?
+# (f(x+h) - f(x))/h
+# ((d+h)*f - d*f)/h
+# ((d*f + h*f - d*f)/h
+#  h*f
+#  ---- = f
+#   h
+
+# d = 4.0, f = -2.0
+# ((4.0+0.001)*-2.0 - 4.0*-2.0)/0.001
+
+# Now we want to compute the derivative of L with respect to c.
+# dd /dc = ?
+# We know that D was created by adding c to e.
+# (f(x+h) - f(x))/h
+# ((c+h) + e) - (c + e)/h 
+# ((c+h) + e) - 1(c + e)/h 
+# (c + h + e - c - e)/h 
+# h/h = 1.0
+
+# Likewise dd/de = 1.0
+# We know the value of dL/dd = -2.0 
+# And know the value of dd/dc = 1.0
+# Then the value of dL/dc = -2.0 * 1.0 = -2.0
+c.grad = -2.0
+e.grad = -2.0
+
+# Next we want to compute dL/da. So we want to compute the derivative of a with
+# respect to L. Looking at a which is called a local node its connection/link
+# to L is through e which was created by multiplying a and b. 
+# dL/da = (dL/de) * (de/da) = -2.0 * -3.0 = 6.0
+# And de/da = b = -3.0
+
+a.grad = -2.0 * -3.0
+
+# And then we have dL/db. So we want to compute the derivative of b with respec
+# to L:
+# (f(x+h) - f(x))/h
+# ((b+h) + e) - (b + e)/h 
+# ((b+h) + e) - 1(b + e)/h 
+# (b + h + e - b - e)/h      // b-b = 0, e-e = 0
+# h/h = 1
+# 1 * a = 1 * 2.0 = 2.0
+# dL/db = (dL/de) * (de/db) = -2.0 * 2.0 = -4.0
+b.grad = -2.0 * 2.0
+
 digraph = draw_dot(L)
 digraph.render('autograd', view=False, format='svg')
 # The generated file can then be opened using:
 # $ python -mwebbrowser autograd.svg
 
+
+def manual_checking():
+    h = 0.0000001
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    e = a*b
+    e.label = 'e'
+    d = e + c
+    d.label = 'd'
+    f = Value(-2.0, label='f')
+    L = d*f
+    L.label = 'L'
+    L1 = L.data
+
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    e = a*b; e.label = 'e'
+    d = e + c; d.label = 'd'
+    f = Value(-2.0, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data + h
+    print(f'Derivative of L with respect to L dL/dL: {(L2-L1)/h=}')
+
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    e = a*b; e.label = 'e'
+    d = e + c; d.label = 'd'
+    f = Value(-2.0 + h, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data
+    print(f'Derivative of L with respect to f dL/df: {(L2-L1)/h=}')
+
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    e = a*b; e.label = 'e'
+    d = e + c; d.label = 'd'
+    d.data += h
+    f = Value(-2.0, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data
+    print(f'Derivative of L with respect to d dL/dd: {(L2-L1)/h=}')
+
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    c.data += h
+    e = a*b; e.label = 'e'
+    d = e + c; d.label = 'd'
+    f = Value(-2.0, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data
+    print(f'Derivative of L with respect to c dL/dc: {(L2-L1)/h=}')
+
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    e = a*b; e.label = 'e'
+    e.data += h
+    d = e + c; d.label = 'd'
+    f = Value(-2.0, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data
+    print(f'Derivative of L with respect to e dL/de: {(L2-L1)/h=}')
+
+    a = Value(2.0, label='a')
+    b = Value(-3.0, label='b')
+    b.data += h
+    c = Value(10.0, label='c')
+    e = a*b; e.label = 'e'
+    d = e + c; d.label = 'd'
+    f = Value(-2.0, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data
+    print(f'Derivative of L with respect to b dL/db: {(L2-L1)/h=}')
+
+    a = Value(2.0, label='a')
+    a.data += h
+    b = Value(-3.0, label='b')
+    c = Value(10.0, label='c')
+    e = a*b; e.label = 'e'
+    d = e + c; d.label = 'd'
+    f = Value(-2.0, label='f')
+    L = d*f; L.label = 'L'
+    L2 = L.data
+    print(f'Derivative of L with respect to a dL/da: {(L2-L1)/h=}')
+
+manual_checking()
