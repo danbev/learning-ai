@@ -158,6 +158,23 @@ class Value:
         out._backward = _backward
         return out
 
+    def backward(self):
+        topo = []
+        visited = set()
+        def build_topo(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v._prev:
+                    build_topo(child)
+                topo.append(v)
+
+        build_topo(self)
+        self.grad = 1.0
+        for v in reversed(topo):
+            v._backward()
+
+        print('\n'.join(map(str, topo)))
+
 print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
 print(f'{a=}')
@@ -498,22 +515,24 @@ digraph.render('autograd_nn', view=False, format='svg')
 #digraph.render('autograd_nn', view=False, format='svg')
 
 print("------ Neural Network Auto Backpropagation ------")
-output.grad = 1.0 # this is needed as if it is 0 it will not work.
+output.backward()
 
-topo = []
-visited = set()
-def build_topo(v):
-    if v not in visited:
-        visited.add(v)
-        for child in v._prev:
-            build_topo(child)
-        topo.append(v)
-
-build_topo(output)
-print('\n'.join(map(str, topo)))
-
-for node in reversed(topo):
-    node._backward()
+# The following has now been extracted into Value.backward()
+#output.grad = 1.0 # this is needed as if it is 0 it will not work.
+#topo = []
+#visited = set()
+#def build_topo(v):
+#    if v not in visited:
+#        visited.add(v)
+#        for child in v._prev:
+#            build_topo(child)
+#        topo.append(v)
+#
+#build_topo(output)
+#print('\n'.join(map(str, topo)))
+#
+#for node in reversed(topo):
+#    node._backward()
 
 #output._backward()
 #n._backward()
