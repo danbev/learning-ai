@@ -146,6 +146,7 @@ class Value:
         # Notice that we are returning a new Value object here, and in the
         # process documenting which objects were used to create this new
         # object, and also the operation which in this case is mul.
+        other = other if isinstance(other, Value) else Value(other)
         out = Value(self.data * other.data, (self, other), '*')
         def _backward():
             self.grad += other.data * out.grad
