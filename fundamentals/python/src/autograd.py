@@ -111,26 +111,39 @@ def manual_derivative_exploration():
 
 class Value:
     def __init__(self, data, children=(), op='', label=''):
-        self.data = data
         self._prev = set(children)
         self._op = op
+        self._backward = lambda: None # recall that leaf nodes/value nodes do not have a backward function
+
+        self.data = data
         self.label = label
         self.grad = 0.0 # does not influence the output value intially
 
     def __repr__(self):
-        return f'Value(data={self.data})'
+        return f'Value(data={self.data}, grad={self.grad}'
 
     def __add__(self, other):
         # Notice that we are returning a new Value object here, and in the
         # process documenting which objects were used to create this new
         # object, and also the operation which in this case is add.
-        return Value(self.data + other.data, (self, other), '+')
+        out = Value(self.data + other.data, (self, other), '+')
+        def _backward():
+            # For addition the gradient of is just copied through
+            self.grad = 1.0 * out.grad
+            other.grad = 1.0 * out.grad
+        out._backward = _backward
+        return out
 
     def __mul__(self, other):
         # Notice that we are returning a new Value object here, and in the
         # process documenting which objects were used to create this new
         # object, and also the operation which in this case is mul.
-        return Value(self.data * other.data, (self, other), '*')
+        out = Value(self.data * other.data, (self, other), '*')
+        def _backward():
+            self.grad = other.data * out.grad
+            other.grad = self.data * out.grad
+        out._backward = _backward
+        return out
 
     def exp(self, other):
         return Value(self.data**other.data, (self, other), '**')
@@ -139,7 +152,11 @@ class Value:
         # tanh(x) = (e^(2*x) - 1) / (e^x(2*x) + 1
         x = self.data
         tanh = (math.exp(2*x) - 1) / (math.exp(2*x) + 1)
-        return Value(tanh, (self,), 'tanh')
+        out = Value(tanh, (self,), 'tanh')
+        def _backward():
+            self.grad = (1 - tanh**2) * out.grad
+        out._backward = _backward
+        return out
 
 print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
@@ -433,39 +450,49 @@ n.label = 'n'
 print(f'{n=}')
 
 output = n.tanh() # this sould be n.tahn() but for that we need more funtions on the Value class
+# namly exponential and division.
 output.label = 'output'
 print(f'{output=}')
-# namly exponential and division.
 digraph = draw_dot(output)
 digraph.render('autograd_nn', view=False, format='svg')
 
 # Alright, now we are doing to do the backpropagation.
-print("------ Neural Network Backpropagation ------")
-output.grad = 1.0 # dL/dL = 1.0
-print(f'{output.grad=}')
-# The next now in the graph, going backwards is the activation function node
-# which used tanh which we need to derive.
-# output = tanh(n)
-# do/dn = 1 - tanh(n)^2   # and we alreay have tanh(n) which is output.data.
-print(f'do/dn = 1 - tanh(n)^2 = {1 - output.data**2}')
-n.grad = 1 - output.data**2
+#print("------ Neural Network Manual Backpropagation ------")
+#output.grad = 1.0 # dL/dL = 1.0
+#print(f'{output.grad=}')
+## The next now in the graph, going backwards is the activation function node
+## which used tanh which we need to derive.
+## output = tanh(n)
+## do/dn = 1 - tanh(n)^2   # and we alreay have tanh(n) which is output.data.
+#print(f'do/dn = 1 - tanh(n)^2 = {1 - output.data**2}')
+#n.grad = 1 - output.data**2
+#
+## Recall that an addtion node simply passes the gradient to all its inputs. So
+## we can set the b node grad to 0.5, as well as the x1w1x2w2 node to 0.5.
+#b.grad = 0.5
+#x1w1x2w2.grad = 0.5
+## And the moving backwards again we have another addition node, so we can set
+## the x1w1 and x2w2 nodes to 0.5.
+#x1w1.grad = 0.5
+#x2w2.grad = 0.5
+#
+#x1.grad = w1.data * x1w1.grad
+#w1.grad = x1.data * x1w1.grad
+#
+#x2.grad = w2.data * x2w2.grad
+#w2.grad = x2.data * x2w2.grad
+#
+#digraph = draw_dot(output)
+#digraph.render('autograd_nn', view=False, format='svg')
 
-# Recall that an addtion node simply passes the gradient to all its inputs. So
-# we can set the b node grad to 0.5, as well as the x1w1x2w2 node to 0.5.
-b.grad = 0.5
-x1w1x2w2.grad = 0.5
-# And the moving backwards again we have another addition node, so we can set
-# the x1w1 and x2w2 nodes to 0.5.
-x1w1.grad = 0.5
-x2w2.grad = 0.5
-
-x1.grad = w1.data * x1w1.grad
-w1.grad = x1.data * x1w1.grad
-
-x2.grad = w2.data * x2w2.grad
-w2.grad = x2.data * x2w2.grad
-
-
+print("------ Neural Network Auto Backpropagation ------")
+output.grad = 1.0 # this is needed as if it is 0 it will not work.
+output._backward()
+n._backward()
+b._backward()
+x1w1x2w2._backward()
+x1w1._backward()
+x2w2._backward()
 
 digraph = draw_dot(output)
 digraph.render('autograd_nn', view=False, format='svg')
