@@ -3,10 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 """
-Automatic gradient calculation example from:
+Automatic gradient (autograd) calculation example from:
 https://www.youtube.com/watch?v=VMj-3S1tku0&t=577s
 
-This might divert from the above example and contains comments about
+This might diverge from the above example and contains comments about
 python in addition to the concepts of automatic gradient calculation.
 """
 
@@ -190,6 +190,10 @@ def draw_dot(root):
         dot.edge(str(id(a)), str(id(b)) + b._op)
     return dot
 
+print('------ Manually calculate the derivative of the node graph  ------')
+print('We apply the chain rule starting from the right most node L')
+# (f(L+h) - f(L))/h
+# h/h = 1.0
 L.grad = 1.0
 f.grad = 4.0
 d.grad = -2.0
@@ -338,3 +342,11 @@ def manual_checking():
     print(f'Derivative of L with respect to a dL/da: {(L2-L1)/h=}')
 
 manual_checking()
+
+# Notice that what we are doing is that we are going backwards through the nodes
+# and locally applying the chain rule. So we want to compute the derivative 
+# with respect to L and the nodes know there children nodes, that is if the
+# node was created through a computation like addition, multiplication, etc.
+# We calculate the local deriviative and multiply them with the derivative of
+# the parent node. This is called backpropagation.
+
