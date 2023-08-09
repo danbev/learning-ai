@@ -34,8 +34,9 @@ print(f'{ys=}')
 ys = np.array([f(x) for x in xs])
 print(f'{ys=}')
 
+plt.figure()
 plt.plot(xs, ys)
-#plt.show()
+plt.show()
 
 h = 0.0000001
 x = 3.0
@@ -371,3 +372,11 @@ L = d*f
 # Notice that L has increased, from -8.0 to -7.286. The value will depend on the
 # step size. If we increase the step size, the value of L will increase more.
 print(f'{L=}')
+
+# Multi-layer perceptron (MLP) example
+
+# tahn activation function
+plt.figure()
+plt.plot(np.arange(-5, 5, 0.2), np.tanh(np.arange(-5, 5, 0.2)))
+plt.grid()
+plt.show()
