@@ -35,7 +35,7 @@ ys = np.array([f(x) for x in xs])
 print(f'{ys=}')
 
 plt.plot(xs, ys)
-#plt.show()
+plt.show()
 
 h = 0.0000001
 x = 3.0
@@ -66,47 +66,47 @@ print(f'{(f(x+h) - f(x))/h=:.15f} is that slop at x=3')
 print(f'{f_prime(x)=}')
 
 
-print('--------------------')
-h = 0.0001
-# inputs
-a = 2.0
-b = -3.0
-c = 10.0
+def manual_derivative_exploration():
+    print('------ Manual exploration of the derivatives  ------')
+    h = 0.0001
+    # inputs
+    a = 2.0
+    b = -3.0
+    c = 10.0
 
-d1 = a*b + c # output
-a += h
-d2 = a*b + c
-print('"Bumping a"')
-print(f'{d1=}')
-print(f'{d2=}')
-print(f'slope: {(d2 - d1)/h}')
+    d1 = a*b + c # output
+    a += h
+    d2 = a*b + c
+    print('"Bumping a"')
+    print(f'{d1=}')
+    print(f'{d2=}')
+    print(f'slope: {(d2 - d1)/h}')
 
-# Next, let dump b a little...
-print('"Bumping b"')
-a = 2.0
-b = -3.0
-c = 10.0
+    # Next, let dump b a little...
+    print('"Bumping b"')
+    a = 2.0
+    b = -3.0
+    c = 10.0
 
-d1 = a*b + c
-b += h
-d2 = a*b + c
-print(f'{d1=}')
-print(f'{d2=}')
-print(f'slope: {(d2 - d1)/h}')
+    d1 = a*b + c
+    b += h
+    d2 = a*b + c
+    print(f'{d1=}')
+    print(f'{d2=}')
+    print(f'slope: {(d2 - d1)/h}')
 
+    # Next, let dump c a little...
+    print('"Bumping c"')
+    a = 2.0
+    b = -3.0
+    c = 10.0
 
-# Next, let dump c a little...
-print('"Bumping c"')
-a = 2.0
-b = -3.0
-c = 10.0
-
-d1 = a*b + c
-c += h
-d2 = a*b + c
-print(f'{d1=}')
-print(f'{d2=}')
-print(f'slope: {(d2 - d1)/h}')
+    d1 = a*b + c
+    c += h
+    d2 = a*b + c
+    print(f'{d1=}')
+    print(f'{d2=}')
+    print(f'slope: {(d2 - d1)/h}')
 
 class Value:
     def __init__(self, data, children=(), op='', label=''):
@@ -131,15 +131,30 @@ class Value:
         # object, and also the operation which in this case is mul.
         return Value(self.data * other.data, (self, other), '*')
 
+print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
 print(f'{a=}')
+
 b = Value(-3.0, label='b')
-print(f'{a+b=}')
+print(f'{b=}')
+
 c = Value(10.0, label='c')
-e = a*b; e.label = 'e'
-d = e + c; d.label = 'd'
+print(f'{c=}')
+
+e = a*b
+e.label = 'e'
+print(f'{e=} (a * b)')
+
+d = e + c
+d.label = 'd'
+print(f'{d=} (e + c)')
+
 f = Value(-2.0, label='f')
+print(f'{f=}')
+
 L = d*f; L.label = 'L'
+print(f'{L=}')
+
 print(f'{d=}')
 print(f'{d._prev=}')
 # By using _prev we can figure out which Value objects were used to create d.
@@ -233,6 +248,7 @@ digraph.render('autograd', view=False, format='svg')
 
 
 def manual_checking():
+    print('------ Manual verifying of the derivatives  ------')
     h = 0.0000001
     a = Value(2.0, label='a')
     b = Value(-3.0, label='b')
