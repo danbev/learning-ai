@@ -35,7 +35,7 @@ ys = np.array([f(x) for x in xs])
 print(f'{ys=}')
 
 plt.plot(xs, ys)
-plt.show()
+#plt.show()
 
 h = 0.0000001
 x = 3.0
@@ -349,4 +349,25 @@ manual_checking()
 # node was created through a computation like addition, multiplication, etc.
 # We calculate the local deriviative and multiply them with the derivative of
 # the parent node. This is called backpropagation.
+# This is a recursive application of the chain rule backwards through the graph.
 
+print("------ Backpropagation ------")
+# What we want to do is nudge our inputs to make L increase. Which we do for all
+# the leaf nodes (the ones created using the Value class).
+step = 0.01
+print(f'Nudge leaf nodes a, b, c, and f by {step=}')
+a.data += step * a.grad
+b.data += step * b.grad
+c.data += step * c.grad
+f.data += step * f.grad
+
+print(f'Current value of L: {L}')
+print(f'Perform the forward pass which computes new values for the nodes ')
+print(f'that are not leaf nodes, i.e. e, d, and L')
+e = a * b
+d = e + c
+L = d*f
+
+# Notice that L has increased, from -8.0 to -7.286. The value will depend on the
+# step size. If we increase the step size, the value of L will increase more.
+print(f'{L=}')
