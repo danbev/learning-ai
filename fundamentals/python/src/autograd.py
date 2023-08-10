@@ -142,6 +142,9 @@ class Value:
         out._backward = _backward
         return out
 
+    def __sub__(self, other):
+        return self + (-other)
+
     def __rmul__(self, other):
         return self * other
 
@@ -156,6 +159,17 @@ class Value:
             other.grad += self.data * out.grad
         out._backward = _backward
         return out
+
+    def __pow__(self, other):
+        assert isinstance(other, (int, float)), 'only supporting int/float powers for now'
+        out =  Value(self.data**other, (self,), f'**{other}')
+        def _backward():
+            self.grad += other * (self.data**(other - 1)) * out.grad
+        out._backward = _backward
+        return out
+
+    def __truediv__(self, other):
+        return self * other**-1
 
     def exp(self, other):
         return Value(self.data**other.data, (self, other), '**')
@@ -197,6 +211,8 @@ class Value:
 
 print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
+b = Value(3.0, label='b')
+a / b
 print(f'{a=}')
 
 b = Value(-3.0, label='b')
@@ -563,3 +579,18 @@ output.backward()
 
 digraph = draw_dot(output)
 digraph.render('autograd_nn', view=False, format='svg')
+
+import torch
+x1 = torch.Tensor([2.0]).double(); x1.requires_grad = True
+x2 = torch.Tensor([0.0]).double(); x2.requires_grad = True
+w1 = torch.Tensor([-3.0]).double(); w1.requires_grad = True
+w2 = torch.Tensor([1.0]).double(); w2.requires_grad = True
+b = torch.Tensor([6.8813735870195432]).double(); b.requires_grad = True
+n = x1 * w1 + x2 * w2 + b
+o = torch.tanh(n)
+o.backward()
+print(f'{o.data.item()=}')
+print(f'{x1.grad.item()=}')
+print(f'{x2.grad.item()=}')
+print(f'{w1.grad.item()=}')
+print(f'{w2.grad.item()=}')
