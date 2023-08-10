@@ -1,4 +1,4 @@
-1. **Alpha** \(\alpha\): Often used to represent the learning rate in gradient descent algorithms.
+1. **Alpha** \( \alpha \): Often used to represent the learning rate in gradient descent algorithms.
 2. **Beta** \(\beta\): May represent hyperparameters, such as the momentum term in optimization algorithms or coefficients in regularization techniques.
 3. **Gamma** \(\gamma\): Used for other hyperparameters or scaling factors, such as in batch normalization.
 4. **Delta** \(\Delta\): Represents changes or differences in quantities, such as weight updates.
