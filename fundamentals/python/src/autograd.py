@@ -142,8 +142,8 @@ class Value:
         out._backward = _backward
         return out
 
-    #def __rmul__(self, other):
-    #    return self * other
+    def __rmul__(self, other):
+        return self * other
 
     def __mul__(self, other):
         # Notice that we are returning a new Value object here, and in the
@@ -170,6 +170,14 @@ class Value:
         out._backward = _backward
         return out
 
+    def exp(self):
+        x = self.data
+        out = Value(math.exp(x), (self,), 'exp')
+        def _backward():
+            self.grad += out.data * out.grad
+        out._backward = _backward
+        return out
+
     def backward(self):
         topo = []
         visited = set()
@@ -189,7 +197,6 @@ class Value:
 
 print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
-2 * a
 print(f'{a=}')
 
 b = Value(-3.0, label='b')
