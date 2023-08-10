@@ -594,3 +594,19 @@ print(f'{x1.grad.item()=}')
 print(f'{x2.grad.item()=}')
 print(f'{w1.grad.item()=}')
 print(f'{w2.grad.item()=}')
+
+
+import random
+
+class Neuron: 
+    def __init__(self, nr_inputs):
+        self.w = [Value(random.uniform(-1, 1)) for _ in range(nr_inputs)]
+        self.b = Value(random.uniform(-1, 1))
+        
+
+    def __call__(self, x):
+        print(f'Neuron (w * x + b), w={[w.data for w in self.w]}, {x=}, {self.b.data=}')
+
+
+neuron = Neuron(2)
+neuron([1, 2])
