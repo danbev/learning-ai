@@ -18,7 +18,7 @@
 18. **Sigma** &Sigma;: Summation operator or covariance matrix.
 19. **Tau** &tau;: Time constant or other special parameters.
 20. **Upsilon** &upsilon;: Rarely used in deep learning.
-21. **Phi** &phi;: Often represents activation functions or angular quantities.
+21. **Phi** &phi;: Often represents activation functions (non-linear transformation) or angular quantities.
 22. **Chi** &chi;: Used in statistical contexts like the chi-squared distribution.
 23. **Psi** &psi;: Wave functions or other special mathematical functions.
 24. **Omega** &omega;: Frequency in signal processing or a hyperparameter.
