@@ -25,6 +25,16 @@ comments and a few changes. This automatic gradient functionality is something
 that I believe is used in most machine learning libraries, like tensorflow and
 pytorch. Going through this example is a good way to understand how it works.
 
+The function that is used in this example is `3x² - 4x + 5` and is defined as:
+```python
+def f(x):
+    return 3*x**2 - 4*x + 5
+```
+The graph for this function looks like this:
+
+![image](./images/autograd_function.png)
+
+
 ### Bigrams
 This example comes from a Andrej Karpathy's youtube video on
 [bigrams](https://www.youtube.com/watch?v=PaCmpygFfXo) modified with comments
