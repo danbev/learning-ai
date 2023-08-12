@@ -781,7 +781,9 @@ def pred(learning_rate):
 
     # Reset the gradients to zero.
     for p in mlp.parameters():
-        p.grad = 0
+        # we update the gradients in place so we need to reset them to zero.
+        p.grad = 0.0
+
     # Perform the backward pass to calculate the gradients.
     loss.backward()
 
@@ -794,3 +796,6 @@ def pred(learning_rate):
 
 for i in range(1000):
     pred(0.1)
+
+print("The final parameters that we have learned:");
+print(*mlp.parameters(), sep='\n')
