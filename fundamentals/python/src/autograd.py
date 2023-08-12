@@ -621,6 +621,10 @@ class Neuron:
         out = act.tanh()
         return out
 
+    def parameters(self):
+        # add the weights list to a list of the bias which is just a float.
+        return self.w + [self.b]
+
 x = [2.0, 3.0]
 n = Neuron(len(x))
 o = n(x)
@@ -633,6 +637,12 @@ class Layer:
     def __call__(self, x):
         outs = [n(x) for n in self.neurons]
         return outs[0] if len(outs) == 1 else outs
+
+    def parameters(self):
+        # What we want is for this method to return all the parameters in all
+        # the nauurons in this layer. So we got through all the neusonrs add
+        # colllect the paramters into a new list which is returned.
+        return [p for n in self.neurons for p in n.parameters()]
 
 x = [2.0, 3.0]
 n = Layer(2, 3)
@@ -650,6 +660,17 @@ class MLP:
         for layer in self.layers:
             x = layer(x)
         return x
+
+    def parameters(self):
+        # And like in the Layer we want to be able to collect all the
+        # parameters from all the Layers.
+        #return [p for layer in self.layers for lp in layer.parameters()]
+        #return [p for layer in self.layers for p in layer.parameters()]
+        params = []
+        for layer in self.layers:
+            for p in layer.parameters():
+                params.append(p)
+        return params
 
 x = [2.0, 3.0, -10]
 mlp = MLP(3, [4, 4, 1])
@@ -722,14 +743,54 @@ print(mlp_output)
 print("Predicted values after nudging weigh[0]:");
 y_pred = [mlp(x) for x in xs]
 for i, (p, t) in enumerate(zip(y_pred, ys)):
-    print(f'{i} pred: {p.data}: true: {y}')
+    print(f'{i} pred: {p.data}: true: {t}')
 
 loss = sum(((yout - ygt)**2 for ygt, yout in zip(ys, y_pred)), Value(0.0))
 # The larger the loss the further away the predicted values are from the true
 # values. We want to minimize the loss.
 print(f'new loss: {loss.data}')
+# So that was changing one weight, but we need to nudge them up or down based
+# on the gradient.
 
 loss.backward()
-#print(mlp.layers[0].neurons[0].w[0].grad)
 
+print(*mlp.parameters(), sep='\n')
+print(f'{mlp.layers[0].neurons[0].w[0].grad=}')
+print(f'{mlp.layers[0].neurons[0].w[0].data=}')
+for p in mlp.parameters():
+    # The gradient is a vector that points in the direction of increated loss.
+    #p.data += 0.001 * p.grad
+    # Lets take the first entry:
+    # data=-0.6384702733335573, grad=-2.3415567749427533
+    # 0.001 * p.grad = -0.002341556774942753
+    # -0.6384702733335573 + (- 0.002341556774942753)
+    # -0.6384702733335573 - 0.002341556774942753) = -0.6408118301085001 
+    # Notice that actually made the wieght more negative and increase the loss:
+    # -0.6384702733335573
+    # -0.6408118301085001 
+    p.data += -0.01 * p.grad
 
+print(f'{mlp.layers[0].neurons[0].w[0].data=}')
+
+def pred(learning_rate):
+    # forward pass through the network calling all the neurons.
+    y_pred = [mlp(x) for x in xs]
+    # Calculate the loss after the forward pass.
+    loss = sum(((yout - ygt)**2 for ygt, yout in zip(ys, y_pred)), Value(0.0))
+    print(f'new loss: {loss.data}')
+
+    # Reset the gradients to zero.
+    for p in mlp.parameters():
+        p.grad = 0
+    # Perform the backward pass to calculate the gradients.
+    loss.backward()
+
+    # Adjust the weights and biases with respect to the gradients.
+    for p in mlp.parameters():
+        p.data += -learning_rate * p.grad
+
+    for i, (p, t) in enumerate(zip(y_pred, ys)):
+        print(f'{i} pred: {p.data}: true: {t}')
+
+for i in range(9000):
+    pred(0.01)
