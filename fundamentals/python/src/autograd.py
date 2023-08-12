@@ -792,5 +792,5 @@ def pred(learning_rate):
     for i, (p, t) in enumerate(zip(y_pred, ys)):
         print(f'{i} pred: {p.data}: true: {t}')
 
-for i in range(9000):
-    pred(0.01)
+for i in range(1000):
+    pred(0.1)
