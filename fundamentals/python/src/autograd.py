@@ -12,7 +12,12 @@ python in addition to the concepts of automatic gradient calculation.
 
 def f(x):
     return 3*x**2 - 4*x + 5
+
 # The derivitive of the above function is:
+#  d
+# --- = (3x² - 4x + 5) = 6x - 4
+#  dx
+
 # 3 * x² - 4x + 5
 # 3 * 2x - 4x¹
 # 3 * 2x - 1*4x⁰
@@ -34,12 +39,16 @@ print(f'{ys=}')
 ys = np.array([f(x) for x in xs])
 print(f'{ys=}')
 
+# Plot the function
 plt.figure()
 plt.plot(xs, ys)
 plt.show()
 
+# h in this case is the "nudge". It is the small increment that we nudge x to
+# the right.
 h = 0.0000001
 x = 3.0
+print(f'{f_prime(x)=}')
 # Definition of the derivative of a function:
 # f'(x) = lim h->0 (f(x+h) - f(x))/h
 print(f'{h=}')
@@ -595,7 +604,6 @@ print(f'{x2.grad.item()=}')
 print(f'{w1.grad.item()=}')
 print(f'{w2.grad.item()=}')
 
-
 import random
 
 class Neuron: 
@@ -605,8 +613,43 @@ class Neuron:
         
 
     def __call__(self, x):
-        print(f'Neuron (w * x + b), w={[w.data for w in self.w]}, {x=}, {self.b.data=}')
+        #print(f'Neuron (w * x + b), w={[w.data for w in self.w]}, {x=}, {self.b.data=}')
+        #print(list(zip(self.w, x)))
+        #act = sum((wi*xi for wi,xi in zip(self.w, x)), Value(0.0)) + self.b
+        act = sum((wi*xi for wi,xi in zip(self.w, x)), self.b)
+        out = act.tanh()
+        return out
 
+x = [2.0, 3.0]
+n = Neuron(len(x))
+o = n(x)
+#print(o)
 
-neuron = Neuron(2)
-neuron([1, 2])
+class Layer:
+    def __init__(self, nr_inputs, nr_neurons):
+        self.neurons = [Neuron(nr_inputs) for _ in range(nr_neurons)]
+
+    def __call__(self, x):
+        outs = [n(x) for n in self.neurons]
+        return outs[0] if len(outs) == 1 else outs
+
+x = [2.0, 3.0]
+n = Layer(2, 3)
+o = n(x)
+#print(o)
+
+# Multi Layer Perceptron
+class MLP:
+    def __init__(self, nr_inputs, nr_outputs):
+        sz = [nr_inputs] + nr_outputs
+        self.layers = [Layer(sz[i], sz[i+1]) for i in range(len(nr_outputs))]
+        
+    def __call__(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+x = [2.0, 3.0, -10]
+n = MLP(3, [4, 4, 1])
+o = n(x)
+print(o)
