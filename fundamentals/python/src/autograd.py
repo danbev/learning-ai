@@ -688,18 +688,46 @@ for i, (t, p) in enumerate(zip(ys, y_pred)):
     diff = t - p.data
     loss += diff**2
     print(f'{i} true value - predicted {diff=}, squared: {diff**2}')
-print(f'loss: {loss}')
-# So for each point we are going to calculate the difference between the true
-# value and the predicted value. But we want to take all the values into accout
-# and then get a single value. So we need to sum all the differences and we take
-# the square of each difference to avoid negative values. We could also have
-# taken the absolute value of each difference. 
+print(f'loss: {loss} (the sum of the "squared" values above)')
+print(''' So for each point we are going to calculate the difference between the true
+ value and the predicted value. But we want to take all the values into accout
+ and then get a single value. So we need to sum all the differences and we take
+ the square of each difference to avoid negative values. We could also have
+ taken the absolute value of each difference.''')
 
 #loss = sum((yout - ygt)**2 for ygt, yout in zip(ys, y_pred))
 # This is the same as the loop above, just me trying to get more familiar with
 # python syntax.
 loss = sum(((yout - ygt)**2 for ygt, yout in zip(ys, y_pred)), Value(0.0))
+# The larger the loss the further away the predicted values are from the true
+# values. We want to minimize the loss.
 print(f'loss: {loss.data}')
+
+print(''' How do we minimize the loss?
+ Initially we initialize the weights and biases randomly which is why these
+ values are so far off. We want to adjust each of the weights and biases so
+ to that the loss goes down.
+ Lets take an example like the first input [2.0, 3.0, -1.0] and the first
+ 0 pred: -0.6168217796407953: true: 1.0.
+ We need to take a look a the weights and biases for this entry.
+''')
+print(f'{mlp.layers[0].neurons[0].w[0]=}')
+# This is a negative value. Remember that we want to change this value in way
+# such that the loss goes down. If we look at the value of the loss for this
+# entry we see that it is 1.6168217796407953. If we increase this value the
+# loss will go up, but if we decrease this value the loss will go down.
+
+mlp.layers[0].neurons[0].w[0] -= 0.001
+print(mlp_output)
+print("Predicted values after nudging weigh[0]:");
+y_pred = [mlp(x) for x in xs]
+for i, (p, t) in enumerate(zip(y_pred, ys)):
+    print(f'{i} pred: {p.data}: true: {y}')
+
+loss = sum(((yout - ygt)**2 for ygt, yout in zip(ys, y_pred)), Value(0.0))
+# The larger the loss the further away the predicted values are from the true
+# values. We want to minimize the loss.
+print(f'new loss: {loss.data}')
 
 loss.backward()
 #print(mlp.layers[0].neurons[0].w[0].grad)
