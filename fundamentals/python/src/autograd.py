@@ -42,7 +42,7 @@ print(f'{ys=}')
 # Plot the function
 plt.figure()
 plt.plot(xs, ys)
-plt.show()
+#plt.show()
 
 # h in this case is the "nudge". It is the small increment that we nudge x to
 # the right.
@@ -216,7 +216,7 @@ class Value:
         for v in reversed(topo):
             v._backward()
 
-        print('\n'.join(map(str, topo)))
+        #print('\n'.join(map(str, topo)))
 
 print('------ Manual exploration of the derivatives using Value object  ------')
 a = Value(2.0, label='a')
@@ -475,7 +475,7 @@ print("------ Neural Network Example ------")
 plt.figure()
 plt.plot(np.arange(-5, 5, 0.2), np.tanh(np.arange(-5, 5, 0.2)))
 plt.grid()
-plt.show()
+#plt.show()
 
 # inputs
 x1 = Value(2.0, label='x1')
@@ -608,6 +608,7 @@ import random
 
 class Neuron: 
     def __init__(self, nr_inputs):
+        random.seed(18)
         self.w = [Value(random.uniform(-1, 1)) for _ in range(nr_inputs)]
         self.b = Value(random.uniform(-1, 1))
         
@@ -638,6 +639,7 @@ n = Layer(2, 3)
 o = n(x)
 #print(o)
 
+print("------ Multi Layer Perceptron ------")
 # Multi Layer Perceptron
 class MLP:
     def __init__(self, nr_inputs, nr_outputs):
@@ -650,6 +652,56 @@ class MLP:
         return x
 
 x = [2.0, 3.0, -10]
-n = MLP(3, [4, 4, 1])
-o = n(x)
-print(o)
+mlp = MLP(3, [4, 4, 1])
+mlp_output = mlp(x)
+print(mlp_output)
+
+digraph = draw_dot(mlp_output)
+digraph.render('autograd_mlp', view=False, format='svg')
+
+xs = [
+    [2.0, 3.0, -1.0], #input 0
+    [3.0, -1.0, 0.5], #input 1
+    [0.5, 1.0, 1.0],  #input 2
+    [1.0, 1.0, -1.0]  #input 3
+]
+# * below is the unpacking operator in python
+print("Input values:");
+print(*xs, sep='\n')
+ys = [1.0, -1.0, -1.0, 1.0] # desired targets
+print("Known/true y target values:");
+print(*ys, sep='\n')
+
+print("Expected inputs with target (true/known) y values:");
+for i, (x, y) in enumerate(zip(xs, ys)):
+    print(f'{i} {x=}: {y=}')
+
+print("Predicted values vs true:");
+y_pred = [mlp(x) for x in xs]
+for i, (p, t) in enumerate(zip(y_pred, ys)):
+    print(f'{i} pred: {p.data}: true: {y}')
+
+#print([(y_out - y_true)**2 for y_true, y_out in zip(ys, y_pred)])
+#loss = sum((y_out - y_true)**2 for y_true, y_out in zip(ys, y_pred))
+loss = 0.0
+for i, (t, p) in enumerate(zip(ys, y_pred)):
+    diff = t - p.data
+    loss += diff**2
+    print(f'{i} true value - predicted {diff=}, squared: {diff**2}')
+print(f'loss: {loss}')
+# So for each point we are going to calculate the difference between the true
+# value and the predicted value. But we want to take all the values into accout
+# and then get a single value. So we need to sum all the differences and we take
+# the square of each difference to avoid negative values. We could also have
+# taken the absolute value of each difference. 
+
+#loss = sum((yout - ygt)**2 for ygt, yout in zip(ys, y_pred))
+# This is the same as the loop above, just me trying to get more familiar with
+# python syntax.
+loss = sum(((yout - ygt)**2 for ygt, yout in zip(ys, y_pred)), Value(0.0))
+print(f'loss: {loss.data}')
+
+loss.backward()
+#print(mlp.layers[0].neurons[0].w[0].grad)
+
+
