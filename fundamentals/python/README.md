@@ -34,6 +34,30 @@ The graph for this function looks like this:
 
 ![image](./images/autograd_function.png)
 
+The example starts with first defining a Value class which it then uses to
+explore using in isolation, creating the following computation graph: 
+
+![image](./images/autograd.svg)
+
+It looks at manually computing the gradients and performing the backpropagation
+"by hand".
+
+It then moves on to using the Value class as neural/node with weights and biases
+, but still just using the Value class:
+
+![image](./images/autograd_nn.svg)
+
+Next, the backpropagation is investigated both manually and adding the backward
+function.
+
+Then there is a PyTorch example that uses the same functions and properties
+which makes it easier to understand how PyTorch works.
+
+After that we have an implementation of a Multi-Layer Perceptron (MLP) using
+the Value class defined previously:
+
+![image](./images/autograd_mlp.svg)
+
 
 ### Bigrams
 This example comes from a Andrej Karpathy's youtube video on

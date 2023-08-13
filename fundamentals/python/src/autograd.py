@@ -545,7 +545,7 @@ digraph.render('images/autograd_nn', view=False, format='svg')
 #w2.grad = x2.data * x2w2.grad
 #
 #digraph = draw_dot(output)
-#digraph.render('autograd_nn', view=False, format='svg')
+#digraph.render('images/autograd_nn', view=False, format='svg')
 
 #print("------ Neural Network Manual Backpropagation ------")
 #output.grad = 1.0 # this is needed as if it is 0 it will not work.
@@ -557,7 +557,7 @@ digraph.render('images/autograd_nn', view=False, format='svg')
 #x2w2._backward()
 #
 #digraph = draw_dot(output)
-#digraph.render('autograd_nn', view=False, format='svg')
+#digraph.render('images/autograd_nn', view=False, format='svg')
 
 print("------ Neural Network Auto Backpropagation ------")
 output.backward()
@@ -664,7 +664,6 @@ class MLP:
     def parameters(self):
         # And like in the Layer we want to be able to collect all the
         # parameters from all the Layers.
-        #return [p for layer in self.layers for lp in layer.parameters()]
         #return [p for layer in self.layers for p in layer.parameters()]
         params = []
         for layer in self.layers:
@@ -792,7 +791,7 @@ def pred(learning_rate):
         p.data += -learning_rate * p.grad
 
     for i, (p, t) in enumerate(zip(y_pred, ys)):
-        print(f'{i} pred: {p.data}: true: {t}')
+        print(f'{i} pred: {p.data}: true/target value: {t}')
 
 for i in range(1000):
     pred(0.1)
