@@ -335,7 +335,7 @@ a.grad = -2.0 * -3.0
 b.grad = -2.0 * 2.0
 
 digraph = draw_dot(L)
-digraph.render('autograd', view=False, format='svg')
+digraph.render('images/autograd', view=False, format='svg')
 # The generated file can then be opened using:
 # $ python -mwebbrowser autograd.svg
 
@@ -516,7 +516,7 @@ output = n.tanh() # this sould be n.tahn() but for that we need more funtions on
 output.label = 'output'
 print(f'{output=}')
 digraph = draw_dot(output)
-digraph.render('autograd_nn', view=False, format='svg')
+digraph.render('images/autograd_nn', view=False, format='svg')
 
 # Alright, now we are doing to do the backpropagation.
 #print("------ Neural Network Manual Backpropagation ------")
@@ -587,7 +587,7 @@ output.backward()
 #x2w2._backward()
 
 digraph = draw_dot(output)
-digraph.render('autograd_nn', view=False, format='svg')
+digraph.render('images/autograd_nn', view=False, format='svg')
 
 import torch
 x1 = torch.Tensor([2.0]).double(); x1.requires_grad = True
@@ -678,7 +678,7 @@ mlp_output = mlp(x)
 print(mlp_output)
 
 digraph = draw_dot(mlp_output)
-digraph.render('autograd_mlp', view=False, format='svg')
+digraph.render('images/autograd_mlp', view=False, format='svg')
 
 xs = [
     [2.0, 3.0, -1.0], #input 0
