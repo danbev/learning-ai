@@ -6,6 +6,11 @@ import matplotlib.pyplot as plt
 Automatic gradient (autograd) calculation example from:
 https://www.youtube.com/watch?v=VMj-3S1tku0&t=577s
 
+I've read that automatic differentiation is a term that refers to the general
+idea of a program that can compute a value and then automatically compute the
+derivitive of that value. Autograd is a specific implementation of automatic
+differentiation which I think was introduced by PyTorch.
+
 This might diverge from the above example and contains comments about
 python in addition to the concepts of automatic gradient calculation.
 """
@@ -129,7 +134,7 @@ class Value:
         self.grad = 0.0 # does not influence the output value intially
 
     def __repr__(self):
-        return f'Value(label={self.label}, data={self.data}, grad={self.grad}'
+        return f'Value(label="{self.label}", data={self.data}, grad={self.grad})'
 
     def __add__(self, other):
         # This looked unfamiliar to me at first, but it is just checking if
@@ -146,6 +151,7 @@ class Value:
         out = Value(self.data + other.data, (self, other), '+')
         def _backward():
             # For addition the gradient of is just copied through
+            breakpoint()
             self.grad += 1.0 * out.grad
             other.grad += 1.0 * out.grad
         out._backward = _backward
@@ -202,6 +208,7 @@ class Value:
         return out
 
     def backward(self):
+        breakpoint()
         topo = []
         visited = set()
         def build_topo(v):
@@ -518,7 +525,7 @@ print(f'{output=}')
 digraph = draw_dot(output)
 digraph.render('images/autograd_nn', view=False, format='svg')
 
-# Alright, now we are doing to do the backpropagation.
+# Alright, now we are going to do the backpropagation.
 #print("------ Neural Network Manual Backpropagation ------")
 #output.grad = 1.0 # dL/dL = 1.0
 #print(f'{output.grad=}')
