@@ -152,6 +152,15 @@ class Value:
         def _backward():
             # For addition the gradient of is just copied through
             breakpoint()
+            # Recall that we are in a closure here, so we have access to the
+            # out object which is the result of the addition and the orginal
+            # objects that were added. self.__add__(other)
+            # +-------+
+            # | self  |------\     
+            # +-------+       \   +-------+
+            # +-------+       / + | out   |
+            # | other |------/    +-------+
+            # +-------+
             self.grad += 1.0 * out.grad
             other.grad += 1.0 * out.grad
         out._backward = _backward
@@ -170,6 +179,41 @@ class Value:
         other = other if isinstance(other, Value) else Value(other)
         out = Value(self.data * other.data, (self, other), '*')
         def _backward():
+            # Recall that we are in a closure here, so we have access to the
+            # out object which is the result of the addition and the orginal
+            # objects that were added. self.__mul__(other)
+            # +-------+
+            # | self  |------\     
+            # +-------+       \   +-------+
+            # +-------+       / * | out   |
+            # | other |------/    +-------+
+            # +-------+
+            #
+            # L = self*other
+            # dL/dself = ?
+            # Recall that:
+            # ( f(x+h) - f(x) ) / h 
+            #
+            # So we can think of this as:
+            # ( other(self+h) - self*other) /  h
+            # ((self*other + h*other - self*other) / h
+            # ((self*other - self*other + h*other) / h
+            # ( h*other ) / h
+            #  h*other
+            #  ---- = other
+            #   h
+
+            # L = d*f
+            # dL/df = ?
+            # ( f(x+h) - f(x) ) / h
+
+            # ( d(f+h) - d*f)   /  h
+            # ((d*f + h*d - d*f) / h
+            # ((d*f - d*f + h*d) / h
+            # ( h*d ) / h
+            #  h*d
+            #  ---- = d
+            #   h
             self.grad += other.data * out.grad
             other.grad += self.data * out.grad
         out._backward = _backward
@@ -296,11 +340,26 @@ d.grad = -2.0
 
 # L = d*f
 # dL/dd = ?
-# (f(x+h) - f(x))/h
-# ((d+h)*f - d*f)/h
-# ((d*f + h*f - d*f)/h
+# ( f(x+h) - f(x) ) / h
+#
+# ( f(d+h) - d*f)   /  h
+# ((d*f + h*f - d*f) / h
+# ((d*f - d*f + h*f) / h
+# ( h*f ) / h
 #  h*f
 #  ---- = f
+#   h
+
+# L = d*f
+# dL/df = ?
+# ( f(x+h) - f(x) ) / h
+
+# ( d(f+h) - d*f)   /  h
+# ((d*f + h*d - d*f) / h
+# ((d*f - d*f + h*d) / h
+# ( h*d ) / h
+#  h*d
+#  ---- = d
 #   h
 
 # d = 4.0, f = -2.0
