@@ -3,6 +3,8 @@ import requests
 import pprint
 import torch
 import matplotlib.pyplot as plt
+import inspect
+
 """
 A bigram or digram is a sequence of two adjacent elements from a string of
 tokens.
@@ -27,7 +29,10 @@ print(f'Shortest name: {min(len(w) for w in words)}')
 print(f'Longest name: {max(len(w) for w in words)}')
 
 all_letters = ''.join(words)
-chars = sorted(list(set(all_letters)))
+# The usage of set will remove duplicates.
+all_unique_letters = set(all_letters)
+# And turn the letters into a list and sort them.
+chars = sorted(list(all_unique_letters))
 print(f'Number of unique characters: {len(chars)}')
 print(f'Characters:\n{chars}')
 
@@ -39,6 +44,7 @@ itos = {i: ch for ch, i in stoi.items()}
 
 print('------------------------------------------')
 # Create an empty matrix of size 27x27 with all zeros.
+# This matrix will contains the bigram counts.
 N = torch.zeros((27, 27), dtype=torch.int32)
 for word in words:
   # Add bigrams for word
@@ -49,6 +55,7 @@ for word in words:
     ix2 = stoi[ch2]
     # Add an increment the bigram count.
     N[ix1, ix2] += 1
+    
 print(f'N contains the integer representations of the bigrams.')
 print(f'For example:\n{N[0]=}')
 print(f'Inspect N[0][0]: {N[0][0]} (int), itos[N[0][0]]: "{itos[N[0][0].item()]}"')
@@ -73,14 +80,23 @@ for i in range(27):
 plt.axis('off');
 #plt.show()
 
+
 print(f'N.shape: {N.shape}')
 print(f'An entry in N is a Tensor: {type(N[2,2])}')
 print(f'We can .item() to get the count for any label above.')
 print(f'For example N[1][1].item(): {N[1][1].item()}')
+
+# To sample a character we start with the first row which contains the counts
+# for the characters that follow the character '.' which is the start of words
+# character in our case. The entries in this line tell us how many times these
+# characters start a word.
+print(f'Counts for N[0] which are the counts for chars that start a name/word:\n{N[0, :]}')
 p = N[0]
-print(f'Notice that the values in N integers. For example the values in the first row are:\n{N[0]}')
+print('Notice that the values in N are integers.')
 print(f'We need to convert them to floats:\n{p}')
 p = N[0].float()
+# Notice that broadcasting is used here and each element in p is divided by
+# the sum of all elements in p.
 p = p / p.sum()
 print(f'After conversion:\n{p}')
 print(f'p.sum(): {p.sum()}')
@@ -92,6 +108,7 @@ g = torch.Generator().manual_seed(18)
 #p = p / p.sum()
 # So we are now going to take a stab at generating a characters and we do this
 # by sampling from a multinomial distribution.
+# Explain the multinomial distribution in simple terms
 idx = torch.multinomial(p, num_samples=1, replacement=True, generator=g).item()
 print(f'sampled index: {idx}')
 sampled_char = itos[idx]
