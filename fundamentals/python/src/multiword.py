@@ -91,3 +91,6 @@ print(C[torch.tensor([1, 4, 6])])
 print(f'{C[X]=}')
 print(f'{C[X].shape=}') # 32 rows, each with 3 characters, with two embeddings.
 emb = C[X]
+
+W1 = torch.randn(6, 100)
+print(f'{W1.shape=}')
