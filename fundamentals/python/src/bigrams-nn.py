@@ -82,7 +82,7 @@ for i in range(27):
         plt.text(j, i, float(f'{W[i, j].item():.2f}'), ha="center", va="top", color='gray')
     print("", flush=True)
 plt.axis('off');
-plt.show()
+#plt.show()
 
 # Multiply the weights by the one-hot encoded vectors, the inputs
 print('\nNow we multiply the weights by the one-hot encoded vectors (the inputs)')
@@ -184,3 +184,44 @@ counts = logits.exp() # exp is the exponential function, eˣ.
 probs = counts / counts.sum(dim=1, keepdim=True)
 loss = -probs[torch.arange(5), ys].log().mean()
 print(f'loss: {loss.data}')
+
+
+# Example with all names and not just the first.
+xs = [] # inputs (ints)
+ys = [] # targets/labels (ints)
+for word in words:
+  # Add bigrams for word
+  chs = ['.'] + list(word) + ['.']
+  for ch1, ch2 in zip(chs, chs[1:]):
+    # the bigrams are added as integers.
+    ix1 = stoi[ch1]
+    ix2 = stoi[ch2]
+    xs.append(ix1)
+    ys.append(ix2)
+
+xs = torch.tensor(xs) # dtype will be int64
+ys = torch.tensor(ys) # dtype will be int64
+num = xs.nelement()
+print(f'{num=}')
+# Initialize the network
+g = torch.Generator().manual_seed(2147483647)
+W = torch.randn((27, 27), dtype=torch.float32, requires_grad=True, generator=g)
+probs = torch.zeros((num, 27), dtype=torch.float32)
+
+# Gradient descent loop
+for k in range(200):
+    # The forward pass
+    x_hot_encoded = torch.nn.functional.one_hot(xs, num_classes=27).float()
+    logits = x_hot_encoded @ W
+    counts = logits.exp() # exp is the exponential function, eˣ.
+    probs = counts / counts.sum(dim=1, keepdim=True)
+    loss = -probs[torch.arange(num), ys].log().mean()
+    print(f'loss: {loss.data}')
+
+    # The backward pass
+    W.grad = None # reset the gradient to zero.
+    loss.backward()
+
+    # Update the grandient
+    W.data += -50 * W.grad.data
+
