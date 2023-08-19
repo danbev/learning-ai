@@ -60,7 +60,7 @@ plt.imshow(x_hot_encoded)
 #plt.show()
 print(f'We can feed this one-hot encoded tensor into a neural network.')
 
-g = torch.Generator().manual_seed(18)
+g = torch.Generator().manual_seed(2147483647)
 # randn is for random normal distribution.
 print(f'We generate random normaly distributed weights for the neural network.')
 W = torch.randn((27, 27), dtype=torch.float32, requires_grad=True, generator=g)
@@ -112,23 +112,26 @@ print(f'(x_hot_encoded[3] * W[:,13] = {(x_hot_encoded[3] * W[:,13]).sum()}')
 print('Notice that this matrix contains both negative and positive numbers.')
 print('We can use the exponential function to convert these numbers into positive number')
 counts = logits.exp() # exp is the exponential function, eˣ.
-# counts is similar to the N matrix in the bigrams.py example. Recall that the
-# P matrix was the N matrix normalized.
 print(f'{counts=}')
+# counts is similar to the N matrix in the bigrams-manual.py example. Recall
+# that the P matrix was the N matrix normalized so we also need to normalize
+# the counts matrix into a new tensor named probs:
 probs = counts / counts.sum(dim=1, keepdim=True)
+#breakpoint()
 # The following two functions together are called the softmax function:
 # counts = logits.exp()
 # probs = counts / counts.sum(dim=1, keepdim=True)
 
 print(f'{probs.shape=}')
 print(f'{probs[0]=}')
-print('The values in the above output are the probabilities that that character will come next')
+print('The values in the above output are the probabilities of the character to come next')
 print(f'We have 27 characters remember: {chars=}, count: {len(chars)} + the "." character')
-print(probs[0, 5].data, probs[1, 13].data, probs[2, 13].data, probs[3, 1].data, probs[4, 0].data)
+print(f'probs: {probs[0, 5].data}, {probs[1, 13].data}, {probs[2, 13].data}, {probs[3, 1].data}, {probs[4, 0].data}')
 print(torch.arange(5))
 print(f'{ys=}')
 # The following is using tensors to index into the probs tensor. This is a way
 # of selecting rows and columns that we are interested in.
+print(f'{probs[torch.arange(5), ys]=}')
 loss = -probs[torch.arange(5), ys].log().mean()
 print(f'loss: {loss.data}')
 print(W.grad)
