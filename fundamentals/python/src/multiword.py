@@ -81,5 +81,13 @@ one_hot = one_hot @ C
 # [0.0] [-1.1456,  0.3123]
 # [0.0] [-0.7670, -1.9977]
 # [0.0] [ 0.0691,  1.4713]
-print(C[5])
-print(f'{one_hot=}.item()')
+# So the following two are identical
+print(f'{C[5]=}')
+print(f'{one_hot=}')
+# So that was an example of how to embedd a single character but we want to
+# embedd X which is a tensor of 32x3.
+print(C[[1, 4, 6]])
+print(C[torch.tensor([1, 4, 6])])
+print(f'{C[X]=}')
+print(f'{C[X].shape=}') # 32 rows, each with 3 characters, with two embeddings.
+emb = C[X]
