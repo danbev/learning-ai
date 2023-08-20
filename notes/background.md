@@ -24,7 +24,7 @@ Examples:
 * BERT family (Natural Language Understanding)
 
 ### Large Language Models
-Are language models with may parameters, like over 100M, and are pre-trained
+Are language models with many parameters, like over 100M, and are pre-trained
 on large collections of text (corpra).
 
 Examples:
@@ -35,17 +35,17 @@ Examples:
 
 ### Model
 The term model is often used interchangably with network and when we say we are
-training model it means that coming up with the weights for network.
+training the/a model it means coming up with the weights for network.
 
 ### Neural Networks
-A neuarl network is often descrived as consisting of a series of stacked layers
+A neuarl network is often described as consisting of a series of stacked layers
 which are connected to the previous layers through a set of weights.
-A fully connected or dense layer is one where it is connected to every unit in
+A fully connected, or dense layer, is one where it is connected to every unit in
 the layer before it.
 
 The main usage/feature of a neural network is its ability to learn the weights
 for each of the layers and then be able to make acurate predications on input
-that it was not seen before (it will be trained on a different set of inputs
+that it has not seen before (it will be trained on a different set of inputs
 which is used to adjust the weights).
 
 A neural network where all adjacent layers are fully connected is called are
@@ -54,9 +54,6 @@ multi layer perceptron (MLP).
 ### Multilayer Perceptron
 Is a discriminative model which can be used with supervised learning.
 Example: [mlp.py](../tensor-flow/src/mpl.py)
-
-
-
 
 ### ...
 Lets say that we have a neural network with two input values:
@@ -195,9 +192,8 @@ example:
 The loss function is what determines the calculated y values with the know
 y values. And depending on the values returned from the loss function the
 parameters to the function, called the optimizer, in the layer are adjusted.
-The this repeates until the values from the loss function are close to the
-expected know values.
-
+This repeates until the values from the loss function are close to the expected
+know values.
 
 A more realistic example could be using the Fashion MNIST where each image is
 28x28 pixels (784), and each pixel can have a value of between 0-255 (our x
