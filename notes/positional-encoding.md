@@ -122,7 +122,6 @@ Token 1               Token 2               Token 3
 Now, if we had another sine wave above the cosine wave this would have a longer
 frequency. So the wave would be slightly more stretched out. This would mean
 that the positional encoding values would be more spread out.
-```
 
 If we turn our attention to the second entry, `Token 2` above, in our token
 sequence it will also get its first positional encoding value from sine wave
@@ -146,7 +145,6 @@ Token 1               Token 2                       Token 3
 ```
 For token 2's second positional encoding value, it will get that value from
 the cosine wave above but at position 1 which is 0.54030231.
-```
 
 If we imagine this in binary we are trying to do something simliar to this:
 ```
