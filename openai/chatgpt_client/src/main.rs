@@ -7,6 +7,7 @@ use std::io::Write;
 const ENDPOINT: &str = "https://api.openai.com/v1/completions";
 
 #[derive(Serialize, Debug)]
+#[allow(dead_code)]
 struct Payload {
     model: String,
     prompt: String,
@@ -14,15 +15,20 @@ struct Payload {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct ResponseData {
     id: String,
     object: String,
     created: i64,
     model: String,
     choices: Vec<Choice>,
+    // logprobs: Logprobs,
+    finish_reason: String,
+    //usage: Usage,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct Choice {
     text: String,
     index: usize,
@@ -34,20 +40,23 @@ fn get_response(api_key: &str, message: &str) -> Result<String, reqwest::Error> 
 
     let payload = Payload {
         model: "text-davinci-003".to_string(),
+        // When gpt-3.5-turbo-instruct is available, use it instead.
+        //model: "gpt-3.5-turbo-instruct".to_string(),
         prompt: message.to_string(),
         max_tokens: 150,
     };
 
     println!("Payload {:?}", payload);
-    let response: ResponseData = client
+    let response = client
         .post(ENDPOINT)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()?
-        .json()?;
+        .text()?;
     println!("Response {:?}", response);
 
+    let response: ResponseData = serde_json::from_str(&response).unwrap();
     Ok(response.choices[0].text.trim().to_string())
 }
 
