@@ -1,9 +1,11 @@
 ## Transformers
 Before the transformers architecture was developed, which was done by Google in
 2017. Recursive Neural Networks (RNN) had been used up until this point but
-transformers outperformed in terms of translation quality and training cost.
+transformers outperformed them in terms of translation quality and training
+cost.
 
 ### Timeline
+```
 2017 Transformers
 2018 ULMFit
 2018 GPT
@@ -17,6 +19,7 @@ transformers outperformed in terms of translation quality and training cost.
 2020 T5
 2021 GPT-Neo
 2021 GPT-J
+```
 
 ### Encoders
 Are used for classification and regression tasks.
@@ -41,7 +44,7 @@ It's important to note that despite the "classification" origin of its name, the
 the entire sequence, whether it's classification, named entity recognition, etc.
 
 For example, if we're classifying a sentence as positive or negative
-(sentiment analysis), we'd feed the sentence into BERT, which would add the
+(sentiment analysis), we would feed the sentence into BERT, which would add the
 "CLS" token to the start of the sentence. BERT processes the entire sequence and
 outputs a vector for each token, but we would only use the vector corresponding
 to the "CLS" token to make the positive/negative prediction.
@@ -52,7 +55,7 @@ Bert-base has 12 encoders and 110M learnable parameters.
 Bert-large has 24 encoders and 340M learnable parameters.
 
 ### T5
-
+Text-to-Text Transfer Transformer (T5) is a transformer model that is trained.
 
 ### Scaled dot product attention
 In standard attention uses 3 martixes, a query matrix, a key matrix, and a value
