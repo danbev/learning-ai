@@ -225,3 +225,18 @@ for k in range(200):
     # Update the grandient
     W.data += -50 * W.grad.data
 
+# Sampling (similar to what is in the bigrams-manual.py example)
+g = torch.Generator().manual_seed(2147483647)
+for i in range(5):
+    output = []
+    idx = 0
+    while True:
+        x_hot_encoded = torch.nn.functional.one_hot(torch.tensor([idx]), num_classes=27).float()
+        logits = x_hot_encoded @ W
+        counts = logits.exp() # exp is the exponential function, eˣ.
+        p = counts / counts.sum(dim=1, keepdim=True)
+        idx = torch.multinomial(p, num_samples=1, replacement=True, generator=g).item()
+        output.append(itos[idx])
+        if idx == 0:
+            break
+    print(f"Generated: {''.join(output)}")
