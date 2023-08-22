@@ -3,7 +3,10 @@ This document contains notes about concepts related to AI/ML.
 
 ### Auto-regressive models
 These only predict a future token/word and only take into consideration the
-previous tokens. For example:
+`previous` tokens. Recalls that regressive means to return/revert to a previous
+state which might help me remember this.
+
+For example:
 ```
 Who let the dogs out ___
 ```
@@ -14,7 +17,7 @@ Examples:
 * GPT family (Natural Language Generation)
 
 ### Auto-encoding models
-These models take the whole sentence into account, both before and after the
+These models take the whole sentence into account, both `before` and `after` the
 word of interest:
 ```
 Vi is ___ to emacs.
@@ -23,9 +26,10 @@ Vi is ___ to emacs.
 Examples:
 * BERT family (Natural Language Understanding)
 
+
 ### Large Language Models
 Are language models with many parameters, like over 100M, and are pre-trained
-on large collections of text (corpra).
+on large collections of text (corpra)..
 
 Examples:
 * BERT
@@ -58,19 +62,23 @@ Example: [mlp.py](../tensor-flow/src/mpl.py)
 ### ...
 Lets say that we have a neural network with two input values:
 ```
+                      b₁
+                      ↓
+ +----+    W₁₁      +----+
+ | x₁ |------------>|    |------> y'₁
  +----+             +----+
- | x₁ |------------>| y₁ |------> y'₁
- +----+             +----+
-    |                 ↑
-    ↓         +-------+
+    |           w₁₁   ↑
+    ↓   W₂₂  +-------+
     +---------|-------+
     +---------+       |
     ↑                 ↓
+ +----+    W₂₁      +----+
+ | x₂ |------------>|    |------> y'₂
  +----+             +----+
- | x₂ |------------>| y₁ |------> y'₂
- +----+             +----+
+                      ­↑
+                       b₂
 ```
-In this case y'₁ will be:
+In this case y'₁, and y'₂ are the output values of the network:
 ```
 y'₁ = activation_function(w₁₁x₁ + w₁₂x₂ + b₁)
 y'₂ = activation_function(w₂₁x₁ + w₂₂x₂ + b₁)
@@ -80,6 +88,7 @@ If we write this in vector and matrix form we get:
  xs = [x₁ x₂]
  ws = [w₁₁ w₁₂]
       [w₂₁ w₂₂]
+ bs   [b₁ b₂]
 ```
 And the layer can then be seen as a matrix multiplication and addition of the
 bias:
@@ -87,14 +96,17 @@ bias:
  [w₁₁ w₁₂][x₁] + [b₁] = [w₁₁x₁ + w₁₂x₂ + b₁] = [y'₁]
  [w₂₁ w₂₂][x₂] + [b₂]   [w₂₁x₁ + w₂₁x₂ + b₂]   [y'₂]
 ```
+
 So what if we only had one neuron in the hidden layer:
 ```
- +----+             +----+
+                      b
+                      ↓
+ +----+    W₁       +----+
  | x₁ |------------>| y₁ |------> y'₁
  +----+             +----+
                       ↑
               +-------+
-              |        
+          W₂  |        
     +---------+        
     ↑                  
  +----+
@@ -103,7 +115,7 @@ So what if we only had one neuron in the hidden layer:
 ```
 We have to remember that we have a cooefficiant for each x value:
 ```
-y₁ = w₁*x₁ + w₂*x₂ + b₁
+y₁ = w₁*x₁ + w₂*x₂ + b
 ```
 So this would become:
 ```
