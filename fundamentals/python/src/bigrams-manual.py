@@ -103,7 +103,8 @@ print(f'p.sum(): {p.sum()}')
 print(f'p.shape: {p.shape}')
 print('------------------------------------------')
 
-g = torch.Generator().manual_seed(18)
+#g = torch.Generator().manual_seed(18)
+g = torch.Generator().manual_seed(2147483647)
 #p = torch.rand(3, generator=g)
 #p = p / p.sum()
 # So we are now going to take a stab at generating a characters and we do this
