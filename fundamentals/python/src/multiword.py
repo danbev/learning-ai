@@ -3,6 +3,14 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import random
 
+"""
+This is the code for Building makemore Part 2: MLP:
+https://www.youtube.com/watch?v=TCH_1BHY58I&t=10s
+
+This is pretty much the same code but with my own comments and some minor
+changes.
+"""
+
 words = open('src/names.txt', 'r').read().splitlines()
 print(f'words: {words[:8]}')
 print(f'Number of words: {len(words)}')
@@ -13,30 +21,54 @@ stoi['.'] = 0
 itos = {i: ch for ch, i in stoi.items()}
 #print(f'itos: {itos}')
 
-# Build the dataset
 # Block size is the context length, as in how many characters to use to predict
 # the next character.
 block_size = 3
 print(f'block_size: {block_size}')
-X = []
-Y = []
-#for word in words[:5]:
-for word in words:
+
+X = [] # Inputs
+Y = [] # Labels
+
+# Build the dataset
+i = 0
+for word in words[:2]:
+#for word in words:
     context = [0] * block_size
-    #print(f'{word=}, context={context}')
+    print(f'{word=}, context={context}')
     for ch in word + '.':
         ix = stoi[ch] # map character to integer
+        print(f'{i=}, {ch=}, {ix=}')
+        i += 1
         # X will represents the input for example 3 tensors that will represent
         # the word for which we want to predict the 4th character
         X.append(context) 
         Y.append(ix) # the labels
-        #print(''.join([itos[i] for i in context]), '---->', itos[ix])
-        # context[1:] is a slicing operation which creates a new list which will
-        # contain all the elements of the constext list except the first one.
+        print(''.join([itos[i] for i in context]), '---->', itos[ix], '(', ix, ')')
+
+        # context[1:] (below) is a slicing operation which creates a new list
+        # which will contain all the elements of the constext list except the
+        #first one.
+
         # [1, 2, 3, 4][1:] -> [2, 3, 4]
         # The +[ix] will join a new list with the integer ix to the end of the
         # context list.
         context = context[1:] + [ix]
+breakpoint()
+
+# For the first word 'emma.' we will have the following in X:
+# [0, 0, 0] when the characters are '.', ',', ','
+# [0, 0, 5] when the characters are ',', ',', 'e'
+# [0, 5, 13] when the characters are ',', 'e', 'm'
+# [5, 13, 13] when the characters are 'e', 'm', 'm'
+# [13, 13, 1] when the characters are 'm', 'm', 'a'
+# Remember that we are taking 3 characters as input to predict the forth char.
+# So if we input [0, 0, 0] we want to predict the forth character which is 'e'
+# becasue X[0] = [0, 0, 0] and Y[0] = 5 which is the index of 'e'.
+
+# Notice that all of the names/words have an entry in X which is '0, 0, 0' and
+# the corresponding Y is different most of the time as they start by different
+# characters.
+
 
 def build_dataset(words, block_size = 3):
     X = []
@@ -65,17 +97,21 @@ Xtr, Ytr = build_dataset(words[:n1]) # Training data
 Xdev, Ydev = build_dataset(words[n1:n2]) # Validation/Dev data
 Yte, Yte = build_dataset(words[n2:]) # Test data
 
-# The inputs 32x3 are the 32 words and the 3 characters that we are using to
-# predict the next character.
+# The inputs 32x3 are the 32 characters, because initially we where using 5
+# words 'emma.', 'olivia.', 'ava.', 'isabella.', 'sophia.' gives us 32
+# characters.
+# The 3 is the context length, as in how and the 3 characters that we are using
+# to predict the next character.
 print(f'{X.shape=}, {X.dtype=} (Inputs)')
 print(f'{Y.shape=}, {Y.dtype=} (Labels)')
 print(X)
 print(Y)
+
 # We are going to take the X's and predicts the Y values for those inputs.
 C = torch.randn(27, 2) # 27 characters (rows), 2 dimensions embedding (columns)
-print(f'{C=}')
+print(f'{C=} which are initially random and the shape is {C.shape=}')
 
-# Manual embedding of the integer 5:
+# Manual embedding of the integer 5.
 # We have 27 possible characters.
 one_hot = F.one_hot(torch.tensor(5), num_classes=27).float()
 print(f'{one_hot=}')
@@ -117,7 +153,71 @@ print(C[[1, 4, 6]])
 print(C[torch.tensor([1, 4, 6])])
 print(f'{C[X]=}')
 print(f'{C[X].shape=}') # 32 rows, each with 3 characters, with two embeddings.
+
+# So we are going to take C which is just a randomly initialized 27x2 matrix
+# 27 because that is the number of characters we have, and the 2 is the number
+# of dimensions we are using for the embedding.
+
+# Create the embedding which will have the shape of 32 x 3 x 2, which is the
+# number of characters, again initially we are only using 5 words, and the
+# 3 is the number of characters in the context, and we have 2 dimensions for
+# the embedding.
+breakpoint()
+
 emb = C[X]
+# The above code will loop through the rows in X and use the values to index
+# the randomlly generated embeddings in C. Each row will be added to a new
+# tensor, so the result will be a tensor with the same shape as X, but with
+# the last dimension appended by the indexed embedding.
+
+# X are the inputs, and C are the randomly initialized embeddings.
+#(Pdb) p C
+#tensor([[ 6.8443e-01, -9.1421e-01], # 0 '.'
+#        [ 1.7745e+00, -3.1138e-01], # 1 'a'
+#        [ 7.0778e-01, -2.1498e-01], # 2 'b'
+#        [-1.6449e+00,  2.1587e-01], # 3 'c'
+#        [-2.8619e-02, -4.1739e-01], # 4 'd'
+#        [ 2.7164e-01,  2.2510e+00], # 5 'e'
+#        [-8.2070e-01,  1.8946e+00], # 6 'f'
+#        [-9.4465e-01, -3.8865e-01], # 7 'g'
+#        [ 5.0636e-01, -9.5188e-02], # 8 'h'
+#        [ 4.3576e-01, -1.4386e+00], # 9 'i'
+#        [-7.6660e-01,  1.8655e+00], # 10 'j'
+#        [-2.5704e+00,  1.2103e+00], # 11 'k'
+#        [ 1.8644e-01,  2.2112e-01], # 12 'l'
+#        [-5.0437e-01,  1.1397e+00], # 13 'm'
+#        [-3.1989e-01, -8.0815e-01], # 14 'n'
+#        [-9.6159e-01,  7.8360e-02], # 15 'o'
+#        [ 3.0150e-01, -1.7784e+00], # 16 'p'
+#        [ 1.9133e-01,  2.8774e-01], # 17 'q'
+#        [ 1.9634e-01,  2.1779e+00], # 18 'r'
+#        [ 1.9811e+00, -1.7951e-01], # 19 's'
+#        [ 1.0016e+00, -1.1002e+00], # 20 't'
+#        [-1.1199e+00, -1.6660e-01], # 21 'u'
+#        [ 9.4509e-01,  1.9054e+00], # 22 'v'
+#        [ 2.1910e-03, -9.8781e-01], # 23 'w'
+#        [-4.4769e-01, -1.3415e+00], # 24 'x'
+#        [ 1.6452e-01, -7.0964e-01], # 25 'y'
+#        [ 6.4244e-01,  1.8194e+00]])# 26
+#(Pdb) p C.shape
+#torch.Size([27, 2])
+#
+#(Pdb) p X
+#tensor([[ 0,  0,  0], # 0
+#        [ 0,  0,  5], # 1
+#        [ 0,  5, 13], # 2
+#        [ 5, 13, 13], # 3 
+#        [13, 13,  1], # 4
+#        [ 0,  0,  0], # 5
+#        [ 0,  0, 15], # 6
+#        [ 0, 15, 12], # 7
+#        [15, 12,  9], # 8
+#        [12,  9, 22], # 9
+#        [ 9, 22,  9], # 10
+#        [22,  9,  1]])# 11
+#(Pdb) p X.shape
+#torch.Size([12, 3])
+# tensor-indexing.py contains an example of this type of indexing.
 
 W1 = torch.randn(6, 100)
 print(f'{W1.shape=}')
