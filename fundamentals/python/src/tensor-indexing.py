@@ -49,13 +49,15 @@ print(emb.shape)
 
 emb = []
 for i, row in enumerate(X):
-    emb_row = []
+    emb_row = [] # new list for each row in X
     print(f'row: {i}')
     for index in row:
         print(f'index: {index}: {C[index]}')
-        emb_row.append(C[index])
-    # add from C to embedding list, so we will have on entry per row and
-    # it will be a list/row from C.
+        emb_row.append(C[index]) # this adds the tensor from C to the list
+
+    print(f'emb_row: {emb_row}')
     emb.append(emb_row)
 
 print(len(emb) ,len(emb[0]), len(emb[0][0]))
+for xs in emb:
+    print(xs)
