@@ -53,8 +53,8 @@ for word in words[:2]:
         # The +[ix] will join a new list with the integer ix to the end of the
         # context list.
         context = context[1:] + [ix]
-breakpoint()
 
+print(f'Number of characters: {i}')
 # For the first word 'emma.' we will have the following in X:
 # [0, 0, 0] when the characters are '.', ',', ','
 # [0, 0, 5] when the characters are ',', ',', 'e'
@@ -162,9 +162,9 @@ print(f'{C[X].shape=}') # 32 rows, each with 3 characters, with two embeddings.
 # number of characters, again initially we are only using 5 words, and the
 # 3 is the number of characters in the context, and we have 2 dimensions for
 # the embedding.
-breakpoint()
 
 emb = C[X]
+breakpoint()
 # The above code will loop through the rows in X and use the values to index
 # the randomlly generated embeddings in C. Each row will be added to a new
 # tensor, so the result will be a tensor with the same shape as X, but with
@@ -219,6 +219,23 @@ emb = C[X]
 #torch.Size([12, 3])
 # tensor-indexing.py contains an example of this type of indexing.
 
+# Next we are going to create the hidden layer and the weights and biases.
+# Here we are saying that we want to have 100 neurons in the hidden layer.
+# Each input is 3 characters with 2 dimension embeddings, so we have 6
+# inputs.
+# So to make this really clear emb will have 12, 3, 2
+# Where each row has 3 characters, and each character has 2 dimensions. These
+# two demensions are the floats that represent the characters
+# For example, the first row is [0, 0, 0], which is the first word in the
+#
+# (Pdb) p emb[0]
+# tensor([[ 0.8671, -0.2617],
+#        [ 0.8671, -0.2617],
+#        [ 0.8671, -0.2617]])
+# So we can see that in this case 0.8671, -0.2617 is the embedding for '.'.
+# Now, we just randomly generated these values but in a real model these
+# would from an embedding. The embedding is just a numerical representation of
+# a of a piece of information.
 W1 = torch.randn(6, 100)
 print(f'{W1.shape=}')
 b1 = torch.randn(100)
