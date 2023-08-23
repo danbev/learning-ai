@@ -61,3 +61,19 @@ for i, row in enumerate(X):
 print(len(emb) ,len(emb[0]), len(emb[0][0]))
 for xs in emb:
     print(xs)
+
+emb = torch.empty(X.shape[0], X.shape[1], C.shape[1])
+
+# Loop over each row in X
+print(f'{X.shape[0]=}')
+print(f'{X.shape[1]=}')
+for i in range(X.shape[0]):
+    # Loop over each column in the row
+    print(f'{i}: {X[i]=}')
+    for j in range(X.shape[1]):
+        # Fetch the corresponding row from C using the index from X
+        print(f'{j}: {C[j]=}')
+        emb[i][j] = C[X[i][j]]
+
+print(emb.shape)
+
