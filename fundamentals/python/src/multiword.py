@@ -236,7 +236,17 @@ breakpoint()
 # Now, we just randomly generated these values but in a real model these
 # would from an embedding. The embedding is just a numerical representation of
 # a of a piece of information.
-W1 = torch.randn(6, 100)
+
+# +------------------------------------------+
+# |                   W1                     |
+# +------------------------------------------+
+#      ↑               ↑              ↑
+# +------------+ +------------+ +------------+
+# |  0.1, 0.1  | |  0.1, 0.1  | |  0.1, 0.1  |  < inputs 3x2=6
+# +------------+ +------------+ +------------+
+#      0               1              2
+
+W1 = torch.randn(6, 100) # the choice of 100 is arbitrary
 print(f'{W1.shape=}')
 b1 = torch.randn(100)
 
@@ -251,7 +261,7 @@ print(emb_cat.shape)
 print(emb.view(emb.shape[0], 6) == emb_cat)
 
 h = torch.tanh(emb.view(emb.shape[0], 6) @ W1 + b1)
-#h = emb.view(-1, 6) @ W1 + b1
+#h = torch.tanh(emb.view(-1, 6) @ W1 + b1)
 print(h)
 print(h.shape)
 
@@ -263,6 +273,7 @@ print(h.shape)
 W2 = torch.randn(100, 27)
 print(f'{W1.shape=}')
 b2 = torch.randn(27)
+
 logits = h @ W2 + b2
 print(logits)
 print(logits.shape)
@@ -271,7 +282,31 @@ prob = counts / counts.sum(1, keepdim=True)
 print(prob.shape)
 print(prob[0].sum())
 
-#print(prob[torch.arange(32), Y])
+# Recall that Y contains the actual letters and that prob are the probabilities
+# that the nueural network predicted.
+# (Pdb) p torch.arange(12)
+# tensor([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11])
+y_prop_list = prob[torch.arange(12), Y].tolist()
+# The above line is indexing into the prob tensor:
+# prob[0, 5] = tensor(2.8872e-1) itos[5] 'e'
+# prob[1, 13] = tensor(5.7237e-12) itos[13] 'm'
+# prob[2, 13] = tensor(7.2747e-05) itos[13] 'm'
+# prob[3, 1] = tensor(0.0030) itos[1] 'a'
+# ...
+
+# Now, prob[0] contains the probabilities for the first word, and the probabilities
+# of the next character that the neural network predicted. So prob[0][0] would
+# be the probability of '.' being the next character, prob[0][1] would be the
+# probability of 'a' being the next character.
+breakpoint()
+# Keep in mind that we are in the training stage here and are trying to massage
+# the weights and biases so that the neural network will predict the correct
+# letter.
+print(" ".join(format(x, 'f') for x in y_prop_list))
+# (Pdb) p Y
+# tensor([ 5, 13, 13,  1,  0, 15, 12,  9, 22,  9,  1,  0])
+# (Pdb) p itos[Y[0].item()]
+# 'e'
 loss = -prob[torch.arange(emb.shape[0]), Y].log().mean()
 print(f'{loss=}')
 
