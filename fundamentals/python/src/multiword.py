@@ -286,7 +286,7 @@ print(prob[0].sum())
 # that the nueural network predicted.
 # (Pdb) p torch.arange(12)
 # tensor([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11])
-y_prop_list = prob[torch.arange(12), Y].tolist()
+y_prop_list = prob[torch.arange(emb.shape[0]), Y].tolist()
 # The above line is indexing into the prob tensor:
 # prob[0, 5] = tensor(2.8872e-1) itos[5] 'e'
 # prob[1, 13] = tensor(5.7237e-12) itos[13] 'm'
@@ -294,10 +294,13 @@ y_prop_list = prob[torch.arange(12), Y].tolist()
 # prob[3, 1] = tensor(0.0030) itos[1] 'a'
 # ...
 
-# Now, prob[0] contains the probabilities for the first word, and the probabilities
-# of the next character that the neural network predicted. So prob[0][0] would
-# be the probability of '.' being the next character, prob[0][1] would be the
-# probability of 'a' being the next character.
+# Now, prob[0] contains the probabilities for the first character, and the
+# probabilities of the next character that the neural network predicted. So
+# prob[0][0] would # be the probability of '.' being the next character,
+# prob[0][1] would be the probability of 'a' being the next character.
+# We know the true next characters are which we have in Y. We want to pluck out
+# the probabilities that the neural network predicted for the true next character
+# so we can compare them to the actual probabilities.
 breakpoint()
 # Keep in mind that we are in the training stage here and are trying to massage
 # the weights and biases so that the neural network will predict the correct
