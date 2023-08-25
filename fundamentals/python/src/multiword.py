@@ -15,6 +15,7 @@ words = open('src/names.txt', 'r').read().splitlines()
 print(f'words: {words[:8]}')
 print(f'Number of words: {len(words)}')
 
+nr_embeddings = 10
 chars = sorted(list(set(''.join(words))))
 stoi = {ch: i+1 for i, ch in enumerate(chars)}
 stoi['.'] = 0
@@ -164,7 +165,6 @@ print(f'{C[X].shape=}') # 32 rows, each with 3 characters, with two embeddings.
 # the embedding.
 
 emb = C[X]
-breakpoint()
 # The above code will loop through the rows in X and use the values to index
 # the randomlly generated embeddings in C. Each row will be added to a new
 # tensor, so the result will be a tensor with the same shape as X, but with
@@ -301,7 +301,6 @@ y_prop_list = prob[torch.arange(emb.shape[0]), Y].tolist()
 # We know the true next characters are which we have in Y. We want to pluck out
 # the probabilities that the neural network predicted for the true next character
 # so we can compare them to the actual probabilities.
-breakpoint()
 # Keep in mind that we are in the training stage here and are trying to massage
 # the weights and biases so that the neural network will predict the correct
 # letter.
@@ -316,10 +315,10 @@ print(f'{loss=}')
 
 ### Refactoring
 g = torch.Generator().manual_seed(2147483647)
-C = torch.randn(27, 2, generator=g)
-W1 = torch.randn(6, 100, generator=g)
-b1 = torch.randn(100, generator=g)
-W2 = torch.randn(100, 27, generator=g)
+C = torch.randn(27, nr_embeddings, generator=g)
+W1 = torch.randn(nr_embeddings * block_size, 200, generator=g)
+b1 = torch.randn(200, generator=g)
+W2 = torch.randn(200, 27, generator=g)
 b2 = torch.randn(27, generator=g)
 params = [C, W1, b1, W2, b2]
 print(f'Number of paramters: {sum(p.nelement() for p in params)}')
@@ -329,7 +328,7 @@ for p in params:
 # The forward pass
 for _ in range(10):
     emb = C[X]
-    h = torch.tanh(emb.view(emb.shape[0], 6) @ W1 + b1)
+    h = torch.tanh(emb.view(emb.shape[0], nr_embeddings * block_size) @ W1 + b1)
     logits = h @ W2 + b2
 
     # The following three lines can be replaced by F.cross_entropy
@@ -367,17 +366,18 @@ print(f'{lrs=}')
 
 lri = []
 lossi = []
+stepi = []
 
 # The forward pass
-for i in range(10000):
+for i in range(30000):
     # minibatch
-    ix = torch.randint(0, Xtr.shape[0], (32,))
+    ix = torch.randint(0, Xtr.shape[0], (128,))
 
     emb = C[Xtr[ix]]
-    h = torch.tanh(emb.view(emb.shape[0], 6) @ W1 + b1)
+    h = torch.tanh(emb.view(emb.shape[0], nr_embeddings * block_size) @ W1 + b1)
     logits = h @ W2 + b2
     loss = F.cross_entropy(logits, Ytr[ix])
-    print(f'{loss.item()=}')
+    #print(f'{loss.item()=}')
 
     # The backward pass
     for p in params:
@@ -390,23 +390,50 @@ for i in range(10000):
 
     # track stats
     #lri.append(lre[i])
-    #lossi.append(loss.item())
+    lossi.append(loss.item())
+    stepi.append(i)
 # Whao that is much faster. The reason is that we are only doing 32 forward
 # passes and 32 backward passes instead of 32*32 = 1024 forward passes and
 # backward passes.
 
 print(f'{loss.item()=}')
 #plt.plot(lri, lossi)
-#plt.show()
 
 emb = C[Xtr]
-h = torch.tanh(emb.view(emb.shape[0], 6) @ W1 + b1)
+h = torch.tanh(emb.view(emb.shape[0], nr_embeddings * block_size) @ W1 + b1)
 logits = h @ W2 + b2
 loss = F.cross_entropy(logits, Ytr)
 print(f'Training loss: {loss.item()=}')
 
 emb = C[Xdev]
-h = torch.tanh(emb.view(emb.shape[0], 6) @ W1 + b1)
+h = torch.tanh(emb.view(emb.shape[0], nr_embeddings * block_size) @ W1 + b1)
 logits = h @ W2 + b2
 loss = F.cross_entropy(logits, Ydev)
 print(f'Dev loss: {loss.item()=}')
+
+#plt.plot(stepi, lossi)
+#plt.show()
+
+plt.figure(figsize=(8, 8))
+plt.scatter(C[:, 0].data, C[:, 1].data, s=200)
+for i in range(C.shape[0]):
+    plt.text(C[i, 0].item(), C[i, 1].item(), itos[i], ha='center', va='center', color='white')
+plt.grid('minor')
+plt.show()
+
+
+g = torch.Generator().manual_seed(2147483647 + 10)
+for _ in range(20):
+    out = []
+    context = [0] * block_size # initialize with all ...
+    while True:
+      emb = C[torch.tensor([context])] # (1,block_size,d)
+      h = torch.tanh(emb.view(1, -1) @ W1 + b1)
+      logits = h @ W2 + b2
+      probs = F.softmax(logits, dim=1)
+      ix = torch.multinomial(probs, num_samples=1, generator=g).item()
+      context = context[1:] + [ix]
+      out.append(ix)
+      if ix == 0:
+        break
+    print(''.join(itos[i] for i in out))
