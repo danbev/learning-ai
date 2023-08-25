@@ -349,7 +349,10 @@ for _ in range(10):
         p.data += -0.1 * p.grad
 
 print(f'{loss.item()=}')
-print(f'{logits.max(1)=}')
+# The following line show logits.max which takes a dimension as an argument,
+# and returns the maximum value foreach row in this case, and also the index
+# for that value in a second tensor. 
+print(f'{logits.max(1)=}') # 1 is the dimension
 print(f'{Y=}')
 
 # Notice that this is pretty slow if we look at the terminal output while it
