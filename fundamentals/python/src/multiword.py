@@ -321,7 +321,7 @@ b1 = torch.randn(200, generator=g)
 W2 = torch.randn(200, 27, generator=g)
 b2 = torch.randn(27, generator=g)
 params = [C, W1, b1, W2, b2]
-print(f'Number of paramters: {sum(p.nelement() for p in params)}')
+print(f'Number of parameters: {sum(p.nelement() for p in params)}')
 for p in params:
     p.requires_grad = True
 
