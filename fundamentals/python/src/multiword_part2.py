@@ -49,11 +49,18 @@ n_embd = 10 # the dimensionality of the character embedding vectors
 n_hidden = 200 # the number of neurons in the hidden layer of the MLP
 
 g = torch.Generator().manual_seed(2147483647)
+# We can predict the expected loss we should expect but taking the number
+# of characters in the vocabulary which is 27. If we think about it, we have
+# a uniform distribution over the characters, so the expected loss is the
+# negative log of 1/27 which is 3.2958. This is the loss we should expect
+# if we were to randomly guess the next character. If we have an initial loss
+# that is much higher than that we can be pretty sure what our initial state
+# is off.
 C  = torch.randn((vocab_size, n_embd), generator=g)
 W1 = torch.randn((n_embd * block_size, n_hidden), generator=g)
 b1 = torch.randn(n_hidden, generator=g)
-W2 = torch.randn((n_hidden, vocab_size), generator=g)
-b2 = torch.randn(vocab_size, generator=g)
+W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.1
+b2 = torch.randn(vocab_size, generator=g) * 0
 
 parameters = [C, W1, b1, W2, b2]
 print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
@@ -101,7 +108,7 @@ for i in range(max_steps):
 
 @torch.no_grad() # this decorator disables gradient tracking
 def split_loss(split):
-  x,y = {
+  x, y = {
     'train': (Xtr, Ytr),
     'val': (Xdev, Ydev),
     'test': (Xte, Yte),
