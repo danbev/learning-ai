@@ -15,7 +15,7 @@ words = open('src/names.txt', 'r').read().splitlines()
 print(f'words: {words[:8]}')
 print(f'Number of words: {len(words)}')
 
-nr_embeddings = 10
+nr_embeddings = 30
 chars = sorted(list(set(''.join(words))))
 stoi = {ch: i+1 for i, ch in enumerate(chars)}
 stoi['.'] = 0
@@ -369,7 +369,7 @@ lossi = []
 stepi = []
 
 # The forward pass
-for i in range(30000):
+for i in range(200000):
     # minibatch
     ix = torch.randint(0, Xtr.shape[0], (128,))
 
@@ -384,7 +384,7 @@ for i in range(30000):
         p.grad = None
     loss.backward() # Update the parameters
     #lr = lrs[i]
-    lr = 0.1
+    lr = 0.1 if i < 100000 else 0.01
     for p in params:
         p.data += -lr * p.grad
 
@@ -421,16 +421,22 @@ for i in range(C.shape[0]):
 plt.grid('minor')
 plt.show()
 
+torch.save(C, 'models/multiword_1_embeddings.pt')
+torch.save(W1, 'models/multiword_1_weights_1.pt')
+torch.save(b1, 'models/multiword_1_bias_1.pt')
+torch.save(W2, 'models/multiword_1_weights_2.pt')
+torch.save(b2, 'models/multiword_1_bias_2.pt')
 
 g = torch.Generator().manual_seed(2147483647 + 10)
 for _ in range(20):
     out = []
-    context = [0] * block_size # initialize with all ...
+    context = [0] * block_size # initialize with all '...'
     while True:
-      emb = C[torch.tensor([context])] # (1,block_size,d)
+      emb = C[torch.tensor([context])] # (1, block_size, d)
       h = torch.tanh(emb.view(1, -1) @ W1 + b1)
       logits = h @ W2 + b2
       probs = F.softmax(logits, dim=1)
+
       ix = torch.multinomial(probs, num_samples=1, generator=g).item()
       context = context[1:] + [ix]
       out.append(ix)
