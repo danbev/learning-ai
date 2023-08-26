@@ -537,7 +537,7 @@ print(f'{L=}')
 
 print("------ Neural Network Example ------")
 
-# tahn activation function
+# tanh activation function
 plt.figure()
 plt.plot(np.arange(-5, 5, 0.2), np.tanh(np.arange(-5, 5, 0.2)))
 plt.grid()
@@ -577,7 +577,7 @@ n = x1w1x2w2 + b
 n.label = 'n'
 print(f'{n=}')
 
-output = n.tanh() # this sould be n.tahn() but for that we need more funtions on the Value class
+output = n.tanh() # this sould be n.tanh() but for that we need more funtions on the Value class
 # namly exponential and division.
 output.label = 'output'
 print(f'{output=}')
