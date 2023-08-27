@@ -57,7 +57,7 @@ g = torch.Generator().manual_seed(2147483647)
 # that is much higher than that we can be pretty sure what our initial state
 # is off.
 C  = torch.randn((vocab_size, n_embd), generator=g)
-W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * 0.1
+W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * (5/3 / (n_embd * block_size)**0.5)
 b1 = torch.randn(n_hidden, generator=g) * 0.01
 W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
 b2 = torch.randn(vocab_size, generator=g) * 0
@@ -66,6 +66,9 @@ parameters = [C, W1, b1, W2, b2]
 print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
 for p in parameters:
   p.requires_grad = True
+
+print("W1 expected standard deviation: ", (5/3) / 30**0.5)
+print("W1 actual standard deviation: ", W1.std().item())
 
 # same optimization as last time
 max_steps = 200000
@@ -109,6 +112,7 @@ for i in range(max_steps):
   #290
   #(Pdb) torch.sum(h.eq(-1.0)).item()
   #235
+
 
 
 #plt.plot(lossi)
