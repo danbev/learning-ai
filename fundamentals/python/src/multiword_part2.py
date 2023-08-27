@@ -62,7 +62,11 @@ b1 = torch.randn(n_hidden, generator=g) * 0.01
 W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
 b2 = torch.randn(vocab_size, generator=g) * 0
 
-parameters = [C, W1, b1, W2, b2]
+# batch normalization gain
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
+
+parameters = [C, W1, b1, W2, b2, bnbias, bngain]
 print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
 for p in parameters:
   p.requires_grad = True
@@ -86,6 +90,7 @@ for i in range(max_steps):
   embcat = emb.view(emb.shape[0], -1) # concatenate the vectors
   # Linear layer
   h_pre_act = embcat @ W1 + b1 # hidden layer pre-activation
+  h_pre_act = bngain * (h_pre_act - h_pre_act.mean(0, keepdim=True)) / h_pre_act.std(0, keepdim=True) + bnbias # batch norm
   # Non-linearity
   h = torch.tanh(h_pre_act) # hidden layer
   logits = h @ W2 + b2 # output layer
