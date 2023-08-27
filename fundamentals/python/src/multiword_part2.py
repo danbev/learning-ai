@@ -57,8 +57,8 @@ g = torch.Generator().manual_seed(2147483647)
 # that is much higher than that we can be pretty sure what our initial state
 # is off.
 C  = torch.randn((vocab_size, n_embd), generator=g)
-W1 = torch.randn((n_embd * block_size, n_hidden), generator=g)
-b1 = torch.randn(n_hidden, generator=g)
+W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * 0.1
+b1 = torch.randn(n_hidden, generator=g) * 0.01
 W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
 b2 = torch.randn(vocab_size, generator=g) * 0
 
@@ -102,6 +102,14 @@ for i in range(max_steps):
   if i % 10000 == 0: # print every once in a while
     print(f'{i:7d}/{max_steps:7d}: {loss.item():.4f}')
   lossi.append(loss.log10().item())
+  #plt.hist(h.view(-1).tolist(), 50)
+  #plt.show()
+  #breakpoint()
+  #(Pdb) torch.sum(h.eq(1.0)).item()
+  #290
+  #(Pdb) torch.sum(h.eq(-1.0)).item()
+  #235
+
 
 #plt.plot(lossi)
 #plt.show()
