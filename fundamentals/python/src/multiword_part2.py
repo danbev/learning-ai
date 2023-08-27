@@ -67,7 +67,7 @@ print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
 for p in parameters:
   p.requires_grad = True
 
-print("W1 expected standard deviation: ", (5/3) / 30**0.5)
+print("W1 expected standard deviation: ", (5/3) / 30**0.5) # kaiming init
 print("W1 actual standard deviation: ", W1.std().item())
 
 # same optimization as last time
@@ -85,9 +85,9 @@ for i in range(max_steps):
   emb = C[Xb] # embed the characters into vectors
   embcat = emb.view(emb.shape[0], -1) # concatenate the vectors
   # Linear layer
-  hpreact = embcat @ W1 + b1 # hidden layer pre-activation
+  h_pre_act = embcat @ W1 + b1 # hidden layer pre-activation
   # Non-linearity
-  h = torch.tanh(hpreact) # hidden layer
+  h = torch.tanh(h_pre_act) # hidden layer
   logits = h @ W2 + b2 # output layer
   loss = F.cross_entropy(logits, Yb) # loss function
 
