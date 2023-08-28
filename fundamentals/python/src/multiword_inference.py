@@ -11,7 +11,7 @@ b1 = torch.load('models/multiword_1_bias_1.pt')
 W2 = torch.load('models/multiword_1_weights_2.pt')
 b2 = torch.load('models/multiword_1_bias_2.pt')
 
-g = torch.Generator().manual_seed(2147483647 + 10)
+#g = torch.Generator().manual_seed(2147483647 + 10)
 for _ in range(20):
     out = []
     context = [0] * block_size # initialize with all '...'
@@ -21,7 +21,8 @@ for _ in range(20):
       logits = h @ W2 + b2
       probs = F.softmax(logits, dim=1)
 
-      ix = torch.multinomial(probs, num_samples=1, generator=g).item()
+      #ix = torch.multinomial(probs, num_samples=1, generator=g).item()
+      ix = torch.multinomial(probs, num_samples=1).item()
       context = context[1:] + [ix]
       out.append(ix)
       if ix == 0:
