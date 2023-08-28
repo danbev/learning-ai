@@ -1,8 +1,8 @@
 import torch
 import matplotlib.pyplot as plt
 
-x = torch.randn(100, 10) # inputs, 100 examples vectors of 10 dimensions
-w = torch.randn(10, 200) # wieghts, 10 input vectors of 200 dimensions
+x = torch.randn(100, 30) # inputs, 100 examples vectors of 30 dimensions
+w = torch.randn(30, 200) # weights, 30 input vectors of 200 dimensions
 y = x @ w # calculate the pre-activation values.
 
 print(f'{x.mean()=}, {x.std()=}, {y.mean()=}, {y.std()=}')
