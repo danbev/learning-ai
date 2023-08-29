@@ -17,22 +17,22 @@ struct Payload {
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 struct ResponseData {
+    created: i64,
     id: String,
     object: String,
-    created: i64,
     model: String,
     choices: Vec<Choice>,
     // logprobs: Logprobs,
-    finish_reason: String,
+    //finish_reason: String,
     //usage: Usage,
 }
 
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 struct Choice {
-    text: String,
-    index: usize,
     finish_reason: String,
+    index: usize,
+    text: String,
 }
 
 fn get_response(api_key: &str, message: &str) -> Result<String, reqwest::Error> {
@@ -54,9 +54,12 @@ fn get_response(api_key: &str, message: &str) -> Result<String, reqwest::Error> 
         .json(&payload)
         .send()?
         .text()?;
-    println!("Response {:?}", response);
+    //println!("Response {:?}", response);
+    let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+    //println!("parsed: {}", parsed);
 
     let response: ResponseData = serde_json::from_str(&response).unwrap();
+    //println!("ResponseData: {:?}", response);
     Ok(response.choices[0].text.trim().to_string())
 }
 
@@ -81,7 +84,9 @@ fn main() {
         }
 
         match get_response(&api_key, trimmed) {
-            Ok(response) => println!("ChatGPT: {}", response),
+            Ok(response) => {
+                println!("ChatGPT: {}", response)
+            }
             Err(err) => println!("Error: {}", err),
         }
     }
