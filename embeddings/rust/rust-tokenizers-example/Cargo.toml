@@ -1,0 +1,11 @@
+[package]
+name = "rust-tokenizers-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rust_tokenizers = "8.1.0"
+cached-path = "0.6"
+tempfile = "3"
+dirs = "4"
+anyhow = "1"
