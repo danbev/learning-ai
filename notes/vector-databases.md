@@ -40,17 +40,17 @@ model = AutoModel.from_pretrained("bert-base-cased")
 input_ids = tokenizer("cat", return_tensors="pt")["input_ids"]
 embeddings = model(input_ids)[0]
 ```
-(I added a print statement to print the embeddings at the end.
+(I added a print statement to print the shape and the embeddings at the end)
 
 We can run this using:
 ```console
-$ python3 -i embeddings/python/src/from-copilot.py  
+(hug) $ python embeddings/python/src/from-copilot.py 
+embeddings.shape=torch.Size([1, 3, 768])
+embeddings=tensor([[[ 0.4580,  0.2269,  0.1635,  ...,  0.3517,  0.2860,  0.0937],
+         [ 0.8024, -0.6908,  0.4293,  ..., -0.0977,  0.5675,  0.1083],
+         [ 1.5082,  0.3579, -0.4193,  ...,  0.2796,  1.3568,  0.0853]]],
+       grad_fn=<NativeLayerNormBackward0>)
 ```
-
-
-Could we perhaps have a database of embeddings for all security adivories and
-then when we get a new security advisory we can convert it into an embedding and
-then search for the closest vectors to this query vector.
 
 ### Searching
 So we have a vector database and we want to search it. So we have a query and
