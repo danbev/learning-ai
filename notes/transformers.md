@@ -38,7 +38,7 @@ Are used for task like generative text like translation or summarization.
 This is a token in the embedding which stands for classification. This is used
 to represent the entire input sequence.
 From ChatGPT4: 
-````
+```
 It's important to note that despite the "classification" origin of its name, the
 "CLS" token is used in all tasks where we need an aggregate representation of
 the entire sequence, whether it's classification, named entity recognition, etc.
