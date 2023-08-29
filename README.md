@@ -17,3 +17,4 @@ This repository contains notes and code examples related to AI.
 * [Transformers](./notes/transformers.md)
 * [Linear-regression](./notes/linear-regression.md)
 * [Copilot notes](./notes/copilot.md)
+* [Symbols](./notes/symbols.md)
