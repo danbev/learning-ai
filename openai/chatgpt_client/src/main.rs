@@ -46,7 +46,7 @@ fn get_response(api_key: &str, message: &str) -> Result<String, reqwest::Error> 
         max_tokens: 150,
     };
 
-    println!("Payload {:?}", payload);
+    println!("Payload {:?}\n", payload);
     let response = client
         .post(ENDPOINT)
         .header("Authorization", format!("Bearer {}", api_key))
@@ -54,12 +54,7 @@ fn get_response(api_key: &str, message: &str) -> Result<String, reqwest::Error> 
         .json(&payload)
         .send()?
         .text()?;
-    //println!("Response {:?}", response);
-    let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
-    //println!("parsed: {}", parsed);
-
     let response: ResponseData = serde_json::from_str(&response).unwrap();
-    //println!("ResponseData: {:?}", response);
     Ok(response.choices[0].text.trim().to_string())
 }
 
@@ -70,7 +65,6 @@ fn main() {
         println!("Please set OPENAI_API_KEY environment variable");
         return;
     };
-    println!("API Key: {}", api_key);
 
     loop {
         let mut input = String::new();
