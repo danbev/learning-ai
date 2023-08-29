@@ -41,7 +41,7 @@ input_ids = tokenizer("cat", return_tensors="pt")["input_ids"]
 embeddings = model(input_ids)[0]
 ```
 (I added a print statement to print the embeddings at the end.
-```
+
 We can run this using:
 ```console
 $ python3 -i embeddings/python/src/from-copilot.py  
