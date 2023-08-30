@@ -61,3 +61,5 @@ exists and provide a list of vulnerabilities for the project.
 * Release number >= 1.0
 * Number of github stars?
 * Signed commits?
+* End of support date validation
+* End of life date validation
