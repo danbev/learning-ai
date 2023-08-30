@@ -63,3 +63,14 @@ exists and provide a list of vulnerabilities for the project.
 * Signed commits?
 * End of support date validation
 * End of life date validation
+
+This might be possible to do by first collecting this information from a 
+github repository and then creating a prompt which can classify this as
+a secure project.
+
+So we would create a prompt template, something like this:
+```
+TODO: Create a prompt template
+```
+We could then populate it with the information we have collected and then
+and ask an LLM to classify it as a secure project or not.
