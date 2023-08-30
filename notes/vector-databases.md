@@ -67,10 +67,10 @@ database. So this is not very efficient.
 This is a another way of searching for the closest vectors to a query vector.
 
 
-
-
-
 ## Qdrant (Rust)
 Qdrant is a vector database written in Rust. It is a vector database that is
 open source and is written in Rust.
+
+[Basic Python example](./vector-databases/qdrant/python/README.md)
+[Basic Rust example](./vector-databases/qdrant/rust/README.md)
 
