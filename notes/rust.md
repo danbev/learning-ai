@@ -14,6 +14,9 @@ overhead of Python in production.
 
 [Basic example](../hugging-face/rust/candle)
 
+I think that Candle sounds interesting and having WASM support is a big plus
+enabling running in any environment which has WASM support.
+
 
 ### Tokenizers (Huggingface)
 [Tokenizers](https://github.com/huggingface/tokenizers) is a project also from
