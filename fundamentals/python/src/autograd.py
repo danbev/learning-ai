@@ -35,19 +35,19 @@ print(f'{f(3.0)=}')
 
 xs = np.arange(-5, 5, 0.25)
 print(f'{xs=}')
-# Notice that passing a numpy array to the function numpy will take care of
+# Notice that passing a numpy array to the function and numpy will take care of
 # broadcasting the function over the array. This had me a little confused at
 # first.
 ys = f(xs)
 print(f'{ys=}')
-# We would have to write the following without the broadcasting
+# We would have to write the above without the broadcasting:
 ys = np.array([f(x) for x in xs])
 print(f'{ys=}')
 
 # Plot the function
 plt.figure()
 plt.plot(xs, ys)
-#plt.show()
+plt.show()
 
 # h in this case is the "nudge". It is the small increment that we nudge x to
 # the right.
@@ -80,7 +80,6 @@ print(f'{f(x+h) - f(x)=:.15f} is the nudge of x')
 print(f'{(f(x+h) - f(x))/h=:.15f} is that slop at x=3')
 print(f'{f_prime(x)=}')
 
-
 def manual_derivative_exploration():
     print('------ Manual exploration of the derivatives  ------')
     h = 0.0001
@@ -97,7 +96,6 @@ def manual_derivative_exploration():
     print(f'{d2=}')
     print(f'slope: {(d2 - d1)/h}')
 
-    # Next, let dump b a little...
     print('"Bumping b"')
     a = 2.0
     b = -3.0
@@ -110,7 +108,6 @@ def manual_derivative_exploration():
     print(f'{d2=}')
     print(f'slope: {(d2 - d1)/h}')
 
-    # Next, let dump c a little...
     print('"Bumping c"')
     a = 2.0
     b = -3.0
@@ -147,11 +144,10 @@ class Value:
         other = other if isinstance(other, Value) else Value(other)
         # Notice that we are returning a new Value object here, and in the
         # process documenting which objects were used to create this new
-        # object, and also the operation which in this case is add.
+        # object, and also the operation which in this case is addition (+).
         out = Value(self.data + other.data, (self, other), '+')
         def _backward():
             # For addition the gradient of is just copied through
-            breakpoint()
             # Recall that we are in a closure here, so we have access to the
             # out object which is the result of the addition and the orginal
             # objects that were added. self.__add__(other)
@@ -180,8 +176,8 @@ class Value:
         out = Value(self.data * other.data, (self, other), '*')
         def _backward():
             # Recall that we are in a closure here, so we have access to the
-            # out object which is the result of the addition and the orginal
-            # objects that were added. self.__mul__(other)
+            # out object which is the result of the multiplication and the
+            # orginal # objects that were multiplied. self.__mul__(other)
             # +-------+
             # | self  |------\     
             # +-------+       \   +-------+
@@ -202,6 +198,7 @@ class Value:
             #  h*other
             #  ---- = other
             #   h
+            self.grad += other.data * out.grad
 
             # L = d*f
             # dL/df = ?
@@ -214,7 +211,6 @@ class Value:
             #  h*d
             #  ---- = d
             #   h
-            self.grad += other.data * out.grad
             other.grad += self.data * out.grad
         out._backward = _backward
         return out
@@ -252,7 +248,6 @@ class Value:
         return out
 
     def backward(self):
-        breakpoint()
         topo = []
         visited = set()
         def build_topo(v):
