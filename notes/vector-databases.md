@@ -1,5 +1,5 @@
 ## Vector databases
-These are databases that store vector [embeddings](./embeddings.md) of
+These are databases that store vector [embeddings](./embedding-vector.md) of
 words/tokens. So these store vectors of numbers, floats that represent these
 tokens. And tokens that are similar will have similar vectors and hence will be
 closer to each other in the vector space.
@@ -25,7 +25,7 @@ vectors will be the most similar to the query which are then returned.
 Lets see what an embedding looks like we can do this in this document by adding
 the following comment:
 ```
-# Can  you show me an example of creating an embedding in Python using Huggingface?
+# Can you show me an example of creating an embedding in Python using Huggingface?
 ```
 And the response from copilot was the following:
 ```
@@ -65,6 +65,7 @@ database. So this is not very efficient.
 
 #### ANN (Approximate Nearest Neighbors)
 This is a another way of searching for the closest vectors to a query vector.
+TODO:
 
 
 ## Qdrant (Rust)
