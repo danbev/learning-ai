@@ -536,7 +536,7 @@ print("------ Neural Network Example ------")
 plt.figure()
 plt.plot(np.arange(-5, 5, 0.2), np.tanh(np.arange(-5, 5, 0.2)))
 plt.grid()
-#plt.show()
+plt.show()
 
 # inputs
 x1 = Value(2.0, label='x1')
@@ -701,8 +701,8 @@ class Layer:
 
     def parameters(self):
         # What we want is for this method to return all the parameters in all
-        # the nauurons in this layer. So we got through all the neusonrs add
-        # colllect the paramters into a new list which is returned.
+        # the neurons in this layer. So we got through all the neurons add
+        # colllect the parameters into a new list which is returned.
         return [p for n in self.neurons for p in n.parameters()]
 
 x = [2.0, 3.0]
@@ -771,7 +771,7 @@ for i, (t, p) in enumerate(zip(ys, y_pred)):
     print(f'{i} true value - predicted {diff=}, squared: {diff**2}')
 print(f'loss: {loss} (the sum of the "squared" values above)')
 print(''' So for each point we are going to calculate the difference between the true
- value and the predicted value. But we want to take all the values into accout
+ value and the predicted value. But we want to take all the values into account
  and then get a single value. So we need to sum all the differences and we take
  the square of each difference to avoid negative values. We could also have
  taken the absolute value of each difference.''')
@@ -785,7 +785,7 @@ loss = sum(((yout - ygt)**2 for ygt, yout in zip(ys, y_pred)), Value(0.0))
 print(f'loss: {loss.data}')
 
 print(''' How do we minimize the loss?
- Initially we initialize the weights and biases randomly which is why these
+ Initially we initialized the weights and biases randomly which is why these
  values are so far off. We want to adjust each of the weights and biases so
  to that the loss goes down.
  Lets take an example like the first input [2.0, 3.0, -1.0] and the first
