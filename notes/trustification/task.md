@@ -74,7 +74,7 @@ TODO: Create a prompt template
 ```
 We could then populate it with the information we have collected and then
 and ask an LLM to classify it as a secure project or not.
-As an example [project-health.py](../langchain/src/project-health.py) is
+As an example [project-health.py](../../langchain/src/project-health.py) is
 something along these lines.
 ```console
 (langch) $ python src/project-health.py 
