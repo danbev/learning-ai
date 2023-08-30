@@ -34,6 +34,12 @@ tokenizers implemented in Rust. This library is used by rust-bert.
 
 [Basic Example](../embeddings/rust/rust-tokenizers-example).
 
+### smartcore
+[smartcore](https://smartcorelib.org/) is a machine learning library written in
+Rust. 
+
+[Basic Example](../fundamentals/rust/smartcore-example).
+
 
 ### safetensors
 [safetensors](https://github.com/huggingface/safetensors/tree/main/safetensors)
