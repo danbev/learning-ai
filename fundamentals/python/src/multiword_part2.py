@@ -5,7 +5,7 @@ import random
 import multiword_utils as utils
 
 """
-This is the code for Building makemore Part 3:
+This is the code for Building makemore Part 3: Activations & Gradient, BatchNorm
 https://www.youtube.com/watch?v=P6sfmUTpUmc&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=5
 
 This is pretty much the same code but with my own comments and some minor
@@ -57,6 +57,7 @@ g = torch.Generator().manual_seed(2147483647)
 # that is much higher than that we can be pretty sure what our initial state
 # is off.
 C  = torch.randn((vocab_size, n_embd), generator=g)
+# The multiplication part at the end is the kaiming initialization.
 W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * (5/3 / (n_embd * block_size)**0.5)
 b1 = torch.randn(n_hidden, generator=g) * 0.01
 W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
@@ -66,7 +67,7 @@ b2 = torch.randn(vocab_size, generator=g) * 0
 bngain = torch.ones((1, n_hidden))
 bnbias = torch.zeros((1, n_hidden))
 
-parameters = [C, W1, b1, W2, b2, bnbias, bngain]
+parameters = [C, W1, W2, b2, bngain, bnbias]
 print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
 for p in parameters:
   p.requires_grad = True
@@ -89,8 +90,15 @@ for i in range(max_steps):
   emb = C[Xb] # embed the characters into vectors
   embcat = emb.view(emb.shape[0], -1) # concatenate the vectors
   # Linear layer
-  h_pre_act = embcat @ W1 + b1 # hidden layer pre-activation
-  h_pre_act = bngain * (h_pre_act - h_pre_act.mean(0, keepdim=True)) / h_pre_act.std(0, keepdim=True) + bnbias # batch norm
+  h_pre_act = embcat @ W1 #+ b1 hidden layer pre-activation
+  # Standardize the hidden layer to have a guassian distribution:
+  h_pre_act = (h_pre_act - h_pre_act.mean(0, keepdim=True)) / h_pre_act.std(0, keepdim=True)
+  # But we also need to scale the values with a gain and offset them using a bias.
+  # This is done to allow for some wiggle room in the distribution during training.
+  # Notice that for the first iteration all the gains will be 1 and  the biases
+  # will be zero so this is a "no-op" for the first iteration. The gains and biases
+  # will be updated during back propagation.
+  h_pre_act = bngain * h_pre_act + bnbias # batch norm
   # Non-linearity
   h = torch.tanh(h_pre_act) # hidden layer
   logits = h @ W2 + b2 # output layer
@@ -118,10 +126,22 @@ for i in range(max_steps):
   #(Pdb) torch.sum(h.eq(-1.0)).item()
   #235
 
+print(f'Loss after training: {loss.item():.4f}')
 
 
 #plt.plot(lossi)
 #plt.show()
+
+
+# Calibrate the batch normalization parameters after training
+with torch.no_grad():
+    emb = C[Xtr]
+    embcat = emb.view(emb.shape[0], -1)
+    h_pre_act = embcat @ W1 + b1
+    # Now we measure the mean and standard deviation of the entire training set.
+    bnmean = h_pre_act.mean(0, keepdim=True)
+    bnstd = h_pre_act.std(0, keepdim=True)
+
 
 @torch.no_grad() # this decorator disables gradient tracking
 def split_loss(split):
@@ -132,7 +152,10 @@ def split_loss(split):
   }[split]
   emb = C[x] # (N, block_size, n_embd)
   embcat = emb.view(emb.shape[0], -1) # concat into (N, block_size * n_embd)
-  h = torch.tanh(embcat @ W1 + b1)
+  h_pre_act = embcat @ W1 #+ b1 hidden layer pre-activation
+  h_pre_act = bngain * (h_pre_act - bnmean) / bnstd + bnbias
+  #h_pre_act = bngain * (h_pre_act - h_pre_act.mean(0, keepdim=True)) / h_pre_act.std(0, keepdim=True) + bnbias
+  h = torch.tanh(h_pre_act)
   logits = h @ W2 + b2 # (N, vocab_size)
   loss = F.cross_entropy(logits, y)
   print(split, loss.item())
@@ -140,7 +163,7 @@ def split_loss(split):
 split_loss('train')
 split_loss('val')
 
-g = torch.Generator().manual_seed(2147483647 + 10)
+g = torch.Generator().manual_seed(2147483647)
 for _ in range(20):
     out = []
     context = [0] * block_size # initialize with all '...'
