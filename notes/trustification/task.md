@@ -5,9 +5,9 @@ there are ways to add value add to using AI/ML for trusification.
 ### Suggestion: Vector database for VEX documents
 Currently the trusification application/ui enables users to store SBOMs and
 VEX (Vulnerability Exchange) documents in a database and then query the database
-for vulnerabilities in the SBOMs.
+for vulnerabilities.
 
-So in the case the user need to manually know about what vulnerabilities or
+So in this case the user need to manually know about what vulnerabilities or
 what packages they use in their application to be able to query the database.
 
 What if we took the VEX documents, or parts of them, and stored then in a vector
