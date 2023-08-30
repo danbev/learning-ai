@@ -12,7 +12,7 @@ be a good resource for AI/ML in Rust.
 The goal is to make the deploying lightweight binaris possible and not have the
 overhead of Python in production.
 
-[Basic example](../hugging-face/rust/candle)
+[Basic example](../hugging-face/rust/candle-example)
 
 I think that Candle sounds interesting and having WASM support is a big plus
 enabling running in any environment which has WASM support.
