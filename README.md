@@ -7,8 +7,8 @@ This repository contains notes and code examples related to AI.
 
 * [OpenAI API](./openai/chatgpt_client) OpenAI API example written in Rust
 * [Huggingface API](./hugging-face/python) Huggingface API example written in Python
-* [tensor-flow](./tensor-flow/README.md)
-* [Qdrant Vector Database](./vector-databases/qdrant)
+* [tensor-flow](./tensor-flow/README.md) Tensorflow example in Python
+* [Qdrant Vector Database](./vector-databases/qdrant) Examples in Python and Rust
 
 ### Notes
 
