@@ -1,0 +1,9 @@
+[package]
+name = "candle-example"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.2.0" }
