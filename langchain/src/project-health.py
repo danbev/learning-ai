@@ -13,14 +13,12 @@ def get_repo_info(username, repo):
     repo_resp = requests.get(repo_url).json()
 
     stars = repo_resp.get('stargazers_count', 0)
-    print(f"Stars: {stars}")
 
     commits_url = f"https://api.github.com/repos/{username}/{repo}/commits"
     commits_resp = requests.get(commits_url).json()
 
     commits = len(commits_resp)
-    print(f"Commits: {commits}")
-    return stars, commits
+    return stars, commits, repo_url
 
 def prompt_chatgpt(stars, commits):
     # Account for deprecation of LLM model
@@ -48,10 +46,12 @@ def prompt_chatgpt(stars, commits):
     print(health_response)
 
 if __name__ == "__main__":
+    _ = load_dotenv(find_dotenv())
+
     username = "danbev"
     repo = "learning-v8"
-    stars, commits = get_repo_info(username, repo)
-    _ = load_dotenv(find_dotenv())
+    stars, commits, repo_url = get_repo_info(username, repo)
+    print(f'{repo_url} has {stars} stars and {commits} commits')
     prompt_chatgpt(stars, commits)
 
 

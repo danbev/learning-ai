@@ -78,8 +78,7 @@ As an example [project-health.py](../../langchain/src/project-health.py) is
 something along these lines.
 ```console
 (langch) $ python src/project-health.py 
-Stars: 2300
-Commits: 30
+https://api.github.com/repos/danbev/learning-v8 has 2300 stars and 30 commits
 "Going to prompt chatgpt (gpt-3.5-turbo-0301)"
 content='This project has a high number of stars but a low number of commits, which suggests that it may have gained popularity but may not be actively maintained or developed.' additional_kwargs={} example=False
 ```
