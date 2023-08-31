@@ -66,6 +66,8 @@ b2 = torch.randn(vocab_size, generator=g) * 0
 # batch normalization gain
 bngain = torch.ones((1, n_hidden))
 bnbias = torch.zeros((1, n_hidden))
+bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running = torch.ones((1, n_hidden))
 
 parameters = [C, W1, W2, b2, bngain, bnbias]
 print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
@@ -92,7 +94,14 @@ for i in range(max_steps):
   # Linear layer
   h_pre_act = embcat @ W1 #+ b1 hidden layer pre-activation
   # Standardize the hidden layer to have a guassian distribution:
-  h_pre_act = (h_pre_act - h_pre_act.mean(0, keepdim=True)) / h_pre_act.std(0, keepdim=True)
+  bnmeani = h_pre_act.mean(0, keepdim=True)
+  bnstdi = h_pre_act.std(0, keepdim=True)
+  h_pre_act = (h_pre_act - bnmeani) / bnstdi
+
+  with torch.no_grad():
+      bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
+      bnstd_running = 0.999 * bnstd_running + 0.001 * bnstdi
+
   # But we also need to scale the values with a gain and offset them using a bias.
   # This is done to allow for some wiggle room in the distribution during training.
   # Notice that for the first iteration all the gains will be 1 and  the biases
@@ -142,6 +151,9 @@ with torch.no_grad():
     bnmean = h_pre_act.mean(0, keepdim=True)
     bnstd = h_pre_act.std(0, keepdim=True)
 
+print(f'{bnmean=}, {bnmean_running=}')
+print(f'{bnstd=}, {bnstd_running=}')
+
 
 @torch.no_grad() # this decorator disables gradient tracking
 def split_loss(split):
@@ -153,7 +165,7 @@ def split_loss(split):
   emb = C[x] # (N, block_size, n_embd)
   embcat = emb.view(emb.shape[0], -1) # concat into (N, block_size * n_embd)
   h_pre_act = embcat @ W1 #+ b1 hidden layer pre-activation
-  h_pre_act = bngain * (h_pre_act - bnmean) / bnstd + bnbias
+  h_pre_act = bngain * (h_pre_act - bnmean_running) / bnstd_running + bnbias
   #h_pre_act = bngain * (h_pre_act - h_pre_act.mean(0, keepdim=True)) / h_pre_act.std(0, keepdim=True) + bnbias
   h = torch.tanh(h_pre_act)
   logits = h @ W2 + b2 # (N, vocab_size)
