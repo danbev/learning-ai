@@ -55,6 +55,11 @@ vector in the vector database to the vector of the package name and version.
 Just as an example to experiment with this idea there is
 [vex.py](../../embeddings/python/src/vex.py). 
 
+This example is just creating embeddings and computing the distance between
+them. It is not using a vector database. But it could be a starting point for
+experimenting with this idea and vector databases have more features like
+filtering and such and might be worth looking into.
+
 What is the benefit of this?   
 The motivation would be that we might then be able to extract all the
 dependencies of a project from whatever build system, or package information
