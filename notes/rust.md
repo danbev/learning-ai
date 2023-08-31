@@ -6,6 +6,9 @@ more being developed.
 There is [arewelearningyet](https://www.arewelearningyet.com/) which seems to
 be a good resource for AI/ML in Rust.
 
+The examples provides here are mostly just the same examples provides by the
+upstream project but were still useful as not all examples worked out of the
+box.
 
 ### Candle (Huggingface)
 [Candle](https://github.com/huggingface/candle) is a project from Huggingface.
@@ -16,6 +19,18 @@ overhead of Python in production.
 
 I think that Candle sounds interesting and having WASM support is a big plus
 enabling running in any environment which has WASM support.
+
+### llm
+[llm](https://github.com/rustformers/llm) is a collection of Rust libraries for
+Large Language Models (LLMs). The current recommendation is to use install from
+source, that is using a github repository as a dependency.
+
+[llm example](../fundamentals/rust/llm-example/README.md    )
+
+
+### llm-chains
+This seems to similar to what langhchain provides for Python.
+[llm-chains](https://github.com/sobelio/llm-chain)
 
 
 ### Tokenizers (Huggingface)
