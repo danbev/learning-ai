@@ -46,6 +46,3 @@ embed2=encode_sentences(prod_name)
 
 cosign_similarity = cos_sim(embed1, embed2)
 print("Cosine similarity Score {}".format(cosign_similarity))
-
-cosign_similarity = cos_sim(embed1, embed2)
-print("Cosine similarity Score {}".format(cosign_similarity))
