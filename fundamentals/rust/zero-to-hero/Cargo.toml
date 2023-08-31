@@ -1,0 +1,12 @@
+[package]
+name = "zero-to-hero"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[[bin]]
+name = "part1"
+path = "src/bin/part1.rs"
