@@ -32,6 +32,7 @@ source, that is using a github repository as a dependency.
 This seems to similar to what langhchain provides for Python.
 [llm-chains](https://github.com/sobelio/llm-chain)
 
+[llm-chains example](../fundamentals/rust/llm-chains-example/README.md    )
 
 ### Tokenizers (Huggingface)
 [Tokenizers](https://github.com/huggingface/tokenizers) is a project also from
