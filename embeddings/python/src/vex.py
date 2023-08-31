@@ -1,13 +1,6 @@
 import numpy as np
 from transformers import BertTokenizer, TFBertModel
 
-vex = """
-"title": "Red Hat Security Advisory: Red Hat AMQ Broker 7.8.7 release and security update",
-"id": "RHSA-2022:6292",
-"cve": "CVE-2022-35278",
-"cwe": {"id": "CWE-74"}
-"""
-print(f'{vex=}')
 
 def cos_sim(x, y):
     numerator = np.dot(x, y)
@@ -38,11 +31,21 @@ def encode_sentences(sentences):
   sequence_output, pooled_output = output[:2]
   return pooled_output[0]
 
-sentence1 = "Red Hat JBoss AMQ Broker"
-sentence2 = vex
-embed1=encode_sentences(sentence1)
-embed2=encode_sentences(sentence2)
+vex = """
+"title": "Red Hat Security Advisory: Red Hat AMQ Broker 7.8.7 release and security update",
+"id": "RHSA-2022:6292",
+"cve": "CVE-2022-35278",
+"cwe": {"id": "CWE-74"}
+"""
+print(f'{vex=}')
+
+prod_name = "Red Hat JBoss AMQ Broker"
+print(f'{prod_name=}')
+embed1=encode_sentences(vex)
+embed2=encode_sentences(prod_name)
 
 cosign_similarity = cos_sim(embed1, embed2)
 print("Cosine similarity Score {}".format(cosign_similarity))
 
+cosign_similarity = cos_sim(embed1, embed2)
+print("Cosine similarity Score {}".format(cosign_similarity))

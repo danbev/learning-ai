@@ -2,6 +2,9 @@
 This task is about investigating the use of AI/ML for trusification and see if
 there are ways to add value add to using AI/ML for trusification.
 
+The suggestions in this document are just that, suggestions, and some might not
+make sense or be feasible. This more of a brainstorming document.
+
 ### Suggestion: Vector database for VEX documents
 Currently the trusification application/ui enables users to store SBOMs and
 VEX (Vulnerability Exchange) documents in a database and then query the database
@@ -49,6 +52,8 @@ p₁ = Search for product name and version: +
 ```
 Searching for vulnerabilities would then be a matter of finding the closest
 vector in the vector database to the vector of the package name and version.
+Just as an example to experiment with this idea there is
+[vex.py](../../embeddings/python/src/vex.py). 
 
 What is the benefit of this?   
 The motivation would be that we might then be able to extract all the
@@ -83,3 +88,6 @@ https://api.github.com/repos/danbev/learning-v8 has 2300 stars and 30 commits
 content='This project has a high number of stars but a low number of commits, which suggests that it may have gained popularity but may not be actively maintained or developed.' additional_kwargs={} example=False
 ```
 
+### Suggestion: Fine tune a language model to detect vulnerabilities
+This is a suggestion to fine tune a language model to detect vulnerabilities
+specific to Red Hat products.
