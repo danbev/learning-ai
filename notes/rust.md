@@ -15,7 +15,7 @@ box.
 The goal is to make the deploying lightweight binaris possible and not have the
 overhead of Python in production.
 
-[Basic example](../hugging-face/rust/candle-example)
+[candle example](../hugging-face/rust/candle-example)
 
 I think that Candle sounds interesting and having WASM support is a big plus
 enabling running in any environment which has WASM support.
@@ -47,13 +47,13 @@ Processing (NLP).
 [rust-tokenizers](https://github.com/guillaume-be/rust-tokenizers) is also has
 tokenizers implemented in Rust. This library is used by rust-bert.
 
-[Basic Example](../embeddings/rust/rust-tokenizers-example).
+[rust-tokenizers Example](../embeddings/rust/rust-tokenizers-example).
 
 ### smartcore
 [smartcore](https://smartcorelib.org/) is a machine learning library written in
 Rust. 
 
-[Basic Example](../fundamentals/rust/smartcore-example).
+[smartcore Example](../fundamentals/rust/smartcore-example).
 
 
 ### safetensors
