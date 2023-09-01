@@ -33,12 +33,8 @@ fn main() -> io::Result<()> {
 fn plot(xs: &Array1<f64>, ys: &Array1<f64>, name: &str) {
     let mut curve = Curve::new();
 
-    // draw curve
-    //let x = &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-    //let y = &[1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 3.5, 3.5, 3.5, 3.5];
     curve.draw(&xs.to_vec(), &ys.to_vec());
 
-    // configure plot
     let mut plot = Plot::new();
     plot.set_subplot(2, 2, 1)
         .set_horizontal_gap(0.1)
