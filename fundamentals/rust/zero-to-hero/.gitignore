@@ -1,1 +1,4 @@
 target
+zeroh
+plots/*.py
+.gdb_history
