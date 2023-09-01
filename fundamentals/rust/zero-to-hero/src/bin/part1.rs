@@ -22,6 +22,15 @@ fn main() -> io::Result<()> {
     let ys = f(xs.clone());
     println!("ys = {ys:?}");
 
+    plot(&xs, &ys, "part1_intro");
+
+    // -----------------  micrograd overview ---------------------------
+    //TODO: add micrograd overview here
+
+    Ok(())
+}
+
+fn plot(xs: &Array1<f64>, ys: &Array1<f64>, name: &str) {
     let mut curve = Curve::new();
 
     // draw curve
@@ -60,10 +69,5 @@ fn main() -> io::Result<()> {
         .set_frame_borders(false);
     plot.grid_and_labels("x", "y");
     plot.add(&curve);
-    let _ = plot.save("./plots/part1_intro.svg").unwrap();
-
-    // -----------------  micrograd overview ---------------------------
-    //TODO: add micrograd overview here
-
-    Ok(())
+    let _ = plot.save(&format!("./plots/{name}.svg")).unwrap();
 }
