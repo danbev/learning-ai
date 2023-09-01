@@ -6,7 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ndarray = "0.15.6"
 
 [[bin]]
 name = "part1"
 path = "src/bin/part1.rs"
+
+[[bin]]
+name = "part2"
+path = "src/bin/part2.rs"
+
+[lib]
+name = "zero_to_hero"
+path = "src/lib.rs"
