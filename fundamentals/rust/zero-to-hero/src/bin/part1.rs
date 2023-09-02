@@ -4,25 +4,70 @@ use plotpy::{Curve, Plot};
 use std::io::{self};
 
 fn f(xs: Array1<f64>) -> Array1<f64> {
-    xs.mapv(|x| 3.0 * (x * x) - 4.0 * x + 5.0)
+    xs.mapv(|x| 3.0 * x * x - 4.0 * x + 5.0)
+}
+
+/// The derivative of f() with respect to x.
+#[allow(dead_code)]
+fn f_prime(xs: Array1<f64>) -> Array1<f64> {
+    xs.mapv(|x| 6.0 * x - 4.0)
 }
 
 fn main() -> io::Result<()> {
     // -----------------  intro ---------------------------
+    println!("f(x) = 3.0 * x * x - 4.0 * x + 5.0");
 
-    // Tryout the function f:
-    let x = f(array![3.0]);
-    println!("x = {x}");
+    println!("\nLets tryout the function f:");
+    println!("f(3.0) = {}", f(array![3.0])[0]);
 
-    // Generate example input data:
+    println!("\nLets generate some input data:");
     let xs = Array::range(-5., 5., 0.25);
     println!("xs = {xs:?}");
 
-    // Show that we can call the function with the input data:
+    println!("\nLets try invoking f(xs):");
     let ys = f(xs.clone());
     println!("ys = {ys:?}");
 
     plot(&xs, &ys, "part1_intro");
+
+    // We can decrease this value, the nudge to be closer and closer to zero.
+    println!("\nLets take a look at when the derivative:");
+    let h = 0.00000001;
+    let x = 3.0;
+    println!("h = {h}");
+    println!("x = {}", x);
+    println!("f(x + h) =  {}", f(array![x + h])[0]);
+    println!(
+        "f(x + h) - f(x) / h = {}",
+        (f(array![x + h])[0] - f(array![x])[0]) / h
+    );
+    // These values won't be exactly equal but the smaller h becomes the closer
+    // they will be.
+    println!("f_prime(x) =  {}", f_prime(array![x])[0]);
+
+    println!("\nLets take a look at when the derivative is negative:");
+    let x = -3.0;
+    println!("x = {}", x);
+    println!(
+        "f(x + h) - f(x) / h = {}",
+        (f(array![x + h])[0] - f(array![x])[0]) / h
+    );
+
+    // Show when the deriative is zero:
+    println!("\nLets take a look at when the derivative is zero:");
+    let x = 2.0 / 3.0;
+    println!("x = {} (2/3)", x);
+    println!(
+        "f(x + h) - f(x) / h = {}",
+        (f(array![x + h])[0] - f(array![x])[0]) / h
+    );
+
+    println!("\nNow lets take a look at a more complex example:");
+    let a = 2.0;
+    let b = -3.0;
+    let c = 10.0;
+    let d = a * b + c;
+    println!("d = {d:.1}");
 
     // -----------------  micrograd overview ---------------------------
     //TODO: add micrograd overview here
