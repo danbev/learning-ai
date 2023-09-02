@@ -113,7 +113,7 @@ fn main() -> io::Result<()> {
     // -----------------  micrograd overview ---------------------------
     //TODO: add micrograd overview here
 
-    #[derive(Debug)]
+    #[derive(Debug, Copy, Clone)]
     #[allow(dead_code)]
     struct Value {
         data: f64,
@@ -123,9 +123,9 @@ fn main() -> io::Result<()> {
 
     // Add Add trait implementation for Value and add use statement
     use std::ops::Add;
-    impl Add for &Value {
+    impl Add for Value {
         type Output = Value;
-        fn add(self, rhs: &Value) -> Self::Output {
+        fn add(self, rhs: Value) -> Self::Output {
             Value {
                 data: self.data + rhs.data,
             }
@@ -134,9 +134,9 @@ fn main() -> io::Result<()> {
 
     // Add Sub trait implementation for Value and add use statement
     use std::ops::Sub;
-    impl Sub for &Value {
+    impl Sub for Value {
         type Output = Value;
-        fn sub(self, rhs: &Value) -> Self::Output {
+        fn sub(self, rhs: Value) -> Self::Output {
             Value {
                 data: self.data - rhs.data,
             }
@@ -145,9 +145,9 @@ fn main() -> io::Result<()> {
 
     // Add Mul trait implementation for Value and add use statement
     use std::ops::Mul;
-    impl Mul for &Value {
+    impl Mul for Value {
         type Output = Value;
-        fn mul(self, rhs: &Value) -> Self::Output {
+        fn mul(self, rhs: Value) -> Self::Output {
             Value {
                 data: self.data * rhs.data,
             }
@@ -166,9 +166,11 @@ fn main() -> io::Result<()> {
     let a = Value { data: 2.0 };
     println!("a = {}", a);
     let b = Value { data: -3.0 };
-    println!("{a} + {b} = {}", &a + &b);
-    println!("{a} - {b} = {}", &a.sub(&b));
-    println!("{a} * {b} = {}", &a * &b);
+    println!("{a} + {b} = {}", a + b);
+    println!("{a} - {b} = {}", a.sub(b));
+    println!("{a} * {b} = {}", a * b);
+    let c = Value { data: 10.0 };
+    println!("{a} * {b} + {c} = {}", a * b + c);
 
     Ok(())
 }
