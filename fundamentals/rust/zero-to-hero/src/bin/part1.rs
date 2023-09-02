@@ -67,7 +67,48 @@ fn main() -> io::Result<()> {
     let b = -3.0;
     let c = 10.0;
     let d = a * b + c;
+    println!("a = {a:.1}");
+    println!("b = {b:.1}");
+    println!("c = {c:.1}");
     println!("d = {d:.1}");
+
+    let h = 0.0001;
+    let mut a = 2.0;
+    let b = -3.0;
+    let c = 10.0;
+
+    // d1 is our original function that we will use as a example
+    let d1 = a * b + c;
+    a += h;
+    // d2 is the function with a nudged/dumped a little.
+    let d2 = a * b + c;
+
+    println!("\nDeriviative with respect to a:");
+    println!("d1 (original function) = {d1:.6}");
+    println!("d2 (nudged a         ) = {d2:.6}");
+    println!("slope (d2 - d1) / h = {}", (d2 - d1) / h);
+
+    let a = 2.0;
+    let mut b = -3.0;
+    let c = 10.0;
+    let d1 = a * b + c;
+    b += h;
+    let d2 = a * b + c;
+    println!("\nDeriviative with respect to b:");
+    println!("d1 (original function) = {d1:.6}");
+    println!("d2 (nudged b         ) = {d2:.6}");
+    println!("slope (d2 - d1) / h = {}", (d2 - d1) / h);
+
+    let a = 2.0;
+    let b = -3.0;
+    let mut c = 10.0;
+    let d1 = a * b + c;
+    c += h;
+    let d2 = a * b + c;
+    println!("\nDeriviative with respect to b:");
+    println!("d1 (original function) = {d1:.6}");
+    println!("d2 (nudged c         ) = {d2:.6}");
+    println!("slope (d2 - d1) / h = {}", (d2 - d1) / h);
 
     // -----------------  micrograd overview ---------------------------
     //TODO: add micrograd overview here
