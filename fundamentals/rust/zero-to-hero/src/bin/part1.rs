@@ -154,12 +154,21 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // Implement the Display trait for Value in the format Value(data) and
+    // include any necessary use statements
+    use std::fmt;
+    impl fmt::Display for Value {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Value({})", self.data)
+        }
+    }
+
     let a = Value { data: 2.0 };
-    println!("a = {:?}", a);
+    println!("a = {}", a);
     let b = Value { data: -3.0 };
-    println!("{a:?} + {b:?} = {:?}", &a + &b);
-    println!("{a:?} - {b:?} = {:?}", &a.sub(&b));
-    println!("{a:?} * {b:?} = {:?}", &a * &b);
+    println!("{a} + {b} = {}", &a + &b);
+    println!("{a} - {b} = {}", &a.sub(&b));
+    println!("{a} * {b} = {}", &a * &b);
 
     Ok(())
 }
