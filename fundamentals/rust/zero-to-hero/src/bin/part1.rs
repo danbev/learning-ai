@@ -113,6 +113,54 @@ fn main() -> io::Result<()> {
     // -----------------  micrograd overview ---------------------------
     //TODO: add micrograd overview here
 
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct Value {
+        data: f64,
+    }
+    // Some of the comments below have been kept as they were prompts for
+    // copilot to generated the code.
+
+    // Add Add trait implementation for Value and add use statement
+    use std::ops::Add;
+    impl Add for &Value {
+        type Output = Value;
+        fn add(self, rhs: &Value) -> Self::Output {
+            Value {
+                data: self.data + rhs.data,
+            }
+        }
+    }
+
+    // Add Sub trait implementation for Value and add use statement
+    use std::ops::Sub;
+    impl Sub for &Value {
+        type Output = Value;
+        fn sub(self, rhs: &Value) -> Self::Output {
+            Value {
+                data: self.data - rhs.data,
+            }
+        }
+    }
+
+    // Add Mul trait implementation for Value and add use statement
+    use std::ops::Mul;
+    impl Mul for &Value {
+        type Output = Value;
+        fn mul(self, rhs: &Value) -> Self::Output {
+            Value {
+                data: self.data * rhs.data,
+            }
+        }
+    }
+
+    let a = Value { data: 2.0 };
+    println!("a = {:?}", a);
+    let b = Value { data: -3.0 };
+    println!("{a:?} + {b:?} = {:?}", &a + &b);
+    println!("{a:?} - {b:?} = {:?}", &a.sub(&b));
+    println!("{a:?} * {b:?} = {:?}", &a * &b);
+
     Ok(())
 }
 
