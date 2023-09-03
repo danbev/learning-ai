@@ -117,7 +117,7 @@ fn main() -> io::Result<()> {
     #[allow(dead_code)]
     struct Value {
         data: f64,
-        children: Vec<Value>,
+        children: Option<(Box<Value>, Box<Value>)>,
         operation: Option<String>,
     }
     // Some of the comments below have been kept as they were prompts for
@@ -128,7 +128,7 @@ fn main() -> io::Result<()> {
         fn new(data: f64) -> Self {
             Value {
                 data,
-                children: Vec::new(),
+                children: None,
                 operation: None,
             }
         }
@@ -138,7 +138,11 @@ fn main() -> io::Result<()> {
     // parameter named 'children' of type Vec and that contains Values
     // as the element types.
     impl Value {
-        fn new_with_children(data: f64, children: Vec<Value>, op: String) -> Self {
+        fn new_with_children(
+            data: f64,
+            children: Option<(Box<Value>, Box<Value>)>,
+            op: String,
+        ) -> Self {
             Value {
                 data,
                 children,
@@ -152,7 +156,11 @@ fn main() -> io::Result<()> {
     impl Add for Value {
         type Output = Value;
         fn add(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data + other.data, vec![self, other], "+".to_string())
+            Value::new_with_children(
+                self.data + other.data,
+                Some((Box::new(self), Box::new(other))),
+                "+".to_string(),
+            )
         }
     }
 
@@ -161,7 +169,11 @@ fn main() -> io::Result<()> {
     impl Sub for Value {
         type Output = Value;
         fn sub(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data - other.data, vec![self, other], "-".to_string())
+            Value::new_with_children(
+                self.data - other.data,
+                Some((Box::new(self), Box::new(other))),
+                "-".to_string(),
+            )
         }
     }
 
@@ -170,7 +182,11 @@ fn main() -> io::Result<()> {
     impl Mul for Value {
         type Output = Value;
         fn mul(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data * other.data, vec![self, other], "*".to_string())
+            Value::new_with_children(
+                self.data * other.data,
+                Some((Box::new(self), Box::new(other))),
+                "*".to_string(),
+            )
         }
     }
 
@@ -184,12 +200,13 @@ fn main() -> io::Result<()> {
     }
 
     // Implement get functions for children and operation
+    #[allow(dead_code)]
     impl Value {
-        fn children(&self) -> &Vec<Value> {
-            &self.children
+        fn children(&self) -> Option<(Box<Value>, Box<Value>)> {
+            self.children.clone()
         }
-        fn operation(&self) -> &Option<String> {
-            &self.operation
+        fn operation(&self) -> Option<String> {
+            self.operation.clone()
         }
     }
 
