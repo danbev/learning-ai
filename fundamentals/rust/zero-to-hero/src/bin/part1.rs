@@ -179,7 +179,12 @@ fn main() -> io::Result<()> {
     use std::fmt;
     impl fmt::Display for Value {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Value(data={})", self.data)
+            write!(f, "Value(data={}", self.data)?;
+            if let Some((lhs, rhs)) = &self.children {
+                write!(f, ", lhs={}, rhs={}", lhs.data, rhs.data)?;
+                write!(f, ", op=\"{}\"", &self.operation.as_ref().unwrap())?;
+            }
+            write!(f, ")")
         }
     }
 
@@ -203,11 +208,7 @@ fn main() -> io::Result<()> {
     let c = Value::new(10.0);
     let d = a.clone() * b.clone() + c.clone();
     println!("{a} * {b} + {c} = {d}");
-    println!(
-        "d.children: lhs: {}, rhs: {}",
-        d.children().unwrap().0,
-        d.children().unwrap().1
-    );
+    println!("d: {d}");
 
     Ok(())
 }
