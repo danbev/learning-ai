@@ -179,7 +179,7 @@ fn main() -> io::Result<()> {
     use std::fmt;
     impl fmt::Display for Value {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Value({})", self.data)
+            write!(f, "Value(data={})", self.data)
         }
     }
 
@@ -201,7 +201,13 @@ fn main() -> io::Result<()> {
     println!("{a} - {b} = {}", a.clone().sub(b.clone()));
     println!("{a} * {b} = {}", a.clone() * b.clone());
     let c = Value::new(10.0);
-    println!("{a} * {b} + {c} = {}", a.clone() * b.clone() + c.clone());
+    let d = a.clone() * b.clone() + c.clone();
+    println!("{a} * {b} + {c} = {d}");
+    println!(
+        "d.children: lhs: {}, rhs: {}",
+        d.children().unwrap().0,
+        d.children().unwrap().1
+    );
 
     Ok(())
 }
