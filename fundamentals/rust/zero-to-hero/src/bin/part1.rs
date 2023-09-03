@@ -113,22 +113,46 @@ fn main() -> io::Result<()> {
     // -----------------  micrograd overview ---------------------------
     //TODO: add micrograd overview here
 
-    #[derive(Debug, Copy, Clone)]
+    #[derive(Debug, Clone)]
     #[allow(dead_code)]
     struct Value {
         data: f64,
+        children: Vec<Value>,
+        operation: Option<String>,
     }
     // Some of the comments below have been kept as they were prompts for
     // copilot to generated the code.
+
+    // Add a new constructor for Value which takes a single f64.
+    impl Value {
+        fn new(data: f64) -> Self {
+            Value {
+                data,
+                children: Vec::new(),
+                operation: None,
+            }
+        }
+    }
+
+    // Add a new_with_children constructor for Value which takes a single f64, and a
+    // parameter named 'children' of type Vec and that contains Values
+    // as the element types.
+    impl Value {
+        fn new_with_children(data: f64, children: Vec<Value>, op: String) -> Self {
+            Value {
+                data,
+                children,
+                operation: Some(op),
+            }
+        }
+    }
 
     // Add Add trait implementation for Value and add use statement
     use std::ops::Add;
     impl Add for Value {
         type Output = Value;
-        fn add(self, rhs: Value) -> Self::Output {
-            Value {
-                data: self.data + rhs.data,
-            }
+        fn add(self, other: Value) -> Self::Output {
+            Value::new_with_children(self.data + other.data, vec![self, other], "+".to_string())
         }
     }
 
@@ -136,10 +160,8 @@ fn main() -> io::Result<()> {
     use std::ops::Sub;
     impl Sub for Value {
         type Output = Value;
-        fn sub(self, rhs: Value) -> Self::Output {
-            Value {
-                data: self.data - rhs.data,
-            }
+        fn sub(self, other: Value) -> Self::Output {
+            Value::new_with_children(self.data - other.data, vec![self, other], "-".to_string())
         }
     }
 
@@ -147,10 +169,8 @@ fn main() -> io::Result<()> {
     use std::ops::Mul;
     impl Mul for Value {
         type Output = Value;
-        fn mul(self, rhs: Value) -> Self::Output {
-            Value {
-                data: self.data * rhs.data,
-            }
+        fn mul(self, other: Value) -> Self::Output {
+            Value::new_with_children(self.data * other.data, vec![self, other], "*".to_string())
         }
     }
 
@@ -163,14 +183,24 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let a = Value { data: 2.0 };
+    // Implement get functions for children and operation
+    impl Value {
+        fn children(&self) -> &Vec<Value> {
+            &self.children
+        }
+        fn operation(&self) -> &Option<String> {
+            &self.operation
+        }
+    }
+
+    let a = Value::new(2.0);
     println!("a = {}", a);
-    let b = Value { data: -3.0 };
-    println!("{a} + {b} = {}", a + b);
-    println!("{a} - {b} = {}", a.sub(b));
-    println!("{a} * {b} = {}", a * b);
-    let c = Value { data: 10.0 };
-    println!("{a} * {b} + {c} = {}", a * b + c);
+    let b = Value::new(-3.0);
+    println!("{a} + {b} = {}", a.clone() + b.clone());
+    println!("{a} - {b} = {}", a.clone().sub(b.clone()));
+    println!("{a} * {b} = {}", a.clone() * b.clone());
+    let c = Value::new(10.0);
+    println!("{a} * {b} + {c} = {}", a.clone() * b.clone() + c.clone());
 
     Ok(())
 }
