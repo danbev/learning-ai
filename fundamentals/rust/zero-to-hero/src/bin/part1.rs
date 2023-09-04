@@ -121,6 +121,7 @@ fn main() -> io::Result<()> {
         children: Option<(Box<Value>, Box<Value>)>,
         operation: Option<String>,
     }
+
     // Some of the comments below have been kept as they were prompts for
     // copilot to generated the code.
 
@@ -206,6 +207,9 @@ fn main() -> io::Result<()> {
         fn operation(&self) -> Option<String> {
             self.operation.clone()
         }
+        fn label(&mut self, label: &str) {
+            self.label = Some(label.to_string())
+        }
     }
 
     impl Value {
@@ -270,7 +274,10 @@ fn main() -> io::Result<()> {
     println!("{a} - {b} = {}", a.clone().sub(b.clone()));
     println!("{a} * {b} = {}", a.clone() * b.clone());
     let c = Value::new(10.0, "c");
-    let d = a.clone() * b.clone() + c.clone();
+    let mut e = a.clone() * b.clone();
+    e.label("e");
+    let mut d = e.clone() + c.clone();
+    d.label("d");
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
     //println!("d.dot(): {}", d.dot());
