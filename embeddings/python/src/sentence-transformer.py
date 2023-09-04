@@ -9,15 +9,15 @@ sentences = [
   "That is a happy dog",
   "Today is a sunny day"
 ]
-
 embeddings = model.encode(sentences)
 
-query_embedding = model.encode("That is a happy person")
+query = "That is a happy person"
+query_embedding = model.encode(query)
 
 def cosine_similarity(a, b):
-    return np.dot(a, b)/(norm(a)*norm(b))
+    return np.dot(a, b) / (norm(a) * norm(b))
 
-print("Query: That is a happy person")
+print(f'Query: {query}')
 for e, s in zip(embeddings, sentences):
     print(s, " -> similarity score = ",
          cosine_similarity(e, query_embedding))
