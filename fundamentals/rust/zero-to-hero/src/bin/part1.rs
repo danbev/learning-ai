@@ -117,6 +117,7 @@ fn main() -> io::Result<()> {
     #[allow(dead_code)]
     struct Value {
         data: f64,
+        label: Option<String>,
         children: Option<(Box<Value>, Box<Value>)>,
         operation: Option<String>,
     }
@@ -125,9 +126,10 @@ fn main() -> io::Result<()> {
 
     // Add a new constructor for Value which takes a single f64.
     impl Value {
-        fn new(data: f64) -> Self {
+        fn new(data: f64, label: &str) -> Self {
             Value {
                 data,
+                label: Some(label.to_string()),
                 children: None,
                 operation: None,
             }
@@ -138,9 +140,16 @@ fn main() -> io::Result<()> {
     // parameter named 'children' of type Vec and that contains Values
     // as the element types.
     impl Value {
-        fn new_with_children(data: f64, lhs: Value, rhs: Value, op: String) -> Self {
+        fn new_with_children(
+            data: f64,
+            label: Option<String>,
+            lhs: Value,
+            rhs: Value,
+            op: String,
+        ) -> Self {
             Value {
                 data,
+                label,
                 children: Some((Box::new(lhs), Box::new(rhs))),
                 operation: Some(op),
             }
@@ -152,7 +161,7 @@ fn main() -> io::Result<()> {
     impl Add for Value {
         type Output = Value;
         fn add(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data + other.data, self, other, "+".to_string())
+            Value::new_with_children(self.data + other.data, None, self, other, "+".to_string())
         }
     }
 
@@ -161,7 +170,7 @@ fn main() -> io::Result<()> {
     impl Sub for Value {
         type Output = Value;
         fn sub(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data - other.data, self, other, "-".to_string())
+            Value::new_with_children(self.data - other.data, None, self, other, "-".to_string())
         }
     }
 
@@ -170,7 +179,7 @@ fn main() -> io::Result<()> {
     impl Mul for Value {
         type Output = Value;
         fn mul(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data * other.data, self, other, "*".to_string())
+            Value::new_with_children(self.data * other.data, None, self, other, "*".to_string())
         }
     }
 
@@ -189,7 +198,6 @@ fn main() -> io::Result<()> {
     }
 
     use std::collections::HashSet;
-    // Implement get functions for children and operation
     #[allow(dead_code)]
     impl Value {
         fn children(&self) -> Option<(Box<Value>, Box<Value>)> {
@@ -198,7 +206,9 @@ fn main() -> io::Result<()> {
         fn operation(&self) -> Option<String> {
             self.operation.clone()
         }
+    }
 
+    impl Value {
         fn dot(&self) -> String {
             let mut out = "digraph {\n".to_string();
             out += "graph [rankdir=LR]\n";
@@ -213,9 +223,17 @@ fn main() -> io::Result<()> {
 
                 let node_id = node_ptr as usize;
 
+                let label_str = |node: &Value| -> String {
+                    match &node.label {
+                        Some(l) => format!("{l}:"),
+                        None => "".to_string(),
+                    }
+                };
                 out += &format!(
-                    "  \"{}\" [label=\"{}\" shape=record]\n",
-                    node_ptr as usize, node.data
+                    "  \"{}\" [label=\"{} {}\" shape=record]\n",
+                    node_ptr as usize,
+                    label_str(node),
+                    node.data
                 );
 
                 seen.insert(node_ptr);
@@ -228,7 +246,7 @@ fn main() -> io::Result<()> {
                     out += &format!(
                         "  \"{}\" [label=\"{}\"]\n",
                         op_id,
-                        node.operation.as_ref().unwrap()
+                        node.operation.as_ref().unwrap_or(&"".to_string())
                     );
                     out += &format!("  \"{}\" -> \"{}\"\n", op_id, node_id,);
 
@@ -245,13 +263,13 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let a = Value::new(2.0);
+    let a = Value::new(2.0, "a");
     println!("a = {}", a);
-    let b = Value::new(-3.0);
+    let b = Value::new(-3.0, "b");
     println!("{a} + {b} = {}", a.clone() + b.clone());
     println!("{a} - {b} = {}", a.clone().sub(b.clone()));
     println!("{a} * {b} = {}", a.clone() * b.clone());
-    let c = Value::new(10.0);
+    let c = Value::new(10.0, "c");
     let d = a.clone() * b.clone() + c.clone();
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
