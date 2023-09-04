@@ -188,6 +188,7 @@ fn main() -> io::Result<()> {
         }
     }
 
+    use std::collections::HashSet;
     // Implement get functions for children and operation
     #[allow(dead_code)]
     impl Value {
@@ -196,6 +197,53 @@ fn main() -> io::Result<()> {
         }
         fn operation(&self) -> Option<String> {
             self.operation.clone()
+        }
+
+        fn dot(&self) -> String {
+            let mut out = "digraph {\n".to_string();
+            out += "graph [rankdir=LR]\n";
+            let mut stack = vec![self];
+            println!("stack: {:?}", stack);
+            let mut seen = HashSet::new();
+
+            while let Some(node) = stack.pop() {
+                println!("node: {:?}", node);
+                let node_ptr = node as *const _;
+                if seen.contains(&node_ptr) {
+                    continue;
+                }
+
+                let node_id = node_ptr as usize;
+
+                out += &format!(
+                    "  \"{}\" [label=\"{}\" shape=record]\n",
+                    node_ptr as usize, node.data
+                );
+
+                seen.insert(node_ptr);
+
+                if let Some((lhs, rhs)) = &node.children {
+                    let op_id = format!("{}{}", node_id, node.operation.as_ref().unwrap());
+                    let lhs_id = lhs.as_ref() as *const _ as usize;
+                    let rhs_id = rhs.as_ref() as *const _ as usize;
+
+                    out += &format!(
+                        "  \"{}\" [label=\"{}\"]\n",
+                        op_id,
+                        node.operation.as_ref().unwrap()
+                    );
+                    out += &format!("  \"{}\" -> \"{}\"\n", op_id, node_id,);
+
+                    out += &format!("  \"{}\" -> \"{}\"\n", lhs_id, op_id,);
+                    out += &format!("  \"{}\" -> \"{}\"\n", rhs_id, op_id);
+
+                    stack.push(&*lhs);
+                    stack.push(&*rhs);
+                }
+            }
+
+            out += "}\n";
+            out
         }
     }
 
@@ -209,6 +257,7 @@ fn main() -> io::Result<()> {
     let d = a.clone() * b.clone() + c.clone();
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
+    println!("d.dot(): {}", d.dot());
 
     Ok(())
 }
