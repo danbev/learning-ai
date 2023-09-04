@@ -203,11 +203,9 @@ fn main() -> io::Result<()> {
             let mut out = "digraph {\n".to_string();
             out += "graph [rankdir=LR]\n";
             let mut stack = vec![self];
-            println!("stack: {:?}", stack);
             let mut seen = HashSet::new();
 
             while let Some(node) = stack.pop() {
-                println!("node: {:?}", node);
                 let node_ptr = node as *const _;
                 if seen.contains(&node_ptr) {
                     continue;
@@ -257,7 +255,13 @@ fn main() -> io::Result<()> {
     let d = a.clone() * b.clone() + c.clone();
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
-    println!("d.dot(): {}", d.dot());
+    //println!("d.dot(): {}", d.dot());
+    // Write the dot output to a file named "plots/part1_intrO.dot"
+    std::fs::write("plots/part1_graph.dot", d.dot()).unwrap();
+    // This file needs to be converted into an svg file to be rendered
+    // and one option is to use the dot command line tool:
+    // dot -Tsvg plots/part1_graph.dot -o plots/part1_graph.svg
+    // Another options is to open the .dot file in https://viz-js.com.
 
     Ok(())
 }
