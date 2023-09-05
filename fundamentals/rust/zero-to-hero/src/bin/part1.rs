@@ -234,7 +234,7 @@ fn main() -> io::Result<()> {
                     }
                 };
                 out += &format!(
-                    "  \"{}\" [label=\"{} {}\" shape=record]\n",
+                    "  \"{}\" [label=\"{} value: {}\" shape=record]\n",
                     node_ptr as usize,
                     label_str(node),
                     node.data
@@ -287,6 +287,19 @@ fn main() -> io::Result<()> {
     // and one option is to use the dot command line tool:
     // dot -Tsvg plots/part1_graph.dot -o plots/part1_graph.svg
     // Another options is to open the .dot file in https://viz-js.com.
+
+    // Run the dot command to convert the .dot file to an svg file, and add
+    // any required use statements
+    use std::process::Command;
+    Command::new("dot")
+        .args(&[
+            "-Tsvg",
+            "plots/part1_graph.dot",
+            "-o",
+            "plots/part1_graph.svg",
+        ])
+        .output()
+        .expect("failed to execute process");
 
     Ok(())
 }
