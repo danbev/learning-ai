@@ -1,6 +1,6 @@
 ## AI/ML Investigation for Trusification
 This task is about investigating the use of AI/ML for trusification and see if
-there are ways to add value add to using AI/ML for trusification.
+there are ways to add value using AI/ML for trustification.
 
 The suggestions in this document are just that, suggestions, and some might not
 make sense or be feasible. This more of a brainstorming document.
@@ -10,7 +10,7 @@ Currently the trusification application/ui enables users to store SBOMs and
 VEX (Vulnerability Exchange) documents in a database and then query the database
 for vulnerabilities.
 
-So in this case the user need to manually know about what vulnerabilities or
+So in this case the user needs to manually know about what vulnerabilities or
 what packages they use in their application to be able to query the database.
 
 What if we took the VEX documents, or parts of them, and stored then in a vector
@@ -58,7 +58,14 @@ Just as an example to experiment with this idea there is
 This example is just creating embeddings and computing the distance between
 them. It is not using a vector database. But it could be a starting point for
 experimenting with this idea and vector databases have more features like
-filtering and such and might be worth looking into.
+filtering and such and might be worth looking into. By using a vector database
+and having the information in it we could use this in combinarion with an LLM
+to first query the vector database for documents relative to the query and then
+pass them along to an LLM as context so that a task/query agains the LLM can
+use that information. This was it would be possible for the LLM to "have
+knowledge" about the vulnerabilities in the vector database. The same concept
+is shown in [github-search.py](langchain/src/github-search.py) but in this case
+it uses documents from github repository as the document source.
 
 What is the benefit of this?   
 The motivation would be that we might then be able to extract all the
@@ -80,19 +87,26 @@ a secure project.
 
 So we would create a prompt template, something like this:
 ```
-TODO: Create a prompt template
+Categorise the following project based on the
+number of stars, and the number of commits. The more starts and
+commits the better the project is likely to be.
+
+stars: {stars}
+commits: {commits}
 ```
-We could then populate it with the information we have collected and then
-and ask an LLM to classify it as a secure project or not.
-As an example [project-health.py](../../langchain/src/project-health.py) is
-something along these lines.
+We could then populate it with the information we have collected, and then
+and ask an LLM to classify it as a secure project or not.  As an example
+[project-health.py](../../langchain/src/project-health.py) is something along
+these lines.
 ```console
 (langch) $ python src/project-health.py 
 https://api.github.com/repos/danbev/learning-v8 has 2300 stars and 30 commits
+
 "Going to prompt chatgpt (gpt-3.5-turbo-0301)"
 content='This project has a high number of stars but a low number of commits, which suggests that it may have gained popularity but may not be actively maintained or developed.' additional_kwargs={} example=False
 ```
 
 ### Suggestion: Fine tune a language model to detect vulnerabilities
 This is a suggestion to fine tune a language model to detect vulnerabilities
-specific to Red Hat products.
+specific to Red Hat products. Or perhaps using something like RAG (Retrieval
+Augmented Generation)
