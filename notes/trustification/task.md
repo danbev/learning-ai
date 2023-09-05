@@ -80,6 +80,7 @@ exists and provide a list of vulnerabilities for the project.
 * Signed commits?
 * End of support date validation
 * End of life date validation
+* [OpenSSF Scorecard](https://securityscorecards.dev/#what-is-openssf-scorecard)
 
 This might be possible to do by first collecting this information from a 
 github repository and then creating a prompt which can classify this as
