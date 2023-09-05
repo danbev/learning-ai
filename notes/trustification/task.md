@@ -223,7 +223,10 @@ Check scores:
 ### Suggestion: Fine tune a language model to detect vulnerabilities
 This is a suggestion to fine tune a language model to detect vulnerabilities
 specific to Red Hat products. Or perhaps using something like RAG (Retrieval
-Augmented Generation)
+Augmented Generation). After some more reading I don't think is a good idea
+and if we wanted to use a language model we should use a vector database like
+mentioned previously to query for similar vulnerabilities and the send them
+along to the LLM as context so that the LLM has access to the information.
 
 ### Suggestion: Use a language model to generate a vulnerability report
 Similar to the previous suggestion, but instead of detecting vulnerabilities
