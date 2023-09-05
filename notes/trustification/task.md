@@ -110,3 +110,6 @@ content='This project has a high number of stars but a low number of commits, wh
 This is a suggestion to fine tune a language model to detect vulnerabilities
 specific to Red Hat products. Or perhaps using something like RAG (Retrieval
 Augmented Generation)
+
+### Sugestion: Use a language model to generate a vulnerability report
+
