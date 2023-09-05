@@ -11,6 +11,7 @@ def get_repo_info(username, repo):
     # URL for GitHub API to get repository information
     repo_url = f"https://api.github.com/repos/{username}/{repo}"
     repo_resp = requests.get(repo_url).json()
+    print(f'{repo_resp=}')
 
     stars = repo_resp.get('stargazers_count', 0)
 
@@ -33,7 +34,7 @@ def prompt_chatgpt(stars, commits):
     chat = ChatOpenAI(temperature=0.0, model=llm_model)
 
     template_string = """Categorise the following project based on the \
-            number of stars, and the number of commits. The more starts and \
+            number of stars, and the number of commits. The more stars and \
             commits the better the project is likely to be. \
     stars: {stars}
     commits: {commits}
