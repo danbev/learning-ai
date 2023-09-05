@@ -111,5 +111,10 @@ This is a suggestion to fine tune a language model to detect vulnerabilities
 specific to Red Hat products. Or perhaps using something like RAG (Retrieval
 Augmented Generation)
 
-### Sugestion: Use a language model to generate a vulnerability report
-
+### Suggestion: Use a language model to generate a vulnerability report
+Similar to the previous suggestion, but instead of detecting vulnerabilities
+we could use a language model to generate a vulnerability report. This could
+be done by using a language model to generate a report based on a VEX
+information and other information that we have available to us in the
+trustification database. If we could collect this information and add it as
+context we could use an LLM to generate a report.
