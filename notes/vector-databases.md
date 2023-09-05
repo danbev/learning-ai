@@ -27,7 +27,17 @@ context of an llm. What we can do is read all the documents and split them up
 and create vector embeddings for then and store them in a vector database. This
 way we can take the query and create a vector embedded of the query and then use
 that embedding to query the vector database. This will then return a document
-relevant to the query which can then be passed to the llm as context.
+relevant to the query which can then be passed to the llm as context. So to be
+clear we are sending the relant documents as context to the llm. For example,
+we might write a prompt template using a placeholder like `{context}` which 
+will could populate with the document retrieved from the vector database. There
+are libraries/frameworks like Langchain that can perform this for you as a
+specific chain.
+There is an example in
+[github-search.py](../../embeddings/python/src/github-search.py) which uses
+a github repository to retreive all the documents in it and create inserts
+them into a vector database. It then uses a query to search for the most
+relevant document and then uses that document as context for the llm.
 
 ### Embeddings
 Lets see what an embedding looks like we can do this in this document by adding
