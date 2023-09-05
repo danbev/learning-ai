@@ -64,7 +64,7 @@ to first query the vector database for documents relative to the query and then
 pass them along to an LLM as context so that a task/query agains the LLM can
 use that information. This was it would be possible for the LLM to "have
 knowledge" about the vulnerabilities in the vector database. The same concept
-is shown in [github-search.py](langchain/src/github-search.py) but in this case
+is shown in [github-search.py](../../langchain/src/github-search.py) but in this case
 it uses documents from github repository as the document source.
 
 What is the benefit of this?   
