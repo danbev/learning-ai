@@ -107,6 +107,119 @@ https://api.github.com/repos/danbev/learning-v8 has 2300 stars and 30 commits
 content='This project has a high number of stars but a low number of commits, which suggests that it may have gained popularity but may not be actively maintained or developed.' additional_kwargs={} example=False
 ```
 
+As an example of the OpenSSF scorecard, I ran this against the
+trustification repository:
+<details>
+<summary> OpenSSF scorecard </summary>
+
+```console
+$ /home/danielbevenius/go/scorecard --repo=github.com/trustification/trustification
+Starting [Pinned-Dependencies]
+Starting [Dangerous-Workflow]
+Starting [License]
+Starting [Fuzzing]
+Starting [Security-Policy]
+Starting [Vulnerabilities]
+Starting [Code-Review]
+Starting [Branch-Protection]
+Starting [Token-Permissions]
+Starting [Dependency-Update-Tool]
+Starting [Binary-Artifacts]
+Starting [Contributors]
+Starting [SAST]
+Starting [Packaging]
+Starting [CI-Tests]
+Starting [CII-Best-Practices]
+Starting [Maintained]
+Starting [Signed-Releases]
+Finished [Security-Policy]
+Finished [Vulnerabilities]
+Finished [Code-Review]
+Finished [Branch-Protection]
+Finished [Token-Permissions]
+Finished [Dependency-Update-Tool]
+Finished [Binary-Artifacts]
+Finished [Contributors]
+Finished [SAST]
+Finished [Packaging]
+Finished [CI-Tests]
+Finished [CII-Best-Practices]
+Finished [Maintained]
+Finished [Signed-Releases]
+Finished [Pinned-Dependencies]
+Finished [Dangerous-Workflow]
+Finished [License]
+Finished [Fuzzing]
+
+RESULTS
+-------
+Aggregate score: 4.7 / 10
+
+Check scores:
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+|  SCORE  |          NAME          |             REASON             |                                               DOCUMENTATION/REMEDIATION                                               |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 10 / 10 | Binary-Artifacts       | no binaries found in the repo  | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#binary-artifacts       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 2 / 10  | Branch-Protection      | branch protection is not       | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#branch-protection      |
+|         |                        | maximal on development and all |                                                                                                                       |
+|         |                        | release branches               |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 10 / 10 | CI-Tests               | 14 out of 14 merged PRs        | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#ci-tests               |
+|         |                        | checked by a CI test -- score  |                                                                                                                       |
+|         |                        | normalized to 10               |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | CII-Best-Practices     | no effort to earn an OpenSSF   | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#cii-best-practices     |
+|         |                        | best practices badge detected  |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 7 / 10  | Code-Review            | found 4 unreviewed changesets  | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#code-review            |
+|         |                        | out of 16 -- score normalized  |                                                                                                                       |
+|         |                        | to 7                           |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 10 / 10 | Contributors           | 25 different organizations     | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#contributors           |
+|         |                        | found -- score normalized to   |                                                                                                                       |
+|         |                        | 10                             |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 10 / 10 | Dangerous-Workflow     | no dangerous workflow patterns | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#dangerous-workflow     |
+|         |                        | detected                       |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | Dependency-Update-Tool | no update tool detected        | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#dependency-update-tool |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | Fuzzing                | project is not fuzzed          | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#fuzzing                |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 10 / 10 | License                | license file detected          | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#license                |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 10 / 10 | Maintained             | 30 commit(s) out of 30 and 30  | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#maintained             |
+|         |                        | issue activity out of 30 found |                                                                                                                       |
+|         |                        | in the last 90 days -- score   |                                                                                                                       |
+|         |                        | normalized to 10               |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| ?       | Packaging              | no published package detected  | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#packaging              |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 3 / 10  | Pinned-Dependencies    | dependency not pinned by hash  | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#pinned-dependencies    |
+|         |                        | detected -- score normalized   |                                                                                                                       |
+|         |                        | to 3                           |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | SAST                   | SAST tool is not run on all    | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#sast                   |
+|         |                        | commits -- score normalized to |                                                                                                                       |
+|         |                        | 0                              |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | Security-Policy        | security policy file not       | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#security-policy        |
+|         |                        | detected                       |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 8 / 10  | Signed-Releases        | 5 out of 5 artifacts are       | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#signed-releases        |
+|         |                        | signed or have provenance      |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | Token-Permissions      | detected GitHub workflow       | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#token-permissions      |
+|         |                        | tokens with excessive          |                                                                                                                       |
+|         |                        | permissions                    |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| 0 / 10  | Vulnerabilities        | 17 existing vulnerabilities    | https://github.com/ossf/scorecard/blob/7ed886f1bd917d19cb9d6ce6c10e80e81fa31c39/docs/checks.md#vulnerabilities        |
+|         |                        | detected                       |                                                                                                                       |
+|---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+```
+</details>
+
 ### Suggestion: Fine tune a language model to detect vulnerabilities
 This is a suggestion to fine tune a language model to detect vulnerabilities
 specific to Red Hat products. Or perhaps using something like RAG (Retrieval
