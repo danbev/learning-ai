@@ -21,6 +21,14 @@ This is trying to illustrate that the query is converted into an embedding and
 then we search for the closest vectors to this query vector. And the closest
 vectors will be the most similar to the query which are then returned.
 
+Vector databases can be used to find content related to a query. Let’s say that
+we have documents that we would like to search but they will not fit into the
+context of an llm. What we can do is read all the documents and split them up
+and create vector embeddings for then and store them in a vector database. This
+way we can take the query and create a vector embedded of the query and then use
+that embedding to query the vector database. This will then return a document
+relevant to the query which can then be passed to the llm as context.
+
 ### Embeddings
 Lets see what an embedding looks like we can do this in this document by adding
 the following comment:
