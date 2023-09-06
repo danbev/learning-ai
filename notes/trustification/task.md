@@ -5,7 +5,7 @@ there are ways to add value using AI/ML for trustification.
 The suggestions in this document are just that, suggestions, and some might not
 make sense or be feasible. This more of a brainstorming document.
 
-### Suggestion: Vector database for VEX documents
+### Vector database for VEX documents
 Currently the trusification application/ui enables users to store SBOMs and
 VEX (Vulnerability Exchange) documents in a database and then query the database
 for vulnerabilities.
@@ -56,24 +56,36 @@ Just as an example to experiment with this idea there is
 [vex.py](../../embeddings/python/src/vex.py). 
 
 This example is just creating embeddings and computing the distance between
-them. It is not using a vector database. But it could be a starting point for
+them. It does not use a vector database. But it could be a starting point for
 experimenting with this idea and vector databases have more features like
-filtering and such and might be worth looking into. By using a vector database
-and having the information in it we could use this in combinarion with an LLM
-to first query the vector database for documents relative to the query and then
-pass them along to an LLM as context so that a task/query agains the LLM can
-use that information. This was it would be possible for the LLM to "have
-knowledge" about the vulnerabilities in the vector database. The same concept
-is shown in [github-search.py](../../langchain/src/github-search.py) but in this case
-it uses documents from github repository as the document source.
+filtering and such and might be worth looking into.
+
+By using a vector database and having the information in it we could use this in
+combinarion with an LLM to first query the vector database for documents
+relative to the query and then pass them along to an LLM as context so that a
+task/query agains the LLM can use that information. This way it would be
+possible for the LLM to "have knowledge" about the vulnerabilities in our vector
+database which it would not have access to otherwise. This concept is shown in
+[github-search.py](../../langchain/src/github-search.py) but in this case
+the example uses documents from github repository as the document source.
 
 What is the benefit of this?   
 The motivation would be that we might then be able to extract all the
 dependencies of a project from whatever build system, or package information
 exists and provide a list of vulnerabilities for the project.
 
+By using a vector database it can be updated with new VEX documents as they
+become available.
 
-### Suggestion: Measure of confidence of software projects
+### Use a language model to generate a vulnerability report
+Similar to the previous suggestion, but instead of detecting vulnerabilities
+we could use a language model to generate a vulnerability report. This could
+be done by using a language model to generate a report based on a VEX
+information and other information that we have available to us in the
+trustification database. If we could collect this information and add it as
+context we could use an LLM to generate a report.
+
+### Measure of confidence of software projects
 * Recent github activity
 * Release number >= 1.0
 * Number of github stars?
@@ -219,19 +231,3 @@ Check scores:
 |---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 ```
 </details>
-
-### Suggestion: Fine tune a language model to detect vulnerabilities
-This is a suggestion to fine tune a language model to detect vulnerabilities
-specific to Red Hat products. Or perhaps using something like RAG (Retrieval
-Augmented Generation). After some more reading I don't think is a good idea
-and if we wanted to use a language model we should use a vector database like
-mentioned previously to query for similar vulnerabilities and the send them
-along to the LLM as context so that the LLM has access to the information.
-
-### Suggestion: Use a language model to generate a vulnerability report
-Similar to the previous suggestion, but instead of detecting vulnerabilities
-we could use a language model to generate a vulnerability report. This could
-be done by using a language model to generate a report based on a VEX
-information and other information that we have available to us in the
-trustification database. If we could collect this information and add it as
-context we could use an LLM to generate a report.
