@@ -25,7 +25,9 @@ We also need to install the lapack and openblas development libraries:
 $ sudo dnf install lapack-devel openblas-devel
 ```
 
-### Part1: [The spelled-out intro to neural networks and backpropagation: building micrograd]
+### Part1: Building micrograd
+Youtube link: [The spelled-out intro to neural networks and backpropagation: building micrograd]
+
 This is the first part of the series and the code can be found in
 [part1.rs](./src/bin/part1.rs) and can be run with the following command:
 ```console
