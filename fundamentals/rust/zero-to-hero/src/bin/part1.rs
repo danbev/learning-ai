@@ -120,6 +120,7 @@ fn main() -> io::Result<()> {
         label: Option<String>,
         children: Option<(Box<Value>, Box<Value>)>,
         operation: Option<String>,
+        grad: f64,
     }
 
     // Some of the comments below have been kept as they were prompts for
@@ -133,6 +134,7 @@ fn main() -> io::Result<()> {
                 label: Some(label.to_string()),
                 children: None,
                 operation: None,
+                grad: 0.0,
             }
         }
     }
@@ -153,6 +155,7 @@ fn main() -> io::Result<()> {
                 label,
                 children: Some((Box::new(lhs), Box::new(rhs))),
                 operation: Some(op),
+                grad: 0.0,
             }
         }
     }
@@ -234,10 +237,11 @@ fn main() -> io::Result<()> {
                     }
                 };
                 out += &format!(
-                    "  \"{}\" [label=\"{} value: {}\" shape=record]\n",
+                    "  \"{}\" [label=\"{} value: {}, grad: {}\" shape=record]\n",
                     node_ptr as usize,
                     label_str(node),
-                    node.data
+                    node.data,
+                    node.grad,
                 );
 
                 seen.insert(node_ptr);
@@ -280,9 +284,12 @@ fn main() -> io::Result<()> {
     d.label("d");
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
+    let f = Value::new(-2.0, "f");
+    let mut l = d * f.clone();
+    l.label("l");
     //println!("d.dot(): {}", d.dot());
     // Write the dot output to a file named "plots/part1_intrO.dot"
-    std::fs::write("plots/part1_graph.dot", d.dot()).unwrap();
+    std::fs::write("plots/part1_graph.dot", l.dot()).unwrap();
     // This file needs to be converted into an svg file to be rendered
     // and one option is to use the dot command line tool:
     // dot -Tsvg plots/part1_graph.dot -o plots/part1_graph.svg
