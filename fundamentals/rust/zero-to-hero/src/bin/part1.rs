@@ -184,7 +184,7 @@ fn main() -> io::Result<()> {
     impl<'a, 'b: 'a> Mul<&'b Value<'b>> for &'a Value<'a> {
         type Output = Value<'a>;
         fn mul(self, other: &'b Value<'b>) -> Self::Output {
-            Value::new_with_children(self.data - other.data, None, self, other, "+".to_string())
+            Value::new_with_children(self.data * other.data, None, self, other, "+".to_string())
         }
     }
 
@@ -239,7 +239,7 @@ fn main() -> io::Result<()> {
                     }
                 };
                 out += &format!(
-                    "  \"{}\" [label=\"{} value: {:.6}, grad: {:.6}\" shape=record]\n",
+                    "  \"{}\" [label=\"{} value: {:.2}, grad: {:.6}\" shape=record]\n",
                     node_ptr as usize,
                     label_str(node),
                     node.data,
@@ -337,6 +337,7 @@ fn main() -> io::Result<()> {
         */
     }
     *l.grad.borrow_mut() = 1.0;
+    *f.grad.borrow_mut() = d.data;
     *d.grad.borrow_mut() = f.data;
 
     // Write the dot output to a file named "plots/part1_intrO.dot"
