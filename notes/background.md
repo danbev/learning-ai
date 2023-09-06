@@ -248,3 +248,9 @@ TODO
 
 ### XGBoot 
 TODO
+
+### Chatbots
+Large Langauge models are stateless and each transaction/interaction is
+independent. But you might say that when we use ChatGPT it "remembers" earlier
+prompts. But it does not remember the context of the conversation, instead the
+chatbot is providing the context with each request.
