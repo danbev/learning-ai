@@ -1,4 +1,4 @@
-## AI/ML Investigation for Trusification
+## AI/ML Investigation for Trustification
 This task is about investigating the use of AI/ML for trusification and see if
 there are ways to add value using AI/ML for trustification.
 
