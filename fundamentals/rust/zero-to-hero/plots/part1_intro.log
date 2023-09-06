@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/home/danielbevenius/work/ai/learning-ai/fundamentals/rust/zero-to-hero/./plots/part1_intro.py", line 2, in <module>
+    import numpy as np
+ModuleNotFoundError: No module named 'numpy'

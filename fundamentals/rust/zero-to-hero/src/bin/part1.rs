@@ -112,29 +112,30 @@ fn main() -> io::Result<()> {
 
     // -----------------  micrograd overview ---------------------------
     //TODO: add micrograd overview here
+    use std::cell::RefCell;
 
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
-    struct Value {
+    struct Value<'a> {
         data: f64,
         label: Option<String>,
-        children: Option<(Box<Value>, Box<Value>)>,
+        children: Option<(&'a Value<'a>, &'a Value<'a>)>,
         operation: Option<String>,
-        grad: f64,
+        grad: RefCell<f64>,
     }
 
     // Some of the comments below have been kept as they were prompts for
     // copilot to generated the code.
 
     // Add a new constructor for Value which takes a single f64.
-    impl Value {
+    impl<'a> Value<'a> {
         fn new(data: f64, label: &str) -> Self {
             Value {
                 data,
                 label: Some(label.to_string()),
                 children: None,
                 operation: None,
-                grad: 0.0,
+                grad: RefCell::new(0.0),
             }
         }
     }
@@ -142,55 +143,55 @@ fn main() -> io::Result<()> {
     // Add a new_with_children constructor for Value which takes a single f64, and a
     // parameter named 'children' of type Vec and that contains Values
     // as the element types.
-    impl Value {
+    impl<'a> Value<'a> {
         fn new_with_children(
             data: f64,
             label: Option<String>,
-            lhs: Value,
-            rhs: Value,
+            lhs: &'a Value<'a>,
+            rhs: &'a Value<'a>,
             op: String,
         ) -> Self {
             Value {
                 data,
                 label,
-                children: Some((Box::new(lhs), Box::new(rhs))),
+                children: Some((lhs, rhs)),
                 operation: Some(op),
-                grad: 0.0,
+                grad: RefCell::new(0.0),
             }
         }
     }
 
     // Add Add trait implementation for Value and add use statement
     use std::ops::Add;
-    impl Add for Value {
-        type Output = Value;
-        fn add(self, other: Value) -> Self::Output {
+    impl<'a, 'b: 'a> Add<&'b Value<'b>> for &'a Value<'a> {
+        type Output = Value<'a>;
+        fn add(self, other: &'b Value<'b>) -> Self::Output {
             Value::new_with_children(self.data + other.data, None, self, other, "+".to_string())
         }
     }
 
     // Add Sub trait implementation for Value and add use statement
     use std::ops::Sub;
-    impl Sub for Value {
-        type Output = Value;
-        fn sub(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data - other.data, None, self, other, "-".to_string())
+    impl<'a, 'b: 'a> Sub<&'b Value<'b>> for &'a Value<'a> {
+        type Output = Value<'a>;
+        fn sub(self, other: &'b Value<'b>) -> Self::Output {
+            Value::new_with_children(self.data - other.data, None, self, other, "+".to_string())
         }
     }
 
     // Add Mul trait implementation for Value and add use statement
     use std::ops::Mul;
-    impl Mul for Value {
-        type Output = Value;
-        fn mul(self, other: Value) -> Self::Output {
-            Value::new_with_children(self.data * other.data, None, self, other, "*".to_string())
+    impl<'a, 'b: 'a> Mul<&'b Value<'b>> for &'a Value<'a> {
+        type Output = Value<'a>;
+        fn mul(self, other: &'b Value<'b>) -> Self::Output {
+            Value::new_with_children(self.data - other.data, None, self, other, "+".to_string())
         }
     }
 
     // Implement the Display trait for Value in the format Value(data) and
     // include any necessary use statements
     use std::fmt;
-    impl fmt::Display for Value {
+    impl fmt::Display for Value<'_> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "Value(data={}", self.data)?;
             if let Some((lhs, rhs)) = &self.children {
@@ -203,10 +204,11 @@ fn main() -> io::Result<()> {
 
     use std::collections::HashSet;
     #[allow(dead_code)]
-    impl Value {
-        fn children(&self) -> Option<(Box<Value>, Box<Value>)> {
-            self.children.clone()
+    impl<'a> Value<'a> {
+        fn children(&self) -> Option<(&'a Value<'a>, &'a Value<'a>)> {
+            self.children
         }
+
         fn operation(&self) -> Option<String> {
             self.operation.clone()
         }
@@ -215,7 +217,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    impl Value {
+    impl Value<'_> {
         fn dot(&self) -> String {
             let mut out = "digraph {\n".to_string();
             out += "graph [rankdir=LR]\n";
@@ -237,19 +239,19 @@ fn main() -> io::Result<()> {
                     }
                 };
                 out += &format!(
-                    "  \"{}\" [label=\"{} value: {}, grad: {}\" shape=record]\n",
+                    "  \"{}\" [label=\"{} value: {:.6}, grad: {:.6}\" shape=record]\n",
                     node_ptr as usize,
                     label_str(node),
                     node.data,
-                    node.grad,
+                    node.grad.borrow(),
                 );
 
                 seen.insert(node_ptr);
 
                 if let Some((lhs, rhs)) = &node.children {
                     let op_id = format!("{}{}", node_id, node.operation.as_ref().unwrap());
-                    let lhs_id = lhs.as_ref() as *const _ as usize;
-                    let rhs_id = rhs.as_ref() as *const _ as usize;
+                    let lhs_id = *lhs as *const _ as usize;
+                    let rhs_id = *rhs as *const _ as usize;
 
                     out += &format!(
                         "  \"{}\" [label=\"{}\"]\n",
@@ -274,20 +276,69 @@ fn main() -> io::Result<()> {
     let a = Value::new(2.0, "a");
     println!("a = {}", a);
     let b = Value::new(-3.0, "b");
-    println!("{a} + {b} = {}", a.clone() + b.clone());
-    println!("{a} - {b} = {}", a.clone().sub(b.clone()));
-    println!("{a} * {b} = {}", a.clone() * b.clone());
+    println!("{a} + {b} = {}", &a + &b);
+    println!("{a} - {b} = {}", &a - &b);
+    println!("{a} * {b} = {}", &a * &b);
     let c = Value::new(10.0, "c");
-    let mut e = a.clone() * b.clone();
+    let mut e = &a * &b;
     e.label("e");
-    let mut d = e.clone() + c.clone();
+    let mut d = &e + &c;
     d.label("d");
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
     let f = Value::new(-2.0, "f");
-    let mut l = d * f.clone();
+    let mut l = &d * &f;
     l.label("l");
-    //println!("d.dot(): {}", d.dot());
+
+    {
+        // This scope is just for manually computing the gradients which in the
+        // Python example was a function named lol.
+        let h = 0.0001;
+
+        let a = Value::new(2.0, "a");
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l1 = l.data;
+
+        let a = Value::new(2.0 + h, "a");
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        println!("(L2 - L1)/h = {}", (l2 - l1) / h);
+
+        /*
+          let mut l = d * f.clone();
+          dL/dd = ?
+          ( f(x+h) - f(x) ) / h
+          ( f(d+h) - f(d) ) /  h
+          (f*d + f*h - f*d) / h
+            ↑           ↑
+            +-----------+
+          ((d*f - d*f + h*f) / h
+          ( f*h ) / h
+            h*f
+           ---- = f
+             h
+         l.grad = f.data;
+        */
+    }
+    *l.grad.borrow_mut() = 1.0;
+    *d.grad.borrow_mut() = f.data;
+
     // Write the dot output to a file named "plots/part1_intrO.dot"
     std::fs::write("plots/part1_graph.dot", l.dot()).unwrap();
     // This file needs to be converted into an svg file to be rendered
