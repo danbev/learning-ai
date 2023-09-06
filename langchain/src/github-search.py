@@ -43,7 +43,7 @@ vectordb = Chroma.from_documents(
 
 vectordb = Chroma(persist_directory=persist_directory, embedding_function=embedding)
 
-question = "Show me all documents about LoRa"
+question = "What frequencies does LoRa use"
 docs = vectordb.similarity_search(question, k=5)
 for doc in docs:
     print(f'{doc.metadata["file_name"]}, {doc.metadata["source"]}\n')
