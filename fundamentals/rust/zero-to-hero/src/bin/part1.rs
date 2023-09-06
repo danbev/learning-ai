@@ -239,7 +239,7 @@ fn main() -> io::Result<()> {
                     }
                 };
                 out += &format!(
-                    "  \"{}\" [label=\"{} value: {:.2}, grad: {:.6}\" shape=record]\n",
+                    "  \"{}\" [label=\"{} value: {:.4}, grad: {:.4}\" shape=record]\n",
                     node_ptr as usize,
                     label_str(node),
                     node.data,
