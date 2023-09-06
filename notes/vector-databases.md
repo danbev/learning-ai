@@ -34,7 +34,7 @@ will could populate with the document retrieved from the vector database. There
 are libraries/frameworks like Langchain that can perform this for you as a
 specific chain.
 There is an example in
-[github-search.py](../embeddings/python/src/github-search.py) which uses
+[github-search.py](../langchain/src/github-search.py) which uses
 a github repository to retreive all the documents in it and create inserts
 them into a vector database. It then uses a query to search for the most
 relevant document and then uses that document as context for the llm.
@@ -90,7 +90,7 @@ TODO:
 Qdrant is a vector database written in Rust. It is a vector database that is
 open source and is written in Rust.
 
-[Basic Python example](../vector-databases/qdrant/python/README.md)  
+[Basic Python example](../vector-databases/qdrant/python)  
 
 [Basic Rust example](../vector-databases/qdrant/rust/README.md)
 
