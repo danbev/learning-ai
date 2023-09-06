@@ -5,6 +5,7 @@ This repository contains notes and code examples related to AI.
 
 ### Examples
 
+* [Embeddings](./embeddings) Word embeddings examples in Rust and Python
 * [OpenAI API](./openai) OpenAI API examples written in Rust and Python
 * [Huggingface API](./hugging-face/python) Huggingface API example written in Python
 * [tensor-flow](./tensor-flow/README.md) Tensorflow example in Python
