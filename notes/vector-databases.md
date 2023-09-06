@@ -33,11 +33,44 @@ we might write a prompt template using a placeholder like `{context}` which
 will could populate with the document retrieved from the vector database. There
 are libraries/frameworks like Langchain that can perform this for you as a
 specific chain.
+
 There is an example in
 [github-search.py](../langchain/src/github-search.py) which uses
 a github repository to retreive all the documents in it and create inserts
 them into a vector database. It then uses a query to search for the most
-relevant document and then uses that document as context for the llm.
+relevant document related to the query from the vector database, and then uses
+those documents as context for prompting llm.
+```console
+(langch) $ python src/github-search.py 
+cosine=0.8627952938295214, lora.md
+cosine=0.8627952938295214, lora.md
+cosine=0.8627952938295214, lora.md
+cosine=0.8627952938295214, lora.md
+cosine=0.8635670973473751, lora.md
+
+Answer:
+LoRa, short for "long range," is a wireless communication technology that is specifically designed for the Internet of Things (IoT). It provides a long-range communication link with low power consumption, allowing small battery-driven sensor devices to connect to a gateway that can be located between 1km to 10km away. These devices are expected to operate on the same battery for approximately 2 years. 
+
+LoRa has a greater range compared to cellular networks, which typically have a range of a few hundred meters to 1km. In Europe, the frequencies used for LoRa are 433MHz and 868MHz. It is important to be cautious when configuring LoRa devices, as using the 915MHz frequency, which is allowed in other parts of the world, may be illegal in Europe.
+
+In terms of its architecture, LoRa serves as the physical layer that enables the long-range communication link. It is a proprietary technology that was patented in June 2014. LoRaWAN, on the other hand, is a media access control (MAC) layer that is built on top of LoRa. It was released in January 2015 and provides additional features for managing the communication between LoRa devices and the network.
+
+source_documents:
+notes/lora.md
+notes/lora.md
+notes/lora.md
+notes/lora.md
+```
+This example will first retrieve all documents from 
+https://github.com/danbev/learning-iot.git and split these into chunks and
+insert them into an in-memory vector database. It will then use a query to
+search for the most relevant document related to the query from the vector
+database, and then uses those documents as context for prompting llm.
+This is an example of how you can use the an LLM to operate on data that are
+your own and that it might not have been exposed to. 
+Also notice that we get references to the docs that it used as the source which
+could be valuable when one needs to provide references to the source of the
+information.
 
 ### Embeddings
 Lets see what an embedding looks like we can do this in this document by adding
