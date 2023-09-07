@@ -175,7 +175,7 @@ fn main() -> io::Result<()> {
     impl<'a, 'b: 'a> Sub<&'b Value<'b>> for &'a Value<'a> {
         type Output = Value<'a>;
         fn sub(self, other: &'b Value<'b>) -> Self::Output {
-            Value::new_with_children(self.data - other.data, None, self, other, "+".to_string())
+            Value::new_with_children(self.data - other.data, None, self, other, "-".to_string())
         }
     }
 
@@ -184,7 +184,7 @@ fn main() -> io::Result<()> {
     impl<'a, 'b: 'a> Mul<&'b Value<'b>> for &'a Value<'a> {
         type Output = Value<'a>;
         fn mul(self, other: &'b Value<'b>) -> Self::Output {
-            Value::new_with_children(self.data * other.data, None, self, other, "+".to_string())
+            Value::new_with_children(self.data * other.data, None, self, other, "*".to_string())
         }
     }
 
@@ -290,11 +290,13 @@ fn main() -> io::Result<()> {
     let mut l = &d * &f;
     l.label("l");
 
+    // Manually calculate the derivative of the node graph
     {
         // This scope is just for manually computing the gradients which in the
         // Python example was a function named lol.
         let h = 0.0001;
 
+        // First we calculate the gradient for l and save it in l1.
         let a = Value::new(2.0, "a");
         let b = Value::new(-3.0, "b");
         let c = Value::new(10.0, "c");
@@ -307,7 +309,8 @@ fn main() -> io::Result<()> {
         l.label("l");
         let l1 = l.data;
 
-        let a = Value::new(2.0 + h, "a");
+        // Now, lets compute the derivative of 'a' with respect to 'l'.
+        let a = Value::new(2.0 + h, "a"); // Notice the +h here.
         let b = Value::new(-3.0, "b");
         let c = Value::new(10.0, "c");
         let mut e = &a * &b;
@@ -318,27 +321,181 @@ fn main() -> io::Result<()> {
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        println!("(L2 - L1)/h = {}", (l2 - l1) / h);
+        let da = (l2 - l1) / h;
+        //println!("\nDeriviative of l with respect to a: {da:.6}");
 
-        /*
-          let mut l = d * f.clone();
-          dL/dd = ?
-          ( f(x+h) - f(x) ) / h
-          ( f(d+h) - f(d) ) /  h
-          (f*d + f*h - f*d) / h
-            ↑           ↑
-            +-----------+
-          ((d*f - d*f + h*f) / h
-          ( f*h ) / h
-            h*f
-           ---- = f
-             h
-         l.grad = f.data;
-        */
+        // Now, lets compute the derivative of 'l' with respect to 'l'.
+        let a = Value::new(2.0, "a");
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data + h; // Notice the +h here.
+        let dl = (l2 - l1) / h;
+        println!("Deriviative of l with respect to l: {dl:.6}");
+
+        //
+        //  This is the operation that produces l:
+        //  let mut l = &d * &f;
+        //  And we want to compute the derivative of l with respect to d:
+        //  dL/dd = ?
+        //  We have:
+        // ( f(x+h) - f(x) ) / h
+        //  And we can plug in d for x:
+        //  ( f(d+h) - f(d) ) /  h
+        //  Expanding that will give us:
+        //  (f*d + f*h - f*d) / h
+        //   ↑           ↑
+        //    +-----------+
+        //  And 'f*d' will cancel out leaving us with:
+        //  ( f*h ) / h = f
+        //  So we can set dL/dd = f
+        //  d.grad = f.data;
+        let a = Value::new(2.0, "a");
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0 + h, "f"); // Notice the +h here.
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        let df = (l2 - l1) / h;
+        println!("Deriviative of l with respect to f: {df:.6}");
+
+        // No lets compute the derivative of l with respect to f:
+        //  dL/df = ?
+        //  ( d(f+h) - d*f) ) /  h
+        //  ((d*f + h*d - d*f) / h
+        // ( h*d ) / h = d
+        //  So we can set dL/dd = f
+        //  d.grad = f.data;
+        let a = Value::new(2.0, "a");
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.data += h; // Notice the +h here.
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        let dd = (l2 - l1) / h;
+        println!("Deriviative of l with respect to d: {dd:.6}");
+
+        // Now we want to compute the derivative of L with respect to c.
+        // dd /dc = ?
+        // We know that 'd' was created by adding 'c' to 'e'.
+        // let mut d = &e + &c;
+        // And we have:
+        // (f(x+h) - f(x))/h
+        // So we can plug in a nudge of c:
+        // ((c+h) + e) - (c + e)/h
+        // ((c+h) + e) - 1(c + e)/h
+        // (c + h + e - c - e)/h
+        // h/h = 1.0
+        // So the derivative of dd/dc = 1.0, but we are interested in the
+        // effect of c on l, so we need to multiply by the derivative of l with
+        // respect to d which we calculated above:
+        // dd/dc * dl/dd = 1.0 * f = f
+        // Notice that since the derivative of addition is just 1.0, the
+        // derivative of the latter part of the equation is just f. So these
+        // derivates pass through the derivate from the node ahead of them in
+        //  the chain.
+        let a = Value::new(2.0, "a");
+        let b = Value::new(-3.0, "b");
+        let mut c = Value::new(10.0, "c");
+        c.data += h; // Notice the +h here.
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        let dc = (l2 - l1) / h;
+        println!("Deriviative of l with respect to c: {dc:.6}");
+
+        // And the same thing applies for 'e' as for 'c':
+        let a = Value::new(2.0, "a");
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        e.data += h; // Notice the +h here.
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        let de = (l2 - l1) / h;
+        println!("Deriviative of l with respect to e: {de:.6}");
+
+        // Next we want to compute dL/da. So we want to compute the derivative
+        // of a with respect to L. Looking at a which is called a local node it
+        // connection/link to L is through e which was created by multiplying
+        // a and b.
+        //
+        // let mut a = 3.0
+        // let a = Value::new(2.0, "a");
+        // let b = Value::new(-3.0, "b");
+        // And we have:
+        // (f(x+h) - f(x))/h
+        // So we can plug in a nudge of a:
+        // ((a+h) * b) - (a * b)/h
+        // ((a+h) * b) - (a * b)/h
+        // (ab + hb - ab)/h
+        // (hb)/h = b
+        // dl/da = (dl/de) * (de/da) = -2.0 * -3.0 = 6.0
+        let mut a = Value::new(2.0, "a");
+        a.data += h; // Notice the +h here.
+        let b = Value::new(-3.0, "b");
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        let da = (l2 - l1) / h;
+        println!("Deriviative of l with respect to a: {da:.6}");
+        // And the same applies for b:
+        let a = Value::new(2.0, "a");
+        let mut b = Value::new(-3.0, "b");
+        b.data += h; // Notice the +h here.
+        let c = Value::new(10.0, "c");
+        let mut e = &a * &b;
+        e.label("e");
+        let mut d = &e + &c;
+        d.label("d");
+        let f = Value::new(-2.0, "f");
+        let mut l = &d * &f;
+        l.label("l");
+        let l2 = l.data;
+        let db = (l2 - l1) / h;
+        println!("Deriviative of l with respect to b: {db:.6}");
     }
+    // Set the gradients that were manually calculated above.
     *l.grad.borrow_mut() = 1.0;
     *f.grad.borrow_mut() = d.data;
     *d.grad.borrow_mut() = f.data;
+    *c.grad.borrow_mut() = 1.0 * f.data;
+    *e.grad.borrow_mut() = 1.0 * f.data;
+    *a.grad.borrow_mut() = *e.grad.borrow() * b.data;
+    *b.grad.borrow_mut() = *e.grad.borrow() * a.data;
 
     // Write the dot output to a file named "plots/part1_intrO.dot"
     std::fs::write("plots/part1_graph.dot", l.dot()).unwrap();
