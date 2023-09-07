@@ -61,7 +61,7 @@ experimenting with this idea and vector databases have more features like
 filtering and such and might be worth looking into.
 
 By using a vector database and having the information in it we could use this in
-combinarion with an LLM to first query the vector database for documents
+combination with an LLM to first query the vector database for documents
 relative to the query and then pass them along to an LLM as context so that a
 task/query agains the LLM can use that information. This way it would be
 possible for the LLM to "have knowledge" about the vulnerabilities in our vector
