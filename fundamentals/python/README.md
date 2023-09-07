@@ -18,9 +18,14 @@ Then install the requirements:
 (fund) $ pip install -r requirements.txt
 ```
 
-### Autograd (automatic gradient)
+### Neural Networks: Zero to Hero
+This is a series of videos by
+[Andrej Karpathy](https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ)
+which I am following along with and implementing in Python.
+
+### Part1: Building micrograd
 This example comes from a Andrej Karpathy's youtube video on
-[autograd](https://www.youtube.com/watch?v=VMj-3S1tku0&t=577s) modified with
+[micrograd](https://www.youtube.com/watch?v=VMj-3S1tku0&t=577s) modified with
 comments and a few changes. This automatic gradient functionality is something
 that I believe is used in most machine learning libraries, like tensorflow and
 pytorch. Going through this example is a good way to understand how it works.
