@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     let collections_list = client.list_collections().await?;
     dbg!(collections_list);
 
-    let collection_name = "test";
+    let collection_name = "vuln";
     client.delete_collection(collection_name).await?;
 
     client
@@ -31,15 +31,12 @@ async fn main() -> Result<()> {
         .await?;
 
     let collection_info = client.collection_info(collection_name).await?;
-    dbg!(collection_info);
+    //dbg!(collection_info);
 
     let payload: Payload = json!(
         {
-            "foo": "Bar",
-            "bar": 12,
-            "baz": {
-                "qux": "quux"
-            }
+            "cve": 123456,
+            "url": "some url"
         }
     )
     .try_into()
@@ -54,7 +51,7 @@ async fn main() -> Result<()> {
         .search_points(&SearchPoints {
             collection_name: collection_name.into(),
             vector: vec![11.; 10],
-            filter: Some(Filter::all([Condition::matches("bar", 12)])),
+            filter: Some(Filter::all([Condition::matches("cve", 123456)])),
             limit: 10,
             with_payload: Some(true.into()),
             ..Default::default()
@@ -64,8 +61,7 @@ async fn main() -> Result<()> {
 
     let found_point = search_result.result.into_iter().next().unwrap();
     let mut payload = found_point.payload;
-    let baz_payload = payload.remove("baz").unwrap().into_json();
-    println!("baz: {}", baz_payload);
+    println!("payload: {:?}", payload);
 
     Ok(())
 }
