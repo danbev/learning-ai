@@ -5,9 +5,27 @@ vector of numbers. So the vector is a representation of the words.
 ### Background
 Early methods of embeddings used one-hot encoding which are sparse vectors.
 This method is not very efficient because the vectors are very large and
-computationally expensive. Also, the vectors are not very meaningful because
-they are not related to each other (it does not capture the relationship
-between words).
+computationally expensive.
+
+Lets take an example to see what this means:
+```
+I really like ice cream
+```
+Lets say that our input word is `I` and that we look at two words before this
+input and two words after this input, so we have window size of 2. This would
+like something like this to predict the next two words:
+```
+I        [0] [0]
+really   [1] [0]
+like     [0] [1]
+ice      [0] [0]
+cream    [0] [0]
+```
+Notice that longer the sentence the larger the vectors will be. And the vectors
+are sparse because most of the values are zero.
+
+Also, the vectors are not very meaningful because they are not related to each
+other (it does not capture the relationship between words).
 
 This was followed by frequency-based embeddings like TF-IDF. This method is
 better than one-hot encoding because it is not sparse but cannot capture
@@ -33,8 +51,8 @@ For example, this [context-embedding.py](../embeddings/python/src/context-embedd
 example creates three vectors that simulate this concept.
 ```console
 (zeroh) $ python src/context-embeddings.py 
-cosine_similarity(häagen_daz, mövenpick)=0.9990601415630397
-cosine_similarity(häagen_daz, dumbell)=0.7601102270023931
+cosine_similarity(häagen_dazs, mövenpick)=0.9990601415630397
+cosine_similarity(häagen_dazs, dumbell)=0.7601102270023931
 cosine_similarity(mövenpick, dumbell)=0.7418513489636707
 ```
 
@@ -57,7 +75,14 @@ developed by Google.
 
 ### Word2Vec
 Was developed by Google in 2013. It is a shallow neural network that takes a
-word as input and tries to predict the surrounding words.
+word as input and tries to predict the surrounding words. Notice that in this
+case the neural network is used to calculate the weighs which are adjusted to
+minimize the loss function. The weights the become the word embeddings.
+
+So how to we train this network to get it to calculate/adjust the weights?  
+This is done by taking a specific word in the middle of a sentence and then
+trying to predict the surrounding words (it uses a window size to specify how
+many words to take into account).
 
 The output of the network is the word embedding. There are two ways to train the
 network, `skip gram` and `continuous bag of words` (CBOW).
@@ -81,3 +106,4 @@ middle.
              ↑ 
            ouput
 ```
+
