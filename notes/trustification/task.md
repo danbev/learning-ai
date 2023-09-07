@@ -77,13 +77,14 @@ exists and provide a list of vulnerabilities for the project.
 By using a vector database it can be updated with new VEX documents as they
 become available.
 
-### Use a language model to generate a vulnerability report
+### Use a language model to generate a vulnerability report/summary
 Similar to the previous suggestion, but instead of detecting vulnerabilities
-we could use a language model to generate a vulnerability report. This could
-be done by using a language model to generate a report based on a VEX
-information and other information that we have available to us in the
-trustification database. If we could collect this information and add it as
-context we could use an LLM to generate a report.
+we could use a language model to generate a vulnerability report. 
+
+There can be a lot of information in a VEX document, and in the documents that
+it references. What might be possible is to fetch this related data and pass
+that to an LLM which can then generate a summary. This summary could then 
+be displayed in the trustification UI.
 
 ### Use a language model to generate suggestions fixing vulnerabilities
 The idea here would be that we gather information about the vulnerability
