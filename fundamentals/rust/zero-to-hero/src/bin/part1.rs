@@ -193,12 +193,17 @@ fn main() -> io::Result<()> {
     use std::fmt;
     impl fmt::Display for Value<'_> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Value(data={}", self.data)?;
+            write!(
+                f,
+                "Value(data={}, label: {}",
+                self.data,
+                self.label.as_ref().unwrap_or(&"".to_string())
+            )?;
             if let Some((lhs, rhs)) = &self.children {
                 write!(f, ", lhs={}, rhs={}", lhs.data, rhs.data)?;
                 write!(f, ", op=\"{}\"", &self.operation.as_ref().unwrap())?;
             }
-            write!(f, ")")
+            write!(f, ", grad={})", self.grad.borrow())
         }
     }
 
@@ -273,20 +278,20 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let a = Value::new(2.0, "a");
+    let mut a = Value::new(2.0, "a");
     println!("a = {}", a);
-    let b = Value::new(-3.0, "b");
+    let mut b = Value::new(-3.0, "b");
     println!("{a} + {b} = {}", &a + &b);
     println!("{a} - {b} = {}", &a - &b);
     println!("{a} * {b} = {}", &a * &b);
-    let c = Value::new(10.0, "c");
+    let mut c = Value::new(10.0, "c");
     let mut e = &a * &b;
     e.label("e");
     let mut d = &e + &c;
     d.label("d");
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
-    let f = Value::new(-2.0, "f");
+    let mut f = Value::new(-2.0, "f");
     let mut l = &d * &f;
     l.label("l");
 
@@ -321,8 +326,8 @@ fn main() -> io::Result<()> {
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        let da = (l2 - l1) / h;
-        //println!("\nDeriviative of l with respect to a: {da:.6}");
+        let _da = (l2 - l1) / h;
+        //println!("\nDeriviative of l with respect to a: {_da:.6}");
 
         // Now, lets compute the derivative of 'l' with respect to 'l'.
         let a = Value::new(2.0, "a");
@@ -487,6 +492,11 @@ fn main() -> io::Result<()> {
         let l2 = l.data;
         let db = (l2 - l1) / h;
         println!("Deriviative of l with respect to b: {db:.6}");
+        // Notice that we started a the node at the end and computed the local
+        // derivative for it and then moved back in the graph calculating the
+        // local derivative for each node.
+        // Think of each node as the result of an operation, for example l is
+        // the result of d * f. So l has two children, d and f. So we can
     }
     // Set the gradients that were manually calculated above.
     *l.grad.borrow_mut() = 1.0;
@@ -506,18 +516,84 @@ fn main() -> io::Result<()> {
 
     // Run the dot command to convert the .dot file to an svg file, and add
     // any required use statements
+    run_dot("part1_graph");
+
+    // The following simulates one set of an optimization that we would be
+    // performed.
+    // First we nudge the values of a, b, c, and f:
+    a.data += 0.001 * *a.grad.borrow();
+    b.data += 0.001 * *b.grad.borrow();
+    c.data += 0.001 * *c.grad.borrow();
+    f.data += 0.001 * *f.grad.borrow();
+    // Then perform the forward pass again
+    let e = &a * &b;
+    let d = &e + &c;
+    let l = &d * &f;
+    // And then we inspect how those nudges affected the l:
+    println!("l: {l:.6}");
+
+    // Next section is #2 "a neuron".
+
+    // Network with one single neuron (but without an activation function) and
+    // two inputs:
+    //  +----+
+    //  | x₁ |\
+    //  +----+ \ w₁
+    //          \
+    //           +---------------------+
+    //           |  x₁*w₁ + x₂*w₂ + b  | ----------->
+    //           +---------------------+
+    //          /
+    //  +----+ / w₂
+    //  | x₂ |/
+    //  +----+
+
+    // Inputs
+    let x1 = Value::new(2.0, "x1");
+    let x2 = Value::new(0.0, "x2");
+    println!("{x1}, {x2}");
+
+    // Weights
+    let w1 = Value::new(-3.0, "w1");
+    let w2 = Value::new(1.0, "w2");
+    println!("{w1}, {w2}");
+
+    // Bias of the neuron.
+    let b = Value::new(6.7, "b");
+    println!("{b}");
+
+    // This is the edge to the 'x1w1' node
+    let mut x1w1 = &x1 * &w1;
+    x1w1.label("x1*w1");
+    println!("{x1w1}");
+    // This is the edge to the 'x2w2' node
+    let mut x2w2 = &x2 * &w2;
+    x2w2.label("x2*w2");
+    println!("{x2w2}");
+
+    let mut x1w1x2w2 = &x1w1 + &x2w2; // this is the sum part of the "dot" product.
+    x1w1x2w2.label("x1w1x + 2w2");
+    println!("x1w1x2w2: {x1w1x2w2}");
+    let n = &x1w1x2w2 + &b;
+    println!("n: {n}");
+
+    std::fs::write("plots/part1_single_neuron.dot", n.dot()).unwrap();
+    run_dot("part1_single_neuron");
+
+    Ok(())
+}
+
+fn run_dot(file_name: &str) {
     use std::process::Command;
     Command::new("dot")
         .args(&[
             "-Tsvg",
-            "plots/part1_graph.dot",
+            format!("plots/{}.dot", file_name).as_str(),
             "-o",
-            "plots/part1_graph.svg",
+            format!("plots/{}.svg", file_name).as_str(),
         ])
         .output()
         .expect("failed to execute process");
-
-    Ok(())
 }
 
 fn plot(xs: &Array1<f64>, ys: &Array1<f64>, name: &str) {
