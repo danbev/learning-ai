@@ -34,4 +34,33 @@ Can be found using `:help copilot-commands` and are also available in the
 [source code](https://github.com/github/copilot.vim/blob/release/doc/copilot.txt).
 
 ### Prompting for help
+We can prompt copilot almost like we can in a chatgpt prompt but that was not
+obvious to me initially.
+We can try that here in markdown too...
 
+```
+# Explain the embeddings are in the context of neural networks
+Embeddings are a way to represent words as vectors in a vector space.
+The idea is that words that are similar in meaning will be close to each other
+in the vector space.
+...
+```
+In the same way we can get explaination api's 
+# Show and example of using the github api to get the number of star for a Repo in Rust
+```rust
+use reqwest::blocking::Client;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Repo {
+    name: String,
+    stargazers_count: u32,
+}
+    
+fn main() {
+    let client = Client::new();
+    let url = "https://api.github.com/repos/rust-lang/rust";
+    let repo: Repo = client.get(url).send().unwrap().json().unwrap();
+    println!("{} has {} stars!", repo.name, repo.stargazers_count);
+}
+``` 
