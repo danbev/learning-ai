@@ -14,6 +14,36 @@ This is the last part that torchifies the code making it more simlilar to what
 we would find in PyTorch.
 """
 
+def tanh_histogram(layers):
+    plt.figure(figsize=(20, 4)) # width and height of the plot
+    legends = []
+    for i, layer in enumerate(layers[:-1]): # note: exclude the output layer
+        if isinstance(layer, Tanh):
+            t = layer.out
+            print('layer %d (%10s): mean %+.2f, std %.2f, saturated: %.2f%%' % (i, layer.__class__.__name__, t.mean(), t.std(), (t.abs() > 0.97).float().mean()*100))
+            hy, hx = torch.histogram(t, density=True)
+            plt.plot(hx[:-1].detach(), hy.detach())
+            legends.append(f'layer {i} ({layer.__class__.__name__})')
+            plt.legend(legends);
+            plt.title('activation distribution')
+
+    plt.show()
+
+def grad_histogram(layers):
+    plt.figure(figsize=(20, 4)) # width and height of the plot
+    legends = []
+    for i, layer in enumerate(layers[:-1]): # note: exclude the output layer
+        if isinstance(layer, Tanh):
+            t = layer.out.grad
+            print('layer %d (%10s): mean %+.2f, std %.2f, saturated: %.2f%%' % (i, layer.__class__.__name__, t.mean(), t.std(), (t.abs() > 0.97).float().mean()*100))
+            hy, hx = torch.histogram(t, density=True)
+            plt.plot(hx[:-1].detach(), hy.detach())
+            legends.append(f'layer {i} ({layer.__class__.__name__})')
+            plt.legend(legends);
+            plt.title('activation distribution')
+
+    plt.show()
+
 class Linear:
 
     # The term `fan_in` refers to the number of inputs to a given node in the
@@ -24,7 +54,7 @@ class Linear:
         self.weights = torch.randn((fan_in, fan_out), generator=g) / fan_in**0.5
         self.bias = torch.zeros(fan_out) if bias else None
 
-    def _call__(self, x):
+    def __call__(self, x):
         self.out = x @ self.weights
         if self.bias is not None:
             self.out += self.bias
@@ -93,7 +123,10 @@ vocab_size = len(utils.itos)
 # the next character.
 block_size = 3 # context length: how many characters do we take to predict the next one?
 
+# Embedding matrix
 C = torch.randn((vocab_size, nr_embeddings), generator=g)
+
+# Layers of the network
 layers = [
     Linear(block_size * nr_embeddings, n_hidden), Tanh(),
     Linear(n_hidden, n_hidden), Tanh(),
@@ -102,9 +135,19 @@ layers = [
     Linear(n_hidden, n_hidden), Tanh(),
     Linear(n_hidden, vocab_size)
 ]
-
 print(layers)
-exit()
+
+with torch.no_grad():
+    # The following makes the first layer less confident about its predictions.
+    layers[-1].weights *= 0.1
+    for layer in layers:
+        if isinstance(layer, Linear):
+            layer.weights *= 5/3
+
+parameters = [C] + [p for l in layers for p in l.parameters()]
+print(f'Parameters: {sum(p.nelement() for p in parameters)}')
+for p in parameters:
+    p.requires_grad = True
 
 def build_dataset(words):  
   X, Y = [], []
@@ -132,39 +175,6 @@ Xdev, Ydev = build_dataset(utils.words[n1:n2])   # 10%
 Xte,  Yte  = build_dataset(utils.words[n2:])     # 10%
 
 
-# MLP revisited
-n_embd = 10 # the dimensionality of the character embedding vectors
-n_hidden = 200 # the number of neurons in the hidden layer of the MLP
-
-g = torch.Generator().manual_seed(2147483647)
-# We can predict the expected loss we should expect but taking the number
-# of characters in the vocabulary which is 27. If we think about it, we have
-# a uniform distribution over the characters, so the expected loss is the
-# negative log of 1/27 which is 3.2958. This is the loss we should expect
-# if we were to randomly guess the next character. If we have an initial loss
-# that is much higher than that we can be pretty sure what our initial state
-# is off.
-C  = torch.randn((vocab_size, n_embd), generator=g)
-# The multiplication part at the end is the kaiming initialization.
-W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * (5/3 / (n_embd * block_size)**0.5)
-b1 = torch.randn(n_hidden, generator=g) * 0.01
-W2 = torch.randn((n_hidden, vocab_size), generator=g) * 0.01
-b2 = torch.randn(vocab_size, generator=g) * 0
-
-# batch normalization gain
-bngain = torch.ones((1, n_hidden))
-bnbias = torch.zeros((1, n_hidden))
-bnmean_running = torch.zeros((1, n_hidden))
-bnstd_running = torch.ones((1, n_hidden))
-
-parameters = [C, W1, W2, b2, bngain, bnbias]
-print("Total nr of parameters: ", sum(p.nelement() for p in parameters))
-for p in parameters:
-  p.requires_grad = True
-
-print("W1 expected standard deviation: ", (5/3) / 30**0.5) # kaiming init
-print("W1 actual standard deviation: ", W1.std().item())
-
 # same optimization as last time
 max_steps = 200000
 batch_size = 32
@@ -178,35 +188,18 @@ for i in range(max_steps):
 
   # forward pass
   emb = C[Xb] # embed the characters into vectors
-  embcat = emb.view(emb.shape[0], -1) # concatenate the vectors
-  # Linear layer
-  h_pre_act = embcat @ W1 #+ b1 hidden layer pre-activation
-  # Standardize the hidden layer to have a guassian distribution:
-  bnmeani = h_pre_act.mean(0, keepdim=True)
-  bnstdi = h_pre_act.std(0, keepdim=True)
-  h_pre_act = (h_pre_act - bnmeani) / bnstdi
-
-  with torch.no_grad():
-      bnmean_running = 0.999 * bnmean_running + 0.001 * bnmeani
-      bnstd_running = 0.999 * bnstd_running + 0.001 * bnstdi
-
-  # But we also need to scale the values with a gain and offset them using a bias.
-  # This is done to allow for some wiggle room in the distribution during training.
-  # Notice that for the first iteration all the gains will be 1 and  the biases
-  # will be zero so this is a "no-op" for the first iteration. The gains and biases
-  # will be updated during back propagation.
-  h_pre_act = bngain * h_pre_act + bnbias # batch norm
-  # Non-linearity
-  h = torch.tanh(h_pre_act) # hidden layer
-  logits = h @ W2 + b2 # output layer
-  loss = F.cross_entropy(logits, Yb) # loss function
-
-  # backward pass
+  x = emb.view(emb.shape[0], -1) # concatenate the vectors
+  for layer in layers:
+    x = layer(x)
+  loss = F.cross_entropy(x, Yb)
+ 
+  for layer in layers:
+      layer.out.retain_grad()
   for p in parameters:
-    p.grad = None
+      p.grad = None
+
   loss.backward()
 
-  # update
   lr = 0.1 if i < 100000 else 0.01 # step learning rate decay
   for p in parameters:
     p.data += -lr * p.grad
@@ -215,19 +208,14 @@ for i in range(max_steps):
   if i % 10000 == 0: # print every once in a while
     print(f'{i:7d}/{max_steps:7d}: {loss.item():.4f}')
   lossi.append(loss.log10().item())
-  #plt.hist(h.view(-1).tolist(), 50)
-  #plt.show()
-  #breakpoint()
-  #(Pdb) torch.sum(h.eq(1.0)).item()
-  #290
-  #(Pdb) torch.sum(h.eq(-1.0)).item()
-  #235
+  # With the following breakpoint we can stop the training and inspect the
+  # network state: 
+  # (Pdb) histogram(layers)
+  breakpoint()
 
 print(f'Loss after training: {loss.item():.4f}')
 
 
-#plt.plot(lossi)
-#plt.show()
 
 
 # Calibrate the batch normalization parameters after training
