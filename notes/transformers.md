@@ -21,6 +21,16 @@ cost.
 2021 GPT-J
 ```
 
+### Backgound
+Transformers are a type of neural network architecture that is used for
+processing sequential data. They are used for tasks like translation, text
+generation, and summarization.
+So they can take text as input but neural networks don't process text, instead
+the text need to be transformed into a format that the neural network can work
+with. This is done by first tokenizing the text, and then these tokens are
+converted into [embeddings](./embeddings.md) which are vectors of numbers that
+represent the tokens. These embeddings are then fed into the neural network.
+
 ### Encoders
 Are used for classification and regression tasks.
 
