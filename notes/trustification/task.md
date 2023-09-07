@@ -85,6 +85,11 @@ information and other information that we have available to us in the
 trustification database. If we could collect this information and add it as
 context we could use an LLM to generate a report.
 
+### Use a language model to generate suggestions fixing vulnerabilities
+The idea here would be that we gather information about the vulnerability
+and craft a prompt to get an LLM to generate suggestions for how to fix the
+reported vulnerability.
+
 ### Measure of confidence of software projects
 * Recent github activity
 * Release number >= 1.0
