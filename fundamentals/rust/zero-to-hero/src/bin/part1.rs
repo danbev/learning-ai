@@ -689,7 +689,7 @@ fn main() -> io::Result<()> {
     plot(&xs, &ys, "tanh");
 
     let mut o = n.tanh();
-    o.label("tanh");
+    o.label("o");
 
     println!("o: {o}");
 
