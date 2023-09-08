@@ -84,7 +84,7 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type="stuff", # "stuff" as in stuff the documents retreived into the template.
     verbose=False,
     return_source_documents=True,
-    chain_type_kwargs={"prompt": prompt_template, "verbose": True,}
+    chain_type_kwargs={"prompt": prompt_template, "verbose": False,}
 )
 
 question = "Explain what LoRa is in the context of IoT"
