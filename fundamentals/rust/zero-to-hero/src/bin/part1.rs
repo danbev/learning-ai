@@ -118,7 +118,7 @@ fn main() -> io::Result<()> {
     struct Value<'a> {
         data: f64,
         label: Option<String>,
-        children: Option<(&'a Value<'a>, &'a Value<'a>)>,
+        children: Option<(&'a Value<'a>, Option<&'a Value<'a>>)>,
         operation: Option<String>,
         grad: RefCell<f64>,
     }
@@ -147,7 +147,7 @@ fn main() -> io::Result<()> {
             data: f64,
             label: Option<String>,
             lhs: &'a Value<'a>,
-            rhs: &'a Value<'a>,
+            rhs: Option<&'a Value<'a>>,
             op: String,
         ) -> Self {
             Value {
@@ -165,7 +165,13 @@ fn main() -> io::Result<()> {
     impl<'a, 'b: 'a> Add<&'b Value<'b>> for &'a Value<'a> {
         type Output = Value<'a>;
         fn add(self, other: &'b Value<'b>) -> Self::Output {
-            Value::new_with_children(self.data + other.data, None, self, other, "+".to_string())
+            Value::new_with_children(
+                self.data + other.data,
+                None,
+                self,
+                Some(other),
+                "+".to_string(),
+            )
         }
     }
 
@@ -174,7 +180,13 @@ fn main() -> io::Result<()> {
     impl<'a, 'b: 'a> Sub<&'b Value<'b>> for &'a Value<'a> {
         type Output = Value<'a>;
         fn sub(self, other: &'b Value<'b>) -> Self::Output {
-            Value::new_with_children(self.data - other.data, None, self, other, "-".to_string())
+            Value::new_with_children(
+                self.data - other.data,
+                None,
+                self,
+                Some(other),
+                "-".to_string(),
+            )
         }
     }
 
@@ -183,7 +195,13 @@ fn main() -> io::Result<()> {
     impl<'a, 'b: 'a> Mul<&'b Value<'b>> for &'a Value<'a> {
         type Output = Value<'a>;
         fn mul(self, other: &'b Value<'b>) -> Self::Output {
-            Value::new_with_children(self.data * other.data, None, self, other, "*".to_string())
+            Value::new_with_children(
+                self.data * other.data,
+                None,
+                self,
+                Some(other),
+                "*".to_string(),
+            )
         }
     }
 
@@ -199,7 +217,10 @@ fn main() -> io::Result<()> {
                 self.label.as_ref().unwrap_or(&"".to_string())
             )?;
             if let Some((lhs, rhs)) = &self.children {
-                write!(f, ", lhs={}, rhs={}", lhs.data, rhs.data)?;
+                write!(f, ", lhs={}", lhs.data)?;
+                if let Some(r) = rhs {
+                    write!(f, ", rhs={}", r.data)?;
+                }
                 write!(f, ", op=\"{}\"", &self.operation.as_ref().unwrap())?;
             }
             write!(f, ", grad={})", self.grad.borrow())
@@ -207,9 +228,10 @@ fn main() -> io::Result<()> {
     }
 
     use std::collections::HashSet;
+    use std::f64;
     #[allow(dead_code)]
     impl<'a> Value<'a> {
-        fn children(&self) -> Option<(&'a Value<'a>, &'a Value<'a>)> {
+        fn children(&self) -> Option<(&'a Value<'a>, Option<&'a Value<'a>>)> {
             self.children
         }
 
@@ -218,6 +240,12 @@ fn main() -> io::Result<()> {
         }
         fn label(&mut self, label: &str) {
             self.label = Some(label.to_string())
+        }
+
+        fn tanh(&self) -> Value {
+            let x = self.data;
+            let t = (f64::exp(2.0 * x) - 1.0) / (f64::exp(2.0 * x) + 1.0);
+            Value::new_with_children(t, None, self, None, "tanh".to_string())
         }
     }
 
@@ -255,7 +283,6 @@ fn main() -> io::Result<()> {
                 if let Some((lhs, rhs)) = &node.children {
                     let op_id = format!("{}{}", node_id, node.operation.as_ref().unwrap());
                     let lhs_id = *lhs as *const _ as usize;
-                    let rhs_id = *rhs as *const _ as usize;
 
                     out += &format!(
                         "  \"{}\" [label=\"{}\"]\n",
@@ -265,10 +292,13 @@ fn main() -> io::Result<()> {
                     out += &format!("  \"{}\" -> \"{}\"\n", op_id, node_id,);
 
                     out += &format!("  \"{}\" -> \"{}\"\n", lhs_id, op_id,);
-                    out += &format!("  \"{}\" -> \"{}\"\n", rhs_id, op_id);
+                    if let Some(r) = rhs {
+                        let rhs_id = *r as *const _ as usize;
+                        out += &format!("  \"{}\" -> \"{}\"\n", rhs_id, op_id);
+                        stack.push(&*r);
+                    };
 
                     stack.push(&*lhs);
-                    stack.push(&*rhs);
                 }
             }
 
@@ -658,10 +688,12 @@ fn main() -> io::Result<()> {
     let ys = xs.mapv(|x| f64::tanh(x));
     plot(&xs, &ys, "tanh");
 
-    let o = n.data.tanh();
+    let mut o = n.tanh();
+    o.label("tanh");
+
     println!("o: {o}");
 
-    std::fs::write("plots/part1_single_neuron.dot", n.dot()).unwrap();
+    std::fs::write("plots/part1_single_neuron.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron");
 
     Ok(())
