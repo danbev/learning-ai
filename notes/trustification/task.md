@@ -93,9 +93,14 @@ language I think).
 As an initial investigation into this,
 [vex-search.py](../../langchain/src/vex-search.py) takes a single VEX documents
 and inserts it into an in-memory vector database. It will then use LangChain
-to ask an LLM to generate a summary for the vulnerability. LangChain will first
-query the vector database for related documents and then pass those to the LLM
-as context. The LLM will then generate a summary for the vulnerability:
+to ask an LLM to generate a summary for the vulnerability using a question like
+this:
+```
+"Summaries RHSA-2020:5566 using a short sentence, including a list of CVE's and references."
+```
+LangChain will first query the vector database for related documents and then
+pass those to the LLM as context. The LLM will then generate a summary for the
+vulnerability:
 ```console
 (langch) $ python src/vex-search.py 
 Answer:
