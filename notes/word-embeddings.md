@@ -77,7 +77,12 @@ developed by Google.
 Was developed by Google in 2013. It is a shallow neural network that takes a
 word as input and tries to predict the surrounding words. Notice that in this
 case the neural network is used to calculate the weighs which are adjusted to
-minimize the loss function. The weights the become the word embeddings.
+minimize the loss function.
+
+What is interesting about this is that normally a nueral network is used to
+train weights that are then used to make predictions on new data. In this case
+the neural network is used to calculate the weights and then the weights are
+used as the word embeddings. So `the weights are the word embeddings`.
 
 So how to we train this network to get it to calculate/adjust the weights?  
 This is done by taking a specific word in the middle of a sentence and then
