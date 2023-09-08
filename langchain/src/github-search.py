@@ -67,6 +67,9 @@ for d in docs:
 
 template = """I will provide you pieces of [Context] to answer the [Question]. 
 If you don't know the answer based on [Context] just say that you don't know, don't try to make up an answer. 
+Translate the answer into Swedish if you can. If you cannot translate the answer,
+just say that you cannot translate it show the aswer in the English.
+
 [Context]: {context} 
 [Question]: {question} 
 Helpful Answer:"""
@@ -81,7 +84,7 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type="stuff", # "stuff" as in stuff the documents retreived into the template.
     verbose=False,
     return_source_documents=True,
-    chain_type_kwargs={"prompt": prompt_template, "verbose": False}
+    chain_type_kwargs={"prompt": prompt_template, "verbose": True,}
 )
 
 question = "Explain what LoRa is in the context of IoT"
