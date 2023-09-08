@@ -90,6 +90,30 @@ This report could be provided in the users preferred language as well by
 instructing the LLM to do so (would require the llm to have been trained on that
 language I think).
 
+As an initial investigation into this,
+[vex-search.py](../../langchain/src/vex-search.py) takes a single VEX documents
+and inserts it into an in-memory vector database. It will then use LangChain
+to ask an LLM to generate a summary for the vulnerability. LangChain will first
+query the vector database for related documents and then pass those to the LLM
+as context. The LLM will then generate a summary for the vulnerability:
+```console
+(langch) $ python src/vex-search.py 
+Answer:
+RHSA-2020:5566 is a security advisory that addresses multiple vulnerabilities in OpenSSL. The advisory includes fixes for CVE-2020-1971. For more information, you can refer to the following references:
+
+- CVE-2020-1971: [Link to CVE-2020-1971](https://access.redhat.com/security/cve/CVE-2020-1971)
+- RHSA-2020:5566: [Link to RHSA-2020:5566](https://access.redhat.com/security/cve/RHSA-2020:5566)
+```
+The result from LangChain can also include the source documents that were used
+which might be relevant for the user to know:
+```console
+source_documents:
+./src/vex-stripped.json
+./src/vex-stripped.json
+./src/vex-stripped.json
+./src/vex-stripped.json
+```
+
 ### Use a language model to generate suggestions fixing vulnerabilities
 The idea here would be that we gather information about the vulnerability
 and craft a prompt to get an LLM to generate suggestions for how to fix the
