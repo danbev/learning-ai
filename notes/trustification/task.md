@@ -86,6 +86,10 @@ it references. What might be possible is to fetch this related data and pass
 that to an LLM which can then generate a summary. This summary could then 
 be displayed in the trustification UI.
 
+This report could be provided in the users preferred language as well by
+instructing the LLM to do so (would require the llm to have been trained on that
+language I think).
+
 ### Use a language model to generate suggestions fixing vulnerabilities
 The idea here would be that we gather information about the vulnerability
 and craft a prompt to get an LLM to generate suggestions for how to fix the
