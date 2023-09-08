@@ -111,7 +111,6 @@ fn main() -> io::Result<()> {
     println!("slope (d2 - d1) / h = {}", (d2 - d1) / h);
 
     // -----------------  micrograd overview ---------------------------
-    //TODO: add micrograd overview here
     use std::cell::RefCell;
 
     #[derive(Debug, Clone)]
@@ -532,22 +531,22 @@ fn main() -> io::Result<()> {
     // And then we inspect how those nudges affected the l:
     println!("l: {l:.6}");
 
-    // Next section is #2 "a neuron".
+    // Next section is "Manual backpropagation example #2: a neuron".
 
-    // Network with one single neuron (but without an activation function) and
-    // two inputs:
+    // This will show a neural network with one single neuron (but without an
+    // activation function for now) and two inputs:
     //  +----+
     //  | x₁ |\
     //  +----+ \ w₁
     //          \
-    //           +---------------------+
-    //           |  x₁*w₁ + x₂*w₂ + b  | ----------->
-    //           +---------------------+
+    //           +-----------------------+
+    //           |        n              |
+    //           |  (x₁*w₁ + x₂*w₂) + b  | ----------->
+    //           +-----------------------+
     //          /
     //  +----+ / w₂
     //  | x₂ |/
     //  +----+
-
     // Inputs
     let x1 = Value::new(2.0, "x1");
     let x2 = Value::new(0.0, "x2");
@@ -574,8 +573,93 @@ fn main() -> io::Result<()> {
     let mut x1w1x2w2 = &x1w1 + &x2w2; // this is the sum part of the "dot" product.
     x1w1x2w2.label("x1w1x + 2w2");
     println!("x1w1x2w2: {x1w1x2w2}");
+
+    // The following was not part of the youtube video, but is just me trying
+    // to get an intuition for what is going on. Following the operations is
+    // pretty easy but I feel that I loose a sense about what is actually
+    // on and why we are performing these operations.
+    //
+    // We can try to visualize this neuron as performing the following:
+    // We have our two inputs:
+    //
+    //                ^
+    //             -6 |
+    //                |
+    //             -5 |
+    //                |
+    //             -4 -
+    //                |
+    //             -3 -
+    //                |
+    // x₁-axis     -2 -
+    //                |
+    //             -1 -
+    //                |
+    // x₂ =  0.0 ---> 0--|--|--|--|--|--|-->
+    //                |  1  2  3  4  5  6
+    //              1 -              x₂-axis
+    //                |
+    //              2 - <--- x₁ = 2.0
+    //                |
+    //              3 -
+    //                |
+    //                V
+    //
+    // And the edges to the neuron are scaling the inputs:
+    // y = w₁x₁ + w₂x₂ + b
+    // And we can plug in our values:
+    // (-3.0 * 2.0) + (1.0 * 0.0)
+    //         -6.0 + 0.0
+    //
+    // If we focus on the first two terms we can see that they are scaling
+    // points on the x₁ and x₂ axis:
+    //                ^
+    //                |     ( w₁  * x₁)
+    //             -6 |<---(-3.0 * 2.0)
+    //                |
+    //             -5 |
+    //                |
+    //             -4 -
+    //                |
+    //             -3 -
+    //                |
+    // x₁-axis     -2 -
+    //                |
+    //             -1 -
+    //                |
+    // (1.0 * 0)--->  0--|--|--|--|--|--|-->
+    //                |  1  2  3  4  5  6
+    //              1 -              x₂-axis
+    //                |
+    //              2 - <--- x₁ = 2.0
+    //                |
+    //              3 -
+    //                |
+    //                V
+    //
+    // In this case because x₂ is 0, the point will be (-6, 0). We then
+    // add the bias which will give us the y value of the point. We can think
+    // of y as coming out through the screen towards us reaching 0.7 units
+    // outwards. That is it is a point above the (x₁, x₂) plane shown above.
+    //
+    // We then add the bias to the point (-6, 0) to get the final point:
+    // y = -6.0 + 6.7 = 0.7
+    // ( x₁,  x₂,   y)
+    // (-6.0, 0.0, 0.7) which is a point in 3D space. The y value is the
+    // height of the point. This is sometimes called the pre-activation value.
+    // It is the y value, in this case 0.7 that will be passed to the activation
+    // function which will transform it into the final output value of the
+    // neuron.
     let n = &x1w1x2w2 + &b;
-    println!("n: {n}");
+    println!("n pre_activation value: {n}");
+
+    // Print the tanh function
+    let xs = Array::range(-5., 5., 0.25);
+    let ys = xs.mapv(|x| f64::tanh(x));
+    plot(&xs, &ys, "tanh");
+
+    let o = n.data.tanh();
+    println!("o: {o}");
 
     std::fs::write("plots/part1_single_neuron.dot", n.dot()).unwrap();
     run_dot("part1_single_neuron");
@@ -625,11 +709,11 @@ fn plot(xs: &Array1<f64>, ys: &Array1<f64>, name: &str) {
         .set_labels("x", "y")
         .clear_current_axes();
     plot.clear_current_figure();
-    plot.set_title("Plot of f(x)")
+    plot.set_title(name)
         .set_frame_borders(false)
         .set_frame_borders(true)
         .set_frame_borders(false);
     plot.grid_and_labels("x", "y");
     plot.add(&curve);
-    let _ = plot.save(&format!("./plots/{name}.svg")).unwrap();
+    let _ = plot.save_and_show(&format!("./plots/{name}.svg")).unwrap();
 }
