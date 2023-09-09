@@ -696,24 +696,45 @@ fn main() -> io::Result<()> {
     let n = &x1w1x2w2 + &b;
     println!("n pre_activation value: {n}");
 
-    // Print the tanh function
-    let xs = Array::range(-5., 5., 0.25);
+    // Print the tanh function for reference.
     let ys = xs.mapv(|x| f64::tanh(x));
     plot(&xs, &ys, "tanh");
 
     let mut o = n.tanh();
     o.label("o");
+
+    std::fs::write("plots/part1_single_neuron3.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron3");
+
+    // Now lets perform the backpropagation.
+    // do with regards to itself is just 1
     *o.grad.borrow_mut() = 1.0;
+    // We need to calculate the local derivative of the tanh function.
+    // This is the operation that this node performed:
     // o = tanh(n)
-    // d0/dn = 1 - tanh(n)^2
+    // And the derivative of tanh is:
+    // do/dn = 1 - tanh(n)^2
     // And we alreay have tanh(n) in o so we can just square it to get the
     // derivative:
     *n.grad.borrow_mut() = 1.0 - o.data.powf(2.0);
+    // Next we have a plus/sum node which we know from before will just pass
+    // the gradient through from the node ahead of it.
+    *b.grad.borrow_mut() = *n.grad.borrow();
+    *x1w1x2w2.grad.borrow_mut() = *n.grad.borrow();
+    // The next nodes is also a sum node so we can just pass the gradient
+    // through.
+    *x1w1.grad.borrow_mut() = *x1w1x2w2.grad.borrow();
+    *x2w2.grad.borrow_mut() = *x1w1x2w2.grad.borrow();
+    // Next we have the multiplication nodes.
+    *x1.grad.borrow_mut() = w1.data * x1w1.grad.borrow().clone();
+    *w1.grad.borrow_mut() = x1.data * x1w1.grad.borrow().clone();
+    *x2.grad.borrow_mut() = w2.data * x2w2.grad.borrow().clone();
+    *w2.grad.borrow_mut() = x2.data * x2w2.grad.borrow().clone();
 
     println!("o: {o}");
 
-    std::fs::write("plots/part1_single_neuron.dot", o.dot()).unwrap();
-    run_dot("part1_single_neuron");
+    std::fs::write("plots/part1_single_neuron4.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron4");
 
     Ok(())
 }
