@@ -244,7 +244,18 @@ fn main() -> io::Result<()> {
 
         fn tanh(&self) -> Value {
             let x = self.data;
+            //
+            // sinh(x) = (e^x - e^-x) / 2
+            //
+            // cosh(x) = (e^x + e^-x) / 2
+            //
+            //         sinh(x)    e^x - e^-x
+            // tanh =  ------- = -----------
+            //         cosh(x)    e^x + e^-x
+            let t = (f64::exp(x) - f64::exp(-x)) / (f64::exp(x) + f64::exp(-x));
+            println!("tanh({}) = {}", x, t);
             let t = (f64::exp(2.0 * x) - 1.0) / (f64::exp(2.0 * x) + 1.0);
+            println!("tanh({}) = {}", x, t);
             Value::new_with_children(t, None, self, None, "tanh".to_string())
         }
     }
@@ -588,7 +599,9 @@ fn main() -> io::Result<()> {
     println!("{w1}, {w2}");
 
     // Bias of the neuron.
-    let b = Value::new(6.7, "b");
+    //let b = Value::new(6.7, "b");
+    // This magic number is a value use to make the numbers come out nice.
+    let b = Value::new(6.8813735870195432, "b");
     println!("{b}");
 
     // This is the edge to the 'x1w1' node
@@ -690,6 +703,12 @@ fn main() -> io::Result<()> {
 
     let mut o = n.tanh();
     o.label("o");
+    *o.grad.borrow_mut() = 1.0;
+    // o = tanh(n)
+    // d0/dn = 1 - tanh(n)^2
+    // And we alreay have tanh(n) in o so we can just square it to get the
+    // derivative:
+    *n.grad.borrow_mut() = 1.0 - o.data.powf(2.0);
 
     println!("o: {o}");
 
