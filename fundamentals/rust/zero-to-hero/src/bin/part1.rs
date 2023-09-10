@@ -12,7 +12,12 @@ fn f(xs: Array1<f64>) -> Array1<f64> {
 fn f_prime(xs: Array1<f64>) -> Array1<f64> {
     xs.mapv(|x| 6.0 * x - 4.0)
 }
-
+// The lots generated in this code are available in the plots directory
+// and also included in the README.md file.
+// During development it was useful run the README.md using grip which
+// watches the file and provides a live preview of the README.md and makes
+// it easy to inspect the plots without having them pop up which can be a little
+// annoying otherwise.
 fn main() -> io::Result<()> {
     // -----------------  intro ---------------------------
     println!("f(x) = 3.0 * x * x - 4.0 * x + 5.0");
