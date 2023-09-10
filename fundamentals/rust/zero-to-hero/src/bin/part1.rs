@@ -1,6 +1,7 @@
 use ndarray::prelude::*;
 use ndarray::Array;
 use plotpy::{Curve, Plot};
+use std::borrow::BorrowMut;
 use std::io::{self};
 
 fn f(xs: Array1<f64>) -> Array1<f64> {
@@ -118,14 +119,34 @@ fn main() -> io::Result<()> {
     // -----------------  micrograd overview ---------------------------
     use std::cell::RefCell;
 
-    #[derive(Debug, Clone)]
+    //#[derive(Debug)]
     #[allow(dead_code)]
     struct Value<'a> {
-        data: f64,
+        data: RefCell<f64>,
         label: Option<String>,
         children: Option<(&'a Value<'a>, Option<&'a Value<'a>>)>,
-        operation: Option<String>,
+        operation: Option<Operation>,
         grad: RefCell<f64>,
+    }
+
+    #[derive(Debug, Clone)]
+    enum Operation {
+        Add,
+        Sub,
+        Mul,
+        Tanh,
+    }
+
+    // Implement as_str function for Operation enum
+    impl Operation {
+        fn as_str(&self) -> &'static str {
+            match self {
+                Operation::Add => "+",
+                Operation::Sub => "-",
+                Operation::Mul => "*",
+                Operation::Tanh => "tanh",
+            }
+        }
     }
 
     // Some of the comments below have been kept as they were prompts for
@@ -135,11 +156,48 @@ fn main() -> io::Result<()> {
     impl<'a> Value<'a> {
         fn new(data: f64, label: &str) -> Self {
             Value {
-                data,
+                data: RefCell::new(data),
                 label: Some(label.to_string()),
                 children: None,
                 operation: None,
                 grad: RefCell::new(0.0),
+            }
+        }
+    }
+
+    impl<'a> Value<'a> {
+        fn backward(&self) {
+            match self.operation {
+                Some(Operation::Add) => {
+                    // Think of this as d = c + e
+                    // Then &self if d and self.children is (c, e), and sinse
+                    // addition passes through the gradient we can just add
+                    // set the gradients of the children to the gradient of d.
+                    let (lhs, rhs) = self.children.unwrap();
+                    let rhs = rhs.unwrap(); // addition must have a right hand side.
+                    *lhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
+                }
+                Some(Operation::Sub) => {
+                    let (lhs, rhs) = self.children.unwrap();
+                    let rhs = rhs.unwrap(); // subtraction must have a right hand side.
+                    *lhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
+                }
+                Some(Operation::Mul) => {
+                    let (lhs, rhs) = self.children.unwrap();
+                    let rhs = rhs.unwrap(); // multiplication must have a right hand side.
+                    *lhs.grad.borrow_mut() = *rhs.data.borrow() * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() = *lhs.data.borrow() * *self.grad.borrow();
+                }
+                Some(Operation::Tanh) => {
+                    let (lhs, _) = self.children.unwrap();
+                    *lhs.grad.borrow_mut() =
+                        1.0 - self.data.borrow().powf(2.0) * *self.grad.borrow();
+                }
+                None => {
+                    println!("No backward for you! {}", self.label.as_ref().unwrap());
+                }
             }
         }
     }
@@ -153,10 +211,10 @@ fn main() -> io::Result<()> {
             label: Option<String>,
             lhs: &'a Value<'a>,
             rhs: Option<&'a Value<'a>>,
-            op: String,
+            op: Operation,
         ) -> Self {
             Value {
-                data,
+                data: RefCell::new(data),
                 label,
                 children: Some((lhs, rhs)),
                 operation: Some(op),
@@ -167,15 +225,16 @@ fn main() -> io::Result<()> {
 
     // Add Add trait implementation for Value and add use statement
     use std::ops::Add;
-    impl<'a, 'b: 'a> Add<&'b Value<'b>> for &'a Value<'a> {
+    impl<'a> Add<&'a Value<'a>> for &'a Value<'a> {
         type Output = Value<'a>;
-        fn add(self, other: &'b Value<'b>) -> Self::Output {
+
+        fn add(self, other: &'a Value<'a>) -> Self::Output {
             Value::new_with_children(
-                self.data + other.data,
+                *self.data.borrow() + *other.data.borrow(),
                 None,
                 self,
                 Some(other),
-                "+".to_string(),
+                Operation::Add,
             )
         }
     }
@@ -186,11 +245,11 @@ fn main() -> io::Result<()> {
         type Output = Value<'a>;
         fn sub(self, other: &'b Value<'b>) -> Self::Output {
             Value::new_with_children(
-                self.data - other.data,
+                *self.data.borrow() - *other.data.borrow(),
                 None,
                 self,
                 Some(other),
-                "-".to_string(),
+                Operation::Sub,
             )
         }
     }
@@ -201,11 +260,11 @@ fn main() -> io::Result<()> {
         type Output = Value<'a>;
         fn mul(self, other: &'b Value<'b>) -> Self::Output {
             Value::new_with_children(
-                self.data * other.data,
+                *self.data.borrow() * *other.data.borrow(),
                 None,
                 self,
                 Some(other),
-                "*".to_string(),
+                Operation::Mul,
             )
         }
     }
@@ -218,15 +277,15 @@ fn main() -> io::Result<()> {
             write!(
                 f,
                 "Value(data={}, label: {}",
-                self.data,
+                *self.data.borrow(),
                 self.label.as_ref().unwrap_or(&"".to_string())
             )?;
             if let Some((lhs, rhs)) = &self.children {
-                write!(f, ", lhs={}", lhs.data)?;
+                write!(f, ", lhs={}", *lhs.data.borrow())?;
                 if let Some(r) = rhs {
-                    write!(f, ", rhs={}", r.data)?;
+                    write!(f, ", rhs={}", *r.data.borrow())?;
                 }
-                write!(f, ", op=\"{}\"", &self.operation.as_ref().unwrap())?;
+                write!(f, ", op=\"{:?}\"", &self.operation.as_ref().unwrap())?;
             }
             write!(f, ", grad={})", self.grad.borrow())
         }
@@ -240,15 +299,16 @@ fn main() -> io::Result<()> {
             self.children
         }
 
-        fn operation(&self) -> Option<String> {
+        fn operation(&self) -> Option<Operation> {
             self.operation.clone()
         }
+
         fn label(&mut self, label: &str) {
             self.label = Some(label.to_string())
         }
 
         fn tanh(&self) -> Value {
-            let x = self.data;
+            let x = *self.data.borrow();
             //
             // sinh(x) = (e^x - e^-x) / 2
             //
@@ -261,7 +321,7 @@ fn main() -> io::Result<()> {
             println!("tanh({}) = {}", x, t);
             let t = (f64::exp(2.0 * x) - 1.0) / (f64::exp(2.0 * x) + 1.0);
             println!("tanh({}) = {}", x, t);
-            Value::new_with_children(t, None, self, None, "tanh".to_string())
+            Value::new_with_children(t, None, self, None, Operation::Tanh)
         }
     }
 
@@ -290,20 +350,20 @@ fn main() -> io::Result<()> {
                     "  \"{}\" [label=\"{} value: {:.4}, grad: {:.4}\" shape=record]\n",
                     node_ptr as usize,
                     label_str(node),
-                    node.data,
+                    *node.data.borrow(),
                     node.grad.borrow(),
                 );
 
                 seen.insert(node_ptr);
 
                 if let Some((lhs, rhs)) = &node.children {
-                    let op_id = format!("{}{}", node_id, node.operation.as_ref().unwrap());
+                    let op_id = format!("{}{}", node_id, node.operation.as_ref().unwrap().as_str());
                     let lhs_id = *lhs as *const _ as usize;
 
                     out += &format!(
                         "  \"{}\" [label=\"{}\"]\n",
                         op_id,
-                        node.operation.as_ref().unwrap_or(&"".to_string())
+                        node.operation.as_ref().unwrap().as_str().to_string()
                     );
                     out += &format!("  \"{}\" -> \"{}\"\n", op_id, node_id,);
 
@@ -323,20 +383,20 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let mut a = Value::new(2.0, "a");
+    let a = Value::new(2.0, "a");
     println!("a = {}", a);
-    let mut b = Value::new(-3.0, "b");
+    let b = Value::new(-3.0, "b");
     println!("{a} + {b} = {}", &a + &b);
     println!("{a} - {b} = {}", &a - &b);
     println!("{a} * {b} = {}", &a * &b);
-    let mut c = Value::new(10.0, "c");
+    let c = Value::new(10.0, "c");
     let mut e = &a * &b;
     e.label("e");
     let mut d = &e + &c;
     d.label("d");
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
-    let mut f = Value::new(-2.0, "f");
+    let f = Value::new(-2.0, "f");
     let mut l = &d * &f;
     l.label("l");
 
@@ -370,8 +430,8 @@ fn main() -> io::Result<()> {
         let f = Value::new(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
-        let l2 = l.data;
-        let _da = (l2 - l1) / h;
+        let l2 = l.data.borrow();
+        let _da = (*l2 - *l1.borrow()) / h;
         //println!("\nDeriviative of l with respect to a: {_da:.6}");
 
         // Now, lets compute the derivative of 'l' with respect to 'l'.
@@ -385,8 +445,8 @@ fn main() -> io::Result<()> {
         let f = Value::new(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
-        let l2 = l.data + h; // Notice the +h here.
-        let dl = (l2 - l1) / h;
+        let l2 = *l.data.borrow() + h; // Notice the +h here.
+        let dl = (l2 - *l1.borrow()) / h;
         println!("Deriviative of l with respect to l: {dl:.6}");
 
         //
@@ -416,8 +476,8 @@ fn main() -> io::Result<()> {
         let f = Value::new(-2.0 + h, "f"); // Notice the +h here.
         let mut l = &d * &f;
         l.label("l");
-        let l2 = l.data;
-        let df = (l2 - l1) / h;
+        let l2 = *l.data.borrow();
+        let df = (l2 - *l1.borrow()) / h;
         println!("Deriviative of l with respect to f: {df:.6}");
 
         // No lets compute the derivative of l with respect to f:
@@ -433,13 +493,13 @@ fn main() -> io::Result<()> {
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
-        d.data += h; // Notice the +h here.
+        *d.data.borrow_mut() += h; // Notice the +h here.
         d.label("d");
         let f = Value::new(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        let dd = (l2 - l1) / h;
+        let dd = (*l2.borrow() - *l1.borrow()) / h;
         println!("Deriviative of l with respect to d: {dd:.6}");
 
         // Now we want to compute the derivative of L with respect to c.
@@ -463,8 +523,8 @@ fn main() -> io::Result<()> {
         //  the chain.
         let a = Value::new(2.0, "a");
         let b = Value::new(-3.0, "b");
-        let mut c = Value::new(10.0, "c");
-        c.data += h; // Notice the +h here.
+        let c = Value::new(10.0, "c");
+        *c.data.borrow_mut() += h; // Notice the +h here.
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
@@ -473,7 +533,7 @@ fn main() -> io::Result<()> {
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        let dc = (l2 - l1) / h;
+        let dc = (*l2.borrow() - *l1.borrow()) / h;
         println!("Deriviative of l with respect to c: {dc:.6}");
 
         // And the same thing applies for 'e' as for 'c':
@@ -482,14 +542,14 @@ fn main() -> io::Result<()> {
         let c = Value::new(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
-        e.data += h; // Notice the +h here.
+        *e.data.borrow_mut() += h; // Notice the +h here.
         let mut d = &e + &c;
         d.label("d");
         let f = Value::new(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        let de = (l2 - l1) / h;
+        let de = (*l2.borrow() - *l1.borrow()) / h;
         println!("Deriviative of l with respect to e: {de:.6}");
 
         // Next we want to compute dL/da. So we want to compute the derivative
@@ -508,8 +568,8 @@ fn main() -> io::Result<()> {
         // (ab + hb - ab)/h
         // (hb)/h = b
         // dl/da = (dl/de) * (de/da) = -2.0 * -3.0 = 6.0
-        let mut a = Value::new(2.0, "a");
-        a.data += h; // Notice the +h here.
+        let a = Value::new(2.0, "a");
+        *a.data.borrow_mut() += h; // Notice the +h here.
         let b = Value::new(-3.0, "b");
         let c = Value::new(10.0, "c");
         let mut e = &a * &b;
@@ -520,12 +580,12 @@ fn main() -> io::Result<()> {
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        let da = (l2 - l1) / h;
+        let da = (*l2.borrow() - *l1.borrow()) / h;
         println!("Deriviative of l with respect to a: {da:.6}");
         // And the same applies for b:
         let a = Value::new(2.0, "a");
-        let mut b = Value::new(-3.0, "b");
-        b.data += h; // Notice the +h here.
+        let b = Value::new(-3.0, "b");
+        *b.data.borrow_mut() += h; // Notice the +h here.
         let c = Value::new(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
@@ -535,7 +595,7 @@ fn main() -> io::Result<()> {
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
-        let db = (l2 - l1) / h;
+        let db = (*l2.borrow() - *l1.borrow()) / h;
         println!("Deriviative of l with respect to b: {db:.6}");
         // Notice that we started a the node at the end and computed the local
         // derivative for it and then moved back in the graph calculating the
@@ -545,12 +605,12 @@ fn main() -> io::Result<()> {
     }
     // Set the gradients that were manually calculated above.
     *l.grad.borrow_mut() = 1.0;
-    *f.grad.borrow_mut() = d.data;
-    *d.grad.borrow_mut() = f.data;
-    *c.grad.borrow_mut() = 1.0 * f.data;
-    *e.grad.borrow_mut() = 1.0 * f.data;
-    *a.grad.borrow_mut() = *e.grad.borrow() * b.data;
-    *b.grad.borrow_mut() = *e.grad.borrow() * a.data;
+    *f.grad.borrow_mut() = *d.data.borrow();
+    *d.grad.borrow_mut() = *f.data.borrow();
+    *c.grad.borrow_mut() = 1.0 * *f.data.borrow();
+    *e.grad.borrow_mut() = 1.0 * *f.data.borrow();
+    *a.grad.borrow_mut() = *e.grad.borrow() * *b.data.borrow();
+    *b.grad.borrow_mut() = *e.grad.borrow() * *a.data.borrow();
 
     // Write the dot output to a file named "plots/part1_intrO.dot"
     std::fs::write("plots/part1_graph.dot", l.dot()).unwrap();
@@ -566,10 +626,10 @@ fn main() -> io::Result<()> {
     // The following simulates one set of an optimization that we would be
     // performed.
     // First we nudge the values of a, b, c, and f:
-    a.data += 0.001 * *a.grad.borrow();
-    b.data += 0.001 * *b.grad.borrow();
-    c.data += 0.001 * *c.grad.borrow();
-    f.data += 0.001 * *f.grad.borrow();
+    *a.data.borrow_mut() += 0.001 * *a.grad.borrow();
+    *b.data.borrow_mut() += 0.001 * *b.grad.borrow();
+    *c.data.borrow_mut() += 0.001 * *c.grad.borrow();
+    *f.data.borrow_mut() += 0.001 * *f.grad.borrow();
     // Then perform the forward pass again
     let e = &a * &b;
     let d = &e + &c;
@@ -725,7 +785,7 @@ fn main() -> io::Result<()> {
     // do/dn = 1 - tanh(n)^2
     // And we alreay have tanh(n) in o so we can just square it to get the
     // derivative:
-    *n.grad.borrow_mut() = 1.0 - o.data.powf(2.0);
+    *n.grad.borrow_mut() = 1.0 - o.data.borrow().powf(2.0);
     // Next we have a plus/sum node which we know from before will just pass
     // the gradient through from the node ahead of it.
     *b.grad.borrow_mut() = *n.grad.borrow();
@@ -735,10 +795,10 @@ fn main() -> io::Result<()> {
     *x1w1.grad.borrow_mut() = *x1w1x2w2.grad.borrow();
     *x2w2.grad.borrow_mut() = *x1w1x2w2.grad.borrow();
     // Next we have the multiplication nodes.
-    *x1.grad.borrow_mut() = w1.data * x1w1.grad.borrow().clone();
-    *w1.grad.borrow_mut() = x1.data * x1w1.grad.borrow().clone();
-    *x2.grad.borrow_mut() = w2.data * x2w2.grad.borrow().clone();
-    *w2.grad.borrow_mut() = x2.data * x2w2.grad.borrow().clone();
+    *x1.grad.borrow_mut() = *w1.data.borrow() * x1w1.grad.borrow().clone();
+    *w1.grad.borrow_mut() = *x1.data.borrow() * x1w1.grad.borrow().clone();
+    *x2.grad.borrow_mut() = *w2.data.borrow() * x2w2.grad.borrow().clone();
+    *w2.grad.borrow_mut() = *x2.data.borrow() * x2w2.grad.borrow().clone();
 
     println!("o: {o}");
 
@@ -747,6 +807,40 @@ fn main() -> io::Result<()> {
 
     // Now lets turn this manual backpropagation into functions that we can
     // call on our Value objects.
+
+    // Inputs
+    let x1 = Value::new(2.0, "x1");
+    let x2 = Value::new(0.0, "x2");
+    // Weights
+    let w1 = Value::new(-3.0, "w1");
+    let w2 = Value::new(1.0, "w2");
+    // Bias of the neuron.
+    //let b = Value::new(6.7, "b");
+    // This magic number is a value use to make the numbers come out nice.
+    let b = Value::new(6.8813735870195432, "b");
+    // This is the edge to the 'x1w1' node
+    let mut x1w1 = &x1 * &w1;
+    x1w1.label("x1*w1");
+    let mut x2w2 = &x2 * &w2;
+    x2w2.label("x2*w2");
+    let mut x1w1x2w2 = &x1w1 + &x2w2;
+    x1w1x2w2.label("x1w1x + 2w2");
+    let mut n = &x1w1x2w2 + &b;
+    n.label("n");
+    let mut o = n.tanh();
+    o.label("o");
+    println!("o: {o}");
+    std::fs::write("plots/part1_single_neuron4.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron4");
+    *o.grad.borrow_mut() = 1.0;
+    o.backward();
+    n.backward();
+    b.backward();
+    x1w1x2w2.backward();
+    x2w2.backward();
+    x1w1.backward();
+    std::fs::write("plots/part1_single_neuron5.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron5");
 
     Ok(())
 }
