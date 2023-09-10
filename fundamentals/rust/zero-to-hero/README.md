@@ -47,13 +47,22 @@ The first diagram/graph from the `intro` section looks like this:
 
 ![image](./plots/part1_graph.svg)
 
-The second diagram is of of the single neuron network:
+The second diagram is of of the single neuron network before gradients have
+been calculated:
 
-![image](./plots/part1_single_neuron.svg)
+![image](./plots/part1_single_neuron1.svg)
+
+Tanh graph for refrence:
+
+![image](./plots/tanh.svg)
+
+After adding the tanh activation function:
+
+![image](./plots/part1_single_neuron2.svg)
+
+After manually calculating the gradients:
 
 ![image](./plots/part1_single_neuron3.svg)
-
-![image](./plots/part1_single_neuron4.svg)
 
 [Neural Networks:  Zero to Hero]: https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ
 [The spelled-out intro to neural networks and backpropagation: building micrograd]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2

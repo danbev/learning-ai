@@ -12,7 +12,7 @@
 <g id="node1" class="node">
 <title>140735375398752</title>
 <polygon fill="none" stroke="black" points="1353,-54.5 1353,-90.5 1535,-90.5 1535,-54.5 1353,-54.5"/>
-<text text-anchor="middle" x="1444" y="-68.8" font-family="Times,serif" font-size="14.00">o: value: 0.7071, grad: 1.0000</text>
+<text text-anchor="middle" x="1444" y="-68.8" font-family="Times,serif" font-size="14.00">o: value: 0.7071, grad: 0.0000</text>
 </g>
 <!-- 140735375398752tanh -->
 <g id="node2" class="node">
@@ -30,7 +30,7 @@
 <g id="node3" class="node">
 <title>140735375398528</title>
 <polygon fill="none" stroke="black" points="1045,-54.5 1045,-90.5 1227,-90.5 1227,-54.5 1045,-54.5"/>
-<text text-anchor="middle" x="1136" y="-68.8" font-family="Times,serif" font-size="14.00">n: value: 0.8814, grad: 0.5000</text>
+<text text-anchor="middle" x="1136" y="-68.8" font-family="Times,serif" font-size="14.00">n: value: 0.8814, grad: 0.0000</text>
 </g>
 <!-- 140735375398528&#45;&gt;140735375398752tanh -->
 <g id="edge2" class="edge">
@@ -54,7 +54,7 @@
 <g id="node5" class="node">
 <title>140735375398376</title>
 <polygon fill="none" stroke="black" points="664,-82.5 664,-118.5 919,-118.5 919,-82.5 664,-82.5"/>
-<text text-anchor="middle" x="791.5" y="-96.8" font-family="Times,serif" font-size="14.00">x1w1x + 2w2: value: &#45;6.0000, grad: 0.5000</text>
+<text text-anchor="middle" x="791.5" y="-96.8" font-family="Times,serif" font-size="14.00">x1w1x + 2w2: value: &#45;6.0000, grad: 0.0000</text>
 </g>
 <!-- 140735375398376&#45;&gt;140735375398528+ -->
 <g id="edge4" class="edge">
@@ -66,7 +66,7 @@
 <g id="node6" class="node">
 <title>140735375397920</title>
 <polygon fill="none" stroke="black" points="700.5,-27.5 700.5,-63.5 882.5,-63.5 882.5,-27.5 700.5,-27.5"/>
-<text text-anchor="middle" x="791.5" y="-41.8" font-family="Times,serif" font-size="14.00">b: value: 6.8814, grad: 0.5000</text>
+<text text-anchor="middle" x="791.5" y="-41.8" font-family="Times,serif" font-size="14.00">b: value: 6.8814, grad: 0.0000</text>
 </g>
 <!-- 140735375397920&#45;&gt;140735375398528+ -->
 <g id="edge5" class="edge">
@@ -90,7 +90,7 @@
 <g id="node8" class="node">
 <title>140735375398072</title>
 <polygon fill="none" stroke="black" points="322,-110.5 322,-146.5 538,-146.5 538,-110.5 322,-110.5"/>
-<text text-anchor="middle" x="430" y="-124.8" font-family="Times,serif" font-size="14.00">x1*w1: value: &#45;6.0000, grad: 0.5000</text>
+<text text-anchor="middle" x="430" y="-124.8" font-family="Times,serif" font-size="14.00">x1*w1: value: &#45;6.0000, grad: 0.0000</text>
 </g>
 <!-- 140735375398072&#45;&gt;140735375398376+ -->
 <g id="edge7" class="edge">
@@ -102,7 +102,7 @@
 <g id="node9" class="node">
 <title>140735375398224</title>
 <polygon fill="none" stroke="black" points="324,-55.5 324,-91.5 536,-91.5 536,-55.5 324,-55.5"/>
-<text text-anchor="middle" x="430" y="-69.8" font-family="Times,serif" font-size="14.00">x2*w2: value: 0.0000, grad: 0.5000</text>
+<text text-anchor="middle" x="430" y="-69.8" font-family="Times,serif" font-size="14.00">x2*w2: value: 0.0000, grad: 0.0000</text>
 </g>
 <!-- 140735375398224&#45;&gt;140735375398376+ -->
 <g id="edge8" class="edge">
@@ -125,8 +125,8 @@
 <!-- 140735375397408 -->
 <g id="node11" class="node">
 <title>140735375397408</title>
-<polygon fill="none" stroke="black" points="1.5,-165.5 1.5,-201.5 194.5,-201.5 194.5,-165.5 1.5,-165.5"/>
-<text text-anchor="middle" x="98" y="-179.8" font-family="Times,serif" font-size="14.00">x1: value: 2.0000, grad: &#45;1.5000</text>
+<polygon fill="none" stroke="black" points="4,-165.5 4,-201.5 192,-201.5 192,-165.5 4,-165.5"/>
+<text text-anchor="middle" x="98" y="-179.8" font-family="Times,serif" font-size="14.00">x1: value: 2.0000, grad: 0.0000</text>
 </g>
 <!-- 140735375397408&#45;&gt;140735375398072* -->
 <g id="edge10" class="edge">
@@ -138,7 +138,7 @@
 <g id="node12" class="node">
 <title>140735375397664</title>
 <polygon fill="none" stroke="black" points="0,-110.5 0,-146.5 196,-146.5 196,-110.5 0,-110.5"/>
-<text text-anchor="middle" x="98" y="-124.8" font-family="Times,serif" font-size="14.00">w1: value: &#45;3.0000, grad: 1.0000</text>
+<text text-anchor="middle" x="98" y="-124.8" font-family="Times,serif" font-size="14.00">w1: value: &#45;3.0000, grad: 0.0000</text>
 </g>
 <!-- 140735375397664&#45;&gt;140735375398072* -->
 <g id="edge11" class="edge">
@@ -162,7 +162,7 @@
 <g id="node14" class="node">
 <title>140735375397496</title>
 <polygon fill="none" stroke="black" points="4,-55.5 4,-91.5 192,-91.5 192,-55.5 4,-55.5"/>
-<text text-anchor="middle" x="98" y="-69.8" font-family="Times,serif" font-size="14.00">x2: value: 0.0000, grad: 0.5000</text>
+<text text-anchor="middle" x="98" y="-69.8" font-family="Times,serif" font-size="14.00">x2: value: 0.0000, grad: 0.0000</text>
 </g>
 <!-- 140735375397496&#45;&gt;140735375398224* -->
 <g id="edge13" class="edge">

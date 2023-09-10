@@ -693,8 +693,12 @@ fn main() -> io::Result<()> {
     // It is the y value, in this case 0.7 that will be passed to the activation
     // function which will transform it into the final output value of the
     // neuron.
-    let n = &x1w1x2w2 + &b;
+    let mut n = &x1w1x2w2 + &b;
+    n.label("n");
     println!("n pre_activation value: {n}");
+
+    std::fs::write("plots/part1_single_neuron1.dot", n.dot()).unwrap();
+    run_dot("part1_single_neuron1");
 
     // Print the tanh function for reference.
     let ys = xs.mapv(|x| f64::tanh(x));
@@ -703,8 +707,8 @@ fn main() -> io::Result<()> {
     let mut o = n.tanh();
     o.label("o");
 
-    std::fs::write("plots/part1_single_neuron3.dot", o.dot()).unwrap();
-    run_dot("part1_single_neuron3");
+    std::fs::write("plots/part1_single_neuron2.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron2");
 
     // Now lets perform the backpropagation.
     // do with regards to itself is just 1
@@ -733,8 +737,11 @@ fn main() -> io::Result<()> {
 
     println!("o: {o}");
 
-    std::fs::write("plots/part1_single_neuron4.dot", o.dot()).unwrap();
-    run_dot("part1_single_neuron4");
+    std::fs::write("plots/part1_single_neuron3.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron3");
+
+    // Now lets turn this manual backpropagation into functions that we can
+    // call on our Value objects.
 
     Ok(())
 }
@@ -787,5 +794,6 @@ fn plot(xs: &Array1<f64>, ys: &Array1<f64>, name: &str) {
         .set_frame_borders(false);
     plot.grid_and_labels("x", "y");
     plot.add(&curve);
-    let _ = plot.save_and_show(&format!("./plots/{name}.svg")).unwrap();
+    //let _ = plot.save_and_show(&format!("./plots/{name}.svg")).unwrap();
+    let _ = plot.save(&format!("./plots/{name}.svg")).unwrap();
 }
