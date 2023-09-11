@@ -1,23 +1,23 @@
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import TextLoader
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.chat_models import ChatOpenAI
+from langchain.document_loaders import JSONLoader
 import numpy as np
 import os
 
 load_dotenv()
 
-loader = TextLoader("./src/vex-stripped.json")
+loader = JSONLoader(file_path='./src/vex-stripped.json', jq_schema='.document', text_content=False)
 
 docs = loader.load()
 #print(f'Pages: {len(docs)}, type: {type(docs[0])})')
 #print(f'{docs[0].metadata}')
 
-CHUNK_SIZE = 500
+CHUNK_SIZE = 400
 CHUNK_OVERLAP = 1
 
 r_splitter = RecursiveCharacterTextSplitter(
@@ -29,6 +29,7 @@ r_splitter = RecursiveCharacterTextSplitter(
 splits = r_splitter.split_documents(docs)
 print(f'splits len: {len(splits)}, type: {type(splits[0])}')
 
+
 embedding = OpenAIEmbeddings()
 persist_directory = 'chroma/sds2/'
 
@@ -38,28 +39,12 @@ vectordb = Chroma.from_documents(
     persist_directory=persist_directory
 )
 
-vectordb = Chroma(persist_directory=persist_directory, embedding_function=embedding)
-
-#question = "Show cve's for RHSA-2020:5566"
-#docs = vectordb.similarity_search(question, k=5)
-#for doc in docs:
-#    print(f'{doc}')
-
 def cosine_similarity(vec1, vec2):
     dot_product = np.dot(vec1, vec2)
     norm_vec1 = np.linalg.norm(vec1)
     norm_vec2 = np.linalg.norm(vec2)
     cos_sim = dot_product / (norm_vec1 * norm_vec2)
     return cos_sim
-
-#q_emb = embedding.embed_query(question)
-#q_vec = np.array(q_emb)
-
-#for d in docs:
-#    emb = embedding.embed_query(d.page_content)
-#    vec = np.array(emb)
-#    cosine = cosine_similarity(q_vec, vec)
-#    print(f'{cosine=}, {d.metadata["file_name"]}')
 
 template = """I will provide you pieces of [Context] to answer the [Question]. 
 If you don't know the answer based on [Context] just say that you don't know, don't try to make up an answer. 
@@ -88,6 +73,6 @@ result = qa_chain({"query": question})
 print('Answer:') 
 print(result["result"])
 
-print('\n\nsource_documents:') 
+print('\n\nSource documents:') 
 for doc in result['source_documents']:
     print(f'{doc.metadata["source"]}')

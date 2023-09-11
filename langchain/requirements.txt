@@ -36,6 +36,7 @@ importlib-resources==6.0.1
 ipykernel==6.25.2
 ipython==8.15.0
 jedi==0.19.0
+jq==1.5.0
 jupyter_client==8.3.1
 jupyter_core==5.3.1
 kiwisolver==1.4.5

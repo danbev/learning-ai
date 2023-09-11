@@ -103,22 +103,29 @@ pass those to the LLM as context. The LLM will then generate a summary for the
 vulnerability:
 ```console
 (langch) $ python src/vex-search.py 
-splits len: 148, type: <class 'langchain.schema.document.Document'>
+splits len: 8, type: <class 'langchain.schema.document.Document'>
 Answer:
-RHSA-2020:5566 is a Red Hat Security Advisory that provides a security update for openssl. The update addresses a vulnerability identified as CVE-2020-1971, which has a CVSS v3 base score of 5.9 (medium severity). The vulnerability could be exploited remotely, leading to a high impact on availability. For more information, you can refer to the following references:
+RHSA-2020:5566 is a Red Hat Security Advisory that provides a security update for OpenSSL in Red Hat Enterprise Linux 7. The update is rated as having an important security impact. The advisory includes a Common Vulnerability Scoring System (CVSS) base score for each vulnerability, which can be found in the References section. 
 
-- Red Hat Security Advisory: https://access.redhat.com/errata/RHSA-2020:5566
+CVEs: 
+- CVE-2020-1971
+- CVE-2020-1970
+- CVE-2020-1968
+
+References:
+- Red Hat Security Advisory: https://access.redhat.com/security/data/csaf/v2/advisories/2020/rhsa-2020_5566.json
+- Red Hat Errata: https://access.redhat.com/errata/RHSA-2020:5566
 - Red Hat Security Updates Classification: https://access.redhat.com/security/updates/classification/#important
-- CVE-2020-1971: https://access.redhat.com/security/cve/CVE-2020-1971
-- OpenSSL Security Advisory: https://www.openssl.org/news/secadv/20201208.txt
+- Red Hat Product Security Contact Details: https://access.redhat.com/security/team/contact/
 ```
 
 This will also report the `source_documents` that were used to generate the summary:
 ```console
-./src/vex-stripped.json
-./src/vex-stripped.json
-./src/vex-stripped.json
-./src/vex-stripped.json
+Source documents:
+/home/danielbevenius/work/ai/learning-ai/langchain/src/vex-stripped.json
+/home/danielbevenius/work/ai/learning-ai/langchain/src/vex-stripped.json
+/home/danielbevenius/work/ai/learning-ai/langchain/src/vex-stripped.json
+/home/danielbevenius/work/ai/learning-ai/langchain/src/vex-stripped.json
 ```
 
 ### Use a language model to generate suggestions fixing vulnerabilities
