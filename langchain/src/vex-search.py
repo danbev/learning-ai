@@ -64,7 +64,7 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type_kwargs={"prompt": prompt_template, "verbose": False,}
 )
 
-question = "Summaries RHSA-2020:5566 using a short sentence, including a list of CVE's and references."
+question = "Summarize RHSA-2020:5566 using a short sentence, including a list of CVE's and references."
 result = qa_chain({"query": question})
 
 print('Answer:') 
