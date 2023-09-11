@@ -103,16 +103,18 @@ pass those to the LLM as context. The LLM will then generate a summary for the
 vulnerability:
 ```console
 (langch) $ python src/vex-search.py 
+splits len: 148, type: <class 'langchain.schema.document.Document'>
 Answer:
-RHSA-2020:5566 is a security advisory that addresses multiple vulnerabilities in OpenSSL. The advisory includes fixes for CVE-2020-1971. For more information, you can refer to the following references:
+RHSA-2020:5566 is a Red Hat Security Advisory that provides a security update for openssl. The update addresses a vulnerability identified as CVE-2020-1971, which has a CVSS v3 base score of 5.9 (medium severity). The vulnerability could be exploited remotely, leading to a high impact on availability. For more information, you can refer to the following references:
 
-- CVE-2020-1971: [Link to CVE-2020-1971](https://access.redhat.com/security/cve/CVE-2020-1971)
-- RHSA-2020:5566: [Link to RHSA-2020:5566](https://access.redhat.com/security/cve/RHSA-2020:5566)
+- Red Hat Security Advisory: https://access.redhat.com/errata/RHSA-2020:5566
+- Red Hat Security Updates Classification: https://access.redhat.com/security/updates/classification/#important
+- CVE-2020-1971: https://access.redhat.com/security/cve/CVE-2020-1971
+- OpenSSL Security Advisory: https://www.openssl.org/news/secadv/20201208.txt
 ```
-The result from LangChain can also include the source documents that were used
-which might be relevant for the user to know:
+
+This will also report the `source_documents` that were used to generate the summary:
 ```console
-source_documents:
 ./src/vex-stripped.json
 ./src/vex-stripped.json
 ./src/vex-stripped.json

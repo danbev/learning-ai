@@ -17,8 +17,8 @@ docs = loader.load()
 #print(f'Pages: {len(docs)}, type: {type(docs[0])})')
 #print(f'{docs[0].metadata}')
 
-CHUNK_SIZE = 2000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 1
 
 r_splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
