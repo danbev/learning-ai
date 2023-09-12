@@ -104,7 +104,21 @@ columns then we can remove them and still get the same results. This is what
 the LoRA paper suggests and where the "low-rank" comes in LoRA comes from.
 
 ### Inference time
-During inference the basemodel can stay the same and the adaptation matrices
+During inference the base model can stay the same and the adaptation matrices
 can be swapped. So it should be possible to have a single basemodel and
 multiple adaptation matrices for different tasks. This would be a lot more
 memory efficient than having multiple models for different tasks.
+
+So the base model need to first be loaded which could be done upon application
+or container startup. The different lora models can be loaded as needed and
+they can all share the same base model.
+
+As an example of the number of parameters vs the number of parameters in
+the base model:
+```
+trainable params: 2457600 || all params: 3005015040 || trainable%: 0.08178328451893539
+```
+This is one of the strengths of LoRA. The number of trainable parameters is
+much smaller than the number of parameters in the model. This means that it
+should be possible to train the model on a smaller GPU than would be required
+to train the model from scratch.
