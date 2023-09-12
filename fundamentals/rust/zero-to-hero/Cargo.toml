@@ -10,6 +10,14 @@ ndarray = "0.15.6"
 plotpy = "0.4.2"
 russell_lab = "0.5.0"
 
+[dependencies.uuid]
+version = "1.4.1"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
+
 [[bin]]
 name = "part1"
 path = "src/bin/part1.rs"

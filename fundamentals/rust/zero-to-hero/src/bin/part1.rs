@@ -1,8 +1,9 @@
 use ndarray::prelude::*;
 use ndarray::Array;
 use plotpy::{Curve, Plot};
-use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::io::{self};
+use uuid::Uuid;
 
 fn f(xs: Array1<f64>) -> Array1<f64> {
     xs.mapv(|x| 3.0 * x * x - 4.0 * x + 5.0)
@@ -117,19 +118,36 @@ fn main() -> io::Result<()> {
     println!("slope (d2 - d1) / h = {}", (d2 - d1) / h);
 
     // -----------------  micrograd overview ---------------------------
-    use std::cell::RefCell;
 
     //#[derive(Debug)]
     #[allow(dead_code)]
+    #[derive(Debug)]
     struct Value<'a> {
+        id: Uuid,
         data: RefCell<f64>,
         label: Option<String>,
-        children: Option<(&'a Value<'a>, Option<&'a Value<'a>>)>,
+        children: Vec<&'a Value<'a>>,
         operation: Option<Operation>,
         grad: RefCell<f64>,
     }
 
-    #[derive(Debug, Clone)]
+    impl<'a> PartialEq for Value<'a> {
+        fn eq(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    // Implement Eq for Value
+    impl<'a> Eq for Value<'a> {}
+
+    use std::hash::{Hash, Hasher};
+    impl<'a> Hash for Value<'a> {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    #[derive(Debug, Clone, Hash, PartialEq, Eq)]
     enum Operation {
         Add,
         Sub,
@@ -156,9 +174,10 @@ fn main() -> io::Result<()> {
     impl<'a> Value<'a> {
         fn new(data: f64, label: &str) -> Self {
             Value {
+                id: Uuid::new_v4(),
                 data: RefCell::new(data),
                 label: Some(label.to_string()),
-                children: None,
+                children: Vec::new(),
                 operation: None,
                 grad: RefCell::new(0.0),
             }
@@ -173,32 +192,58 @@ fn main() -> io::Result<()> {
                     // Then &self if d and self.children is (c, e), and sinse
                     // addition passes through the gradient we can just add
                     // set the gradients of the children to the gradient of d.
-                    let (lhs, rhs) = self.children.unwrap();
-                    let rhs = rhs.unwrap(); // addition must have a right hand side.
+                    let lhs = self.children[0];
+                    let rhs = self.children[1];
                     *lhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
                     *rhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
                 }
                 Some(Operation::Sub) => {
-                    let (lhs, rhs) = self.children.unwrap();
-                    let rhs = rhs.unwrap(); // subtraction must have a right hand side.
+                    let lhs = self.children[0];
+                    let rhs = self.children[1];
                     *lhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
                     *rhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
                 }
                 Some(Operation::Mul) => {
-                    let (lhs, rhs) = self.children.unwrap();
-                    let rhs = rhs.unwrap(); // multiplication must have a right hand side.
+                    let lhs = self.children[0];
+                    let rhs = self.children[1];
                     *lhs.grad.borrow_mut() = *rhs.data.borrow() * *self.grad.borrow();
                     *rhs.grad.borrow_mut() = *lhs.data.borrow() * *self.grad.borrow();
                 }
                 Some(Operation::Tanh) => {
-                    let (lhs, _) = self.children.unwrap();
+                    let lhs = self.children[0];
                     *lhs.grad.borrow_mut() =
                         1.0 - self.data.borrow().powf(2.0) * *self.grad.borrow();
                 }
                 None => {
-                    println!("No backward for you! {}", self.label.as_ref().unwrap());
+                    //println!("No backward for you! {}", self.label.as_ref().unwrap());
                 }
             }
+        }
+    }
+
+    use std::collections::VecDeque;
+    impl<'a> Value<'a> {
+        fn topological_sort(
+            root: &'a Value<'a>,
+            visited: &mut HashSet<&'a Value<'a>>,
+            stack: &mut VecDeque<&'a Value<'a>>,
+        ) {
+            visited.insert(root);
+
+            for child in root.children.iter() {
+                if !visited.contains(child) {
+                    Self::topological_sort(child, visited, stack);
+                }
+            }
+
+            stack.push_front(root);
+        }
+
+        fn topological_order(value: &'a Value<'a>) -> VecDeque<&'a Value<'a>> {
+            let mut visited = HashSet::new();
+            let mut stack = VecDeque::new();
+            Self::topological_sort(&value, &mut visited, &mut stack);
+            stack
         }
     }
 
@@ -213,10 +258,15 @@ fn main() -> io::Result<()> {
             rhs: Option<&'a Value<'a>>,
             op: Operation,
         ) -> Self {
+            let children = match rhs {
+                Some(rhs) => vec![lhs, rhs],
+                None => vec![lhs],
+            };
             Value {
+                id: Uuid::new_v4(),
                 data: RefCell::new(data),
                 label,
-                children: Some((lhs, rhs)),
+                children,
                 operation: Some(op),
                 grad: RefCell::new(0.0),
             }
@@ -280,10 +330,10 @@ fn main() -> io::Result<()> {
                 *self.data.borrow(),
                 self.label.as_ref().unwrap_or(&"".to_string())
             )?;
-            if let Some((lhs, rhs)) = &self.children {
-                write!(f, ", lhs={}", *lhs.data.borrow())?;
-                if let Some(r) = rhs {
-                    write!(f, ", rhs={}", *r.data.borrow())?;
+            if &self.children.len() > &0 {
+                write!(f, ", lhs={}", *self.children[0].data.borrow())?;
+                if &self.children.len() == &2 {
+                    write!(f, ", rhs={}", *self.children[1].data.borrow())?;
                 }
                 write!(f, ", op=\"{:?}\"", &self.operation.as_ref().unwrap())?;
             }
@@ -295,9 +345,11 @@ fn main() -> io::Result<()> {
     use std::f64;
     #[allow(dead_code)]
     impl<'a> Value<'a> {
-        fn children(&self) -> Option<(&'a Value<'a>, Option<&'a Value<'a>>)> {
+        /*
+        fn children(&self) -> Vec<&'a Value<'a>> {
             self.children
         }
+        */
 
         fn operation(&self) -> Option<Operation> {
             self.operation.clone()
@@ -356,9 +408,9 @@ fn main() -> io::Result<()> {
 
                 seen.insert(node_ptr);
 
-                if let Some((lhs, rhs)) = &node.children {
+                if !&node.children.is_empty() {
                     let op_id = format!("{}{}", node_id, node.operation.as_ref().unwrap().as_str());
-                    let lhs_id = *lhs as *const _ as usize;
+                    let lhs_id = node.children[0] as *const _ as usize;
 
                     out += &format!(
                         "  \"{}\" [label=\"{}\"]\n",
@@ -368,13 +420,13 @@ fn main() -> io::Result<()> {
                     out += &format!("  \"{}\" -> \"{}\"\n", op_id, node_id,);
 
                     out += &format!("  \"{}\" -> \"{}\"\n", lhs_id, op_id,);
-                    if let Some(r) = rhs {
-                        let rhs_id = *r as *const _ as usize;
+                    if &node.children.len() == &2 {
+                        let rhs_id = node.children[1] as *const _ as usize;
                         out += &format!("  \"{}\" -> \"{}\"\n", rhs_id, op_id);
-                        stack.push(&*r);
+                        stack.push(&node.children[1]);
                     };
 
-                    stack.push(&*lhs);
+                    stack.push(&*node.children[0]);
                 }
             }
 
@@ -841,6 +893,33 @@ fn main() -> io::Result<()> {
     x1w1.backward();
     std::fs::write("plots/part1_single_neuron5.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron5");
+
+    // Reset the values
+    let x1 = Value::new(2.0, "x1");
+    let x2 = Value::new(0.0, "x2");
+    let w1 = Value::new(-3.0, "w1");
+    let w2 = Value::new(1.0, "w2");
+    let b = Value::new(6.8813735870195432, "b");
+    let mut x1w1 = &x1 * &w1;
+    x1w1.label("x1*w1");
+    let mut x2w2 = &x2 * &w2;
+    x2w2.label("x2*w2");
+    let mut x1w1x2w2 = &x1w1 + &x2w2;
+    x1w1x2w2.label("x1w1x + 2w2");
+    let mut n = &x1w1x2w2 + &b;
+    n.label("n");
+    let mut o = n.tanh();
+    o.label("o");
+    *o.grad.borrow_mut() = 1.0;
+    // Now lets do the backpropagation using the topological order.
+    let order = Value::topological_order(&o);
+    println!("topological order:");
+    for (i, node) in order.iter().enumerate() {
+        println!("{}: {:?}", i, node.label);
+        node.backward();
+    }
+    std::fs::write("plots/part1_single_neuron6.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron6");
 
     Ok(())
 }

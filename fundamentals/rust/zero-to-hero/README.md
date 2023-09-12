@@ -68,9 +68,14 @@ Before performing backpropagation using the `backward` function:
 
 ![image](./plots/part1_single_neuron4.svg)
 
-After performing backpropagation using the `backward` function:
+After performing backpropagation manually using the explicit `backward` function:
 
 ![image](./plots/part1_single_neuron5.svg)
+
+After performing backpropagation using topological order (calling backward)
+function:
+
+![image](./plots/part1_single_neuron6.svg)
 
 [Neural Networks:  Zero to Hero]: https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ
 [The spelled-out intro to neural networks and backpropagation: building micrograd]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2
