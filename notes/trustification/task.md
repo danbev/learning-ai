@@ -1,12 +1,12 @@
 ## AI/ML Investigation for Trustification
-This task is about investigating the use of AI/ML for trusification and see if
+This task is about investigating the use of AI/ML for trustification and see if
 there are ways to add value using AI/ML for trustification.
 
 The suggestions in this document are just that, suggestions, and some might not
 make sense or be feasible. This more of a brainstorming document.
 
 ### Vector database for VEX documents
-Currently the trusification application/ui enables users to store SBOMs and
+Currently the trustification application/ui enables users to store SBOMs and
 VEX (Vulnerability Exchange) documents in a database and then query the database
 for vulnerabilities.
 
