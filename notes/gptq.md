@@ -27,7 +27,7 @@ INT    -8 to 7
 ```
 
 ### Post-training quantanized models
-The most populare models are `GGML` and `GPTQ`. `GGML` is a post trained
+The most popular models are `GGML` and `GPTQ`. `GGML` is a post trained
 quantanised model. This means that the model is trained with 32-bit precision
 and then quantanised to 8-bit precision.
 
@@ -49,3 +49,16 @@ https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML
 ```
 This was something that has confused be in the past so it was nice to finally
 get an answer to this.
+There is also a new format called
+[GGUF](https://github.com/philpax/ggml/blob/gguf-spec/docs/gguf.md) which is a
+replacement for GGML.
+
+### AutoGPTQ
+This is a library from Huggingface which enables you to quantanise a pre-trained
+transformer models. There are other libraries that are specific to certain
+models but AutoGPTQ is a general library that can be used with many models.
+I'm just including the pip install command so that I can see the actual name
+of the python package.
+```console
+$ pip install auto-gptq
+```
