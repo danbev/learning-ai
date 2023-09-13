@@ -55,12 +55,10 @@ def load_cve_docs():
 # This only need to be run once to create the vector store, or after more
 # documents are to be added to the store.
 #load_vex_docs()
-load_cve_docs()
+#load_cve_docs()
 
 vex_vectorstore = Chroma(persist_directory=vex_persist_directory, embedding_function=embedding)
 vex_retriever = vex_vectorstore.as_retriever(search_kwargs={'k': 3})
-print(f'{vex_retriever.search_kwargs=}')
-print(f'{vex_retriever.search_type=}')
 
 cve_vectorstore = Chroma(persist_directory=cve_persist_directory, embedding_function=embedding)
 cve_retriever = vex_vectorstore.as_retriever(search_kwargs={'k': 3})
@@ -83,10 +81,10 @@ from langchain import PromptTemplate
 prompt_template = PromptTemplate.from_template(
         "Show me a detailed description of {cve}."
 )
-formatted = prompt_template.format(cve=result["answer"])
-print(f'{formatted=}')
+query = prompt_template.format(cve=result["answer"])
+print(f'{query=}')
 
 qa = ConversationalRetrievalChain.from_llm(OpenAI(temperature=0), cve_retriever, memory=memory)
-result = qa(inputs={"question": formatted})
+result = qa(inputs={"question": query})
 print(f'{result["answer"]=}')
 
