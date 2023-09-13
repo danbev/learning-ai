@@ -172,7 +172,17 @@ fn main() -> io::Result<()> {
 
     // Add a new constructor for Value which takes a single f64.
     impl<'a> Value<'a> {
-        fn new(data: f64, label: &str) -> Self {
+        fn new(data: f64) -> Self {
+            Value {
+                id: Uuid::new_v4(),
+                data: RefCell::new(data),
+                label: None,
+                children: Vec::new(),
+                operation: None,
+                grad: RefCell::new(0.0), // we initialize the gradient to 0.0
+            }
+        }
+        fn new_with_label(data: f64, label: &str) -> Self {
             Value {
                 id: Uuid::new_v4(),
                 data: RefCell::new(data),
@@ -302,6 +312,22 @@ fn main() -> io::Result<()> {
         }
     }
 
+    impl<'a> Add<&'a Value<'a>> for f64 {
+        type Output = Value<'a>;
+
+        fn add(self, other: &'a Value<'a>) -> Self::Output {
+            Value::new(self + *other.data.borrow())
+        }
+    }
+
+    impl<'a> Add<f64> for &'a Value<'a> {
+        type Output = Value<'a>;
+
+        fn add(self, other: f64) -> Self::Output {
+            Value::new(*self.data.borrow() + other)
+        }
+    }
+
     // Add Sub trait implementation for Value and add use statement
     use std::ops::Sub;
     impl<'a, 'b: 'a> Sub<&'b Value<'b>> for &'a Value<'a> {
@@ -317,6 +343,22 @@ fn main() -> io::Result<()> {
         }
     }
 
+    impl<'a> Sub<&'a Value<'a>> for f64 {
+        type Output = Value<'a>;
+
+        fn sub(self, other: &'a Value<'a>) -> Self::Output {
+            Value::new(self - *other.data.borrow())
+        }
+    }
+
+    impl<'a> Sub<f64> for &'a Value<'a> {
+        type Output = Value<'a>;
+
+        fn sub(self, other: f64) -> Self::Output {
+            Value::new(*self.data.borrow() - other)
+        }
+    }
+
     // Add Mul trait implementation for Value and add use statement
     use std::ops::Mul;
     impl<'a, 'b: 'a> Mul<&'b Value<'b>> for &'a Value<'a> {
@@ -329,6 +371,22 @@ fn main() -> io::Result<()> {
                 Some(other),
                 Operation::Mul,
             )
+        }
+    }
+
+    impl<'a> Mul<&'a Value<'a>> for f64 {
+        type Output = Value<'a>;
+
+        fn mul(self, other: &'a Value<'a>) -> Self::Output {
+            Value::new(self * *other.data.borrow())
+        }
+    }
+
+    impl<'a> Mul<f64> for &'a Value<'a> {
+        type Output = Value<'a>;
+
+        fn mul(self, other: f64) -> Self::Output {
+            Value::new(*self.data.borrow() * other)
         }
     }
 
@@ -448,20 +506,20 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let a = Value::new(2.0, "a");
+    let a = Value::new_with_label(2.0, "a");
     println!("a = {}", a);
-    let b = Value::new(-3.0, "b");
+    let b = Value::new_with_label(-3.0, "b");
     println!("{a} + {b} = {}", &a + &b);
     println!("{a} - {b} = {}", &a - &b);
     println!("{a} * {b} = {}", &a * &b);
-    let c = Value::new(10.0, "c");
+    let c = Value::new_with_label(10.0, "c");
     let mut e = &a * &b;
     e.label("e");
     let mut d = &e + &c;
     d.label("d");
     println!("{a} * {b} + {c} = {d}");
     println!("d: {d}");
-    let f = Value::new(-2.0, "f");
+    let f = Value::new_with_label(-2.0, "f");
     let mut l = &d * &f;
     l.label("l");
 
@@ -472,27 +530,27 @@ fn main() -> io::Result<()> {
         let h = 0.0001;
 
         // First we calculate the gradient for l and save it in l1.
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l1 = l.data;
 
         // Now, lets compute the derivative of 'a' with respect to 'l'.
-        let a = Value::new(2.0 + h, "a"); // Notice the +h here.
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0 + h, "a"); // Notice the +h here.
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data.borrow();
@@ -500,14 +558,14 @@ fn main() -> io::Result<()> {
         //println!("\nDeriviative of l with respect to a: {_da:.6}");
 
         // Now, lets compute the derivative of 'l' with respect to 'l'.
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = *l.data.borrow() + h; // Notice the +h here.
@@ -531,14 +589,14 @@ fn main() -> io::Result<()> {
         //  ( f*h ) / h = f
         //  So we can set dL/dd = f
         //  d.grad = f.data;
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0 + h, "f"); // Notice the +h here.
+        let f = Value::new_with_label(-2.0 + h, "f"); // Notice the +h here.
         let mut l = &d * &f;
         l.label("l");
         let l2 = *l.data.borrow();
@@ -552,15 +610,15 @@ fn main() -> io::Result<()> {
         // ( h*d ) / h = d
         //  So we can set dL/dd = f
         //  d.grad = f.data;
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         *d.data.borrow_mut() += h; // Notice the +h here.
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
@@ -586,15 +644,15 @@ fn main() -> io::Result<()> {
         // derivative of the latter part of the equation is just f. So these
         // derivates pass through the derivate from the node ahead of them in
         //  the chain.
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         *c.data.borrow_mut() += h; // Notice the +h here.
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
@@ -602,15 +660,15 @@ fn main() -> io::Result<()> {
         println!("Deriviative of l with respect to c: {dc:.6}");
 
         // And the same thing applies for 'e' as for 'c':
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         *e.data.borrow_mut() += h; // Notice the +h here.
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
@@ -633,30 +691,30 @@ fn main() -> io::Result<()> {
         // (ab + hb - ab)/h
         // (hb)/h = b
         // dl/da = (dl/de) * (de/da) = -2.0 * -3.0 = 6.0
-        let a = Value::new(2.0, "a");
+        let a = Value::new_with_label(2.0, "a");
         *a.data.borrow_mut() += h; // Notice the +h here.
-        let b = Value::new(-3.0, "b");
-        let c = Value::new(10.0, "c");
+        let b = Value::new_with_label(-3.0, "b");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
         let da = (*l2.borrow() - *l1.borrow()) / h;
         println!("Deriviative of l with respect to a: {da:.6}");
         // And the same applies for b:
-        let a = Value::new(2.0, "a");
-        let b = Value::new(-3.0, "b");
+        let a = Value::new_with_label(2.0, "a");
+        let b = Value::new_with_label(-3.0, "b");
         *b.data.borrow_mut() += h; // Notice the +h here.
-        let c = Value::new(10.0, "c");
+        let c = Value::new_with_label(10.0, "c");
         let mut e = &a * &b;
         e.label("e");
         let mut d = &e + &c;
         d.label("d");
-        let f = Value::new(-2.0, "f");
+        let f = Value::new_with_label(-2.0, "f");
         let mut l = &d * &f;
         l.label("l");
         let l2 = l.data;
@@ -719,19 +777,19 @@ fn main() -> io::Result<()> {
     //  | x₂ |/
     //  +----+
     // Inputs
-    let x1 = Value::new(2.0, "x1");
-    let x2 = Value::new(0.0, "x2");
+    let x1 = Value::new_with_label(2.0, "x1");
+    let x2 = Value::new_with_label(0.0, "x2");
     println!("{x1}, {x2}");
 
     // Weights
-    let w1 = Value::new(-3.0, "w1");
-    let w2 = Value::new(1.0, "w2");
+    let w1 = Value::new_with_label(-3.0, "w1");
+    let w2 = Value::new_with_label(1.0, "w2");
     println!("{w1}, {w2}");
 
     // Bias of the neuron.
-    //let b = Value::new(6.7, "b");
+    //let b = Value::new_with_label(6.7, "b");
     // This magic number is a value use to make the numbers come out nice.
-    let b = Value::new(6.8813735870195432, "b");
+    let b = Value::new_with_label(6.8813735870195432, "b");
     println!("{b}");
 
     // This is the edge to the 'x1w1' node
@@ -874,15 +932,15 @@ fn main() -> io::Result<()> {
     // call on our Value objects.
 
     // Inputs
-    let x1 = Value::new(2.0, "x1");
-    let x2 = Value::new(0.0, "x2");
+    let x1 = Value::new_with_label(2.0, "x1");
+    let x2 = Value::new_with_label(0.0, "x2");
     // Weights
-    let w1 = Value::new(-3.0, "w1");
-    let w2 = Value::new(1.0, "w2");
+    let w1 = Value::new_with_label(-3.0, "w1");
+    let w2 = Value::new_with_label(1.0, "w2");
     // Bias of the neuron.
-    //let b = Value::new(6.7, "b");
+    //let b = Value::new_with_label(6.7, "b");
     // This magic number is a value use to make the numbers come out nice.
-    let b = Value::new(6.8813735870195432, "b");
+    let b = Value::new_with_label(6.8813735870195432, "b");
     // This is the edge to the 'x1w1' node
     let mut x1w1 = &x1 * &w1;
     x1w1.label("x1*w1");
@@ -908,11 +966,11 @@ fn main() -> io::Result<()> {
     run_dot("part1_single_neuron5");
 
     // Reset the values
-    let x1 = Value::new(2.0, "x1");
-    let x2 = Value::new(0.0, "x2");
-    let w1 = Value::new(-3.0, "w1");
-    let w2 = Value::new(1.0, "w2");
-    let b = Value::new(6.8813735870195432, "b");
+    let x1 = Value::new_with_label(2.0, "x1");
+    let x2 = Value::new_with_label(0.0, "x2");
+    let w1 = Value::new_with_label(-3.0, "w1");
+    let w2 = Value::new_with_label(1.0, "w2");
+    let b = Value::new_with_label(6.8813735870195432, "b");
     let mut x1w1 = &x1 * &w1;
     x1w1.label("x1*w1");
     let mut x2w2 = &x2 * &w2;
@@ -927,6 +985,11 @@ fn main() -> io::Result<()> {
     std::fs::write("plots/part1_single_neuron6.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron6");
 
+    let a = Value::new_with_label(2.0, "a");
+    let b = 1.0 - &a;
+    println!("b: {b}");
+    let b = &a * 2.0;
+    println!("b: {b}");
     Ok(())
 }
 
