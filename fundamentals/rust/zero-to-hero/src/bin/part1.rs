@@ -179,7 +179,7 @@ fn main() -> io::Result<()> {
                 label: Some(label.to_string()),
                 children: Vec::new(),
                 operation: None,
-                grad: RefCell::new(0.0),
+                grad: RefCell::new(0.0), // we initialize the gradient to 0.0
             }
         }
     }
@@ -194,24 +194,26 @@ fn main() -> io::Result<()> {
                     // set the gradients of the children to the gradient of d.
                     let lhs = self.children[0];
                     let rhs = self.children[1];
-                    *lhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
-                    *rhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
+                    // If we have have a + a then both lhs and rhs will be then
+                    // same value so we accumulate the gradient.
+                    *lhs.grad.borrow_mut() += 1.0 * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() += 1.0 * *self.grad.borrow();
                 }
                 Some(Operation::Sub) => {
                     let lhs = self.children[0];
                     let rhs = self.children[1];
-                    *lhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
-                    *rhs.grad.borrow_mut() = 1.0 * *self.grad.borrow();
+                    *lhs.grad.borrow_mut() += 1.0 * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() += 1.0 * *self.grad.borrow();
                 }
                 Some(Operation::Mul) => {
                     let lhs = self.children[0];
                     let rhs = self.children[1];
-                    *lhs.grad.borrow_mut() = *rhs.data.borrow() * *self.grad.borrow();
-                    *rhs.grad.borrow_mut() = *lhs.data.borrow() * *self.grad.borrow();
+                    *lhs.grad.borrow_mut() += *rhs.data.borrow() * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() += *lhs.data.borrow() * *self.grad.borrow();
                 }
                 Some(Operation::Tanh) => {
                     let lhs = self.children[0];
-                    *lhs.grad.borrow_mut() =
+                    *lhs.grad.borrow_mut() +=
                         1.0 - self.data.borrow().powf(2.0) * *self.grad.borrow();
                 }
                 None => {
@@ -244,6 +246,17 @@ fn main() -> io::Result<()> {
             let mut stack = VecDeque::new();
             Self::topological_sort(&value, &mut visited, &mut stack);
             stack
+        }
+
+        fn backwards(value: &'a Value<'a>) {
+            *value.grad.borrow_mut() = 1.0;
+            // Now lets do the backpropagation using the topological order.
+            let order = Value::topological_order(&value);
+            println!("topological order:");
+            for (i, node) in order.iter().enumerate() {
+                println!("{}: {:?}", i, node.label);
+                node.backward();
+            }
         }
     }
 
@@ -910,14 +923,7 @@ fn main() -> io::Result<()> {
     n.label("n");
     let mut o = n.tanh();
     o.label("o");
-    *o.grad.borrow_mut() = 1.0;
-    // Now lets do the backpropagation using the topological order.
-    let order = Value::topological_order(&o);
-    println!("topological order:");
-    for (i, node) in order.iter().enumerate() {
-        println!("{}: {:?}", i, node.label);
-        node.backward();
-    }
+    Value::backwards(&o);
     std::fs::write("plots/part1_single_neuron6.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron6");
 
