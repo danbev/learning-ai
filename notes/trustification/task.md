@@ -128,6 +128,32 @@ Source documents:
 /home/danielbevenius/work/ai/learning-ai/langchain/src/vex-stripped.json
 ```
 
+So that was a single VEX document, now how about we add some of the CVEs that
+are referenced in that VEX to the vector store and see if we can generate a
+summary for them:
+```console
+$ curl -s https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2020-1971 > src/cve-2020-1971
+$ curl -s https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2020-1968 > src/cve-2020-1968
+```
+I tried adding both of these types of documents to the same vector store but
+the results were not good and I'm not sure why. So I created separate vector
+store for the CVEs. The process was then to chain the queries by first
+performing a query for the VEX document, and then using the CVE that it refers
+to to perform a query for the CVE information. This is shown in
+[vex-cve.py](../../langchain/src/vex-cve.py).
+```console
+(langch) $ python src/vex_cve.py 
+query='Show a short summary of RHSA-2020:5566, including the cve.'
+result["answer"]=' RHSA-2020:5566 is an update for openssl for Red Hat Enterprise Linux 7. It has a security impact of Important and is related to CVE-2020-1971.'
+
+query='Which CVEs were mentioned'
+result["answer"]=' CVE-2020-1971'
+
+formatted='Show me a detailed description of  CVE-2020-1971.'
+result["answer"]=' CVE-2020-1971 is a NULL pointer de-reference vulnerability in OpenSSL, a toolkit that implements the Secure Sockets Layer (SSL) and Transport Layer Security (TLS) protocols, as well as a full-strength general-purpose cryptography library.'
+```
+
+
 ### Use a language model to generate suggestions fixing vulnerabilities
 The idea here would be that we gather information about the vulnerability
 and craft a prompt to get an LLM to generate suggestions for how to fix the
