@@ -142,7 +142,7 @@ the results were not good and I'm not sure why. So I created separate vector
 store for the CVEs. The process was then to chain the queries by first
 performing a query for the VEX document, and then using the CVE that it refers
 to to perform a query for the CVE information. This is shown in
-[vex-cve.py](../../langchain/src/vex-cve.py).
+[vex-cve.py](../../langchain/src/vex_cve.py).
 ```console
 (langch) $ python src/vex_cve.py 
 
