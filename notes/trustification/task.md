@@ -145,14 +145,15 @@ to to perform a query for the CVE information. This is shown in
 [vex-cve.py](../../langchain/src/vex-cve.py).
 ```console
 (langch) $ python src/vex_cve.py 
+
 query='Show a short summary of RHSA-2020:5566, including the cve.'
-result["answer"]=' RHSA-2020:5566 is an update for openssl for Red Hat Enterprise Linux 7. It has a security impact of Important and is related to CVE-2020-1971.'
+result["answer"]=' RHSA-2020:5566 is an update for openssl for Red Hat Enterprise Linux 7. It has a security impact of Important and is related to CVE-2020-1971, a NULL pointer de-reference.'
 
 query='Which CVEs were mentioned'
 result["answer"]=' CVE-2020-1971'
 
-formatted='Show me a detailed description of  CVE-2020-1971.'
-result["answer"]=' CVE-2020-1971 is a NULL pointer de-reference vulnerability in OpenSSL, a toolkit that implements the Secure Sockets Layer (SSL) and Transport Layer Security (TLS) protocols, as well as a full-strength general-purpose cryptography library.'
+query='Show me a detailed description of  CVE-2020-1971.'
+result["answer"]=' CVE-2020-1971 is a vulnerability in the TLS specification which can lead to an attacker being able to compute the pre-master secret in connections which have used a Diffie-Hellman (DH) based ciphersuite. In such a case this would result in the attacker being able to eavesdrop on all encrypted communications sent over that TLS connection. The attack can only be exploited if an implementation re-uses a DH secret across multiple TLS connections. Note that this issue only impacts DH ciphersuites and not ECDH ciphersuites.'
 ```
 I'm using OpenAI for these examples which means that they require an API key.
 You can sign up and get a free trail period with token credits. The

@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-vex_persist_directory = 'chroma/chat/vex'
-cve_persist_directory = 'chroma/chat/cve'
+vex_persist_directory = 'chroma/trust/vex'
+cve_persist_directory = 'chroma/trust/cve'
 embedding = OpenAIEmbeddings()
 
-def load_vec_docs():
+def load_vex_docs():
     vec_loader = JSONLoader(file_path='./src/vex-stripped.json', jq_schema='.document', text_content=False)
     vex_docs = vec_loader.load()
     #print(f'Pages: {len(docs)}, type: {type(docs[0])})')
@@ -39,8 +39,8 @@ def load_cve_docs():
                                  loader_kwargs = {'jq_schema': '.', 'text_content': False})
     cve_docs = cve_loader.load()
     cve_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=400,
-        chunk_overlap=1,
+        chunk_size=1000,
+        chunk_overlap=100,
         length_function=len  # function used to measure chunk size
     )
     cve_splits = cve_splitter.split_documents(cve_docs)
@@ -61,7 +61,7 @@ vex_vectorstore = Chroma(persist_directory=vex_persist_directory, embedding_func
 vex_retriever = vex_vectorstore.as_retriever(search_kwargs={'k': 3})
 
 cve_vectorstore = Chroma(persist_directory=cve_persist_directory, embedding_function=embedding)
-cve_retriever = vex_vectorstore.as_retriever(search_kwargs={'k': 3})
+cve_retriever = cve_vectorstore.as_retriever(search_kwargs={'k': 6})
 
 from langchain.memory import ConversationBufferMemory
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
