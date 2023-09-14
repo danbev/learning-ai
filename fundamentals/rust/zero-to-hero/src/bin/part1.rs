@@ -120,7 +120,6 @@ fn main() -> io::Result<()> {
 
     // -----------------  micrograd overview ---------------------------
 
-    //#[derive(Debug)]
     #[allow(dead_code)]
     #[derive(Debug)]
     struct Value<'a> {
