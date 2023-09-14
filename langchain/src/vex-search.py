@@ -6,42 +6,51 @@ from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.chat_models import ChatOpenAI
 from langchain.document_loaders import JSONLoader
+from langchain.document_loaders import DirectoryLoader
 import numpy as np
 import os
 
 load_dotenv()
 
-loader = JSONLoader(file_path='./src/vex-stripped.json', jq_schema='.document', text_content=False)
-
-docs = loader.load()
-#print(f'Pages: {len(docs)}, type: {type(docs[0])})')
-#print(f'{docs[0].metadata}')
-
-r_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=400,
-    chunk_overlap=1,
-    length_function=len  # function used to measure chunk size
-)
-
-splits = r_splitter.split_documents(docs)
-print(f'splits len: {len(splits)}, type: {type(splits[0])}')
-
-
-embedding = OpenAIEmbeddings()
 persist_directory = 'chroma/sds2/'
+embedding = OpenAIEmbeddings()
 
-vectordb = Chroma.from_documents(
-    documents=splits,
-    embedding=embedding,
-    persist_directory=persist_directory
-)
+def load_docs():
 
-def cosine_similarity(vec1, vec2):
-    dot_product = np.dot(vec1, vec2)
-    norm_vec1 = np.linalg.norm(vec1)
-    norm_vec2 = np.linalg.norm(vec2)
-    cos_sim = dot_product / (norm_vec1 * norm_vec2)
-    return cos_sim
+    vec_loader = JSONLoader(file_path='./src/vex-stripped.json', jq_schema='.document', text_content=False)
+
+    vex_docs = vec_loader.load()
+    #print(f'Pages: {len(docs)}, type: {type(docs[0])})')
+    #print(f'{docs[0].metadata}')
+
+    r_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=400,
+        chunk_overlap=1,
+        length_function=len  # function used to measure chunk size
+    )
+
+    splits = r_splitter.split_documents(vex_docs)
+    print(f'splits len: {len(splits)}, type: {type(splits[0])}')
+
+    vectordb = Chroma.from_documents(
+        documents=splits,
+        embedding=embedding,
+        persist_directory=persist_directory
+    )
+    vectordb.persist()
+
+# This only need to be run once to create the vector store, or after more
+# documents are to be added to the store.
+#load_docs()
+
+vectordb = Chroma(persist_directory=persist_directory, embedding_function=embedding)
+retriever = vectordb.as_retriever(search_kwargs={'k': 3})
+print(f'{retriever.search_kwargs=}')
+print(f'{retriever.search_type=}')
+
+docs = retriever.get_relevant_documents("What is CVE-2020-1971 about?")
+print(f'{len(docs)=}');
+print(f'{docs[0].metadata["source"]}')
 
 template = """I will provide you pieces of [Context] to answer the [Question]. 
 If you don't know the answer based on [Context] just say that you don't know, don't try to make up an answer. 
