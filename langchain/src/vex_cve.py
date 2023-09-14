@@ -75,23 +75,23 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 
 qa = ConversationalRetrievalChain.from_llm(OpenAI(temperature=0), vex_retriever, memory=memory)
 query = f'Show a short summary of {advisory}, including the cve.'
-print(f'{query=}')
+print(f'Query: {query}')
 result = qa({"question": query})
-print(f'{result["answer"]=}')
+print(f'Result: {result["answer"]}')
 
 query = "Which CVEs were mentioned"
-print(f'{query=}')
+print(f'Query: {query}')
 result = qa({"question": query, "chat_history": result["answer"]})
-print(f'{result["answer"]=}')
+print(f'Result: {result["answer"]}')
 
 from langchain import PromptTemplate
 prompt_template = PromptTemplate.from_template(
         "Show me a detailed description of {cve}."
 )
 query = prompt_template.format(cve=result["answer"])
-print(f'{query=}')
+print(f'Query: {query}')
 
 qa = ConversationalRetrievalChain.from_llm(OpenAI(temperature=0), cve_retriever, memory=memory)
 result = qa(inputs={"question": query})
-print(f'{result["answer"]=}')
+print(f'Result: {result["answer"]}')
 
