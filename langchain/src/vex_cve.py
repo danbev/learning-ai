@@ -57,6 +57,13 @@ def load_cve_docs():
 #load_vex_docs()
 #load_cve_docs()
 
+import sys
+
+if len(sys.argv) > 1:
+    advisory = sys.argv[1]
+else:
+    advisory = "RHSA-2020:5566"
+
 vex_vectorstore = Chroma(persist_directory=vex_persist_directory, embedding_function=embedding)
 vex_retriever = vex_vectorstore.as_retriever(search_kwargs={'k': 3})
 
@@ -67,7 +74,7 @@ from langchain.memory import ConversationBufferMemory
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 qa = ConversationalRetrievalChain.from_llm(OpenAI(temperature=0), vex_retriever, memory=memory)
-query = "Show a short summary of RHSA-2020:5566, including the cve."
+query = f'Show a short summary of {advisory}, including the cve.'
 print(f'{query=}')
 result = qa({"question": query})
 print(f'{result["answer"]=}')

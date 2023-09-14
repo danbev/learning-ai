@@ -144,10 +144,9 @@ performing a query for the VEX document, and then using the CVE that it refers
 to to perform a query for the CVE information. This is shown in
 [vex-cve.py](../../langchain/src/vex_cve.py).
 ```console
-(langch) $ python src/vex_cve.py 
-
+(langch) $ python src/vex_cve.py RHSA-2020:5566
 query='Show a short summary of RHSA-2020:5566, including the cve.'
-result["answer"]=' RHSA-2020:5566 is an update for openssl for Red Hat Enterprise Linux 7. It has a security impact of Important and is related to CVE-2020-1971, a NULL pointer de-reference.'
+result["answer"]=' RHSA-2020:5566 is an update for openssl for Red Hat Enterprise Linux 7. It has a security impact of Important and is related to CVE-2020-1971.'
 
 query='Which CVEs were mentioned'
 result["answer"]=' CVE-2020-1971'
