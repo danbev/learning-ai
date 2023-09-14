@@ -152,6 +152,11 @@ result["answer"]=' CVE-2020-1971'
 formatted='Show me a detailed description of  CVE-2020-1971.'
 result["answer"]=' CVE-2020-1971 is a NULL pointer de-reference vulnerability in OpenSSL, a toolkit that implements the Secure Sockets Layer (SSL) and Transport Layer Security (TLS) protocols, as well as a full-strength general-purpose cryptography library.'
 ```
+I'm using OpenAI for these examples which means that they require an API key.
+You can sign up and get a free trail period with token credits. The
+[pricing](https://openai.com/pricing#language-models) is based on the number
+of tokens used and it is possible to buy credits. I bought $10 worth of credits
+and I'm still using not used up half of them yet.
 
 
 ### Use a language model to generate suggestions fixing vulnerabilities
