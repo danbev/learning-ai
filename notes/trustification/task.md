@@ -69,7 +69,7 @@ database which it would not have access to otherwise. This concept is shown in
 [github-search.py](../../langchain/src/github-search.py) but in this case
 the example uses documents from github repository as the document source.
 I believe that term for this model is
-[Retrieval Augmented Generation (RAG)](./rag.md).
+[Retrieval Augmented Generation (RAG)](./../rag.md).
 
 What is the benefit of this?   
 The motivation would be that we might then be able to extract all the
