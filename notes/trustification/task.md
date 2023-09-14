@@ -142,7 +142,8 @@ the results were not good and I'm not sure why. So I created separate vector
 store for the CVEs. The process was then to chain the queries by first
 performing a query for the VEX document, and then using the CVE that it refers
 to to perform a query for the CVE information. This is shown in
-[vex-cve.py](../../langchain/src/vex_cve.py).
+[vex-cve.py](../../langchain/src/vex_cve.py). Here we pass in a RHSA number
+as a command line argument:
 ```console
 (langch) $ python src/vex_cve.py RHSA-2020:5566
 query='Show a short summary of RHSA-2020:5566, including the cve.'
@@ -312,3 +313,13 @@ Check scores:
 |---------|------------------------|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 ```
 </details>
+
+### Investigate Low-Rank Adaptation (LoRA)
+I'd like to to a spike on Low-Rank Adapation [LoRA](./lora.md) to understand
+how it works and what possibilities it might provide. The idea is to take a
+pre-trained llm model and then fine-tune it for a specific dataset or tasks.
+This does not require the whole model to be re-trained so it is not as time
+consuming as training a model from scratch. This could possibly be something
+like fine-tuning a model to generate a specific type of reports that we want
+for our use case. So that it learns does not have to be new information but it
+can also be a new way of presenting the information.
