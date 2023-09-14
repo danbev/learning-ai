@@ -72,7 +72,7 @@ print(f'{query=}')
 result = qa({"question": query})
 print(f'{result["answer"]=}')
 
-query = "Which CVE was mentioned"
+query = "Which CVEs were mentioned"
 print(f'{query=}')
 result = qa({"question": query, "chat_history": result["answer"]})
 print(f'{result["answer"]=}')
