@@ -4,34 +4,39 @@ LoRA is an example of Parameter Efficient Fine-Tuning (PEFT).
 The motivation for LoRA is that most LLM's are too big to be fine-tuned on
 anything except very powerful hardware, and very expensive to train from
 scratch.
-So LoRA is a method decomposes the original weight matrix into smaller
+So LoRA is a method that decomposes the original weight matrix into smaller
 matrices. The smaller matrices are then used to create new layers that are
-layer and only the weights in these smaller layers are updated during training.
-The new layers are called the adaptation layers. This possible by the fact
-that large weight matrices low-rank matrices which means that it can be
-approximated by the product of two smaller matrices.
+and only the weights in these smaller layers are updated during training.
 
-For example:
+The new layers are called the adaptation layers. This is possible by the fact
+that large weight matrices are often low-rank matrices which means that it can
+be approximated by the product of two smaller matrices.
+
+Lets take a look at an example to clarify:
 A matrix `A` of dimensions `m * n` and rank `r` can be written as the product
 of two matrices `U` and `V`, where `U` has dimensions `m *r` and `V` has
 the dimensions `r * n`.
 
 ```
-A = U * V
+W = A * B
     
       [2  4  6]             dim (m*n): 3x3, r (rank): 1
-  A = [3  6  9] 
+  W = [3  6  9] 
       [4  8 12]
 
-  U = [2]                   dim: 3*1 (m*r)
+  A = [2]                   dim: 3*1 (m*r)
       [3]
       [4]
 
-  V = [1  2  3]             dim: 1*3 (r*n)
+  B = [1  2  3]             dim: 1*3 (r*n)
 
   [2]             [2  4 6 ]
-  [3] [1  2  3] = [3  6 9 ]
+  [3] [1  2  3] = [3  6 9 ]  
   [4]             [4  8 12]
+       ↑              ↑
+       |              |
+     6 values      9 values
+ 
 ```
 Recall that the rank is the number of linearly independent rows or columns in
 a matrix. And notice that we haven't lost any information by decomposing the
@@ -44,6 +49,10 @@ We can decompose this matrix into two smaller matrices U and V.
 Notice that instead of having 9 values we reduced that into 6 values in memory
 which might not seem like a lot but when the matrix is very large this can
 make a big difference.
+
+So the idea here is that instead of re-training the entire model we can
+decompose the weight matrix and train the smaller matrices instead and it will
+have the same effect.
 
 ### Fine tuning
 When we train a model from scratch it looks something like this:
@@ -69,13 +78,17 @@ weights in the new layers that we add to the model. So it looks something like
 this:
 ```
               +------------------+
-              |   hidden layer   |        h = Wx + WAWB
+              |   hidden layer   |        h = W₀x + ΔWx = W₀x + AB
               +------------------+
                       ↑       
-               +------+------+----------------+
-               |             |                |
+                     W + AB
+               +------+---------------+
+               |                      |
+               |                +-----*-------+
+               |                |     A*B     |
       +-------------------+  +-----------+ +-----------+
       | pretrained weights|  | A weights | | B weights |
+      |   Wₙ*ₙ (fixed)    |  |  Aₘ*ₙ     | | Bₘ*ₙ      |
       +-------------------+  +-----------+ +-----------+
                     ↑             ↑
                     |             |
@@ -84,13 +97,49 @@ this:
                 +------------------+
 
 ````
+So we end up with two matrices because we have decomposed the original weight
+matrix. The LoRA matrices can be merged with the frozen weights with does not
+increase the size of the model, which is one of the strengths of LoRA. Other
+solutions like the "adapter" method would increase the size of the model as
+the trained weights of the adapter are then taken and they extend the
+pre-trained models' weights. But LoRA does not exclude other methods, they
+could still be used in addition to LoRA.
+
+So we have our frozen weights W:
+```
+      [2  4  6]             dim (m*n): 3x3, r (rank): 1
+  W = [3  6  9] 
+      [4  8 12]
+```
+And we have our matrices A and B which are the weights that we are training:
+Now, lets modify them slightly:
+```
+  A = [2.1]                       dim: 3*1 (m*r)
+      [3.3]
+      [4.8]
+
+  B = [1.0  2.2  3.6]             dim: 1*3 (r*n)
+```
+Now we will multiply A and B:
+```
+  [2.1]                   [2.1  4.62   7.56]
+  [3.3] [1.0  2.2  3.6] = [3.3  7.26  11.88]
+  [4.8]                   [4.8  10.56 17.28]
+```
+And then we merge the changes with the frozen weights:
+```
+      [2  4  6]   [2.1  4.62   7.56]   [4.1  8.62  13.56]
+      [3  6  9] + [3.3  7.26  11.88] = [6.3  13.26 20.88]
+      [4  8 12]   [4.8  10.56 17.28]   [8.8  18.56 29.28]
+```
 Notice that we are adding the pre-trained weights to the new weights.
 So looking at that we are only updating the weights in the new layers A and B
 but we still we still need to do matrix multiplication of the inputs and W,
 and then add the results to A and B. But the computation of A and B which would
 be done on GPUs is much less than the computation of W which would be done on
-GPUs. So we are saving a lot of computation by only updating the weights in the
-new layers I think.
+CPUs. So we are saving a lot of computation by only updating the weights in the
+new layers I think. Remember that the above example is very very small and
+the real weight matrices would be much larger.
 
 ### Matrix decomposition
 It has been shown that large weight matrices can be described by smaller
@@ -122,3 +171,8 @@ This is one of the strengths of LoRA. The number of trainable parameters is
 much smaller than the number of parameters in the model. This means that it
 should be possible to train the model on a smaller GPU than would be required
 to train the model from scratch.
+
+
+### Adam optimizer
+LoRA uses Adam form model optimization.
+TODO: explain Adam optimizer
