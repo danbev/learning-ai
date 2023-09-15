@@ -20,9 +20,9 @@ TODO: I'm not familiar with any of the above so this so look into these
 separately.
 
 ### llama.cpp
-[llama.cpp](https://github.com/ggerganov/llama.cpp) is a c program which can
-take a Llama model and then perform inference, like text generation and question
-answering.
+[llama.cpp](https://github.com/ggerganov/llama.cpp) is a library written in c
+and contains useful program that can be used to run inference on a Llama model,
+as well as quantize a model.
 
 It can be run locally:
 ```console
