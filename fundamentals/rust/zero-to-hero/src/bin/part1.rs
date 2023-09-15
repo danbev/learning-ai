@@ -397,6 +397,37 @@ fn main() -> io::Result<()> {
         }
     }
 
+    use std::ops::Div;
+    impl<'a> Div<&'a Value<'a>> for &'a Value<'a> {
+        type Output = Value<'a>;
+
+        fn div(self, other: &'a Value<'a>) -> Self::Output {
+            Value::new_with_children(
+                *self.data.borrow() / *other.data.borrow(),
+                None,
+                self,
+                Some(other),
+                Operation::Add,
+            )
+        }
+    }
+
+    impl<'a> Div<&'a Value<'a>> for f64 {
+        type Output = Value<'a>;
+
+        fn div(self, other: &'a Value<'a>) -> Self::Output {
+            Value::new(self / *other.data.borrow())
+        }
+    }
+
+    impl<'a> Div<f64> for &'a Value<'a> {
+        type Output = Value<'a>;
+
+        fn div(self, other: f64) -> Self::Output {
+            Value::new(*self.data.borrow() / other)
+        }
+    }
+
     // Implement the Display trait for Value in the format Value(data) and
     // include any necessary use statements
     use std::fmt;
@@ -1001,7 +1032,8 @@ fn main() -> io::Result<()> {
 
     let a = Value::new_with_label(2.0, "a");
     let b = Value::new_with_label(4.0, "b");
-    let c = &a / &b;
+    let c = &a / 2.0;
+    println!("c: {c}");
 
     Ok(())
 }
