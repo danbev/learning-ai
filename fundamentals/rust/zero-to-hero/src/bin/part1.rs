@@ -153,6 +153,7 @@ fn main() -> io::Result<()> {
         Sub,
         Mul,
         Tanh,
+        Exp,
     }
 
     // Implement as_str function for Operation enum
@@ -163,6 +164,7 @@ fn main() -> io::Result<()> {
                 Operation::Sub => "-",
                 Operation::Mul => "*",
                 Operation::Tanh => "tanh",
+                Operation::Exp => "exp",
             }
         }
     }
@@ -225,6 +227,11 @@ fn main() -> io::Result<()> {
                     let lhs = self.children[0];
                     *lhs.grad.borrow_mut() +=
                         1.0 - self.data.borrow().powf(2.0) * *self.grad.borrow();
+                }
+                Some(Operation::Exp) => {
+                    let lhs = self.children[0];
+                    // e^x * dx/dx = e^x
+                    *lhs.grad.borrow_mut() += *self.data.borrow() * *self.grad.borrow();
                 }
                 None => {
                     //println!("No backward for you! {}", self.label.as_ref().unwrap());
@@ -445,6 +452,13 @@ fn main() -> io::Result<()> {
             let t = (f64::exp(2.0 * x) - 1.0) / (f64::exp(2.0 * x) + 1.0);
             println!("tanh({}) = {}", x, t);
             Value::new_with_children(t, None, self, None, Operation::Tanh)
+        }
+
+        fn exp(&self) -> Value {
+            let x = *self.data.borrow();
+            let e = f64::exp(x);
+            println!("exp({}) = {}", x, e);
+            Value::new_with_children(e, None, self, None, Operation::Exp)
         }
     }
 
@@ -986,10 +1000,9 @@ fn main() -> io::Result<()> {
     run_dot("part1_single_neuron6");
 
     let a = Value::new_with_label(2.0, "a");
-    let b = 1.0 - &a;
-    println!("b: {b}");
-    let b = &a * 2.0;
-    println!("b: {b}");
+    let b = Value::new_with_label(4.0, "b");
+    let c = &a / &b;
+
     Ok(())
 }
 
