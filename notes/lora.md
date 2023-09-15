@@ -54,6 +54,10 @@ So the idea here is that instead of re-training the entire model we can
 decompose the weight matrix and train the smaller matrices instead and it will
 have the same effect.
 
+Initially A is initialized randomly using a Gaussian/normal distribution.
+Then B is initialized to 0. So the product of A and B is zero to begin with.
+Then ΔW is scaled by α/r where α is a scaling constant.
+
 ### Fine tuning
 When we train a model from scratch it looks something like this:
 ```
@@ -171,6 +175,13 @@ This is one of the strengths of LoRA. The number of trainable parameters is
 much smaller than the number of parameters in the model. This means that it
 should be possible to train the model on a smaller GPU than would be required
 to train the model from scratch.
+
+But do note that the same memory requirements are needed for inference plus
+the memory requirements for the adaptation matrices. So the inference memory
+requirements will increase a little. But this depends on whether the pre-trained
+model is merged with the adaptation matrices or not. If the pre-trained model
+are merged with the adaptation matrices then the memory requirements will not
+increase.
 
 
 ### Adam optimizer
