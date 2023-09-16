@@ -152,8 +152,10 @@ fn main() -> io::Result<()> {
         Add,
         Sub,
         Mul,
+        Div,
         Tanh,
         Exp,
+        Pow,
     }
 
     // Implement as_str function for Operation enum
@@ -163,8 +165,10 @@ fn main() -> io::Result<()> {
                 Operation::Add => "+",
                 Operation::Sub => "-",
                 Operation::Mul => "*",
+                Operation::Div => "/",
                 Operation::Tanh => "tanh",
                 Operation::Exp => "exp",
+                Operation::Pow => "pow",
             }
         }
     }
@@ -223,6 +227,12 @@ fn main() -> io::Result<()> {
                     *lhs.grad.borrow_mut() += *rhs.data.borrow() * *self.grad.borrow();
                     *rhs.grad.borrow_mut() += *lhs.data.borrow() * *self.grad.borrow();
                 }
+                Some(Operation::Div) => {
+                    let lhs = self.children[0];
+                    let rhs = self.children[1];
+                    *lhs.grad.borrow_mut() += *rhs.data.borrow() * *self.grad.borrow();
+                    *rhs.grad.borrow_mut() += *lhs.data.borrow() * *self.grad.borrow();
+                }
                 Some(Operation::Tanh) => {
                     let lhs = self.children[0];
                     *lhs.grad.borrow_mut() +=
@@ -232,6 +242,32 @@ fn main() -> io::Result<()> {
                     let lhs = self.children[0];
                     // e^x * dx/dx = e^x
                     *lhs.grad.borrow_mut() += *self.data.borrow() * *self.grad.borrow();
+                }
+                Some(Operation::Pow) => {
+                    // let a = Value::new(2.0);
+                    // let b = Value::new(4.0);
+                    // let c = &a.pow(&b);
+                    //  +-------------------+       +--------------------+
+                    //  |a, data: 2, grad:  |-------|c, data: 16, grad:  |
+                    //  +-------------------+       +--------------------+
+                    //  +-------------------+      /
+                    //  |b, data: 4, grad:  |-----+
+                    //  +-------------------+
+                    // Now if we call c.backward() we want to compute the
+                    // derivitives of a and b with respect to c.
+                    // c will be self
+                    // a will be lhs (base)
+                    // b will be rhs (exponent)
+                    let lhs = self.children[0];
+                    let rhs = self.children[1];
+                    let base = *lhs.data.borrow();
+                    let exponent = *rhs.data.borrow();
+                    println!("self: {}", *self.data.borrow());
+                    println!("base: {}", base);
+                    println!("exponent: {}", exponent);
+                    // Here we use the power rule:
+                    *lhs.grad.borrow_mut() +=
+                        exponent * (base.powf(exponent - 1.0)) * *self.grad.borrow();
                 }
                 None => {
                     //println!("No backward for you! {}", self.label.as_ref().unwrap());
@@ -407,7 +443,7 @@ fn main() -> io::Result<()> {
                 None,
                 self,
                 Some(other),
-                Operation::Add,
+                Operation::Div,
             )
         }
     }
@@ -490,6 +526,17 @@ fn main() -> io::Result<()> {
             let e = f64::exp(x);
             println!("exp({}) = {}", x, e);
             Value::new_with_children(e, None, self, None, Operation::Exp)
+        }
+
+        fn pow(&self, x: &'a Value<'a>) -> Value {
+            println!("pow({}, {})", *self.data.borrow(), x);
+            Value::new_with_children(
+                f64::powf(*self.data.borrow(), *x.data.borrow()),
+                None,
+                self,
+                Some(x),
+                Operation::Pow,
+            )
         }
     }
 
@@ -1032,8 +1079,11 @@ fn main() -> io::Result<()> {
 
     let a = Value::new_with_label(2.0, "a");
     let b = Value::new_with_label(4.0, "b");
-    let c = &a / 2.0;
-    println!("c: {c}");
+    let b = a.pow(&b);
+    *b.grad.borrow_mut() = 1.0;
+    b.backward();
+    println!("a: {a}");
+    println!("b: {b}");
 
     Ok(())
 }
