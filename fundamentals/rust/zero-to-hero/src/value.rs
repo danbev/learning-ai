@@ -287,7 +287,13 @@ impl<'a> Sub<&'a Value<'a>> for f64 {
     type Output = Value<'a>;
 
     fn sub(self, other: &'a Value<'a>) -> Self::Output {
-        Value::new(self - *other.data.borrow())
+        Value::new_with_children(
+            self - *other.data.borrow(),
+            None,
+            other,
+            None,
+            Operation::Sub,
+        )
     }
 }
 
@@ -302,7 +308,6 @@ impl<'a> Sub<f64> for &'a Value<'a> {
             None,
             Operation::Sub,
         )
-        //Value::new(*self.data.borrow() - other)
     }
 }
 
@@ -369,7 +374,6 @@ impl<'a> Div<&'a Value<'a>> for f64 {
             None,
             Operation::Div,
         )
-        //Value::new(self / *other.data.borrow())
     }
 }
 
@@ -384,7 +388,6 @@ impl<'a> Div<f64> for &'a Value<'a> {
             None,
             Operation::Div,
         )
-        //Value::new(*self.data.borrow() / other)
     }
 }
 
@@ -414,12 +417,6 @@ use std::collections::HashSet;
 use std::f64;
 #[allow(dead_code)]
 impl<'a> Value<'a> {
-    /*
-    fn children(&self) -> Vec<&'a Value<'a>> {
-        self.children
-    }
-    */
-
     fn operation(&self) -> Option<Operation> {
         self.operation.clone()
     }
@@ -540,7 +537,7 @@ fn test_add() {
 }
 
 #[test]
-fn test_add_with_rhs_float() {
+fn test_add_rhs_float() {
     let a = Value::new(1.0);
     let c = &a + 4.0;
 
@@ -551,7 +548,7 @@ fn test_add_with_rhs_float() {
 }
 
 #[test]
-fn test_add_with_lhs_float() {
+fn test_add_lhs_float() {
     let a = Value::new(1.0);
     let c = 4.0 + &a;
 
@@ -592,7 +589,7 @@ fn test_sub_lhs_float() {
     let a = Value::new(8.0);
     let c = 4.0 - &a;
 
-    assert_eq!(*c.data.borrow(), 4.0);
+    assert_eq!(*c.data.borrow(), -4.0);
     assert_eq!(c.operation, Some(Operation::Sub));
     assert_eq!(c.children.len(), 1);
     assert_eq!(*c.children[0].data.borrow(), 8.0);
@@ -620,6 +617,28 @@ fn test_div() {
     assert_eq!(c.children.len(), 2);
     assert_eq!(*c.children[0].data.borrow(), 10.0);
     assert_eq!(*c.children[1].data.borrow(), 2.0);
+    assert_eq!(c.operation, Some(Operation::Div));
+}
+
+#[test]
+fn test_div_lhs_float() {
+    let a = Value::new(2.0);
+    let c = 10.0 / &a;
+
+    assert_eq!(*c.data.borrow(), 5.0);
+    assert_eq!(c.children.len(), 1);
+    assert_eq!(*c.children[0].data.borrow(), 2.0);
+    assert_eq!(c.operation, Some(Operation::Div));
+}
+
+#[test]
+fn test_div_rhs_float() {
+    let a = Value::new(10.0);
+    let c = &a / 2.0;
+
+    assert_eq!(*c.data.borrow(), 5.0);
+    assert_eq!(c.children.len(), 1);
+    assert_eq!(*c.children[0].data.borrow(), 10.0);
     assert_eq!(c.operation, Some(Operation::Div));
 }
 
@@ -674,18 +693,20 @@ fn test_tanh_backwards_decomposed() {
     // tanh =  ----------
     //         e²ˣ + 1
     //
-    let binding = &n * 2.0;
-    let e = binding.exp();
-    println!("e.children[0]: {}", &e.children[0]);
+    //let binding = &n * 2.0;
+    //let e = binding.exp();
+    //println!("e.children[0]: {}", &e.children[0]);
     println!("n: {}", n);
-    /*
     let e_two_exp = &n * 2.0;
     let e_two_exp = e_two_exp.exp();
     let e_minus_one = &e_two_exp - 1.0;
     let e_plus_one = &e_two_exp + 1.0;
     let mut o = &e_minus_one / &e_plus_one;
     o.label("o");
+    /*
     println!("o: {}", &o);
+    println!("o.children: {}", &o.children[0]);
+    println!("o.children: {}", &o.children[0].children[0]);
     Value::backwards(&o);
 
     assert_eq!(*o.grad.borrow(), 1.0);
