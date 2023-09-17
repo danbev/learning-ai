@@ -244,7 +244,13 @@ impl<'a> Add<&'a Value<'a>> for f64 {
     type Output = Value<'a>;
 
     fn add(self, other: &'a Value<'a>) -> Self::Output {
-        Value::new(self + *other.data.borrow())
+        Value::new_with_children(
+            self + *other.data.borrow(),
+            None,
+            other,
+            None,
+            Operation::Add,
+        )
     }
 }
 
@@ -252,7 +258,13 @@ impl<'a> Add<f64> for &'a Value<'a> {
     type Output = Value<'a>;
 
     fn add(self, other: f64) -> Self::Output {
-        Value::new(*self.data.borrow() + other)
+        Value::new_with_children(
+            *self.data.borrow() + other,
+            None,
+            self,
+            None,
+            Operation::Add,
+        )
     }
 }
 
@@ -283,7 +295,6 @@ impl<'a> Sub<f64> for &'a Value<'a> {
     type Output = Value<'a>;
 
     fn sub(self, other: f64) -> Self::Output {
-        println!("sub with rihgthand side float...");
         Value::new_with_children(
             *self.data.borrow() - other,
             None,
@@ -529,6 +540,28 @@ fn test_add() {
 }
 
 #[test]
+fn test_add_with_rhs_float() {
+    let a = Value::new(1.0);
+    let c = &a + 4.0;
+
+    assert_eq!(*c.data.borrow(), 5.0);
+    assert_eq!(c.children.len(), 1);
+    assert_eq!(*c.children[0].data.borrow(), 1.0);
+    assert_eq!(c.operation, Some(Operation::Add));
+}
+
+#[test]
+fn test_add_with_lhs_float() {
+    let a = Value::new(1.0);
+    let c = 4.0 + &a;
+
+    assert_eq!(*c.data.borrow(), 5.0);
+    assert_eq!(c.children.len(), 1);
+    assert_eq!(*c.children[0].data.borrow(), 1.0);
+    assert_eq!(c.operation, Some(Operation::Add));
+}
+
+#[test]
 fn test_add_backwards() {
     let a = Value::new(1.0);
     let b = Value::new(2.0);
@@ -536,6 +569,8 @@ fn test_add_backwards() {
     Value::backwards(&c);
 
     assert_eq!(*c.grad.borrow(), 1.0);
+    assert_eq!(*a.grad.borrow(), 1.0);
+    assert_eq!(*b.grad.borrow(), 1.0);
 }
 
 // Add a test to test subtraction
@@ -550,6 +585,17 @@ fn test_sub() {
     assert_eq!(*c.children[0].data.borrow(), 1.0);
     assert_eq!(*c.children[1].data.borrow(), 2.0);
     assert_eq!(c.operation, Some(Operation::Sub));
+}
+
+#[test]
+fn test_sub_lhs_float() {
+    let a = Value::new(8.0);
+    let c = 4.0 - &a;
+
+    assert_eq!(*c.data.borrow(), 4.0);
+    assert_eq!(c.operation, Some(Operation::Sub));
+    assert_eq!(c.children.len(), 1);
+    assert_eq!(*c.children[0].data.borrow(), 8.0);
 }
 
 #[test]
