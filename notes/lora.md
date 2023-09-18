@@ -5,8 +5,9 @@ The motivation for LoRA is that most LLM's are too big to be fine-tuned on
 anything except very powerful hardware, and very expensive to train from
 scratch.
 So LoRA is a method that decomposes the original weight matrix into smaller
-matrices. The smaller matrices are then used to create new layers that are
-and only the weights in these smaller layers are updated during training.
+matrices which are called update matrices. The update matrices are then used
+to create new layers that are and only the weights in these smaller layers are
+updated during training.
 
 The new layers are called the adaptation layers. This is possible by the fact
 that large weight matrices are often low-rank matrices which means that it can
@@ -92,12 +93,12 @@ this:
                |                |     A*B     |
       +-------------------+  +-----------+ +-----------+
       | pretrained weights|  | A weights | | B weights |
-      |   Wₙ*ₙ (fixed)    |  |  Aₘ*ₙ     | | Bₘ*ₙ      |
+      |   Wₙ*ₙ (fixed)    |  |  Aₘ*ₙ x   | | Bₘ*ₙ x    |
       +-------------------+  +-----------+ +-----------+
                     ↑             ↑
                     |             |
                 +------------------+
-                |     Inputs       |
+                |    x inputs       |
                 +------------------+
 
 ````
@@ -184,6 +185,24 @@ are merged with the adaptation matrices then the memory requirements will not
 increase.
 
 
+### Singular Value Decomposition (SVD)
+Is a linear algebra method that can be used to decompose a matrix into smaller
+matrices. It is used in LoRA to decompose the weight matrix into smaller
+matrices. The smaller matrices are then trained instead of the larger matrix.
+
+Lets say we have matrix A and we want to decompose it into smaller matrices:
+```
+  A = UΣVᵀ
+```
+Where U and V are orthogonal matrices and Σ is a diagonal matrix. The diagonal
+
 ### Adam optimizer
 LoRA uses Adam form model optimization.
 TODO: explain Adam optimizer
+
+### LoRA Example
+I usually prefer to have examples that run locally but for a lora example where
+training/fine tuning is involved having access to GPU(s) is almost required.
+I've got a Colab Pro account which gives me access to a GPU.
+
+
