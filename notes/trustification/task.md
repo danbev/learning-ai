@@ -316,7 +316,7 @@ Check scores:
 </details>
 
 ### Investigate Low-Rank Adaptation (LoRA)
-I'd like to to a spike on Low-Rank Adapation [LoRA](./../lora.md) to understand
+I'd like to do a spike on Low-Rank Adapation [LoRA](./../lora.md) to understand
 how it works and what possibilities it might provide. The idea is to take a
 pre-trained llm model and then fine-tune it for a specific dataset or tasks.
 This does not require the whole model to be re-trained so it is not as time
