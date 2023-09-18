@@ -18,3 +18,4 @@ Insert cell above:  a
 Insert cell below:  b
 Execute cell:       CTRL+ENTER
 ```
+So view all short cuts press CTRL+M H.
