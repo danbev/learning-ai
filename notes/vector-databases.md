@@ -119,11 +119,17 @@ This is a another way of searching for the closest vectors to a query vector.
 TODO:
 
 
-## Qdrant (Rust)
+### Qdrant (Rust)
 Qdrant is a vector database written in Rust. It is a vector database that is
 open source and is written in Rust.
 
-[Basic Python example](../vector-databases/qdrant/python)  
+[Qdrant Python example](../vector-databases/qdrant/python)  
 
-[Basic Rust example](../vector-databases/qdrant/rust/README.md)
+[Qdrant Rust example](../vector-databases/qdrant/rust/README.md)
 
+
+### LanceDB 
+[LanceDB](https://github.com/lancedb/lancedb) is also an opensource vector
+database written in Rust.
+
+[LanceDB Python example](../vector-databases/lancedb/python/src/lancedb-example.py
