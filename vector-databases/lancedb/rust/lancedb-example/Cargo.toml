@@ -1,0 +1,9 @@
+[package]
+name = "lancedb-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vectordb = "0.2.5"
+tokio = { version = "1", features = ["full"] }
+arrow-array = "46.0.0"
