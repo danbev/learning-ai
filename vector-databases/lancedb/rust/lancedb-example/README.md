@@ -26,3 +26,41 @@ protobuf-devel can be installed using the following command:
 ```console
 $ sudo dnf install -y protobuf-devel 
 ```
+
+## Troubleshooting
+
+### arrow dependency issue
+I ran into an issue where I got the following error message:
+```console
+   Compiling lancedb-example v0.1.0 (/home/danielbevenius/work/ai/learning-ai/vector-databases/lancedb/rust/lancedb-example)
+error[E0277]: the trait bound `impl RecordBatchReader + Send + Sync + 'static: arrow_array::record_batch::RecordBatchReader` is not satisfied
+   --> src/main.rs:20:45
+    |
+20  |         let t = db.create_table(table_name, batches, None).await?;
+    |                    ------------             ^^^^^^^ the trait `arrow_array::record_batch::RecordBatchReader` is not implemented for `impl RecordBatchReader + Send + Sync + 'static`
+    |                    |
+    |                    required by a bound introduced by this call
+    |
+    = help: the following other types implement trait `arrow_array::record_batch::RecordBatchReader`:
+              arrow_array::record_batch::RecordBatchIterator<I>
+              arrow_csv::reader::BufReader<R>
+              arrow_ipc::reader::FileReader<R>
+              arrow_ipc::reader::StreamReader<R>
+              arrow_json::reader::Reader<R>
+              parquet::arrow::arrow_reader::ParquetRecordBatchReader
+note: required by a bound in `Database::create_table`
+   --> /home/danielbevenius/.cargo/git/checkouts/lancedb-46cbf9f2a5b4f61c/dbf37a0/rust/vectordb/src/database.rs:165:23
+    |
+162 |     pub async fn create_table(
+    |                  ------------ required by a bound in this associated function
+...
+165 |         batches: impl RecordBatchReader + Send + 'static,
+    |                       ^^^^^^^^^^^^^^^^^ required by this bound in `Database::create_table`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `lancedb-example` (bin "lancedb-example") due to previous error
+```
+After a lot of troubleshooting I was able to track this down to the array
+dependency versions. Using version "43.0.0" of `arrow-array` and `arrow-schema`
+allowed me to get around this issue. This is the version that is used by
+lancedb as well.

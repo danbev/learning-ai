@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-vectordb = "0.2.5"
+arrow-array = "43.0.0"
+arrow-schema = "43.0.0"
+lance = "0.7.3"
 tokio = { version = "1", features = ["full"] }
-arrow-array = "46.0.0"
+vectordb = "0.2.5"

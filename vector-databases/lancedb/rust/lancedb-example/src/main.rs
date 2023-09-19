@@ -1,5 +1,7 @@
-use arrow_array::Float32Array;
+use arrow_array::{Int32Array, RecordBatch, RecordBatchIterator, RecordBatchReader};
+use arrow_schema::{DataType, Field, Schema};
 use std::fs;
+use std::sync::Arc;
 use vectordb::Database;
 
 #[tokio::main]
@@ -12,18 +14,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let table_names = db.table_names().await?;
     println!("table_names: {:?}", table_names);
-    let _table_name = "my_table";
+    let table_name = "my_table";
     let table = if table_names.is_empty() {
-        let vector = Float32Array::from_iter_values([3.1, 4.1]);
-        println!("vector: {:?}", vector);
-        //let t = db.create_table(table_name, , None).await?;
-        "create"
+        println!("Creating table {:?}", table_name);
+        let batches = make_test_batches();
+        db.create_table(table_name, batches, None).await?
     } else {
-        "open"
+        println!("Opening table {:?}", table_name);
+        db.open_table(table_name).await?
     };
     println!("table: {:?}", table);
     //println!("db: {:?}", db);
     //db.create_table(table_name).await;
 
     Ok(())
+}
+
+fn make_test_batches() -> impl RecordBatchReader + Send + Sync + 'static {
+    let schema = Arc::new(Schema::new(vec![Field::new("i", DataType::Int32, false)]));
+    RecordBatchIterator::new(
+        vec![RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from_iter_values(0..10))],
+        )],
+        schema,
+    )
 }
