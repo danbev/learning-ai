@@ -4,6 +4,10 @@ use plotpy::{Curve, Plot};
 use std::io::{self};
 use std::rc::Rc;
 
+#[path = "../value.rs"]
+mod value;
+use value::Value;
+
 fn f(xs: Array1<f64>) -> Array1<f64> {
     xs.mapv(|x| 3.0 * x * x - 4.0 * x + 5.0)
 }
@@ -118,10 +122,6 @@ fn main() -> io::Result<()> {
     println!("slope (d2 - d1) / h = {}", (d2 - d1) / h);
 
     // -----------------  micrograd overview ---------------------------
-
-    #[path = "../value.rs"]
-    mod value;
-    use value::Value;
 
     let a = Value::new_with_label(2.0, "a");
     println!("a = {}", a);
