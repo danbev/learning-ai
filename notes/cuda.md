@@ -1,6 +1,6 @@
 ## CUDA (Compute Unified Device Architecture)
 The motivation for this page is that I want to get a basic understanding of
-how GPUs work from programming perspective. Like can understand that there are
+how GPUs work from a programming perspective. I can understand that there are
 libraries like Torch and TensorFlow that can do this for us but is just seems
 like magic to me at the moment.
 
@@ -98,3 +98,55 @@ and include/library paths, and for steering the compilation process. nvcc also
 accepts a range of CUDA-specific options for defining the virtual architecture
 targeting which the CUDA program is compiled, and for defining the memory model
 used, and for steering the compilation process.
+
+### Questions
+So when we are going to train a large language model on a GPU we first need to
+load the model weights into the host's memory, then copy them over to the GPU's
+memory, and then call a kernel function to execute. Is this how it is done in
+practice or are there ways to avoid the memory copying?
+
+When training large language models (or any deep learning models) on GPUs, the
+model's weights and the data do need to reside in the GPU's memory. However, the
+process is a bit more nuanced than just loading everything into the host's
+memory and then copying it to the GPU's memory. Here's a breakdown of how it
+typically works in practice:
+
+Model Initialization:
+
+When you initialize a model using deep learning frameworks like TensorFlow or
+PyTorch, and you've set the device to a GPU, the model's weights are often
+directly initialized in the GPU's memory. There's no need to first initialize
+them on the CPU and then transfer them.
+When you instruct these frameworks to initialize tensors (or model parameters)
+on the GPU, a series of steps occur:
+
+* The framework communicates with the GPU through a driver API (e.g., CUDA for
+NVIDIA GPUs).
+* Memory on the GPU is allocated to store the tensor.
+* Initialization operations (like random number generation for weight
+initialization) are executed as GPU kernels. These operations fill the allocated
+memory with the initial values.
+
+The key takeaway is that these operations occur directly on the GPU without the
+need for an intermediary step on the CPU.
+
+
+Data Loading and Batching:
+
+
+Training data is usually read in batches. Instead of loading the entire dataset
+into the host's memory and then transferring it to the GPU, data is typically
+loaded batch-by-batch. Each batch is transferred to the GPU just before it's
+needed for training.
+Modern deep learning frameworks and data loaders handle this process
+efficiently, often using asynchronous operations to overlap data loading on the
+CPU with computation on the GPU.
+```
+
+Once the model's weights are on the GPU, they typically stay there throughout
+the training process. Forward passes, backward passes, and weight updates all
+happen on the GPU. The weights aren't constantly moved back and forth between
+the host and the GPU.
+It's only if you need to save the model's weights or inspect them on the CPU
+that you'd transfer them back to the host's memory.
+
