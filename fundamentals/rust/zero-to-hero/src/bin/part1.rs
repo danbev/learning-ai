@@ -565,7 +565,6 @@ fn main() -> io::Result<()> {
     *n.label.borrow_mut() = "n".to_string();
     let o = n.tanh();
     *o.label.borrow_mut() = "o".to_string();
-    println!("o: {o}");
     std::fs::write("plots/part1_single_neuron4.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron4");
     *o.grad.borrow_mut() = 1.0;
@@ -598,7 +597,7 @@ fn main() -> io::Result<()> {
     std::fs::write("plots/part1_single_neuron6.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron6");
 
-    // Reset the values so that we can break up the tanh node into multiplied
+    // Reset the values so that we can break up the tanh node into multiple
     // nodes.
     let x1 = Rc::new(Value::new_with_label(2.0, "x1"));
     let x2 = Rc::new(Value::new_with_label(0.0, "x2"));
@@ -615,20 +614,15 @@ fn main() -> io::Result<()> {
     *n.label.borrow_mut() = "n".to_string();
 
     let e_two_exp = &*n * &Rc::new(Value::new(2.0));
-    println!("e_two_exp: {}", e_two_exp);
     let e_two_exp = e_two_exp.exp();
     *e_two_exp.label.borrow_mut() = "exp(n * 2.0)".to_string();
-    println!("e_two_exp: {}", e_two_exp);
     let e_minus_one = &*e_two_exp - &Rc::new(Value::new(1.0));
     *e_minus_one.label.borrow_mut() = "e - 1".to_string();
-    println!("e_minus_one: {}", e_minus_one);
     let e_plus_one = &*e_two_exp + &Rc::new(Value::new(1.0));
     *e_plus_one.label.borrow_mut() = "e + 1".to_string();
-    println!("e_plus_one: {}", e_plus_one);
     let o = &*Rc::new(e_minus_one) / &Rc::new(e_plus_one);
     let o = Rc::new(o.clone());
     *o.label.borrow_mut() = "o".to_string();
-    println!("o: {}", &o);
     Value::backwards(o.clone());
 
     std::fs::write("plots/part1_single_neuron7.dot", o.dot()).unwrap();

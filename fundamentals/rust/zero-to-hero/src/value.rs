@@ -129,8 +129,7 @@ impl Value {
         *root.grad.borrow_mut() = 1.0;
         // Now lets do the backpropagation using the topological order.
         let order = Self::topological_order(root);
-        for (i, node) in order.iter().enumerate() {
-            println!("{}:{:?} {:?}", i, node.label, node.data.borrow());
+        for node in order.iter() {
             node.backward();
         }
     }
@@ -333,10 +332,8 @@ impl Value {
         //         sinh(x)    e^x - e^-x
         // tanh =  ------- = -----------
         //         cosh(x)    e^x + e^-x
-        let t = (f64::exp(x) - f64::exp(-x)) / (f64::exp(x) + f64::exp(-x));
-        println!("tanh({}) = {}", x, t);
+        let _t = (f64::exp(x) - f64::exp(-x)) / (f64::exp(x) + f64::exp(-x));
         let t = (f64::exp(2.0 * x) - 1.0) / (f64::exp(2.0 * x) + 1.0);
-        println!("tanh({}) = {}", x, t);
         Rc::new(Self {
             id: Uuid::new_v4(),
             data: RefCell::new(t),
@@ -349,7 +346,6 @@ impl Value {
     pub fn exp(&self) -> Rc<Self> {
         let x = *self.data.borrow();
         let e = f64::exp(x);
-        println!("exp({}) = {}", x, e);
         Rc::new(Self {
             id: Uuid::new_v4(),
             data: RefCell::new(e),
