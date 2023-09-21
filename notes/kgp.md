@@ -12,7 +12,6 @@ It is made up of triplets of information in the form of source, destination and
 relationship. For example, "Dan" "likes" "icecream". This is a very simple
 example but it can be used to represent complex relationships between content
 accross documents.
-# Create an ascii art diagram of the KGP process
 
 ```
    Source         Relationship      Destination
