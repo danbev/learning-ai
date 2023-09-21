@@ -1,4 +1,5 @@
 ## LanceDB Rust example
+The goal of this example is to have an equivalent of the Python example in Rust.
 
 ### Pre-requisites
 You need to have protobuf-devel installed or you will get the following error:
@@ -25,6 +26,17 @@ warning: build failed, waiting for other jobs to finish...
 protobuf-devel can be installed using the following command:
 ```console
 $ sudo dnf install -y protobuf-devel 
+```
+
+### Running
+```console
+$ cargo r -q
+LanceDB Rust Example
+Opening table "my_table"
+
+         vector     item     price     _distance    
+0        [3.0  5.0]  bar     20.0      18434.0
+1        [5.0  0.0]  foo     10.0      19801.0
 ```
 
 ## Troubleshooting

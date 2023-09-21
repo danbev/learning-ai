@@ -7,6 +7,7 @@ edition = "2021"
 arrow-array = "43.0.0"
 arrow-schema = "43.0.0"
 lance = "0.7.3"
+lance-arrow = { path="/home/danielbevenius/work/ai/lance/rust/lance-arrow", version="0.7.5" }
 tokio = { version = "1", features = ["full"] }
 vectordb = "0.2.5"
 futures = "0.3"
