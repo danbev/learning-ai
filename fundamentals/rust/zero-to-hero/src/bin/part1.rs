@@ -1,6 +1,7 @@
 use ndarray::prelude::*;
 use ndarray::Array;
 use plotpy::{Curve, Plot};
+use std::cell::RefCell;
 use std::io::{self};
 use std::rc::Rc;
 
@@ -394,37 +395,31 @@ fn main() -> io::Result<()> {
     //  | x₂ |/
     //  +----+
     // Inputs
-    let x1 = Value::new_with_label(2.0, "x1");
-    let x2 = Value::new_with_label(0.0, "x2");
-    println!("{x1}, {x2}");
+    let x1 = RefCell::new(Value::new_with_label(2.0, "x1"));
+    let x2 = RefCell::new(Value::new_with_label(0.0, "x2"));
 
     // Weights
-    let w1 = Value::new_with_label(-3.0, "w1");
-    let w2 = Value::new_with_label(1.0, "w2");
-    println!("{w1}, {w2}");
+    let w1 = RefCell::new(Value::new_with_label(-3.0, "w1"));
+    let w2 = RefCell::new(Value::new_with_label(1.0, "w2"));
 
     // Bias of the neuron.
     //let b = Value::new_with_label(6.7, "b");
     // This magic number is a value use to make the numbers come out nice.
-    let b = Value::new_with_label(6.8813735870195432, "b");
-    println!("{b}");
+    let b = RefCell::new(Value::new_with_label(6.8813735870195432, "b"));
 
     // This is the edge to the 'x1w1' node
-    let x1w1 = &x1 * &w1;
-    *x1w1.label.borrow_mut() = "x1*w1".to_string();
-    println!("{x1w1}");
+    let x1w1 = RefCell::new(&*x1.borrow() * &*w1.borrow());
+    *(*x1w1.borrow_mut()).label.borrow_mut() = "x1*w1".to_string();
     // This is the edge to the 'x2w2' node
-    let x2w2 = &x2 * &w2;
-    *x2w2.label.borrow_mut() = "x2*w2".to_string();
-    println!("{x2w2}");
+    let x2w2 = RefCell::new(&*x2.borrow() * &*w2.borrow());
+    *(*x2w2.borrow_mut()).label.borrow_mut() = "x2*w2".to_string();
 
-    let x1w1x2w2 = &x1w1 + &x2w2; // this is the sum part of the "dot" product.
-    *x1w1x2w2.label.borrow_mut() = "x1w1 + x2w2".to_string();
-    println!("x1w1x2w2: {x1w1x2w2}");
+    let x1w1x2w2 = RefCell::new(&*x1w1.borrow() + &*x2w2.borrow());
+    *(*x1w1x2w2.borrow_mut()).label.borrow_mut() = "x1w1 + x2w2".to_string();
 
     // The following was not part of the youtube video, but is just me trying
     // to get an intuition for what is going on. Following the operations is
-    // pretty easy but I feel that I loose a sense about what is actually
+    // pretty easy but I feel that I loose a sense about what is actually going
     // on and why we are performing these operations.
     //
     // We can try to visualize this neuron as performing the following:
@@ -488,34 +483,33 @@ fn main() -> io::Result<()> {
     // In this case because x₂ is 0, the point will be (-6, 0). We then
     // add the bias which will give us the y value of the point. We can think
     // of y as coming out through the screen towards us reaching 0.7 units
-    // outwards. That is it is a point above the (x₁, x₂) plane shown above.
+    // outwards. That is, it is a point above the (x₁, x₂) plane shown above.
     //
     // We then add the bias to the point (-6, 0) to get the final point:
     // y = -6.0 + 6.7 = 0.7
-    // ( x₁,  x₂,   y)
+    // ( x₁,   x₂,   y)
     // (-6.0, 0.0, 0.7) which is a point in 3D space. The y value is the
     // height of the point. This is sometimes called the pre-activation value.
     // It is the y value, in this case 0.7 that will be passed to the activation
     // function which will transform it into the final output value of the
     // neuron.
-    let n = &x1w1x2w2 + &b;
-    *n.label.borrow_mut() = "n".to_string();
-    println!("n pre_activation value: {n}");
+    let n = RefCell::new(&*x1w1x2w2.borrow() + &*b.borrow());
+    *(*n.borrow_mut()).label.borrow_mut() = "n".to_string();
 
-    std::fs::write("plots/part1_single_neuron1.dot", n.dot()).unwrap();
+    std::fs::write("plots/part1_single_neuron1.dot", (*n.borrow()).dot()).unwrap();
     run_dot("part1_single_neuron1");
 
     // Print the tanh function for reference.
     let ys = xs.mapv(|x| f64::tanh(x));
     plot(&xs, &ys, "tanh");
 
-    let o = n.tanh();
+    let o = (*n.borrow_mut()).tanh();
     *o.label.borrow_mut() = "o".to_string();
 
     std::fs::write("plots/part1_single_neuron2.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron2");
 
-    // Now lets perform the backpropagation.
+    // Now lets perform the manual backpropagation.
     // do with regards to itself is just 1
     *o.grad.borrow_mut() = 1.0;
     // We need to calculate the local derivative of the tanh function.
@@ -523,24 +517,26 @@ fn main() -> io::Result<()> {
     // o = tanh(n)
     // And the derivative of tanh is:
     // do/dn = 1 - tanh(n)^2
-    // And we alreay have tanh(n) in o so we can just square it to get the
+    // And we already have tanh(n) in o so we can just square it to get the
     // derivative:
-    *n.grad.borrow_mut() = 1.0 - o.data.borrow().powf(2.0);
-    // Next we have a plus/sum node which we know from before will just pass
+    *(*n.borrow()).grad.borrow_mut() = 1.0 - o.data.borrow().powf(2.0);
+    // Next we have a addition node which we know from before will just pass
     // the gradient through from the node ahead of it.
-    *b.grad.borrow_mut() = *n.grad.borrow();
-    *x1w1x2w2.grad.borrow_mut() = *n.grad.borrow();
+    *(*b.borrow()).grad.borrow_mut() = *(*n.borrow()).grad.borrow();
+    *(*x1w1x2w2.borrow()).grad.borrow_mut() = *(*n.borrow()).grad.borrow();
     // The next nodes is also a sum node so we can just pass the gradient
     // through.
-    *x1w1.grad.borrow_mut() = *x1w1x2w2.grad.borrow();
-    *x2w2.grad.borrow_mut() = *x1w1x2w2.grad.borrow();
+    *(*x1w1.borrow()).grad.borrow_mut() = *(*x1w1x2w2.borrow()).grad.borrow();
+    *(*x2w2.borrow()).grad.borrow_mut() = *(*x1w1x2w2.borrow()).grad.borrow();
     // Next we have the multiplication nodes.
-    *x1.grad.borrow_mut() = *w1.data.borrow() * x1w1.grad.borrow().clone();
-    *w1.grad.borrow_mut() = *x1.data.borrow() * x1w1.grad.borrow().clone();
-    *x2.grad.borrow_mut() = *w2.data.borrow() * x2w2.grad.borrow().clone();
-    *w2.grad.borrow_mut() = *x2.data.borrow() * x2w2.grad.borrow().clone();
-
-    println!("o: {o}");
+    *(*x1.borrow()).grad.borrow_mut() =
+        *(*w1.borrow()).data.borrow() * (*x1w1.borrow()).grad.borrow().clone();
+    *(*w1.borrow()).grad.borrow_mut() =
+        *(*x1.borrow()).data.borrow() * (x1w1.borrow()).grad.borrow().clone();
+    *(*x2.borrow()).grad.borrow_mut() =
+        *(*w2.borrow()).data.borrow() * (x2w2.borrow()).grad.borrow().clone();
+    *(*w2.borrow()).grad.borrow_mut() =
+        *(*x2.borrow()).data.borrow() * (x2w2.borrow()).grad.borrow().clone();
 
     std::fs::write("plots/part1_single_neuron3.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron3");

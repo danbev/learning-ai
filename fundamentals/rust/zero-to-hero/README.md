@@ -1,7 +1,9 @@
 ## Neural Networks:  Zero to Hero
 This project is a Rust implementation of the youtube series
-[Neural Networks:  Zero to Hero] by Andrej Karpathy. The goal is to implement
-the code in the series in Rust.
+[Neural Networks:  Zero to Hero] by Andrej Karpathy.
+The goal is to implement the code in each video in Rust in a way that allows
+the viewers to follow along, but instead of looking at Python code they can
+look the Rust code in this repository.
 
 In the series Mr. Karpathy uses some notebook exploration coding which is very
 helpful for learning. I'll try to provide the same thing in the code itself, or 
@@ -26,28 +28,25 @@ $ sudo dnf install lapack-devel openblas-devel
 ```
 
 ### Part1: Building micrograd
-Youtube link: [The spelled-out intro to neural networks and backpropagation: building micrograd]
+The first [part] of the series is called 
+`The spelled-out intro to neural networks and backpropagation: building micrograd`.
+Since the idea is to follow along with the series, I won't decribe what it does
+here which might take away from the learning experience.
 
-This is the first part of the series and the code can be found in
+The Rust code for this first part of the series can be found in
 [part1.rs](./src/bin/part1.rs) and can be run with the following command:
 ```console
 (zeroh) $ cargo run --bin part1
 ```
-The first plot from `intro` section looks like this:
+The following plot shows the function the will be used in the  `intro` section:
 
 ![image](./plots/part1_intro.svg)
-
-This can also be opened locally using the following command or using a web
-browser:
-```console
-(zeroh) $ xdg-open plots/part1.svg
-```
 
 The first diagram/graph from the `intro` section looks like this:
 
 ![image](./plots/part1_graph.svg)
 
-The second diagram is of of the single neuron network before gradients have
+The second diagram is of the single neuron network before gradients have
 been calculated:
 
 ![image](./plots/part1_single_neuron1.svg)
@@ -83,4 +82,4 @@ function with the "decomposed" tanh function:
 ![image](./plots/part1_single_neuron7.svg)
 
 [Neural Networks:  Zero to Hero]: https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ
-[The spelled-out intro to neural networks and backpropagation: building micrograd]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2
+[part1]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2
