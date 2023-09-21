@@ -141,7 +141,6 @@ needed for training.
 Modern deep learning frameworks and data loaders handle this process
 efficiently, often using asynchronous operations to overlap data loading on the
 CPU with computation on the GPU.
-```
 
 Once the model's weights are on the GPU, they typically stay there throughout
 the training process. Forward passes, backward passes, and weight updates all
@@ -149,4 +148,3 @@ happen on the GPU. The weights aren't constantly moved back and forth between
 the host and the GPU.
 It's only if you need to save the model's weights or inspect them on the CPU
 that you'd transfer them back to the host's memory.
-
