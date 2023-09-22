@@ -379,7 +379,7 @@ impl Value {
             let node_id = node_ptr as usize;
 
             out += &format!(
-                "  \"{}\" [label=\"{} value: {:.4}, grad: {:.4}\" shape=record]\n",
+                "  \"{}\" [label=\"{{{} | value: {:.4} | grad: {:.4} }}\" shape=record]\n",
                 node_ptr as usize,
                 &*node.label.borrow(),
                 *node.data.borrow(),
