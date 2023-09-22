@@ -82,7 +82,7 @@ variable is the thread id. The `blockIdx.x` is the block id and the
 number of threads in a block. The `blockIdx.x * blockDim.x + threadIdx.x`
 is the global thread id.
 
-There is an example in [cuda_exploration](../cuda/cuda_exploration.ipynb) that
+There is an example in [cuda_exploration](../gpu/cuda/cuda_exploration.ipynb) that
 shows the above example.
 
 ### Parallel Thread Execution (PTX)
