@@ -39,3 +39,25 @@ have a vector like [0.1 0.2 0.3] for "Dan" and [0.4 0.5 0.6] for "likes", which
 we could add together to get [0.5 0.7 0.9] which should then be the vector
 for "icecream".
 
+### Graph RAG (Retrieval Augmented Generation)
+We have discussed [RAG](rag.md) before, but this is a variation of it where we
+use a knowledge graph to represent the relationships between content accross
+documents.
+
+The main issue as I understand it with the traditional RAG, and I'm here
+assuming that it would be the kind the we have talked about before, where we
+have a vector database where information is stored. And when we want to perform
+an interaction with an LLM we take the query and create a vector embedding for
+it and usually perform a cosine similarity search against the vector store. One
+issue is that we might not be able to find the correct context depending on the
+query. The vector database might not be able to understand the correct intent
+of the query this way.
+
+This extra information is then passed as context to the LLM which will know
+have access to this information which it was not trained on.
+
+So recall that when we have documents in a vector database we have to split
+them up into smaller pieces and then create embeddings for them. When we do a
+simliarity search (distance search) we might not get back the most accurate
+pieces. What a graph knowledge base enables is to have relationships between
+the entities.
