@@ -63,7 +63,7 @@ impl Value {
     pub fn new(data: f64) -> Self {
         Value {
             data: RefCell::new(data),
-            ..Default::default()
+            ..Value::default()
         }
     }
 
@@ -71,7 +71,7 @@ impl Value {
         Value {
             label: RefCell::new(label.to_string()),
             data: RefCell::new(data),
-            ..Default::default()
+            ..Value::default()
         }
     }
 
@@ -80,7 +80,7 @@ impl Value {
             data: RefCell::new(data),
             children,
             op,
-            ..Default::default()
+            ..Value::default()
         }
     }
 
@@ -318,7 +318,7 @@ impl Value {
             data: RefCell::new(*value.data.borrow() + other),
             children: vec![value.clone(), Rc::new(Self::new(other))],
             op: Operation::Add,
-            ..Default::default()
+            ..Value::default()
         })
     }
 
@@ -339,7 +339,7 @@ impl Value {
             data: RefCell::new(t),
             children: vec![Rc::new(self.clone())],
             op: Operation::Tanh,
-            ..Default::default()
+            ..Value::default()
         })
     }
 
@@ -351,7 +351,7 @@ impl Value {
             data: RefCell::new(e),
             children: vec![Rc::new(self.clone())],
             op: Operation::Exp,
-            ..Default::default()
+            ..Value::default()
         })
     }
 
@@ -360,7 +360,7 @@ impl Value {
             data: RefCell::new(f64::powf(*self.data.borrow(), *x.data.borrow())),
             children: vec![Rc::new(self.clone()), Rc::new(x.clone())],
             op: Operation::Pow,
-            ..Default::default()
+            ..Value::default()
         })
     }
 
