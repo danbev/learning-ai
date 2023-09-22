@@ -804,6 +804,7 @@ dependencies = [
  "approx",
  "ndarray",
  "plotpy",
+ "rand",
  "russell_lab",
  "uuid",
 ]
