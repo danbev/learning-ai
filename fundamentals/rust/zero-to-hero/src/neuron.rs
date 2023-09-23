@@ -5,14 +5,15 @@ use std::rc::Rc;
 /// This struct is the equivalent of the `Neuron` class in the python version.
 /// which is defined in part1.
 #[allow(dead_code)]
-struct Neuron<const N: usize> {
+#[derive(Debug)]
+pub struct Neuron<const N: usize> {
     bias: Rc<Value>,
     weights: [Rc<Value>; N],
 }
 
 #[allow(dead_code)]
 impl<const N: usize> Neuron<N> {
-    fn new() -> Neuron<N> {
+    pub fn new() -> Neuron<N> {
         let mut rng = rand::thread_rng();
         let weights: Vec<Rc<Value>> = (0..N)
             .map(|i| {
