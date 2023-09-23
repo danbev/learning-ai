@@ -33,7 +33,7 @@ impl<const I: usize> Neuron<I> {
 }
 
 #[allow(dead_code)]
-impl<const I: usize> FnOnce<([Rc<Value>; I],)> for Neuron<I> {
+impl<const I: usize> FnOnce<(Vec<Rc<Value>>,)> for Neuron<I> {
     type Output = Rc<Value>;
 
     /// This function performs the operation of the neuron, that is it
@@ -41,9 +41,8 @@ impl<const I: usize> FnOnce<([Rc<Value>; I],)> for Neuron<I> {
     ///
     /// This is the equivalent of the `__call__` method used in the python
     /// version.
-    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
+    extern "rust-call" fn call_once(self, xs: (Vec<Rc<Value>>,)) -> Self::Output {
         let mut sum = Value::new_with_label(*self.bias.data.borrow(), "sum");
-        println!("sum (initialized to value of bias): = {}", sum);
         for (x, w) in self.weights.iter().zip(xs.0.iter()) {
             sum = &sum + &(&**w * &**x);
         }
@@ -64,7 +63,7 @@ mod tests {
     #[test]
     fn test_neuron_call() {
         let n = Neuron::<6>::new();
-        let r = n([
+        let r = n(vec![
             Rc::new(Value::new_with_label(1.0, "x0")),
             Rc::new(Value::new_with_label(2.0, "x1")),
             Rc::new(Value::new_with_label(3.0, "x2")),

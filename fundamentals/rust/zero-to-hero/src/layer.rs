@@ -7,14 +7,13 @@ use std::rc::Rc;
 //
 #[derive(Debug)]
 pub struct Layer<const I: usize, const N: usize> {
-    neurons: [Neuron<I>; N],
+    neurons: Vec<Neuron<I>>,
 }
 
 impl<const I: usize, const N: usize> Layer<I, N> {
     pub fn new() -> Layer<I, N> {
-        let neurons: Vec<Neuron<I>> = (0..N).map(|_| Neuron::<I>::new()).collect();
         Layer {
-            neurons: neurons.try_into().unwrap(),
+            neurons: (0..N).map(|_| Neuron::<I>::new()).collect(),
         }
     }
 
@@ -28,10 +27,10 @@ impl<const I: usize, const N: usize> Layer<I, N> {
 }
 
 #[allow(dead_code)]
-impl<const I: usize, const N: usize> FnOnce<([Rc<Value>; I],)> for Layer<I, N> {
-    type Output = [Rc<Value>; N];
+impl<const I: usize, const N: usize> FnOnce<(Vec<Rc<Value>>,)> for Layer<I, N> {
+    type Output = Vec<Rc<Value>>;
 
-    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
+    extern "rust-call" fn call_once(self, xs: (Vec<Rc<Value>>,)) -> Self::Output {
         let outputs = self
             .neurons
             .into_iter()
@@ -54,7 +53,7 @@ mod tests {
 
     #[test]
     fn test_layer_call() {
-        let inputs = [
+        let inputs = vec![
             Rc::new(Value::new_with_label(1.0, "x0")),
             Rc::new(Value::new_with_label(2.0, "x1")),
         ];
