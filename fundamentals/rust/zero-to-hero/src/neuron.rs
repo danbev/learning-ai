@@ -4,18 +4,19 @@ use std::rc::Rc;
 
 /// This struct is the equivalent of the `Neuron` class in the python version.
 /// which is defined in part1.
+/// It represents a single neuron in a layer of allow neural network
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct Neuron<const N: usize> {
+pub struct Neuron<const I: usize> {
     bias: Rc<Value>,
-    weights: [Rc<Value>; N],
+    weights: [Rc<Value>; I],
 }
 
 #[allow(dead_code)]
-impl<const N: usize> Neuron<N> {
-    pub fn new() -> Neuron<N> {
+impl<const I: usize> Neuron<I> {
+    pub fn new() -> Neuron<I> {
         let mut rng = rand::thread_rng();
-        let weights: Vec<Rc<Value>> = (0..N)
+        let weights: Vec<Rc<Value>> = (0..I)
             .map(|i| {
                 Rc::new(Value::new_with_label(
                     rng.gen_range(-1.0..=1.0),
@@ -32,7 +33,7 @@ impl<const N: usize> Neuron<N> {
 }
 
 #[allow(dead_code)]
-impl<const N: usize> FnOnce<([Rc<Value>; N],)> for Neuron<N> {
+impl<const I: usize> FnOnce<([Rc<Value>; I],)> for Neuron<I> {
     type Output = Rc<Value>;
 
     /// This function performs the operation of the neuron, that is it
@@ -40,7 +41,7 @@ impl<const N: usize> FnOnce<([Rc<Value>; N],)> for Neuron<N> {
     ///
     /// This is the equivalent of the `__call__` method used in the python
     /// version.
-    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; N],)) -> Self::Output {
+    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
         let mut sum = Value::new_with_label(*self.bias.data.borrow(), "sum");
         println!("sum (initialized to value of bias): = {}", sum);
         for (x, w) in self.weights.iter().zip(xs.0.iter()) {
