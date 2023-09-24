@@ -4,10 +4,8 @@ use plotpy::{Curve, Plot};
 use std::cell::RefCell;
 use std::io::{self};
 use std::rc::Rc;
-
-#[path = "../value.rs"]
-mod value;
-use value::Value;
+use zero_to_hero::mlp::Mlp;
+use zero_to_hero::value::Value;
 
 fn f(xs: Array1<f64>) -> Array1<f64> {
     xs.mapv(|x| 3.0 * x * x - 4.0 * x + 5.0)
@@ -627,6 +625,15 @@ fn main() -> io::Result<()> {
 
     std::fs::write("plots/part1_single_neuron7.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron7");
+
+    let layer = Mlp::<3, 4, 2>::new();
+    let inputs = vec![
+        Rc::new(Value::new_with_label(1.0, "x0")),
+        Rc::new(Value::new_with_label(2.0, "x1")),
+        Rc::new(Value::new_with_label(3.0, "x2")),
+    ];
+    let output = layer(inputs);
+    println!("output: {}", output);
 
     Ok(())
 }
