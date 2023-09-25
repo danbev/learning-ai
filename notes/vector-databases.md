@@ -268,12 +268,27 @@ r = number of rows
 b = number of bands (subvectors)
 ```
 
+#### Quantization based indexing
+In this case we divide the vectors into island, or clusters, each having a
+specific center point. For a query we can search for the nearest cluster of
+the query, and then further compare the query to the vectors in that cluster.
+
+#### IVF (Inverted File)
+In general an inverted file refers to how one might for each term store a list
+of documents that contain that term.
+
+But in this case we talking about vector databases and hence we don't have
+terms in that sense. In this case the vector space is divided into clusters
+of vectors each with a centroid. This is done at the time of indexing. I think
+these regions/clusters are called Voronoi cells. We can think each centeroid
+as the terms we would have with inverted files.
+
+When a query comes in we can then find the closest centroid(s?) to the query.
+The query is then compared to a number of K closest centroid into which the
+query is then compared to the vectors in that cluster.
 
 
 #### HNSW (Hierarchical Navigable Small World)
-TODO:
-
-#### IVF (Inverted File)
 TODO:
 
 
