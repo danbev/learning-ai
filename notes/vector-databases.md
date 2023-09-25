@@ -116,13 +116,23 @@ have a query vector and we want to find the closest vectors to this query.
 This is done by calculating the distance between the query vector and all the
 vectors in the database. Notice that this says `all` the vectors in the
 database. So this is not very efficient. 
-This method is also sometimes called flat searching not very efficient but the
-quality of the searches is 100% as all vectors in the database will be compared
-to the query vector. This works well for a small database but might become an
-issue with larger ones as the search time will increase as the number of vectors
-inserted into the vector database increases. We need a way that scales and makes
-the search time independent of the number of vectors in the database which
-leads us to approximate nearest neighbor searching.
+
+This method is also sometimes called flat searching and is not very efficient
+but the quality of the searches is 100% as all vectors in the database will be
+compared to the query vector. This works well for a small database but might
+become an issue with larger ones as the search time will increase as the number
+of vectors inserted into the vector database increases. We need a way that
+scales and makes the search time independent of the number of vectors in the
+database which leads us to approximate nearest neighbor (ANN) searching.
+
+#### ANN (Approximate Nearest Neighbor)
+This is a way of searching for the closest vectors to a query vector which out
+having to perform an exhaustive search, though this might be less accurate hence
+the "appoximate" part of the name.
+
+### Indexing
+This is about creating datastructures that allow efficient searching. This
+section will go through a few the most common ones (I think).
 
 #### LSH (Locality Sensitive Hashing)
 Is an example of approximate nearest neighbor searching. Instead of comparing
@@ -268,10 +278,6 @@ r = number of rows
 b = number of bands (subvectors)
 ```
 
-#### Quantization based indexing
-In this case we divide the vectors into island, or clusters, each having a
-specific center point. For a query we can search for the nearest cluster of
-the query, and then further compare the query to the vectors in that cluster.
 
 #### IVF (Inverted File)
 In general an inverted file refers to how one might for each term store a list
@@ -289,6 +295,19 @@ query is then compared to the vectors in that cluster.
 
 
 #### HNSW (Hierarchical Navigable Small World)
+TODO:
+
+#### Quantization based indexing
+This is an index that combines an existing index, like IVF, or HNSW, with
+a compression method to reduce memory usage by reducing the size of the vectors
+but not their lenght (dimsionality reduction). The idea is that we can use
+quantization to reduce the number of bits needed to represent a vector.
+
+This can be done using scalar quantization where instead of using floating
+point numbers we use integers.
+Another option is product quantization...
+
+#### Neighbourhood Graph & Tree (NGT)
 TODO:
 
 
