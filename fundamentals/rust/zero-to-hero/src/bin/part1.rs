@@ -627,7 +627,7 @@ fn main() -> io::Result<()> {
     run_dot("part1_single_neuron7");
 
     let layer = Mlp::<3, 4, 2>::new();
-    let inputs = vec![
+    let inputs = [
         Rc::new(Value::new_with_label(1.0, "x0")),
         Rc::new(Value::new_with_label(2.0, "x1")),
         Rc::new(Value::new_with_label(3.0, "x2")),

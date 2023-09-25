@@ -6,14 +6,15 @@ use std::rc::Rc;
 //
 #[derive(Debug)]
 pub struct Mlp<const I: usize, const N: usize, const L: usize> {
-    layers: [Layer<I, N>; L],
+    first: Layer<I, N>,
+    layers: Vec<Layer<N, N>>,
 }
 
 impl<const I: usize, const N: usize, const L: usize> Mlp<I, N, L> {
     pub fn new() -> Mlp<I, N, L> {
-        let layers: Vec<Layer<I, N>> = (0..L).map(|_| Layer::<I, N>::new()).collect();
         Self {
-            layers: layers.try_into().unwrap(),
+            first: Layer::<I, N>::new(),
+            layers: (1..L).map(|_| Layer::<N, N>::new()).collect(),
         }
     }
 
@@ -31,17 +32,20 @@ impl<const I: usize, const N: usize, const L: usize> Mlp<I, N, L> {
 }
 
 #[allow(dead_code)]
-impl<const I: usize, const N: usize, const L: usize> FnOnce<(Vec<Rc<Value>>,)> for Mlp<I, N, L> {
+impl<const I: usize, const N: usize, const L: usize> FnOnce<([Rc<Value>; I],)> for Mlp<I, N, L> {
     type Output = Rc<Value>;
 
-    extern "rust-call" fn call_once(self, xs: (Vec<Rc<Value>>,)) -> Self::Output {
+    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
         // The output of one layer is the input to the next layer.
-        let mut layer_output = xs.0;
-        for layer in self.layers.into_iter() {
-            layer_output = layer(layer_output);
+        let mut outputs = (self.first)(xs.0);
+        for (i, layer) in self.layers.into_iter().enumerate() {
+            if i == 0 {
+            } else {
+                outputs = layer(outputs);
+            }
         }
-        let last = Layer::<I, 1>::new();
-        last(layer_output)[0].clone()
+        let last = Layer::<N, 1>::new();
+        last(outputs)[0].clone()
     }
 }
 
@@ -60,7 +64,7 @@ mod tests {
     #[test]
     fn test_mlp_call() {
         let layer = Mlp::<1, 3, 2>::new();
-        let inputs = vec![Rc::new(Value::new_with_label(1.0, "x0"))];
+        let inputs = [Rc::new(Value::new_with_label(1.0, "x0"))];
         let output = layer(inputs);
         println!("output: {}", output.dot());
     }

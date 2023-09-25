@@ -27,10 +27,10 @@ impl<const I: usize, const N: usize> Layer<I, N> {
 }
 
 #[allow(dead_code)]
-impl<const I: usize, const N: usize> FnOnce<(Vec<Rc<Value>>,)> for Layer<I, N> {
-    type Output = Vec<Rc<Value>>;
+impl<const I: usize, const N: usize> FnOnce<([Rc<Value>; I],)> for Layer<I, N> {
+    type Output = [Rc<Value>; N];
 
-    extern "rust-call" fn call_once(self, xs: (Vec<Rc<Value>>,)) -> Self::Output {
+    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
         let outputs = self
             .neurons
             .into_iter()
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn test_layer_call() {
-        let inputs = vec![
+        let inputs = [
             Rc::new(Value::new_with_label(1.0, "x0")),
             Rc::new(Value::new_with_label(2.0, "x1")),
         ];
