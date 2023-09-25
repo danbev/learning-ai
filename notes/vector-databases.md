@@ -293,19 +293,3 @@ database written in Rust.
 [LanceDB Python example](../vector-databases/lancedb/python/src/lancedb-example.py)
 
 [LanceDB Rust example](../vector-databases/lancedb/rust/lancedb-example/README.md)
-
-
-In Lancedb we have
-#### Schema
-https://docs.rs/arrow-schema/latest/arrow_schema/struct.Schema.html
-```rust
-pub struct Schema {
-    pub(crate) fields: Fields,
-    pub(crate) metadata: HashMap<String, String>,
-}
-```
-
-#### Issues
-```console
-Error: Lance { message: "LanceError(Schema): Column vector does not exist, /home/danielbevenius/.cargo/registry/src/index.crates.io-6f17d22bba15001f/lance-0.7.5/src/datatypes/schema.rs:96:31" }
-```
