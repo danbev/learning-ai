@@ -134,7 +134,9 @@ the "appoximate" part of the name.
 This is about creating datastructures that allow efficient searching. This
 section will go through a few the most common ones (I think).
 
-#### LSH (Locality Sensitive Hashing)
+Indexing can be hash-based, tree-based, graph-based, or inverted file based.
+
+#### LSH (Locality Sensitive Hashing) (hash-based)
 Is an example of approximate nearest neighbor searching. Instead of comparing
 the query vector to all other vectors we want to reduce the number by finding
 potential candidates. This is done by using a hash function that will hash the
@@ -278,8 +280,7 @@ r = number of rows
 b = number of bands (subvectors)
 ```
 
-
-#### IVF (Inverted File)
+#### IVF (Inverted File) (inverted file based indexing)
 In general an inverted file refers to how one might for each term store a list
 of documents that contain that term.
 
@@ -294,10 +295,17 @@ The query is then compared to a number of K closest centroid into which the
 query is then compared to the vectors in that cluster.
 
 
-#### HNSW (Hierarchical Navigable Small World)
+#### HNSW (Hierarchical Navigable Small World) (graph based indexing)
 TODO:
 
-#### Quantization based indexing
+#### Vamana (graph based indexing)
+TODO:
+
+#### Approximate Nearest Neighbour Oh Yeah (ANNOY) (tree based indexing)
+TODO:
+
+
+### Quantization based indexing
 This is an index that combines an existing index, like IVF, or HNSW, with
 a compression method to reduce memory usage by reducing the size of the vectors
 but not their lenght (dimsionality reduction). The idea is that we can use
@@ -305,9 +313,70 @@ quantization to reduce the number of bits needed to represent a vector.
 
 This can be done using scalar quantization where instead of using floating
 point numbers we use integers.
-Another option is product quantization...
 
-#### Neighbourhood Graph & Tree (NGT)
+#### Scalar Quantization (SQ)
+So in this case we are going to take floating point values and convert them into
+integers. Now if we take a vector of float 32 values they will normally not
+"use" the complete range of values that can be represented. Instead the
+distribution will most likely be a normal distribution.
+Integers also have a range of values that they can represent. For an 8bit
+integer we can represent values from 0 to 255 or -128 to 127.
+
+```
+i8 = (f32 - offset)
+     --------------
+           α
+
+f32 = α * i8 + offset
+```
+The first expression converts an i8 to a f32 by first scaling the i8 value by
+α and then adding the offset. If α is greater then 1 then it will scale the i8
+value up, and if it is between 0-1 it will scale the value down. The offset
+ensures that the converted value is centered around a perticualar value which I
+think is the range of the values mentioned above.
+
+Lets look at an example:
+```
+          [4.8, 5.0, 5.2 6.0, 7.0]
+
+i8 = (f32 - 5.0) / 0.1
+
+4.8: (4.8 - 5.0) / 1.0 = -0.2 / 0.1 = -2
+5.0: (5.0 - 5.0) / 1.0 =  0.0 / 0.1 =  0
+5.2: (5.2 - 5.0) / 1.0 =  0.2 / 0.1 =  2
+6.0: (6.0 - 5.0) / 1.0 =  1.0 / 0.1 = 10
+7.0: (7.0 - 5.0) / 1.0 =  2.0 / 0.1 = 20
+
+[-2, 0, 2, 10, 20]
+```
+A common strategy for choosing the offset is to take the min value in the range
+plus the max value and divide by 2 to get the center of the range. In this case
+the min value is 4.8 and the max value is 7.0. So the offset would be:
+
+```
+offset = 4.8 + 7.0 / 2 = 5.9 / 2 = 2.95
+
+i8 = (f32 - 2.95) / 0.1
+4.8: (4.8 - 2.95) / 1.0 =  1.85 / 0.1 =  18.5
+5.0: (5.0 - 2.95) / 1.0 =  2.05 / 0.1 =  20.5
+5.2: (5.2 - 2.95) / 1.0 =  2.25 / 0.1 =  22.5
+6.0: (6.0 - 2.95) / 1.0 =  3.05 / 0.1 =  30.5
+7.0: (7.0 - 2.95) / 1.0 =  4.05 / 0.1 =  40.5
+
+[18, 20, 22, 30, 40]
+
+f32 = 0.1 * 18 + 2.95 = 0.1 * 18 + 2.95 = 4.8
+0.1 * 18 = 1.8
+1.8 + 2.95 = 4.75
+```
+To get a "feel" for this there is an example in
+[scalar-quantization.py](../fundamentals/python/src/scalar-quantization.py)
+
+
+#### Product Quantization (PQ)
+TODO:
+
+#### Neighbourhood Graph & Tree (NGT) (graph and tree based indexing)
 TODO:
 
 
