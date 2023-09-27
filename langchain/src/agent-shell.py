@@ -7,12 +7,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 shell_tool = ShellTool()
-
-llm = ChatOpenAI(temperature=0)
+print(shell_tool.run({"commands": ["echo 'Bajja!'"]}))
+print(f'{shell_tool.description=}')
+print(f'{shell_tool.args=}')
 
 shell_tool.description = shell_tool.description + f"args {shell_tool.args}".replace(
     "{", "{{"
 ).replace("}", "}}")
+print(f'{shell_tool.description=}')
+
+llm = ChatOpenAI(temperature=0)
 
 self_ask_with_search = initialize_agent(
     [shell_tool], llm, agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION, verbose=True
