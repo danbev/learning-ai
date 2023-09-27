@@ -255,6 +255,7 @@ signature a:  [9, 7, 1, 3, 4, 7, 8, 9, 6]
   +-----------+ +-----------+ +-----------+
 ```
 And we can do the same thing with a different signature:
+```
 signature a:  [8, 2, 6, 5, 1, 0, 8, 9, 6] 
  
    [8, 2, 6]     [5, 1, 0]    [8, 9, 6]
