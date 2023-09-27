@@ -372,9 +372,79 @@ f32 = 0.1 * 18 + 2.95 = 0.1 * 18 + 2.95 = 4.8
 To get a "feel" for this there is an example in
 [scalar-quantization.py](../fundamentals/python/src/scalar-quantization.py)
 
+```
+                    Scope (S)
+   +------------------------------------------------+
+   |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+D  |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+   |    |    |   |    |    |    |    |    |    |    |
+   +------------------------------------------------+
+                         ↓
+
+                    Scope (S)
+   +----------------------------+
+   |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+D  |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+   |    |    |   |    |    |    |
+   +----------------------------+
+```
 
 #### Product Quantization (PQ)
-TODO:
+Like scalar quantization this is also a technique for vector compression
+
+```
+    0                      d                       128
+    +-----------------------------------------------+               4096 bits
+b   |f32|f32|f32|f32|f32|f32|f32|f32|f32|f32|f32|f32|
+    +-----------------------------------------------+
+
+d = 128 (slots/elements)
+b = 32 bits
+mem = 128 * 32 = 4096 bits
+```
+The goals is to reduce the memory footprint of this vector.
+We start by splitting the vector into subvectors:
+```
+    +-----+  +----+  +----+  +----+  +----+  +----+  +----+ +----+ Still floating point numbers
+    | S₀  |  | S₁ |  | S₂ |  | S₃ |  | S₄ |  | S₅ |  | S₆ | | S₇ |
+    +-----+  +----+  +----+  +----+  +----+  +----+  +----+ +----+
+       |       |        |       |       |       |       |      |
+       |       |        |       |       |       |       |      |
+       |  k-means clustering for all of the subvectors
+ +-----+      
+ |   +-------------+ 
+ |   | Centroid S₀₀|
+ |   | Centroid S₀₁|              8 bits
+ |   | Centroid S₀₂|             +-----+
+ +-->| Centroid S₀₃|------------>|  3  |
+     | Centroid S₀₄|             +-----+
+     | Centroid S₀₅|
+     | Centroid S₀₆|
+     | Centroid S₀₇|
+     +-------------+
+```
+Each vector will replaced by a sequence of 8 centroid ids which are stored as
+ints. So instead of a 128 floating point vector taking up 4096 bits we have
+8*8=64 bits.
+
+Each subvector is will have its own set of centroids which are specific to
+that subvector.
+
+![image](./centroids.png)
+
+_work in progress_
 
 #### Neighbourhood Graph & Tree (NGT) (graph and tree based indexing)
 TODO:
