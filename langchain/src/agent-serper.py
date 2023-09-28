@@ -43,13 +43,20 @@ llm_tool = Tool(
 # The REACT part is the ReAct, reason and act, part of the agent.
 # The description indicates that the agent will trigger tools based on the
 # description of the tool.
-agent = initialize_agent(tools,
+agent_executor = initialize_agent(tools,
                          llm,
                          agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
                          verbose=True,
-                         max_iterations=3) # the default value is 15
+                         max_iterations=3) # the default value is 15, and is
+                                           # the max number of thoughts the
+                                           # agent can have.
+
+# Show the propts for the agents interaction with the LLM
+#print(f'System prompt:\n{agent_executor.agent.llm_chain.prompt.messages[0].prompt.template}')
+#print(f'User prompt:\n{agent_executor.agent.llm_chain.prompt.messages[1].prompt.template}')
     
 
-result = count_tokens(agent,
+result = count_tokens(agent_executor,
                       "Who is Austin Powers? What is his current age raised to the 0.23 power? Return his age in the result")
 print(f'{result["output"]}')
+
