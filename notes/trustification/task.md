@@ -162,6 +162,10 @@ You can sign up and get a free trail period with token credits. The
 of tokens used and it is possible to buy credits. I bought $10 worth of credits
 and I'm still using not used up half of them yet.
 
+The above is using RAG with a vector store to first retrieve the context to be
+sent to the LLM. There is also the option to use Knowledge Graphs Promting (KGP)
+which can more accurate in retrieving the correct contex. I'm going to read
+up a little about this and see if it could be useful in our case. 
 
 ### Use a language model to generate suggestions fixing vulnerabilities
 The idea here would be that we gather information about the vulnerability
@@ -315,12 +319,76 @@ Check scores:
 ```
 </details>
 
+
 ### Investigate Low-Rank Adaptation (LoRA)
 I'd like to do a spike on Low-Rank Adapation [LoRA](./../lora.md) to understand
 how it works and what possibilities it might provide. The idea is to take a
 pre-trained llm model and then fine-tune it for a specific dataset or tasks.
+
 This does not require the whole model to be re-trained so it is not as time
 consuming as training a model from scratch. This could possibly be something
 like fine-tuning a model to generate a specific type of reports that we want
-for our use case. So that it learns does not have to be new information but it
-can also be a new way of presenting the information.
+for our use case. So what it learns does not have to be new information but it
+can also be a new way of presenting information.
+
+I've done some experimentation with LoRA but only followed an example where
+the model was fine-tuned for a different dataset. This was a little harder to
+experiment with as it requires (or will run very very slowly) a GPU. I used
+a Colab Pro account and can use this for further experimentation if we find a
+good use case.
+
+### Using ReAct
+This is a suggestion where we could use an LLM to reason and act and access
+our existing services.
+
+For example, we could create an agent that use tools/expert modules to access
+our existing APIs to retrieve information that is specific to our systems.
+
+For example, the following uses the VEX OpenAPI to retrieve VEX documents
+when given an advisory ID. It then extracts the CVEs from the VEX document
+and returns them. 
+
+```console
+(langch) $ python src/agent-openapi.py 
+
+> Entering new AgentExecutor chain...
+Action: api_planner
+Action Input: Find the VEX for RHSA-2023:1441 and show the CVEs
+Observation: 1. GET /api/v1/vex with a query param to search for RHSA-2023:1441
+2. Extract the CVEs from the returned VEX data.
+Thought:I'm ready to execute the API calls.
+Action: api_controller
+Action Input: 1. GET /api/v1/vex with a query param to search for RHSA-2023:1441
+2. Extract the CVEs from the returned VEX data.
+
+> Entering new AgentExecutor chain...
+I need to make a GET request to the /api/v1/vex endpoint with the advisory parameter set to RHSA-2023:1441. Then, I will extract the CVEs from the response.
+
+Action: requests_get
+Action Input: 
+{
+  "url": "http://localhost:8081/api/v1/vex",
+  "params": {
+    "advisory": "RHSA-2023:1441"
+  },
+  "output_instructions": "Extract the CVEs from the response"
+}
+Observation: The CVE mentioned in the API response is: CVE-2023-0286.
+Thought:I have successfully retrieved the CVE from the VEX data.
+Final Answer: The CVE associated with the advisory RHSA-2023:1441 is CVE-2023-0286.
+
+> Finished chain.
+
+Observation: The CVE associated with the advisory RHSA-2023:1441 is CVE-2023-0286.
+Thought:I am finished executing a plan and have the information the user asked for.
+Final Answer: The CVE associated with the advisory RHSA-2023:1441 is CVE-2023-0286.
+
+> Finished chain.
+The CVE associated with the advisory RHSA-2023:1441 is CVE-2023-0286.
+```
+This is only one service added but multiple could be added and as well as
+other tools like web searching for example to find information that is not
+available in our services, like references in the CVEs.
+
+This is very much a work in progress and an investigation trying to figure out
+possible interesting use cases for us.
