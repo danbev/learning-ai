@@ -632,8 +632,16 @@ fn main() -> io::Result<()> {
         Rc::new(Value::new_with_label(2.0, "x1")),
         Rc::new(Value::new_with_label(3.0, "x2")),
     ];
-    let output = layer(inputs);
-    println!("output: {}", output);
+    let o = layer(inputs);
+    println!("output: {}", o);
+
+    std::fs::write("plots/part1_single_neuron8.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron8");
+
+    Value::backwards(o.clone());
+
+    std::fs::write("plots/part1_single_neuron9.dot", o.dot()).unwrap();
+    run_dot("part1_single_neuron9");
 
     Ok(())
 }

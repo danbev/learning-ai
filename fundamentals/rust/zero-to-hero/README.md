@@ -2,7 +2,7 @@
 This project is a Rust implementation of the youtube series
 [Neural Networks:  Zero to Hero] by Andrej Karpathy.
 The goal is to implement the code in each video in Rust in a way that allows
-the viewers to follow along, but instead of looking at Python code they can
+the viewer to follow along, but instead of looking at Python code they can
 look the Rust code in this repository.
 
 In the series Mr. Karpathy uses some notebook exploration coding which is very
@@ -80,6 +80,16 @@ After performing backpropagation using topological order (calling backward)
 function with the "decomposed" tanh function:
 
 ![image](./plots/part1_single_neuron7.svg)
+
+Next we have a multi-layer perceptron (MLP) with two hidden layers, each
+containing, before backpropagation:
+
+![image](./plots/part1_single_neuron8.svg)
+
+Finally we have a multi-layer perceptron (MLP) with two hidden layers, each
+containing, after backpropagation:
+
+![image](./plots/part1_single_neuron9.svg)
 
 [Neural Networks:  Zero to Hero]: https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ
 [part1]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2
