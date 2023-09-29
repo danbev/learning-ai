@@ -31,14 +31,11 @@ impl<const I: usize, const N: usize, const L: usize> Mlp<I, N, L> {
     }
 }
 
-#[allow(dead_code)]
-impl<const I: usize, const N: usize, const L: usize> FnOnce<([Rc<Value>; I],)> for Mlp<I, N, L> {
-    type Output = Rc<Value>;
-
-    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
+impl<const I: usize, const N: usize, const L: usize> Fn<([Rc<Value>; I],)> for Mlp<I, N, L> {
+    extern "rust-call" fn call(&self, args: ([Rc<Value>; I],)) -> Self::Output {
         // The output of one layer is the input to the next layer.
-        let mut outputs = (self.first)(xs.0);
-        for (i, layer) in self.layers.into_iter().enumerate() {
+        let mut outputs = (self.first)(args.0);
+        for (i, layer) in self.layers.iter().enumerate() {
             if i == 0 {
             } else {
                 outputs = layer(outputs);
@@ -46,6 +43,21 @@ impl<const I: usize, const N: usize, const L: usize> FnOnce<([Rc<Value>; I],)> f
         }
         let last = Layer::<N, 1>::new();
         last(outputs)[0].clone()
+    }
+}
+
+impl<const I: usize, const N: usize, const L: usize> FnMut<([Rc<Value>; I],)> for Mlp<I, N, L> {
+    extern "rust-call" fn call_mut(&mut self, args: ([Rc<Value>; I],)) -> Self::Output {
+        self.call(args)
+    }
+}
+
+#[allow(dead_code)]
+impl<const I: usize, const N: usize, const L: usize> FnOnce<([Rc<Value>; I],)> for Mlp<I, N, L> {
+    type Output = Rc<Value>;
+
+    extern "rust-call" fn call_once(self, args: ([Rc<Value>; I],)) -> Self::Output {
+        self.call(args)
     }
 }
 
@@ -64,6 +76,10 @@ mod tests {
     #[test]
     fn test_mlp_call() {
         let layer = Mlp::<1, 3, 2>::new();
+        let inputs = [Rc::new(Value::new_with_label(1.0, "x0"))];
+        let output = layer(inputs);
+        println!("output: {}", output.dot());
+
         let inputs = [Rc::new(Value::new_with_label(1.0, "x0"))];
         let output = layer(inputs);
         println!("output: {}", output.dot());

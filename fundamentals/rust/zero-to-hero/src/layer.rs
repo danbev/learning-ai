@@ -26,17 +26,29 @@ impl<const I: usize, const N: usize> Layer<I, N> {
     }
 }
 
+impl<const I: usize, const N: usize> Fn<([Rc<Value>; I],)> for Layer<I, N> {
+    extern "rust-call" fn call(&self, args: ([Rc<Value>; I],)) -> Self::Output {
+        let outputs = self
+            .neurons
+            .iter()
+            .map(|neuron| neuron(args.0.clone()))
+            .collect::<Vec<Rc<Value>>>();
+        outputs.try_into().unwrap()
+    }
+}
+
+impl<const I: usize, const N: usize> FnMut<([Rc<Value>; I],)> for Layer<I, N> {
+    extern "rust-call" fn call_mut(&mut self, args: ([Rc<Value>; I],)) -> Self::Output {
+        self.call(args)
+    }
+}
+
 #[allow(dead_code)]
 impl<const I: usize, const N: usize> FnOnce<([Rc<Value>; I],)> for Layer<I, N> {
     type Output = [Rc<Value>; N];
 
-    extern "rust-call" fn call_once(self, xs: ([Rc<Value>; I],)) -> Self::Output {
-        let outputs = self
-            .neurons
-            .into_iter()
-            .map(|neuron| neuron(xs.0.clone()))
-            .collect::<Vec<Rc<Value>>>();
-        outputs.try_into().unwrap()
+    extern "rust-call" fn call_once(self, args: ([Rc<Value>; I],)) -> Self::Output {
+        self.call(args)
     }
 }
 
@@ -61,6 +73,13 @@ mod tests {
         assert_eq!(layer.len(), 3);
         assert_eq!(layer.inputs_len(), 2);
 
+        let outputs = layer(inputs);
+        assert_eq!(outputs.len(), 3);
+
+        let inputs = [
+            Rc::new(Value::new_with_label(1.0, "x0")),
+            Rc::new(Value::new_with_label(2.0, "x1")),
+        ];
         let outputs = layer(inputs);
         assert_eq!(outputs.len(), 3);
     }

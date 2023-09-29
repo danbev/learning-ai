@@ -626,13 +626,13 @@ fn main() -> io::Result<()> {
     std::fs::write("plots/part1_single_neuron7.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron7");
 
-    let layer = Mlp::<3, 4, 2>::new();
+    let mlp = Mlp::<3, 4, 2>::new();
     let inputs = [
         Rc::new(Value::new_with_label(1.0, "x0")),
         Rc::new(Value::new_with_label(2.0, "x1")),
         Rc::new(Value::new_with_label(3.0, "x2")),
     ];
-    let o = layer(inputs);
+    let o = mlp(inputs);
     println!("output: {}", o);
 
     std::fs::write("plots/part1_single_neuron8.dot", o.dot()).unwrap();
@@ -642,6 +642,14 @@ fn main() -> io::Result<()> {
 
     std::fs::write("plots/part1_single_neuron9.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron9");
+
+    let inputs1 = [
+        Rc::new(Value::new_with_label(2.0, "x0")),
+        Rc::new(Value::new_with_label(3.0, "x1")),
+        Rc::new(Value::new_with_label(-1.0, "x2")),
+    ];
+    let output1 = mlp(inputs1);
+    println!("output_1: {}", output1);
 
     Ok(())
 }
