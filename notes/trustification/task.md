@@ -349,7 +349,7 @@ when given an advisory ID. It then extracts the CVEs from the VEX document
 and returns them. 
 
 ```console
-(langch) $ python src/agent-openapi.py 
+(langch) $ python src/agent-trust.py
 
 > Entering new AgentExecutor chain...
 Action: api_planner
