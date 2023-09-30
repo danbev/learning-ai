@@ -5,17 +5,17 @@ determine the size of the file and also how much memory is required to read
 the model into memory. If we can get away with a lower precision we can save
 on memory and storage space. This is called quantanisation.
 
-The options we have are to store with 32-bit precision, 16-bit precision, or
+The options we have are to store with 32-bit precision, 16-bit precision, 
 8-bit precision, or 4-bit precision. The lower the precision the smaller the
 file size and the less memory required to read the model into memory. But won't
 the lower precision make the model less accurate?  
-Yes, but if we can use compression to get the bit size down but still keep the
-precision we will have the best of both worlds. This is what quantanisation
+Yes, but if we can use compression to get the bit size down and still keep the
+precision, we will have the best of both worlds. This is what quantanisation
 aims to do.
 
-So we have the weights, bias, and activations that are generated turing training
+So we have the weights, bias, and activations that are generated during training
 and these can be stored in 32-bit, 16-bit, 8-bit, or 4-bit precision after
-training or that we can quantanise the weights, bias, and activations of a 
+training, or that we can quantanise the weights, bias, and activations of a 
 pre-trained model.
 
 Ranges of values for different precisions:
