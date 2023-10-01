@@ -19,3 +19,7 @@ Insert cell below:  b
 Execute cell:       CTRL+ENTER
 ```
 So view all short cuts press CTRL+M H.
+
+There is actually a vim keyboard binding which might be useful and allows for
+using vim key in the editor tabs. This means that to jump between cells is
+different and requires pressing CTRL+M J and CTRL+M K to navigate..
