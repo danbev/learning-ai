@@ -297,7 +297,34 @@ query is then compared to the vectors in that cluster.
 
 
 #### HNSW (Hierarchical Navigable Small World) (graph based indexing)
-TODO:
+To understand this we can start by looking at skip list first:
+The lowest layer is a linked-list which includes all the elements:
+```
+Level 3: 1 -----------------------> 8
+Level 2: 1 --------> 4 -----------> 8 -----> 10
+Level 1: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
+```
+So when searching for 5 we start at the top and move to the right until we
+find a value that is greater than 5 which in this case is 8 at the end of the
+first line. We then move down to level 2 and continue until we hit 4 which is
+not greater then 5 so we drop straight down to level 1 and continue until and
+the move one position to the right and we have found 5.
+The advantage here is that when we have a lot of elements we can skip a lot of
+elements in the list to find the element we are looking for which improves
+performance. This kind of layering is also used in HNSW which I think is the
+hierarchical part of the name.
+
+Next we have Navigable Small World (NSW) graphs.
+The names comes from the saying "Its a small world" when you meet someone and
+they know someone you know. 
+
+We can start by thinking of a graph where node/veritces that are connected to
+each other, then the edges are called friends.
+The idea is that we have a graph and we most often have a sinlge entry point
+and we want to find the most efficient way to get to a specific node.
+When we do is looks at all the friends of the node and then pick the one that
+is closest to our target node and then move along to that node and repeat the
+process until we have found the target node.
 
 #### Vamana (graph based indexing)
 TODO:
