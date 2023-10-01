@@ -28,3 +28,10 @@ above with the original word vectors and the rotated word vectors:
 So the original points are the vectors for the words as if we were not using
 any rotations at all. Then the rotated points are the vectors for the words
 to show how they have been rotated for this specific sentence.
+
+Now, even if we adding words to the start of the sentence or to the end of the
+sentence, we we look at 'cat' and 'sat' they will still have the same angle
+theta between them. So the relative position of the words is still the same. So
+this gives us both positional endcoding and relative positional encoding in a
+single type of embedding technique instead two separate techniques.
+
