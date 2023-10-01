@@ -2,6 +2,11 @@
 The principal behing RAG is to use external data sources to provide an LLM with
 context.
 
+RAG is one of the ways that allow for an LLM to know about things that it was
+not trained on, like proprietary data for example. Another option is to fine
+tune the model on the new data, but this can be expensive and time consuming
+depending on the type of fine tuning (using [LoRA](lora.md) can help with this).
+
 For example, say we want to generate a summary of some information that was not
 available at the time the LLM model we are using was trained. What we can do is
 take these documents and create embeddings for them and then use those
