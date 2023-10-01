@@ -1,5 +1,5 @@
-CXX = g++
-CXXFLAGS = -g -Wall -Iggml/include
+CC = gcc
+CFLAGS = -g -Wall -Iggml/include
 LDFLAGS = -Lggml/build/src/
 
 ggml:
@@ -7,8 +7,8 @@ ggml:
 
 all: $(TARGET)
 
-main: src/main.cpp | ggml
-	$(CXX) $(CXXFLAGS) $^ -o main $(LDFLAGS) -lggml
+main: src/main.c | ggml
+	$(CC) $(CFLAGS) $^ -o main $(LDFLAGS) -lggml -lm
 
 clean:
 	${RM} -f $(TARGET)
