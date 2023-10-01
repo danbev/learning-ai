@@ -1,0 +1,3 @@
+[submodule "fundamentals/ggml/c-example/ggml"]
+	path = fundamentals/ggml/c-example/ggml
+	url = https://github.com/ggerganov/ggml.git
