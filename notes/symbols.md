@@ -22,3 +22,10 @@
 22. **Chi** &chi;: Used in statistical contexts like the chi-squared distribution.
 23. **Psi** &psi;: Wave functions or other special mathematical functions.
 24. **Omega** &omega;: Frequency in signal processing or a hyperparameter.
+
+## Example of usage of Phi
+```
+PΦ(y|x)
+```
+This represent the probability of generating `y` given `x`, after `y` has been
+transformed by some function `Φ` (phi).
