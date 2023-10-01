@@ -11,7 +11,8 @@ int main(int argc, char **argv) {
     .mem_buffer = NULL,
   };
   struct ggml_context *ctx = ggml_init(params);
-  printf("ctx mem_buffer: %ld\n", ggml_get_mem_size(ctx));
+  printf("ctx mem size: %ld\n", ggml_get_mem_size(ctx));
+  printf("ctx mem used: %ld\n", ggml_used_mem(ctx));
   ggml_free(ctx);
   return 0;
 }
