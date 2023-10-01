@@ -31,33 +31,36 @@ The most popular models are `GGML` and `GPTQ`. `GGML` is a post trained
 quantanised model. This means that the model is trained with 32-bit precision
 and then quantanised to 8-bit precision.
 
-GGML models are optimized for CPUs. So the inference is done on CPUs and is
+#### GGML (Georgi Gerganov Machine Learning)
+GGML models are optimized for `CPU`s. So the inference is done on CPUs and is
 faster on CPUS. The models can be slightly larger than GPTQ models.
 "GG" refers to the initials of its originator (Georgi Gerganov) and I think
 ML is just for machine learning. It is a [C library](https://github.com/rustformers/llm/blob/main/crates/ggml/README.md).
 
-GPTQ's are optimized GPUs. So the inference is done on GPUs and is faster on
+GPTQ's are optimized `GPU`s. So the inference is done on GPUs and is faster on
 GPUs.
 
-So depending on you execution environment you should choose the model that is
+So depending on your execution environment you should choose the model that is
 optimized for that environment.
 
-For example, on hugging face you might see multiple versions of a model but
-they have been build/optimized for GGML/GPTQ:
+For example, on hugging face you might see multiple versions of a model that
+have been build/optimized using GGML or GPTQ:
 ```
 https://huggingface.co/TheBloke/Llama-2-7b-Chat-GPTQ
 https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML
 ```
 This was something that has confused be in the past so it was nice to finally
 get an answer to what this suffixes mean.
+
 There is also a new format called
 [GGUF](https://github.com/philpax/ggml/blob/gguf-spec/docs/gguf.md) which is a
 replacement for GGML.
 
 ### AutoGPTQ
 This is a library from Huggingface which enables you to quantanise a pre-trained
-transformer models. There are other libraries that are specific to certain
+transformer model. There are other libraries that are specific to certain
 models but AutoGPTQ is a general library that can be used with many models.
+
 I'm just including the pip install command so that I can see the actual name
 of the python package.
 ```console
