@@ -1,19 +1,20 @@
 ## Modular Reasoning, Knowledge and Language (MRKL)
 [Modular Reasoning, Knowledge and Language] (MRKL, pronouned as "mircle").
 
-Although Language Models include Language i the name and hence we think about
+Although Language Models include Language in the name and hence we think about
 text the Large Language Models (LLM) are not really about text per say. They
 are multimodel in that they can take in any kind of input and produce any kind
 of output. The input can be text, images, audio, video, etc. The output can be
 text, images, audio, video, etc.
+
 I liked the following quote from the paper:
 ```
 While LMs indeed model syntax, and other linguistic elements, their most
 striking feature is that they model the world, as described by the data on which
-they were trained
+they were trained.
 ```
-And the paper goes on to say that perphaps the should be called language and
-knowledge models.
+And the paper goes on to say that perhaps they, LLMs, should be called language
+and knowledge models.
 
 LLMs are trained with a corpus of data which has been gathered from different
 resources. Events that happen after the training of the model are not part of
