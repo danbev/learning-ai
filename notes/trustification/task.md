@@ -392,3 +392,30 @@ available in our services, like references in the CVEs.
 
 This is very much a work in progress and an investigation trying to figure out
 possible interesting use cases for us.
+
+This could possibly be used in a UI, something along the lines of:
+
+![image](./trust-chat.png)
+
+This is using a custom langchain tool to make a request to the VEX API:
+```console
+> Entering new AgentExecutor chain...
+Thought: I need to find information related to a VEX using its advisory ID.
+Action:
+```
+{
+  "action": "VEX",
+  "action_input": "RHSA-2023:1441"
+}
+```
+VEX tool, input:  RHSA-2023:1441
+
+Observation: 
+Thought: I now have the information I need
+Final Answer: RHSA-2023:1441 is a security advisory issued by Red Hat that addresses a vulnerability in the Linux kernel. The vulnerability could allow an attacker to gain access to sensitive information or execute arbitrary code. The advisory recommends that users update their systems to the latest version of the kernel to mitigate the risk.
+
+> Finished chain.
+
+```
+
+
