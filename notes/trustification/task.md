@@ -405,7 +405,6 @@ tool we have defined we get the following:
 > Entering new AgentExecutor chain...
 Thought: I need to find information related to a VEX using its advisory ID.
 Action:
-```
 {
   "action": "VEX",
   "action_input": "RHSA-2023:1441"
@@ -439,7 +438,6 @@ Action:
   "action": "VEX",
   "action_input": "RHSA-2020:5566"
 }
-```
 
 
 > Entering new RetrievalQA chain...
