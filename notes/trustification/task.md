@@ -407,15 +407,15 @@ Action:
   "action": "VEX",
   "action_input": "RHSA-2023:1441"
 }
+...
+  File "/home/danielbevenius/work/ai/learning-ai/langchain/langch/lib64/python3.11/site-packages/openai/api_requestor.py", line 765, in _interpret_response_line
+    raise self.handle_error_response(
+openai.error.InvalidRequestError: This model's maximum context length is 4097 tokens, however you requested 18967 tokens (18711 in your prompt; 256 for the completion). Please reduce your prompt; or completion length.
 ```
-VEX tool, input:  RHSA-2023:1441
-
-Observation: 
-Thought: I now have the information I need
-Final Answer: RHSA-2023:1441 is a security advisory issued by Red Hat that addresses a vulnerability in the Linux kernel. The vulnerability could allow an attacker to gain access to sensitive information or execute arbitrary code. The advisory recommends that users update their systems to the latest version of the kernel to mitigate the risk.
-
-> Finished chain.
-
-```
-
+The returned VEX is simply to large for the model to handle and I don't think
+this approach wll work for us. But a combination of a vector store and agents
+could work I think where the agent has access to a vector store as a tool for
+information retrieval about VEX information. It can then use this to further
+reason about the information it has retrieved by sending that as the context
+to the LLM. So we would be combining Agent and RAG in this case.
 
