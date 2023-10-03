@@ -433,7 +433,6 @@ Agent console output:
 
 Thought: This question requires me to use the VEX tool.
 Action:
-```
 {
   "action": "VEX",
   "action_input": "RHSA-2020:5566"
@@ -449,6 +448,5 @@ Thought: I now know the final answer
 Final Answer: RHSA-2020:5566 is a Red Hat Security Advisory for an openssl security update. It has been rated as having a security impact of Important by Red Hat Product Security. It includes a fix for a NULL pointer de-reference (CVE-2020-1971).
 
 > Finished chain.
-
 ```
 
