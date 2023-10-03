@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, Sub};
 use std::rc::Rc;
 use uuid::Uuid;
 
@@ -440,6 +440,19 @@ impl<'a> Add for &'a Value {
     }
 }
 
+//impl<'a> AddAssign<&'a Value> for Value {
+impl<'a> AddAssign for Value {
+    fn add_assign(&mut self, other: Value) {
+        let data = *self.data.borrow_mut();
+        *self = Value {
+            data: RefCell::new(data + *other.data.borrow()),
+            children: vec![Rc::new(self.clone()), Rc::new(other.clone())],
+            op: Operation::Add,
+            ..Value::default()
+        }
+    }
+}
+
 impl<'a> Sub for &'a Value {
     type Output = Value;
 
@@ -523,6 +536,14 @@ mod tests {
         assert_eq!(*c.data.borrow(), 3.0);
         assert_eq!(*c.children[0].data.borrow(), 1.0);
         assert_eq!(*c.children[1].data.borrow(), 2.0);
+    }
+
+    #[test]
+    fn test_add_assign() {
+        let mut a = Value::new(1.0);
+        let b = Value::new(2.0);
+        a += b;
+        assert_eq!(*a.data.borrow(), 3.0);
     }
 
     #[test]
