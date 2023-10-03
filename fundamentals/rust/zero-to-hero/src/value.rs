@@ -440,7 +440,6 @@ impl<'a> Add for &'a Value {
     }
 }
 
-//impl<'a> AddAssign<&'a Value> for Value {
 impl<'a> AddAssign for Value {
     fn add_assign(&mut self, other: Value) {
         let data = *self.data.borrow_mut();

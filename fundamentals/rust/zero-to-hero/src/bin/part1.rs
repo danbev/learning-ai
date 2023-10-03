@@ -643,13 +643,67 @@ fn main() -> io::Result<()> {
     std::fs::write("plots/part1_single_neuron9.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron9");
 
-    let inputs1 = [
-        Rc::new(Value::new_with_label(2.0, "x0")),
-        Rc::new(Value::new_with_label(3.0, "x1")),
-        Rc::new(Value::new_with_label(-1.0, "x2")),
+    let xs = [
+        [
+            Rc::new(Value::new_with_label(2.0, "x0")),
+            Rc::new(Value::new_with_label(3.0, "x1")),
+            Rc::new(Value::new_with_label(-1.0, "x2")),
+        ],
+        [
+            Rc::new(Value::new_with_label(3.0, "x0")),
+            Rc::new(Value::new_with_label(-1.0, "x1")),
+            Rc::new(Value::new_with_label(0.5, "x2")),
+        ],
+        [
+            Rc::new(Value::new_with_label(0.5, "x0")),
+            Rc::new(Value::new_with_label(1.0, "x1")),
+            Rc::new(Value::new_with_label(1.0, "x2")),
+        ],
+        [
+            Rc::new(Value::new_with_label(1.0, "x0")),
+            Rc::new(Value::new_with_label(1.0, "x1")),
+            Rc::new(Value::new_with_label(-1.0, "x2")),
+        ],
     ];
-    let output1 = mlp(inputs1);
-    println!("output_1: {}", output1);
+    // ys are the actual known values/labels which we are going to compare
+    // againt the predictions that the Mlp output..
+    let ys = [
+        Rc::new(Value::new_with_label(1.0, "y0")),
+        Rc::new(Value::new_with_label(-1.0, "y1")),
+        Rc::new(Value::new_with_label(-1.0, "y2")),
+        Rc::new(Value::new_with_label(1.0, "y3")),
+    ];
+    let mut y_pred = Vec::with_capacity(ys.len());
+    println!("y_pred: {}", y_pred.len());
+    for (i, x) in xs.into_iter().enumerate() {
+        y_pred.push(mlp(x));
+        println!("output {i}: {:?}", *y_pred[i].data.borrow());
+    }
+    // Do make this prediction we need to be able to evaulate the performance
+    // or our neural network using single number. We call this single number
+    // the loss and it is a measure of how well our neural network is doing.
+    // zip ys and ys_pred together and then calculate the loss by taking the
+    // predicted value and subtracting the actual value and then squaring it.
+    let mut loss = Value::new(0.0);
+    for (y, y_pred) in ys.iter().zip(y_pred.iter()) {
+        let local_loss = &*y.clone() - &*y_pred;
+        let local_loss = &local_loss.pow(&Rc::new(Value::new(2.0)));
+        println!(
+            "predicted: {}, target: {}, local_loss: {}",
+            *y_pred.data.borrow(),
+            *y.data.borrow(),
+            *local_loss.data.borrow()
+        );
+        loss += (**local_loss).clone();
+    }
+    println!("total loss: {}", *loss.data.borrow());
+    // Now we want the loss to be low because that measns that each predicted
+    // value is equal or close to its target value.
+
+    Value::backwards(Rc::new(loss.clone()));
+    // Print the gradients of the loss with respect to each of the weights.
+    std::fs::write("plots/part1_single_neuron10.dot", loss.dot()).unwrap();
+    run_dot("part1_single_neuron10");
 
     Ok(())
 }
