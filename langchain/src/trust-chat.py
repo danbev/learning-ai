@@ -25,7 +25,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 vex_persist_directory = 'chroma/trust/vex'
-cve_persist_directory = 'chroma/trust/cve'
 embedding = OpenAIEmbeddings()
 
 def load_vex_docs():
@@ -58,8 +57,7 @@ vex_chain = RetrievalQA.from_chain_type(
     llm=llm, chain_type="stuff", retriever=vex_retriever, verbose=True
 )
 
-#tools = load_tools(["google-serper", "llm-math"], llm=llm)
-tools = load_tools(["llm-math"], llm=llm)
+tools = load_tools(["google-serper", "llm-math"], llm=llm)
 tools.append(Tool(name="VEX", func=vex_chain.run, description="useful for when you need to answer questions about the VEX documents which are security advisories in the format RHSA-XXXX:XXXX, where X can be any number."))
 
 memory = ConversationBufferWindowMemory(
@@ -78,18 +76,6 @@ agent_executor = initialize_agent(
     max_iterations=3,
     memory=memory
 )
-#print(agent)
-#exit()
-
-#agent_executor = initialize_agent(
-#    agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-#    tools=tools,
-#    llm=llm,
-#    verbose=True,
-#    max_iterations=3,
-#    early_stopping_method='generate',
-#    memory=memory
-#)
 
 st.title("Trustification Chat UI")
 
