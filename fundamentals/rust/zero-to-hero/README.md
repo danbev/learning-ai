@@ -91,5 +91,9 @@ containing, after backpropagation:
 
 ![image](./plots/part1_single_neuron9.svg)
 
+And then we have...
+
+![image](./plots/part1_single_neuron10.svg)
+
 [Neural Networks:  Zero to Hero]: https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ
 [part1]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2
