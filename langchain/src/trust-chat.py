@@ -2,53 +2,65 @@ import streamlit as st
 import openai
 import os, random, time
 import requests
-from langchain import OpenAI
 
+from langchain import OpenAI
+from langchain.llms import OpenAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.agents import Tool
 from langchain.tools import BaseTool
 from langchain.agents import load_tools, Tool, initialize_agent, AgentType
 from langchain.requests import RequestsWrapper
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.vectorstores import Chroma
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.chains import ConversationalRetrievalChain
+from langchain.document_loaders import JSONLoader
+from langchain.document_loaders import DirectoryLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chains import RetrievalQA
+
+from dotenv import load_dotenv
 
 from dotenv import load_dotenv 
 load_dotenv()
 
-def vex(input):
-    print("VEX tool, input: ", input)
-    token_endpoint = 'http://localhost:8090/realms/chicken/protocol/openid-connect/token'
-    client_id = 'walker'
-    client_secret = os.getenv("CLIENT_SECRET")
-    access_token = []
+vex_persist_directory = 'chroma/trust/vex'
+cve_persist_directory = 'chroma/trust/cve'
+embedding = OpenAIEmbeddings()
 
-    response = requests.post(
-        token_endpoint,
-        data={
-            'grant_type': 'client_credentials',
-            'client_id': client_id,
-            'client_secret': client_secret,
-        }
+def load_vex_docs():
+    vec_loader = JSONLoader(file_path='./src/vex-stripped.json', jq_schema='.document', text_content=False)
+    vex_docs = vec_loader.load()
+    #print(f'Pages: {len(docs)}, type: {type(docs[0])})')
+    #print(f'{docs[0].metadata}')
+
+    r_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100,
+        length_function=len  # function used to measure chunk size
     )
-    if response.status_code == 200:
-        token_data = response.json()
-        access_token = token_data['access_token']
-    else:
-        print(f"Failed to obtain access token. Status code: {response.status_code}, Response: {response.text}")
-        exit()
+    vex_splits = r_splitter.split_documents(vex_docs)
+    print(f'vex_splits len: {len(vex_splits)}, type: {type(vex_splits[0])}')
+    vex_vectorstore = Chroma.from_documents(
+        documents=vex_splits,
+        embedding=embedding,
+        persist_directory=vex_persist_directory
+    )
+    vex_vectorstore.persist()
 
-    headers = {"Authorization": f"Bearer {access_token}"}
-    requests_wrapper = RequestsWrapper(headers=headers)
-    return requests_wrapper.get(f'http://localhost:8081/api/v1/vex?advisory=${input}')
+#load_vex_docs()
 
-vex_tool = Tool(
-    name='VEX',
-    func= vex,
-    description="Useful when you need to get information related to a VEX using its advisory ID. An example of an advisory ID is RHSA-2023:1441"
+llm = OpenAI(temperature=0)
+
+vex_vectorstore = Chroma(persist_directory=vex_persist_directory, embedding_function=embedding)
+vex_retriever = vex_vectorstore.as_retriever(search_kwargs={'k': 3})
+vex_chain = RetrievalQA.from_chain_type(
+    llm=llm, chain_type="stuff", retriever=vex_retriever, verbose=True
 )
 
-llm = OpenAI(model_name="text-davinci-003" ,temperature=0)
-
-tools = load_tools(["google-serper", "llm-math"], llm=llm)
-tools.append(vex_tool)
+#tools = load_tools(["google-serper", "llm-math"], llm=llm)
+tools = load_tools(["llm-math"], llm=llm)
+tools.append(Tool(name="VEX", func=vex_chain.run, description="useful for when you need to answer questions about the VEX documents which are security advisories in the format RHSA-XXXX:XXXX, where X can be any number."))
 
 memory = ConversationBufferWindowMemory(
     memory_key='chat_history',
@@ -56,15 +68,28 @@ memory = ConversationBufferWindowMemory(
     return_messages=True
 )
 
+# Construct the agent. We will use the default agent type here.
+# See documentation for a full list of options.
 agent_executor = initialize_agent(
+    tools,
+    llm,
     agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-    tools=tools,
-    llm=llm,
     verbose=True,
     max_iterations=3,
-    early_stopping_method='generate',
     memory=memory
 )
+#print(agent)
+#exit()
+
+#agent_executor = initialize_agent(
+#    agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+#    tools=tools,
+#    llm=llm,
+#    verbose=True,
+#    max_iterations=3,
+#    early_stopping_method='generate',
+#    memory=memory
+#)
 
 st.title("Trustification Chat UI")
 

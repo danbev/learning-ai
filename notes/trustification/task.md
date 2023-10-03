@@ -429,6 +429,8 @@ information regarding VEX documents:
 
 Agent console output:
 ```console
+(langch) $ python src/agent-trust.py
+
 > Entering new AgentExecutor chain...
 
 Thought: This question requires me to use the VEX tool.
