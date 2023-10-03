@@ -397,7 +397,10 @@ This could possibly be used in a UI, something along the lines of:
 
 ![image](./trust-chat.png)
 
-This is using a custom langchain tool to make a request to the VEX API:
+This is actually something the LLM made up is not the actual inforation related
+to this advisory. 
+After fixing the above issue and trying again making sure that it uses the VEX
+tool we have defined we get the following:
 ```console
 > Entering new AgentExecutor chain...
 Thought: I need to find information related to a VEX using its advisory ID.
@@ -418,4 +421,36 @@ could work I think where the agent has access to a vector store as a tool for
 information retrieval about VEX information. It can then use this to further
 reason about the information it has retrieved by sending that as the context
 to the LLM. So we would be combining Agent and RAG in this case.
+
+The following is an example where the agent uses the vector store to retrieve
+information regarding VEX documents:
+
+![image](./trust-chat2.png)
+
+
+Agent console output:
+```console
+> Entering new AgentExecutor chain...
+
+Thought: This question requires me to use the VEX tool.
+Action:
+```
+{
+  "action": "VEX",
+  "action_input": "RHSA-2020:5566"
+}
+```
+
+
+> Entering new RetrievalQA chain...
+
+> Finished chain.
+
+Observation:  RHSA-2020:5566 is a Red Hat Security Advisory for an openssl security update. It has been rated as having a security impact of Important by Red Hat Product Security. It includes a fix for a NULL pointer de-reference (CVE-2020-1971).
+Thought: I now know the final answer
+Final Answer: RHSA-2020:5566 is a Red Hat Security Advisory for an openssl security update. It has been rated as having a security impact of Important by Red Hat Product Security. It includes a fix for a NULL pointer de-reference (CVE-2020-1971).
+
+> Finished chain.
+
+```
 
