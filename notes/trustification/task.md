@@ -426,7 +426,6 @@ information regarding VEX documents:
 
 ![image](./trust-chat2.png)
 
-
 Agent console output:
 ```console
 (langch) $ python src/agent-trust.py
@@ -452,3 +451,6 @@ Final Answer: RHSA-2020:5566 is a Red Hat Security Advisory for an openssl secur
 > Finished chain.
 ```
 
+This agent also has a tool to perform web searches which it can use for other
+questions. We could also add tools similar to the VEX tool but instead works
+for SBOMs or other types of information.
