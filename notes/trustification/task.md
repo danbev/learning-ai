@@ -492,6 +492,10 @@ Rust.
 
 Here is demo of the chat in action:
 
-<video src="trustification-chat-demo.mkv" width="320" height="240" controls></video>
+<video width="320" height="240" controls>
+  <source src="trustification-chat-demo.mkv" type="video/x-matroska">
+  Your browser does not support the video tag.
+</video>
+
 
 
