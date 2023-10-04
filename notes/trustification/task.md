@@ -489,3 +489,7 @@ This example is using [streamlit](https://streamlit.io/) to create the UI which
 is written in Python. This is only for testing and exploration purposes and
 if we do decide to pursue one of the approaches we could/would implement this in
 Rust.
+
+Here is demo of the chat in action:
+
+![](trustification-chat-demo.mkv)
