@@ -490,12 +490,5 @@ is written in Python. This is only for testing and exploration purposes and
 if we do decide to pursue one of the approaches we could/would implement this in
 Rust.
 
-Here is demo of the chat in action:
-
-<video width="320" height="240" controls>
-  <source src="trustification-chat-demo.mkv" type="video/x-matroska">
-  Your browser does not support the video tag.
-</video>
-
-
+Here is [demo](./trustification-chat-demo.mkv) of the chat in action.
 
