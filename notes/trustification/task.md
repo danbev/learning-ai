@@ -428,17 +428,13 @@ information regarding VEX documents:
 
 Agent console output:
 ```console
-(langch) $ python src/agent-trust.py
-
 > Entering new AgentExecutor chain...
-
-Thought: This question requires me to use the VEX tool.
+Thought: I need to use the VEX tool to answer this question.
 Action:
 {
   "action": "VEX",
   "action_input": "RHSA-2020:5566"
 }
-
 
 > Entering new RetrievalQA chain...
 
@@ -447,6 +443,36 @@ Action:
 Observation:  RHSA-2020:5566 is a Red Hat Security Advisory for an openssl security update. It has been rated as having a security impact of Important by Red Hat Product Security. It includes a fix for a NULL pointer de-reference (CVE-2020-1971).
 Thought: I now know the final answer
 Final Answer: RHSA-2020:5566 is a Red Hat Security Advisory for an openssl security update. It has been rated as having a security impact of Important by Red Hat Product Security. It includes a fix for a NULL pointer de-reference (CVE-2020-1971).
+
+> Finished chain.
+
+
+> Entering new AgentExecutor chain...
+Thought: I need to find information about a CVE
+Action:
+{
+  "action": "google_serper",
+  "action_input": "CVE-2020-1971"
+}
+
+Observation: This function behaves incorrectly when both GENERAL_NAMEs contain an EDIPARTYNAME. A NULL pointer dereference and a crash may occur leading to a ... The highest threat from this vulnerability is to system availability. A null pointer dereference flaw was found in openssl. A remote attacker, ... The mission of the CVE® Program is to identify, define, and catalog publicly disclosed cybersecurity vulnerabilities. No information is available for this page. · Learn why This function behaves incorrectly when both GENERAL_NAMEs contain an EDIPARTYNAME. A NULL pointer dereference and a crash may occur leading to a possible denial ... The X.509 GeneralName type is a generic type for representing different types of names. One of those name types is known as EDIPartyName. Vulnerability Details. CVEID: CVE-2020-1971. DESCRIPTION: OpenSSL is vulnerable to a denial of service, caused by a NULL pointer dereference ... CVE-2020-1971 Common Vulnerabilities and Exposures. There are vulnerabilities in OpenSSL used by AIX. An attacker may cause a NULL pointer dereference and produce a core file, leading to a possible denial-of-service (DOS) attack. Security ...
+Thought: I now know the final answer
+Final Answer: CVE-2020-1971 is a null pointer dereference vulnerability in OpenSSL which can lead to a denial of service attack.
+
+> Finished chain.
+
+
+> Entering new AgentExecutor chain...
+Thought: I need to find out more information about CVE-2020-1971
+Action:
+{
+  "action": "google_serper",
+  "action_input": "CVE-2020-1971"
+}
+
+Observation: This function behaves incorrectly when both GENERAL_NAMEs contain an EDIPARTYNAME. A NULL pointer dereference and a crash may occur leading to a ... The highest threat from this vulnerability is to system availability. A null pointer dereference flaw was found in openssl. A remote attacker, ... The mission of the CVE® Program is to identify, define, and catalog publicly disclosed cybersecurity vulnerabilities. No information is available for this page. · Learn why This function behaves incorrectly when both GENERAL_NAMEs contain an EDIPARTYNAME. A NULL pointer dereference and a crash may occur leading to a possible denial ... The X.509 GeneralName type is a generic type for representing different types of names. One of those name types is known as EDIPartyName. Vulnerability Details. CVEID: CVE-2020-1971. DESCRIPTION: OpenSSL is vulnerable to a denial of service, caused by a NULL pointer dereference ... CVE-2020-1971 Common Vulnerabilities and Exposures. There are vulnerabilities in OpenSSL used by AIX. An attacker may cause a NULL pointer dereference and produce a core file, leading to a possible denial-of-service (DOS) attack. Security ...
+Thought: I now know the final answer
+Final Answer: OpenSSL is vulnerable to a denial of service, caused by a NULL pointer dereference when both GENERAL_NAMEs contain an EDIPARTYNAME. A remote attacker, may cause a crash leading to a possible denial of service attack.
 
 > Finished chain.
 ```
