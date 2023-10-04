@@ -402,6 +402,8 @@ to this advisory.
 After fixing the above issue and trying again making sure that it uses the VEX
 tool we have defined we get the following:
 ```console
+$ streamlit run src/trust-chat.py
+
 > Entering new AgentExecutor chain...
 Thought: I need to find information related to a VEX using its advisory ID.
 Action:
@@ -428,6 +430,8 @@ information regarding VEX documents:
 
 Agent console output:
 ```console
+$ streamlit run src/trust-chat.py
+
 > Entering new AgentExecutor chain...
 Thought: I need to use the VEX tool to answer this question.
 Action:
@@ -480,3 +484,8 @@ Final Answer: OpenSSL is vulnerable to a denial of service, caused by a NULL poi
 This agent also has a tool to perform web searches which it can use for other
 questions. We could also add tools similar to the VEX tool but instead works
 for SBOMs or other types of information.
+
+This example is using [streamlit](https://streamlit.io/) to create the UI which
+is written in Python. This is only for testing and exploration purposes and
+if we do decide to pursue one of the approaches we could/would implement this in
+Rust.
