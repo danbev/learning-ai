@@ -492,4 +492,6 @@ Rust.
 
 Here is demo of the chat in action:
 
-![](trustification-chat-demo.mkv)
+<video src="trustification-chat-demo.mkv" width="320" height="240" controls></video>
+
+
