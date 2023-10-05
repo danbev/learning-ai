@@ -13,7 +13,7 @@ callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
 
 llm = LlamaCpp(
     model_path="models/llama-2-7b-chat.gguf.q2_K.bin",
-    temperature=0,
+    temperature=0.9,
     max_tokens=2000,
     top_p=1,
     callback_manager=callback_manager,
@@ -22,7 +22,7 @@ llm = LlamaCpp(
 #print(llm)
 
 prompt = """
-Question: Can you give me a short description of how Austin Danger Powers is?"
+Question: Can you give me a short description of who Austin Danger Powers is?"
 """
 llm(prompt)
 
