@@ -97,12 +97,10 @@ means that we need to convert the older GGML format to GGUF format:
 (langch) $ ~/work/ai/llama.cpp/convert-llama-ggml-to-gguf.py --input models/llama-2-7b-chat.ggmlv3.q4_0.bin  --output models/llama-2-7b-chat.gguf.q4_0.bin
 ```
 
-It should be possible to compile llama-cpp-python with OpenBLAS support but
-I've get to get that to work but I'm leaving this here so that I can revisit it
-later:
+It should be possible to compile llama-cpp-python with OpenBLAS support:
 ```console
-CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install --upgrade --force-reinstall llama-cpp-python --no-cache-dir
-```
+$ export PKG_CONFIG_PATH=$PWD
+$ CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install --upgrade --force-reinstall llama-cpp-python --no-cache-dir
 ```
 After this we should be good to go and be able to run the example:
 ```console
