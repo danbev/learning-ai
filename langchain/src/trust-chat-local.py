@@ -67,7 +67,7 @@ llm = LlamaCpp(
     top_p=0.73,
     top_k=0,
     n_ctx=2000,
-    #callback_manager=callback_manager,
+    callback_manager=callback_manager,
     verbose=True, # Verbose is required to pass to the callback manager
 )
 
@@ -136,14 +136,14 @@ All of Assistant's communication is performed using this JSON format.
 
 Assistant can also use tools by responding to the user with tool use instructions in the same "action" and "action_input" JSON format. Tools available to Assistant are:
 
-- "Calculator": Useful for when you need to answer questions about math.
-  - To use the calculator tool, Assistant should write like so:
+- "google-serper": Useful for when you search the web for answers.
+  - To use the goggle-serper tool, Assistant should write like so:
     ```json
-    {{"action": "Calculator",
-      "action_input": "sqrt(4)"}}
+    {{"action": "google-serper",
+      "action_input": "query"}}
     ```
 
-- "VEX": Useful for when you need to answer questions about security advisory VEX documents in the format RHSA-XXXX:XXXX, where X can be any number. Don't use this tool for details about CVEs but instead use google-serper for that.
+- "VEX": Useful for when you need to answer questions about security advisory VEX documents in the format RHSA-XXXX:XXXX, where X can be any number. Don't use this tool for details about CVEs but instead use 'google-serper' for that.
   - To use the VEX tool, Assistant should write like so:
     ```json
     {{"action": "VEX",
@@ -165,17 +165,17 @@ Assistant:
  "action_input": "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
 ```
 
-User: Thanks could you tell me what 4 to the power of 2 is?
+User: Could you explain what CVE-2020-14386 is about?
 Assistant:
 ```json
-{{"action": "Calculator",
- "action_input": "4**2"}}
+{{"action": "google-serper",
+ "action_input": "CVE-2020-14386"}}
 ```
 User: 16.0
 Assistant:
 ```json
 {{"action": "Final Answer",
- "action_input": "It looks like the answer is 16!"}}
+ "action_input": "CVE-2020-14386 is a vulnerability in the Linux kernel that allows a local attacker to cause a denial of service (DoS) or possibly execute arbitrary code on a system."}}
 ```
 
 Here is the latest conversation between Assistant and User.""" + E_SYS
