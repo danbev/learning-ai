@@ -492,3 +492,21 @@ Rust.
 
 Here is [demo](./trustification-chat-demo.mkv) of the chat in action.
 
+I've also tried to reproduce this example,
+[trust-chat-local.py](../../langchain/src/trust-chat-local.py), running the LLM
+locally and CPU-only, using [llama.cpp](https://github.com/ggerganov/llama.cpp).
+This is very slow but works and there are some details about how to download
+and convert the model in [README.md](../../langchain/README.md).
+
+Below is a screenshot of the chat running locally:
+
+![image](./trust-chat-llama.cpp-local.png)
+
+And here is another example with a slightly different question::
+![image](./trust-chat-llama.cpp-local-2.png)
+
+This is a very rough demo and it takes minutes to run but it does show that it
+can be done and with a GPU it would be much faster. The motivation for this is
+not be be able to run locally but to see if it is possible to use this instead
+of OpenAI's API on a server somewhere with some decent hardware.
+
