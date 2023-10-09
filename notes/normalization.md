@@ -90,3 +90,8 @@ Different features in a dataset can have different units and ranges, making it
 difficult for machine learning algorithms to interpret them equally.
 Normalization brings all variables to a similar scale, making it easier for
 algorithms to understand the data.
+
+Zero can be important to have 0.0 in the floating point range, for example when
+using a sigmoid function. If we have a value that is very large, then the
+sigmoid function will return 1.0. If we have a value that is very small, then
+the sigmoid function will return 0.0
