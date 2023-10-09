@@ -496,7 +496,7 @@ I've also tried to reproduce this example,
 [trust-chat-local.py](../../langchain/src/trust-chat-local.py), running the LLM
 locally and CPU-only, using [llama.cpp](https://github.com/ggerganov/llama.cpp).
 This is very slow but works and there are some details about how to download
-and convert the model in [README.md](../../langchain/README.md).
+and convert the model in [README.md](../../langchain/README.md#llama-localpy-example).
 
 Below is a screenshot of the chat running locally:
 
