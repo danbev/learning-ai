@@ -195,3 +195,22 @@ probabilities of already-appeared tokens.
 * A Repetition Penalty less than 1 encourages repetition by increasing the
 probabilities of already-appeared tokens.
 
+
+#### Frequency penalty
+This is a hyperparameter that is simlar to the repetition penalty but instead
+controls the likelihood of generating tokens that are inherently frequent in the
+language model's training data, whereas repetition penalty is about the the
+tokens in the generated text.
+
+The following is applied to each token in the vocabulary:
+```
+modified probability = original probabilty^frequency_penalty
+```
+Frequency Penalty is applied universally to all tokens, while Repetition Penalty
+is applied only to tokens that have already appeared in the generated text.
+
+Frequency Penalty is useful when you want to encourage or discourage the use of
+common words. Repetition Penalty is useful when you want to avoid repetitive
+text in longer sequences.
+
+
