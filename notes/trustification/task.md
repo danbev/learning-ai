@@ -529,7 +529,7 @@ What information would we need to store in the vector store/database?
 * SBOMs 
 * CVEs ? So can we rely on other Agent tools like google_serper which can
 lookup this information for us?
-...
+* ...
 
 I'm trying to understand what information we have in our internal knowledge
 domain and that we would need to store in the vector store. Anything else can
