@@ -565,4 +565,7 @@ engine/driver).
 Using OpenAI API will infer a cost per token requested, whereas llama.cpp is
 free. llm-chain has support for multiple drivers including LLAMA (locally) and
 OpenAI, and is written in Rust.
+For an LLM there is also the issue of privacy and security of the data that is
+sent to the inference engine. This is something that we would need to consider
+and having a local inference engine would be a way to address this.
 
