@@ -170,3 +170,28 @@ The advantage of top_k is that it's straightforward and computationally
 efficient. However, it may not capture as much diversity as top_p if the top few
 tokens have significantly higher probabilities than the rest.
 
+#### Repetition penalty
+This is a hyperparameter that penalizes the probability of tokens that have
+already been generated. This is useful for text generation tasks where we want
+to avoid repetition.
+The probability of each token is modified like this:
+```
+modified probability = original probabilty^repetition_penalty
+```
+Here the original probablity is the probability of the token given to the token
+by the LLM. The repetition penalty is a value between 1 and infinity. A value
+of 1 will not do anything as we in this case are just raising the probability
+to the power of 1 which is just the original probability.
+Now, a value greater than one will actually make the probability, a value
+between 0-1, smaller which might seem counter intuitive but it makes sense if we
+think about it:
+```
+0.20^1.2  = 0.16
+0.20^-1.2 = 0.25
+```
+* A Repetition Penalty greater than 1 discourages repetition by reducing the
+probabilities of already-appeared tokens.
+
+* A Repetition Penalty less than 1 encourages repetition by increasing the
+probabilities of already-appeared tokens.
+
