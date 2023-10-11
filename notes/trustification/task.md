@@ -535,6 +535,10 @@ I'm trying to understand what information we have in our internal knowledge
 domain and that we would need to store in the vector store. Anything else can
 hopefully be reteived from other sources using other agent tools.
 
+One option if we did not want to use Rust at the moment is to use one of the
+OpenSource databases that is implemented in Rust but also provide Python
+libraries which both Qdrant and LanceDB do.
+
 ##### Agent
 In the examples above we have used an agent that first retrieves information
 from a vector database using the query for the llm. These documents are then
@@ -546,6 +550,10 @@ So we need to implement the agent and integrate it with the LLM. This would be a
 Rust implementation of the agent I'm assuming. There are a few options for this
 listed in [rust.md](../../rust.md). In the examples above we have been using 
 LangChain and an equivalent in Rust would be llm-chains.
+
+After some looking around in llm-chain I found this open
+[issue](https://github.com/sobelio/llm-chain/issues/151) to implement ReAct
+(Reason and Act) agent.
 
 ##### LLM inference engine
 In the examples above we have been using OpenAI for inference in the majority
