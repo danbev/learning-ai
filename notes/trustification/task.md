@@ -510,3 +510,51 @@ can be done and with a GPU it would be much faster. The motivation for this is
 not be be able to run locally but to see if it is possible to use this instead
 of OpenAI's API on a server somewhere with some decent hardware.
 
+### Disucssion: Vector database + Rust agent + LLM inference engine
+This section is intended to be used as an initial discussion point an upcoming
+meeting. In the following sections I've listed some of the things what would
+need to taking into consideration and make some decisions about before we can
+start implementing this.
+
+First, is this something that we are allowed to pursue?  
+
+#### Vector database
+Which vector database should we use and what are the implications of having one
+with regards to deploying and managing one.
+See [vector-databases.md](../../vector-databases.md) for some of the Rust
+options (see end of document).
+
+What information would we need to store in the vector store/database?
+* VEX documents
+* SBOMs 
+* CVEs ? So can we rely on other Agent tools like google_serper which can
+lookup this information for us?
+...
+
+I'm trying to understand what information we have in our internal knowledge
+domain and that we would need to store in the vector store. Anything else can
+hopefully be reteived from other sources using other agent tools.
+
+##### Agent
+In the examples above we have used an agent that first retrieves information
+from a vector database using the query for the llm. These documents are then
+passed as context to the llm. For information that there are now tools for
+information that we don't have in our internal knowledge domain we can use
+google_serper or other tools to retrieve this information.
+
+So we need to implement the agent and integrate it with the LLM. This would be a
+Rust implementation of the agent I'm assuming. There are a few options for this
+listed in [rust.md](../../rust.md). In the examples above we have been using 
+LangChain and an equivalent in Rust would be llm-chains.
+
+3. LLM inference engine
+In the examples above we have been using OpenAI for inference in the majority
+of cases but also tried out llama.cpp running on a local laptop without a GPU
+which works but is very slow. We might need a runtime environment with GPU
+support for this to be feasible (using llm-chain with llama.cpp as the
+engine/driver).
+
+Using OpenAI API will infer a cost per token requested, whereas llama.cpp is
+free. llm-chain has support for multiple drivers including LLAMA (locally) and
+OpenAI, and is written in Rust.
+
