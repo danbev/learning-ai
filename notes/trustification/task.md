@@ -547,7 +547,7 @@ Rust implementation of the agent I'm assuming. There are a few options for this
 listed in [rust.md](../../rust.md). In the examples above we have been using 
 LangChain and an equivalent in Rust would be llm-chains.
 
-3. LLM inference engine
+##### LLM inference engine
 In the examples above we have been using OpenAI for inference in the majority
 of cases but also tried out llama.cpp running on a local laptop without a GPU
 which works but is very slow. We might need a runtime environment with GPU
