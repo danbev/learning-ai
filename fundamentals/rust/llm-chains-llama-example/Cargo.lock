@@ -822,8 +822,7 @@ checksum = "da2479e8c062e40bf0066ffa0bc823de0a9368974af99c9f6df941d2c231e03f"
 [[package]]
 name = "llm-chain"
 version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "441d783a2388f22afa1cc74e2299dfc91b48683f49e9ccc5fd43e8075f0814cb"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#afef670cbb474f0ec5ff1e4eb5da48a09d62299c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -848,8 +847,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-llama"
 version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a729f931579aff0cab51c8c6a31906d067a50d1d785d696839d027acb9ee8e50"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#afef670cbb474f0ec5ff1e4eb5da48a09d62299c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -864,8 +862,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-llama-sys"
 version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f56241b10c0c73ae20230cdb6f6035327fb98122187d3ca7e77ab8cee25bd5ff"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#afef670cbb474f0ec5ff1e4eb5da48a09d62299c"
 dependencies = [
  "bindgen",
 ]

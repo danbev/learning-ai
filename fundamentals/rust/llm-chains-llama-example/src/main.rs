@@ -7,11 +7,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Model: ModelRef::from_path("./models/llama-2-7b-chat.ggmlv3.q4_0.bin"),
         ModelType: "llama",
         MaxContextSize: 3000_usize,
-        MaxTokens: 2000_usize,
+        MaxTokens: 200_usize,
         Temperature: 0.1,
         TopP: 0.1,
-        RepeatPenalty: 8.4,
-        RepeatPenaltyLastN: 1000_usize,
+        TopK: 0,
+        RepeatPenalty: 1.0,
+        RepeatPenaltyLastN: 0_usize,
         FrequencyPenalty: 1.0,
         PresencePenalty: 1.0,
         Mirostat: 1_i32,
@@ -19,13 +20,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MirostatEta: 0.1,
         PenalizeNl: true,
         NThreads: 4_usize,
-        Stream: false
-        //StopSequence: vec!["\n".to_string(), "\n\n".to_string(), "</s>".to_string(), "LP".to_string()]
+        Stream: true,
+        TypicalP: 2.0,
+        TfsZ: 1.0
     );
     let exec = executor!(llama, opts.clone())?;
-    let step = Step::for_prompt_with_streaming(prompt!(
-        "You are a helpful assistant that answers questions.The question is:\n--\n{{query}}\n--\n"
-    ));
+    let prompt_str = r#"
+<s>[INST] <<SYS>>
+You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.
+
+If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.
+<</SYS>>
+
+{{ query }} [/INST]
+    "#;
+    let step = Step::for_prompt_with_streaming(prompt!(prompt_str));
     let query = "What is LoRa?";
     println!("Query: {}", query);
     //let res = Step::for_prompt_with_streaming(chat_prompt)
