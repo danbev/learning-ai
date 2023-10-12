@@ -170,6 +170,20 @@ The advantage of top_k is that it's straightforward and computationally
 efficient. However, it may not capture as much diversity as top_p if the top few
 tokens have significantly higher probabilities than the rest.
 
+#### Locally Typical Sampling
+This is introduced in the paper: https://arxiv.org/pdf/2202.00666.pdf.
+Example, we have the following vocabulary:
+```
+"sunny"
+"cloudy"
+"rainy"
+"windy"
+```
+The parameter of this in llm-chain is called `TypicalP`.
+
+TODO: Explain this better
+
+
 #### Repetition penalty
 This is a hyperparameter that penalizes the probability of tokens that have
 already been generated. This is useful for text generation tasks where we want
