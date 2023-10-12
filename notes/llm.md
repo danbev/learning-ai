@@ -213,4 +213,41 @@ Frequency Penalty is useful when you want to encourage or discourage the use of
 common words. Repetition Penalty is useful when you want to avoid repetitive
 text in longer sequences.
 
+##### Presence penalty
+This hyperparameter influences the models output and controlls the presence or
+absence of new token in the generated text.
 
+If this value i 0 then there is no effect at all for this hyperparameter.
+If this value is > 0 the model i discouraged from introducing new tokens that
+are not strongly supported by the context (the model is more conservative).
+If this value is < 0 the model is encouraged to introduce new tokens, eveni if
+they are not strongly supported by the context (the model is more creative).
+
+When the model is generating text, it computes a probability distribution over
+the vocabulary for the next token to be generated, given the current context
+(i.e., the tokens that have been generated so far and the initial prompt).
+
+The PresencePenalty value is used to adjust these probabilities before the next
+token is sampled. Specifically, it modifies the "logits" (unnormalized log
+probabilities) associated with each token in the vocabulary. The adjustment can
+either increase or decrease the likelihood of each token being selected as the
+next token in the sequence, depending on the value of PresencePenalty
+
+Somewhat simplified process:
+* The model computes a probability distribution over the vocabulary for each
+token in the vocabulary based on the current context.
+* The PresencePenalty value is used to adjust these probabilities by adding or
+subtracting the value from the logit (unnormalized log probabilities) associated
+with each token.
+* Adjusted/Rescale the logits so thy sum to 1 after possibly adding/subtracting
+the PresencePenalty value.
+* Sample the next token from the adjusted probability distribution. 
+* Add the token to the current context and repeat the process.
+
+#### Perplexity
+This is a metric that is used to evaluate language models. It is a measure of
+how well a probability model predicts a sample. It may be used to compare
+probability models.
+
+A low perplexity indicates the probability distribution is good at predicting
+the sample.
