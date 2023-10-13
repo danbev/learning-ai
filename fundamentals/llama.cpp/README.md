@@ -13,3 +13,8 @@ To update the submodule run:
 ```console
 $ git submodule update --recursive --remote
 ```
+
+### ctags
+```console
+$ ctags -R --languages=C++ --c++-kinds=+p --fields=+iaS --extra=+q .
+```
