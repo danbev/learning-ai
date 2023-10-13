@@ -8,21 +8,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ModelType: "llama",
         MaxContextSize: 3000_usize,
         MaxTokens: 200_usize,
-        Temperature: 0.1,
-        TopP: 0.1,
-        TopK: 0,
-        RepeatPenalty: 1.0,
-        RepeatPenaltyLastN: 0_usize,
-        FrequencyPenalty: 1.0,
-        PresencePenalty: 1.0,
-        Mirostat: 1_i32,
+        Temperature: 1.0, // disabled
+        TopP: 1.0, // 1.0 is the default and means no top-p sampling
+        TopK: 0,  //
+        RepeatPenalty: 1.0, // disbled
+        RepeatPenaltyLastN: 0_usize, // disabled
+        FrequencyPenalty: 0.0, // disabled
+        PresencePenalty: 0.0, // disabled
+        Mirostat: 0_i32, // disabled
         MirostatTau: 1.0,
         MirostatEta: 0.1,
         PenalizeNl: true,
         NThreads: 4_usize,
         Stream: true,
-        TypicalP: 2.0,
-        TfsZ: 1.0
+        TypicalP: 1.0, // disabled
+        TfsZ: 1.0 // disabled
     );
     let exec = executor!(llama, opts.clone())?;
     let prompt_str = r#"

@@ -1,3 +1,6 @@
 [submodule "fundamentals/ggml/c-example/ggml"]
 	path = fundamentals/ggml/c-example/ggml
 	url = https://github.com/ggerganov/ggml.git
+[submodule "fundamentals/llama.cpp/llama.cpp"]
+	path = fundamentals/llama.cpp/llama.cpp
+	url = https://github.com/ggerganov/llama.cpp
