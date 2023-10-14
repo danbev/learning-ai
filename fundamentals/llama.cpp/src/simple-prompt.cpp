@@ -90,7 +90,9 @@ int main(int argc, char** argv) {
             // logit for each token in the vocabulary (32000).
             for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
                 float prob = 0.0f;
-                // recall that emplace creates the object directly within the vectors memory.
+                // recall that emplace (in-place construction of elements
+                // (emplace)) creates the object directly within the vectors
+                // memory without copying/moving it.
                 candidates.emplace_back(llama_token_data{ token_id, logits[token_id], prob });
             }
             // Here we are creating an unsorted array of token data from the vector.
