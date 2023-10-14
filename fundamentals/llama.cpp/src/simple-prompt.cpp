@@ -42,11 +42,14 @@ int main(int argc, char** argv) {
     batch.n_tokens = input_tokens.size();
     std::cout << "batch.n_tokens: " << batch.n_tokens << std::endl;
 
-    // Add the tokens to the batch
-    // So we are adding the tokens to the batch, and then we are getting
-    // llama.cpp to predict the next token. After that is done we will then
-    // att that token to the batch and then predict the next token with that
-    // token as well and so on.
+    // So what this llmm_batch is used for is simlilar to the contept of contex
+    // we talked about in ../../notes/llm.md#context_size. Below we are adding
+    // the input query tokens to this batch/context. So it will initially just
+    // contain the tokens for our query. But after running the inference, we
+    // will append the next token to the batch and run the inference again and
+    // then run the inference again to predict the next token, now with more
+    // context (the previous token). Hope this makes sense but looking at the
+    // diagram in the notes might help.
     for (int32_t i = 0; i < batch.n_tokens; i++) {
         batch.token[i] = input_tokens[i];
         batch.pos[i] = i;
