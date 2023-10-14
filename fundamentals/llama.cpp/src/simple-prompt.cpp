@@ -4,10 +4,9 @@
 #include <iostream>
 
 int main(int argc, char** argv) {
-    std::cout << "llama.cpp example" << std::endl;
     gpt_params params;
     params.model = "models/llama-2-13b-chat.Q4_0.gguf";
-    std::cout << "params.n_threads: " << params.n_threads << std::endl;
+    std::cout << "llama.cpp example using model: " << params.model << std::endl;
 
     llama_backend_init(params.numa);
     llama_model_params model_params = llama_model_default_params();
@@ -33,7 +32,7 @@ int main(int argc, char** argv) {
     std::string query = "What is LoRA?";
     std::cout << "query: " << query << std::endl;
 
-    input_tokens = ::llama_tokenize(ctx, query, true);
+    input_tokens = llama_tokenize(ctx, query, true);
     std::cout << "input_tokens: " << std::endl;
     for (auto token : input_tokens) {
         std::cout << token << " :" << llama_token_to_piece(ctx, token) << std::endl;
@@ -44,6 +43,10 @@ int main(int argc, char** argv) {
     std::cout << "batch.n_tokens: " << batch.n_tokens << std::endl;
 
     // Add the tokens to the batch
+    // So we are adding the tokens to the batch, and then we are getting
+    // llama.cpp to predict the next token. After that is done we will then
+    // att that token to the batch and then predict the next token with that
+    // token as well and so on.
     for (int32_t i = 0; i < batch.n_tokens; i++) {
         batch.token[i] = input_tokens[i];
         batch.pos[i] = i;
@@ -53,12 +56,79 @@ int main(int argc, char** argv) {
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
 
-    // What does decode do?
     if (llama_decode(ctx, batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
-    std::cout << "logits: " << batch.logits[batch.n_tokens-1] << std::endl;
+
+    // total length of the sequence including the prompt
+    const int n_len = 100;
+
+    int n_cur = batch.n_tokens;
+    int n_decode = 0;
+    int n_vocab = llama_n_vocab(model);
+    std::cout << "n_vocab: " << n_vocab << std::endl;
+    std::cout << "LLM response:" << std::endl;
+    while (n_cur <= n_len) {
+        {
+            // logits are stored in the last token of the batch and are
+            // logits are the raw unnormalized predictions
+            float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
+            // logits will be an array of length 32000 because it will be resized
+            // by the above call to llama_decode.
+
+            std::vector<llama_token_data> candidates;
+            candidates.reserve(n_vocab);
+
+            // The following is populating the candidates vector with the
+            // logit for each token in the vocabulary (32000).
+            for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+                float prob = 0.0f;
+                // recall that emplace creates the object directly within the vectors memory.
+                candidates.emplace_back(llama_token_data{ token_id, logits[token_id], prob });
+            }
+            // Here we are creating an unsorted array of token data from the vector.
+            bool sorted = false;
+            llama_token_data_array candidates_p = { candidates.data(), candidates.size(), sorted };
+
+            // Find the token with the highest raw score (logit) and return it.
+            const llama_token highest_logit = llama_sample_token_greedy(ctx, &candidates_p);
+
+            // is it an end of stream?
+            if (highest_logit == llama_token_eos(ctx) || n_cur == n_len) {
+                fprintf(stdout, "\n");
+                fflush(stdout);
+                break;
+            }
+
+            // Next we get the string value for the token. This is called a piece
+            // which I think comes from SentencePiece, and a token would be
+            // one such piece (something like that).
+            std::string str = llama_token_to_piece(ctx, highest_logit);
+            if (str != "\n") {
+                fprintf(stdout, "%s", str.c_str());
+                fflush(stdout);
+            }
+
+            // Push this new token for next evaluation
+            batch.n_tokens = 0;
+            batch.token[batch.n_tokens] = highest_logit;
+            batch.pos[batch.n_tokens] = n_cur;
+            batch.seq_id[batch.n_tokens] = 0;
+            batch.logits[batch.n_tokens] = true;
+            batch.n_tokens += 1;
+            n_decode += 1;
+        }
+
+        n_cur += 1;
+
+        // With the new token added to the batch, we can now predict the
+        // next token with the logit from above and repeat the process.
+        if (llama_decode(ctx, batch)) {
+            fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
+            return 1;
+        }
+    }
 
     return 0;
 }
