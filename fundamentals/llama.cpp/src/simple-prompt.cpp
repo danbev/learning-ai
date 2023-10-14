@@ -59,20 +59,23 @@ int main(int argc, char** argv) {
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
 
+    // Now we run the inference on the batch. This will populate the logits
+    // for the last token in the batch.
     if (llama_decode(ctx, batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
 
-    // total length of the sequence including the prompt
-    const int n_len = 100;
+    // This is the total number of tokens that we will generate, which recall
+    // includes our query tokens (they are all in the llm_batch).
+    const int n_gen_tokens = 100;
 
     int n_cur = batch.n_tokens;
     int n_decode = 0;
     int n_vocab = llama_n_vocab(model);
     std::cout << "n_vocab: " << n_vocab << std::endl;
     std::cout << "LLM response:" << std::endl;
-    while (n_cur <= n_len) {
+    while (n_cur <= n_gen_tokens) {
         {
             // logits are stored in the last token of the batch and are
             // logits are the raw unnormalized predictions
@@ -98,7 +101,7 @@ int main(int argc, char** argv) {
             const llama_token highest_logit = llama_sample_token_greedy(ctx, &candidates_p);
 
             // is it an end of stream?
-            if (highest_logit == llama_token_eos(ctx) || n_cur == n_len) {
+            if (highest_logit == llama_token_eos(ctx) || n_cur == n_gen_tokens) {
                 fprintf(stdout, "\n");
                 fflush(stdout);
                 break;
