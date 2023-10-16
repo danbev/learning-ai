@@ -9,6 +9,7 @@ This repository contains notes and code examples related to AI.
 * [OpenAI API](./openai) OpenAI API examples written in Rust and Python
 * [Huggingface API](./hugging-face/python) Huggingface API example written in Python
 * [Qdrant Vector Database](./vector-databases/qdrant) Examples in Python and Rust
+* [LanceDB Vector Database](./vector-databases/lancedb) Examples in Python and Rust
 * [Langchain examples](./langchain) Langchain examples written in Python
 
 ### Notes
