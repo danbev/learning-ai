@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
     batch.n_tokens = input_tokens.size();
     std::cout << "batch.n_tokens: " << batch.n_tokens << std::endl;
 
-    // So what this llmm_batch is used for is simlilar to the contept of contex
+    // So what this llmm_batch is used for is similar to the concept of context
     // we talked about in ../../notes/llm.md#context_size. Below we are adding
     // the input query tokens to this batch/context. So it will initially just
     // contain the tokens for our query. But after running the inference, we
