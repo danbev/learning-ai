@@ -47,7 +47,7 @@ multitool!(
     BashToolError
 );
 
-async fn build_local_qdrant() -> Qdrant<Embeddings, EmptyMetadata> {
+async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> {
     let config = QdrantClientConfig::from_url("http://localhost:6334");
     let client = Arc::new(QdrantClient::new(Some(config)).unwrap());
     let collection_name = "my-collection".to_string();
@@ -88,17 +88,19 @@ async fn build_local_qdrant() -> Qdrant<Embeddings, EmptyMetadata> {
         None,
     );
 
-    // Add a single VEX document
-    let file_path = "data/vex-stripped.json".to_owned();
-    let vex = fs::read_to_string(file_path).expect("Couldn't find or load vex file.");
-    // Default implementation uses character count for chunk size
-    let max_characters = 1000;
-    let splitter = TextSplitter::default().with_trim_chunks(true);
-    let chunks = splitter.chunks(&vex, max_characters);
-    let chs = chunks.into_iter().map(String::from).collect::<Vec<_>>();
+    if add_doc {
+        // Add a single VEX document
+        let file_path = "data/vex-stripped.json".to_owned();
+        let vex = fs::read_to_string(file_path).expect("Couldn't find or load vex file.");
+        // Default implementation uses character count for chunk size
+        let max_characters = 1000;
+        let splitter = TextSplitter::default().with_trim_chunks(true);
+        let chunks = splitter.chunks(&vex, max_characters);
+        let chs = chunks.into_iter().map(String::from).collect::<Vec<_>>();
 
-    let doc_ids = qdrant.add_texts(chs).await.unwrap();
-    println!("VEX documents stored under IDs: {:?}", doc_ids);
+        let doc_ids = qdrant.add_texts(chs).await.unwrap();
+        println!("VEX documents stored under IDs: {:?}", doc_ids);
+    }
     qdrant
 }
 
@@ -107,7 +109,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::var("OPENAI_API_KEY").expect(
         "You need an OPENAI_API_KEY env var with a valid OpenAI API key to run this example",
     );
-    let qdrant = build_local_qdrant().await;
+    // Only need to perform this when we have new documents to add.
+    let qdrant = build_local_qdrant(false).await;
 
     let mut tool_collection = ToolCollection::<Multitool>::new();
     let _opts = options!(
@@ -132,7 +135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TfsZ: 1.0 // disabled
     );
     //let exec = executor!(llama, opts.clone())?;
-    let exec = executor!().unwrap();
+    let openai_opts = options!(
+        Stream: false
+    );
+    let exec = executor!(chatgpt, openai_opts).unwrap();
 
     tool_collection.add_tool(BashTool::new().into());
     tool_collection.add_tool(
@@ -143,6 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into(),
     );
+    //println!("Tool collection: {:?}", tool_collection.describe());
 
     /*
     let sys_prompt = r#"
@@ -171,11 +178,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]));
 
     let query = "Can you show me a summary of RHSA-2020:5566?";
+    // Notice that we are passing in the executor to run here.
     let result = Step::for_prompt_template(prompt.into())
         .run(&parameters!("task" => query), &exec)
         .await
         .unwrap();
-    println!("{}", result);
+
+    // This result is the result of the VectorStoreTool, which is a YAML.
+    println!("Result: {}", result);
+
     match tool_collection
         .process_chat_input(
             &result
@@ -186,7 +197,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await
     {
-        Ok(output) => println!("{}", output),
+        Ok(output) => {
+            println!("Tool output: {}", output);
+            // This only provided the output of the tool I think, and we would
+            // now want the LLM to generate a response, which is this case it
+            // the summary.
+        }
         Err(e) => println!("Error: {}", e),
     }
 
