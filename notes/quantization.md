@@ -50,3 +50,84 @@ float value = 500.0
 ```
 Notice that 0.0 is symmetric to the 0 value in the quantanised range. I believe
 this is why it is called symmetric quantanisation.
+
+### Asymmetric Quantanisation
+Take the following example:
+```
+ -40.0                                                             1000.0
+    +--------------------------------------------------------------+
+    |                                                              |
+    |                                                              |
+    ↓                                                              ↓
+    0                                                              255
+```
+Notice that our floating point range has changed in this example. Like before
+we can calculate the scale factor:
+```
+         1000.0 - (-40.0)     1040.0
+scale =  ---------------- =   ------ = 4.07843137254902
+         255 - 0              255
+```
+So if we quantize a value in that range, for example -40.0 then we should get
+0:
+```
+-40.0 / 4.07843137254902 = -9.80392156862745
+                         = -10 (rounded)
+```
+Notice that this does not lined up to 0 which is what have have above. This is
+an issue and something that we need to take into account.
+```
+1000.0 / 4.07843137254902 = 245.09803921568627
+                          = 245 (rounded)
+```
+Notice that this value does not line up with 255. What we can do is take
+the value that we got when we converted -40.0 and add the `negative` of that
+value to all the values that we convert to fix this issue in mis-alignment. 
+```
+-40.0 / 4.07843137254902 + -(-10) = -9.80392156862745 + 10
+                                   = 0.19607843137254902
+                                   = 0 (rounded)
+
+1000.0 / 4.07843137254902 + -(-10)  = 245.09803921568627 + 10
+                                    = 255.09803921568627
+                                    = 255 (rounded)
+```
+The value that we add to all the values is called the `zero-point`. 
+
+In the examples so far we have been using 8-bit integers and they have been in
+unsigned so there range was 0-255. We could also use signed integers:
+```
+ -40.0                                                             1000.0
+    +--------------------------------------------------------------+
+    |                                                              |
+    |                                                              |
+    ↓                                                              ↓
+  -128                                                             127
+```
+So in this case instead of -40.0 lining up with 0 it lines up with -128, and
+1000.0 lines up with 127.
+
+```
+         1000.0 - (-40.0)     1040.0
+scale =  ---------------- =   ------ = -4.07843137254902
+         -128 - 127            -255 
+
+
+-40.0 / -4.07843137254902 = 9.80392156862745
+                          = 10 (rounded)
+                         
+zero-point = 10
+zero-point = 10 + (-128)
+zero-point = 10 -128
+zero-point = -118
+```
+So the zero-point is -118. So we can convert a floating point value to a
+quantanised value using the following formula:
+```
+0.0 / -4.07843137254902 + -(-118) = 0.0 + 118
+                                  = 118 (rounded)
+
+1000.0 / -4.07843137254902 + -(-118) = -245.09803921568627 + 118
+                                      = -127.09803921568627
+                                      = -127 (rounded)
+```
