@@ -59,7 +59,62 @@ I'm going to investigate using llama.cpp as the inference engine and see if I
 can get a chat ui to run against it, all locally.
 
 
-### LLM parameters
+### LLM hyperparameters
+These are configuration options for the llm that influences how inference is
+done. This section will list the ones that I've come accross and what they do.
+
+But to fully understand where these come into play it might be worth backing
+up a little and think about how inference works. Lets say we have the following
+query "What is LoRA?". This string is passed to the llm and the first thing that
+will happen is that it will be first be tokenized and then mapped (encoded) into
+an integer id according to the vocabulary that the llm was trained on.
+So if we run llama.cpp with the following command:
+```
+./main -m models/llama-2-13b-chat.Q4_0.gguf --prompt "What is LoRA?</s>"
+```
+What is the vocabulary that the llm was trained on? Well, that is defined in
+the model file and once the model has been loaded we can inspect it:
+```console
+(gdb) br
+Breakpoint 2 at 0x4e6b64: file common/common.cpp, line 813.
+
+(gdb) p model->name
+$28 = "LLaMA v2"
+
+(gdb) p model->vocab->token_to_id
+$25 = std::unordered_map with 32000 elements = {["왕"] = 31996, ["还"] = 31994, 
+  ["ὀ"] = 31990, ["역"] = 31987, ["ɯ"] = 31983, ["합"] = 31980, ["才"] = 31979, 
+  ["명"] = 31976, ["遠"] = 31971, ["故"] = 31969, ["丁"] = 31968, ["ญ"] = 31967, 
+  ["음"] = 31966, ["ษ"] = 31964, ["败"] = 31955, ["茶"] = 31954, ["洲"] = 31952, 
+  ["월"] = 31950, ["ḏ"] = 31946, ["방"] = 31945, ["效"] = 31944, ["导"] = 31943, 
+  ["중"] = 31941, ["내"] = 31940, ["ほ"] = 31938, ["Ġ"] = 31937, ["瀬"] = 31933, 
+  ["助"] = 31931, ["ˇ"] = 31929, ["現"] = 31928, ["居"] = 31924, ["პ"] = 31919, 
+  ["ව"] = 31918, ["客"] = 31915, ["ശ"] = 31913, ["昭"] = 31912, ["员"] = 31911, 
+  ["反"] = 31908, ["과"] = 31906, ["操"] = 31904, ["米"] = 31902, ["构"] = 31901, 
+  ["ྱ"] = 31896, ["식"] = 31895, ["运"] = 31894, ["种"] = 31893, ["ҡ"] = 31892, 
+  ["̍"] = 31891, ["ɵ"] = 31890, ["ദ"] = 31889, ["貴"] = 31887, ["達"] = 31883, 
+  ["‭"] = 31881, ["頭"] = 31876, ["孝"] = 31875, ["ự"] = 31874, ["Ÿ"] = 31872, 
+  ["論"] = 31871, ["Ħ"] = 31870, ["红"] = 31869, ["庄"] = 31868, ["ὺ"] = 31866, 
+  ["ো"] = 31864, ["ರ"] = 31861, ["ਿ"] = 31857, ["터"] = 31856, ["测"] = 31851, 
+  ["溪"] = 31850, ["ក"] = 31849, ["麻"] = 31846, ["希"] = 31841, ["❯"] = 31840, 
+  ["望"] = 31839, ["非"] = 31838, ["索"] = 31836, ["确"] = 31835, ["む"] = 31834, 
+  ["ந"] = 31833, ["ϊ"] = 31832, ["塔"] = 31831, ["ც"] = 31828, ["Ξ"] = 31827, 
+  ["만"] = 31826, ["학"] = 31822, ["样"] = 31819, ["զ"] = 31816, ["衛"] = 31815, 
+  ["尔"] = 31814, ["話"] = 31812, ["എ"] = 31808, ["ӏ"] = 31806, ["ḷ"] = 31802, 
+  ["ြ"] = 31801, ["ܝ"] = 31800, ["达"] = 31798, ["ณ"] = 31796, ["˜"] = 31793, 
+  ["개"] = 31789, ["隆"] = 31788, ["変"] = 31786...}
+
+(gdb) p model->vocab->id_to_token[31996]
+$61 = {text = "왕", score = -31737, type = LLAMA_TOKEN_TYPE_NORMAL}
+```
+Notice that the vocabulary has the size of 32000. This means that the llm can
+handle 32000 different tokens.
+
+The context has a logits with a reserved capacity of 32000:
+```console
+(gdb) p ctx->logits
+$73 = std::vector of length 0, capacity 32000
+```
 
 #### Context size
 An LLM has a context size which specifies how much context the LLM can handle.
@@ -67,7 +122,7 @@ So what does that mean? Well, lets say we want to generate a sentence, we would
 pass the start of the sentence to the LLM and it would generate the next word.
 For example:
 ```
-Somewhere over the...
+"Somewhere over the..."
 ```
 We can imaging the context that an LLM as like this:
 ```
@@ -182,6 +237,18 @@ Example, we have the following vocabulary:
 The parameter of this in llm-chain is called `TypicalP`.
 
 TODO: Explain this better
+
+
+#### Mirostat
+This is introduced in the paper: https://openreview.net/pdf?id=W1G1JZEIy5_ and
+is also related sampling of generated tokens, so in the same "category" as
+top_p and top_k I think. It is about controlling perplexity, which is a measure
+of how well a language model predicts a sample of text.
+
+It sounds like MIROSTAT also uses top_k sampling but unlike traditional top-k
+sampling, MIROSTAT adaptively adjusts the value of k to control the perplexity.
+So there is still a top_k sampling performed but the value of k is not fixed but
+instead is adjusted to control the perplexity.
 
 
 #### Repetition penalty
