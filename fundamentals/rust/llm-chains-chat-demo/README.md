@@ -17,7 +17,7 @@ The Qdrant database needs to be started:
 $ cd ../../../vector-databases/qdrant/rust
 $ make start-qdrant-server 
 ```
-Then we can run this example using:
+Then we can run the OpenAI example using:
 ```console
-$ cargo r
+cargo r --bin openai
 ```
