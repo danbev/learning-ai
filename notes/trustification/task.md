@@ -569,3 +569,32 @@ For an LLM there is also the issue of privacy and security of the data that is
 sent to the inference engine. This is something that we would need to consider
 and having a local inference engine would be a way to address this.
 
+
+### Outstanding Questions/Tasks
+* Rust implementation of the demo: Proof of concept to demonstrate that we can
+use Rust for this project.
+[llm-chains-chat-demo](../../fundamentals/rust/llm-chains-chat-demo).
+  
+* What information do we need to store in the vector store?  
+  This should explore what information could be valuable to store and assist in
+retrieving documents when performing a similarity search. In theory, we should
+be able to insert any type of document into the vector store; related chunks
+should be closer to each other in the vector space.
+
+* What implications does deploying and managing a vector store have?  
+  We have been looking at Qdrant and LanceDB as options. Qdrant has been used
+for the Rust demo, but this was solely because there was an example in llm-chain
+that uses Qdrant.
+
+* Should we use the OpenAI API or llama.cpp (or other options) as the inference engine?  
+  The OpenAI API has a cost per token used, and there is also the concern
+regarding data privacy. Therefore, it might be good to offer a local inference
+engine as an option.
+
+* What should the UI look like for this?
+
+* Which LLM model should we use?  
+  There are different models available; some are open-source and free, while
+others are not. We should investigate which models are available and ensure
+that they work for our use case.
+
