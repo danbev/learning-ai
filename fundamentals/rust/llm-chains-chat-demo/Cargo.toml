@@ -26,3 +26,11 @@ serde_yaml = "0.9.25"
 text-splitter = "0.4.4"
 thiserror = "1.0.49"
 tokio = { version = "1.33.0", features = ["full"] }
+
+[[bin]]
+name = "openai"
+path = "src/main-openai.rs"
+
+[[bin]]
+name = "llama"
+path = "src/main-llama.rs"

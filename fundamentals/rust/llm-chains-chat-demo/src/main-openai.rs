@@ -1,17 +1,18 @@
 use llm_chain::options::*;
+use llm_chain::prompt::ChatMessage;
 use std::fs;
 use text_splitter::TextSplitter;
 
 use async_trait::async_trait;
 use llm_chain::executor;
 use llm_chain::options;
+use llm_chain::prompt::ChatRole;
 use llm_chain::prompt::{ChatMessageCollection, StringTemplate};
 use llm_chain::schema::{Document, EmptyMetadata};
 use llm_chain::step::Step;
 use llm_chain::tools::tools::{
-    BashTool, VectorStoreTool, VectorStoreToolError, VectorStoreToolInput, VectorStoreToolOutput,
+    VectorStoreTool, VectorStoreToolError, VectorStoreToolInput, VectorStoreToolOutput,
 };
-use llm_chain::tools::tools::{BashToolError, BashToolInput, BashToolOutput};
 use llm_chain::tools::{Tool, ToolCollection, ToolDescription, ToolError};
 use llm_chain::traits::VectorStore;
 use llm_chain::{multitool, parameters};
@@ -23,9 +24,9 @@ use qdrant_client::prelude::{QdrantClient, QdrantClientConfig};
 use qdrant_client::qdrant::{CreateCollection, Distance, VectorParams, VectorsConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-// A simple example generating a prompt with some tools.
 
-// `multitool!` macro cannot handle generic annotations as of now; for now you will need to pass concrete arguments and alias your types
+// `multitool!` macro cannot handle generic annotations as of now; for now you
+// will need to pass concrete arguments and alias your types
 type QdrantTool = VectorStoreTool<Embeddings, EmptyMetadata, Qdrant<Embeddings, EmptyMetadata>>;
 type QdrantToolInput = VectorStoreToolInput;
 type QdrantToolOutput = VectorStoreToolOutput;
@@ -40,17 +41,15 @@ multitool!(
     QdrantTool,
     QdrantToolInput,
     QdrantToolOutput,
-    QdrantToolError,
-    BashTool,
-    BashToolInput,
-    BashToolOutput,
-    BashToolError
+    QdrantToolError
 );
 
+// This would normally be in a separate file, or perhaps done by a separate
+// process all together.
 async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> {
     let config = QdrantClientConfig::from_url("http://localhost:6334");
     let client = Arc::new(QdrantClient::new(Some(config)).unwrap());
-    let collection_name = "my-collection".to_string();
+    let collection_name = "vec-documents".to_string();
     let embedding_size = 1536;
 
     if !client
@@ -109,66 +108,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::var("OPENAI_API_KEY").expect(
         "You need an OPENAI_API_KEY env var with a valid OpenAI API key to run this example",
     );
-    // Only need to perform this when we have new documents to add.
     let qdrant = build_local_qdrant(false).await;
 
-    let mut tool_collection = ToolCollection::<Multitool>::new();
-    let _opts = options!(
-        Model: ModelRef::from_path("./models/llama-2-7b-chat.ggmlv3.q4_0.bin"),
-        ModelType: "llama",
-        MaxContextSize: 3000_usize,
-        MaxTokens: 200_usize,
-        Temperature: 1.0, // disabled
-        TopP: 1.0, // 1.0 is the default and means no top-p sampling
-        TopK: 0,  //
-        RepeatPenalty: 1.0, // disbled
-        RepeatPenaltyLastN: 0_usize, // disabled
-        FrequencyPenalty: 0.0, // disabled
-        PresencePenalty: 0.0, // disabled
-        Mirostat: 0_i32, // disabled
-        MirostatTau: 1.0,
-        MirostatEta: 0.1,
-        PenalizeNl: true,
-        NThreads: 4_usize,
-        Stream: false,
-        TypicalP: 1.0, // disabled
-        TfsZ: 1.0 // disabled
-    );
-    //let exec = executor!(llama, opts.clone())?;
     let openai_opts = options!(
         Stream: false
     );
     let exec = executor!(chatgpt, openai_opts).unwrap();
 
-    tool_collection.add_tool(BashTool::new().into());
-    tool_collection.add_tool(
-        QdrantTool::new(
-            qdrant,
-            "factual information and trivia",
-            "facts, news, knowledge or trivia",
-        )
-        .into(),
+    let mut tool_collection = ToolCollection::<Multitool>::new();
+    let quadrant_tool = QdrantTool::new(
+        qdrant,
+        "VEX documents, Red Hat Security Advisories (RHSA) information which use id's in the format RHSA-xxxx-xxxx",
+        "vex documents, RHSA information",
     );
-    //println!("Tool collection: {:?}", tool_collection.describe());
+    tool_collection.add_tool(quadrant_tool.into());
 
-    /*
-    let sys_prompt = r#"
-    <s>[INST] <<SYS>>
-    You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.
+    let tool_prompt = tool_collection.to_prompt_template().unwrap();
+    let template = StringTemplate::combine(vec![
+        tool_prompt,
+        StringTemplate::tera(
+            "You may ONLY use one tool at a time. Please perform the following task: {{task}}.",
+        ),
+    ]);
 
-    If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.
-    Your output must always be YAML.
-    <</SYS>>
-        "#;
-
-    let prompt = ChatMessageCollection::new()
-        .with_system(StringTemplate::tera(sys_prompt))
-        .with_user(StringTemplate::combine(vec![
-            tool_collection.to_prompt_template().unwrap(),
-            StringTemplate::tera("Please perform the following task: {{query}} [/INST]."),
-        ]));
-    */
-    let prompt = ChatMessageCollection::new()
+    let mut prompt = ChatMessageCollection::new()
         .with_system(StringTemplate::tera(
             "You are an automated agent for performing tasks. Your output must always be YAML.",
         ))
@@ -178,32 +141,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]));
 
     let query = "Can you show me a summary of RHSA-2020:5566?";
-    // Notice that we are passing in the executor to run here.
-    let result = Step::for_prompt_template(prompt.into())
-        .run(&parameters!("task" => query), &exec)
-        .await
-        .unwrap();
 
-    // This result is the result of the VectorStoreTool, which is a YAML.
-    println!("Result: {}", result);
+    for _ in 1..3 {
+        let result = Step::for_prompt_template(prompt.clone().into())
+            .run(&parameters!("task" => query), &exec)
+            .await
+            .unwrap();
+        let assistent_text = result
+            .to_immediate()
+            .await?
+            .primary_textual_output()
+            .unwrap();
+        println!("{}", assistent_text);
 
-    match tool_collection
-        .process_chat_input(
-            &result
-                .to_immediate()
-                .await?
-                .primary_textual_output()
-                .unwrap(),
-        )
-        .await
-    {
-        Ok(output) => {
-            println!("Tool output: {}", output);
-            // This only provided the output of the tool I think, and we would
-            // now want the LLM to generate a response, which is this case it
-            // the summary.
-        }
-        Err(e) => println!("Error: {}", e),
+        let step = match tool_collection.process_chat_input(&assistent_text).await {
+            Ok(tool_output) => {
+                println!("Tool output: {}", tool_output);
+                StringTemplate::static_string(format!(
+                    "```yaml
+                    {}
+                    ```
+                    Proceed with your next command.",
+                    tool_output
+                ))
+            }
+            Err(e) => StringTemplate::static_string(format!(
+                "Correct your output and perform the task - {}. Your task was: {}",
+                e, query
+            )),
+        };
+        println!("User: {}", step);
+        prompt.add_message(ChatMessage::system(StringTemplate::static_string(
+            assistent_text,
+        )));
+        prompt.add_message(ChatMessage::user(step));
     }
 
     Ok(())
