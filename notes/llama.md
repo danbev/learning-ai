@@ -126,6 +126,7 @@ is created using bindget. The crate llm-chain-llama-sys contains the binding
 and llm-chain-llama contains Rust API.
 
 #### llama_batch
+This struct holdes `input` data for llama_decode and is defined as:
 ```c++
     typedef struct llama_batch {
         int32_t n_tokens;
@@ -139,39 +140,17 @@ and llm-chain-llama contains Rust API.
 ```
 The `n_tokens` is a counter of the number of tokens that this batch_contains.
 
-A llmm_batch is used for is simlilar to the contept of context we talked about
-[llm.md](../../notes/llm.md#context_size). Below we are adding
-the input query tokens to this batch/context. So it will initially just contain
-the tokens for our query. But after running the inference, we will append the
-next token to the batch and run the inference again and then run the inferencex
-again to predict the next token, now with more context (the previous token).
+A llmm_batch is simlilar to the contept of context we talked about
+[llm.md](../../notes/llm.md#context_size). Below we are adding the input query
+tokens to this batch/context. So it will initially just contain the tokens for
+our query. But after running the inference, we will append the next token to the
+batch and run the inference again and then run the inferencex again to predict
+the next token, now with more context (the previous token).
 
-The `embd` is the embedding of the token. So this was not obvious to me at first
-but recall that the tokens just integer representations of works/subwords, like
-a mapping. But they don't contains any semantic information. This is what the
-embeddings provide and is something that is performad by the llm. So where is
-this done by llama.cpp? Well lets take a look:
-TODO: show where this happens using simple-prompt.cpp.
-First we need to break somewhere in the code where `batch` is in scope and
-then we can set a watch point:
-```console
-(gdb) watch batch.embd 
-Hardware watchpoint 2: batch.embd
-(gdb) c
-Hardware watchpoint 3: batch.embd
-
-Old value = (float *) 0x16b7c00016b78
-New value = (float *) 0x0
-0x000000000047fb51 in llama_batch_init ()
-``` 
-And this matches where the value is set to 0x0 from an uninitialized value(
-whatever was in that memory location before). So this is where the memory is
-```c++
-    llama_batch batch = { -1, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0, };
-```
-So lets continue:
-```console
-(gdb) c
-```
-Actually that was the only point where the embeddings were touched. TODO: Write
-an example for embeddings.
+The `embd` is the embedding of the tokens (I think). So this was not obvious to
+me at first, but recall that the tokens just integer representations of
+works/subwords, like a mapping. But they don't contains any semantic
+information. Recall that this is data which is setup as input to for
+llama_decode and I think this is used when embeddings are already available
+perhaps. TODO: verify this.
+The `pos` is the position of the tokens in the sequence.
