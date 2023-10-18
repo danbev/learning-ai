@@ -12,7 +12,7 @@ box.
 
 ### Candle (Huggingface)
 [Candle](https://github.com/huggingface/candle) is a project from Huggingface.
-The goal is to make the deploying lightweight binaris possible and not have the
+The goal is to make the deploying lightweight binareis possible and not have the
 overhead of Python in production.
 
 [candle example](../hugging-face/rust/candle-example)
