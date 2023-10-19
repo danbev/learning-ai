@@ -1,8 +1,8 @@
 ## llm-chain chat demo
 This example is intended to mimic the python chat demo in
-[](../../../langchain/src/trust-chat.py). This example differs in that it does
-not use an in-memory vector database but instead an external Qdrant database
-which needs to be running.
+[trust-chat.py](../../../langchain/src/trust-chat.py). This example differs in
+that it does not use an in-memory vector database but instead an external Qdrant
+database which needs to be running.
 
 __work in progress__
 
