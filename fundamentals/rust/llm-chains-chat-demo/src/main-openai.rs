@@ -1,12 +1,9 @@
-use llm_chain::options::*;
-use llm_chain::prompt::ChatMessage;
 use std::fs;
 use text_splitter::TextSplitter;
 
 use async_trait::async_trait;
 use llm_chain::executor;
 use llm_chain::options;
-use llm_chain::prompt::ChatRole;
 use llm_chain::prompt::{ChatMessageCollection, StringTemplate};
 use llm_chain::schema::{Document, EmptyMetadata};
 use llm_chain::step::Step;
@@ -25,8 +22,6 @@ use qdrant_client::qdrant::{CreateCollection, Distance, VectorParams, VectorsCon
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// `multitool!` macro cannot handle generic annotations as of now; for now you
-// will need to pass concrete arguments and alias your types
 type QdrantTool = VectorStoreTool<Embeddings, EmptyMetadata, Qdrant<Embeddings, EmptyMetadata>>;
 type QdrantToolInput = VectorStoreToolInput;
 type QdrantToolOutput = VectorStoreToolOutput;
@@ -92,12 +87,16 @@ async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> 
         let file_path = "data/vex-stripped.json".to_owned();
         let vex = fs::read_to_string(file_path).expect("Couldn't find or load vex file.");
         // Default implementation uses character count for chunk size
-        let max_characters = 1000;
+        let max_characters = 1536;
         let splitter = TextSplitter::default().with_trim_chunks(true);
-        let chunks = splitter.chunks(&vex, max_characters);
-        let chs = chunks.into_iter().map(String::from).collect::<Vec<_>>();
+        let chunks = splitter
+            .chunks(&vex, max_characters)
+            .map(String::from)
+            .collect::<Vec<_>>();
+        let chs: Vec<Document> = chunks.into_iter().map(Document::new).collect();
 
-        let doc_ids = qdrant.add_texts(chs).await.unwrap();
+        //let doc_ids = qdrant.add_texts(chs).await.unwrap();
+        let doc_ids = qdrant.add_documents(chs).await.unwrap();
         println!("VEX documents stored under IDs: {:?}", doc_ids);
     }
     qdrant
@@ -115,12 +114,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let exec = executor!(chatgpt, openai_opts).unwrap();
 
-    let mut tool_collection = ToolCollection::<Multitool>::new();
     let quadrant_tool = QdrantTool::new(
         qdrant,
         "VEX documents, Red Hat Security Advisories (RHSA) information which use id's in the format RHSA-xxxx-xxxx",
-        "vex documents, RHSA information",
+        "VEX documents, RHSA information",
     );
+
+    let mut tool_collection = ToolCollection::<Multitool>::new();
     tool_collection.add_tool(quadrant_tool.into());
 
     let tool_prompt = tool_collection.to_prompt_template().unwrap();
@@ -131,50 +131,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     ]);
 
-    let mut prompt = ChatMessageCollection::new()
-        .with_system(StringTemplate::tera(
-            "You are an automated agent for performing tasks. Your output must always be YAML.",
-        ))
+    let prompt = ChatMessageCollection::new()
+        .with_system(template)
         .with_user(StringTemplate::combine(vec![
             tool_collection.to_prompt_template().unwrap(),
             StringTemplate::tera("Please perform the following task: {{task}}."),
         ]));
 
     let query = "Can you show me a summary of RHSA-2020:5566?";
+    println!("Query: {}", query);
 
-    for _ in 1..3 {
+    for _ in 0..2 {
         let result = Step::for_prompt_template(prompt.clone().into())
             .run(&parameters!("task" => query), &exec)
             .await
             .unwrap();
+
         let assistent_text = result
             .to_immediate()
             .await?
             .primary_textual_output()
             .unwrap();
-        println!("{}", assistent_text);
-
-        let step = match tool_collection.process_chat_input(&assistent_text).await {
+        match tool_collection.process_chat_input(&assistent_text).await {
             Ok(tool_output) => {
-                println!("Tool output: {}", tool_output);
-                StringTemplate::static_string(format!(
-                    "```yaml
-                    {}
-                    ```
-                    Proceed with your next command.",
-                    tool_output
-                ))
+                let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
+                let texts = yaml.get("texts").unwrap();
+                let mut joined_text = String::new();
+                if let Some(sequence) = texts.as_sequence() {
+                    for (i, text) in sequence.iter().enumerate() {
+                        if let Some(str_value) = text.as_str() {
+                            joined_text.push_str(str_value);
+                            if i < sequence.len() - 1 {
+                                joined_text.push_str(" ");
+                            }
+                        }
+                    }
+                }
+                let prompt = ChatMessageCollection::new()
+                    .with_system(StringTemplate::tera(
+                       "You are a friendly assistent and help answer questions. Use the following as additional context: {{texts}}.",
+                    ))
+                    .with_user(StringTemplate::combine(vec![
+                        StringTemplate::static_string(query),
+                    ]));
+                let result = Step::for_prompt_template(prompt.clone().into())
+                    .run(&parameters!("texts" => joined_text), &exec)
+                    .await
+                    .unwrap();
+                println!("Result: {}", result);
+                break;
             }
-            Err(e) => StringTemplate::static_string(format!(
-                "Correct your output and perform the task - {}. Your task was: {}",
-                e, query
-            )),
-        };
-        println!("User: {}", step);
-        prompt.add_message(ChatMessage::system(StringTemplate::static_string(
-            assistent_text,
-        )));
-        prompt.add_message(ChatMessage::user(step));
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
     }
 
     Ok(())

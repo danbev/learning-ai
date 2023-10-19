@@ -17,7 +17,19 @@ The Qdrant database needs to be started:
 $ cd ../../../vector-databases/qdrant/rust
 $ make start-qdrant-server 
 ```
+
+Currently, the progress made is that we can run the example and it will
+retrieve data from the vector database related to the query "Can you show me a
+summary of RHSA-2020:5566?", This will then be used as the context for a new
+request to the LLM answer the query.
+
 Then we can run the OpenAI example using:
 ```console
-cargo r --bin openai
+$ cargo r -q --bin openai
+Query: Can you show me a summary of RHSA-2020:5566?
+Result: Assistant: Sure! RHSA-2020:5566 is a Red Hat Security Advisory that provides a security update for the openssl package. The vulnerability addressed in this advisory is classified as "Important" and has a CVSS base score of 6.5. 
+
+The update fixes a flaw in the OpenSSL Diffie-Hellman (DH) key exchange implementation. This flaw could allow an attacker to downgrade the security of the DH key exchange to the weakest commonly supported level, known as "export-grade." By doing so, the attacker could potentially intercept and decrypt TLS connections between vulnerable clients and servers.
+
+It is recommended to install the updated openssl packages as soon as possible to mitigate this vulnerability. You can find further details and instructions on how to update your systems in the Red Hat Security Advisory at the following URL: [RHSA-2020:5566](https://access.redhat.com/errata/RHSA-2020:5566).
 ```
