@@ -1,8 +1,9 @@
 ## Llama
-Is a large language model from Meta. So this is a model which means that it
-contains a binary file with the weights and biases of the model. These models
-come in different sizes and are trained on different datasets. The larger the
-model the more data it has been trained on and the more accurate it is.
+LLaMA (Large Language Model Meta AI) is a large language model from Meta. So
+this is a model which means that it contains a binary file with the weights and
+biases of the model. These models come in different sizes and are trained on
+ different datasets. The larger the model the more data it has been trained on
+and the more accurate it is.
 
 ### Llama 2
 Is really a family of pre-trained models in various scales (the number of
