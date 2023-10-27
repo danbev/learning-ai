@@ -687,15 +687,15 @@ fn main() -> io::Result<()> {
     // zip ys and ys_pred together and then calculate the loss by taking the
     // predicted value and subtracting the actual value and then squaring it.
     let mut loss = Value::new(0.0);
-    println!("{:<20} {:10} {:<10}", "Predicted", "Target", "Local loss");
+    println!("{:<20} {:20} {:<20}", "Predicted", "Local loss", "Target");
     for (y, y_pred) in ys.iter().zip(y_pred.iter()) {
         let local_loss = &*y.clone() - &*y_pred;
         let local_loss = &local_loss.pow(&Rc::new(Value::new(2.0)));
         println!(
-            "{:<20} {:<10} {:<10}",
+            "{:<20} {:<20} {:<20}",
             *y_pred.data.borrow(),
+            *local_loss.data.borrow(),
             *y.data.borrow(),
-            *local_loss.data.borrow()
         );
         loss += (**local_loss).clone();
     }
@@ -703,7 +703,9 @@ fn main() -> io::Result<()> {
     // Now we want the loss to be low because that means that each predicted
     // value is equal, or close to its target value.
 
+    // Run the backward pass (back propagation) to calculate the gradients
     Value::backwards(Rc::new(loss.clone()));
+
     // Print the gradients of the loss with respect to each of the weights.
     std::fs::write("plots/part1_single_neuron10.dot", loss.dot()).unwrap();
     run_dot("part1_single_neuron10");
