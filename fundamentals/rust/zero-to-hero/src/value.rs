@@ -299,9 +299,6 @@ impl Value {
                 let rhs = &self.children[1];
                 let base = *lhs.data.borrow();
                 let exponent = *rhs.data.borrow();
-                println!("----------->self: {}", *self.data.borrow());
-                println!("base: {}", base);
-                println!("exponent: {}", exponent);
                 // Here we use the power rule:
                 *lhs.grad.borrow_mut() +=
                     exponent * (base.powf(exponent - 1.0)) * *self.grad.borrow();
