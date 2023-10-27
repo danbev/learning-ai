@@ -643,6 +643,7 @@ fn main() -> io::Result<()> {
     std::fs::write("plots/part1_single_neuron9.dot", o.dot()).unwrap();
     run_dot("part1_single_neuron9");
 
+    // Inputs into our MLP
     let xs = [
         [
             Rc::new(Value::new_with_label(2.0, "x0")),
@@ -665,19 +666,19 @@ fn main() -> io::Result<()> {
             Rc::new(Value::new_with_label(-1.0, "x2")),
         ],
     ];
+
     // ys are the actual known values/labels which we are going to compare
     // againt the predictions that the Mlp output..
     let ys = [
-        Rc::new(Value::new_with_label(1.0, "y0")),
-        Rc::new(Value::new_with_label(-1.0, "y1")),
-        Rc::new(Value::new_with_label(-1.0, "y2")),
-        Rc::new(Value::new_with_label(1.0, "y3")),
+        Rc::new(Value::new_with_label(1.0, "y0")), // target for xs[0]
+        Rc::new(Value::new_with_label(-1.0, "y1")), // target for xs[1]
+        Rc::new(Value::new_with_label(-1.0, "y2")), // target for xs[2]
+        Rc::new(Value::new_with_label(1.0, "y3")), // target for xs[3]
     ];
+
     let mut y_pred = Vec::with_capacity(ys.len());
-    println!("y_pred: {}", y_pred.len());
-    for (i, x) in xs.into_iter().enumerate() {
+    for x in xs.into_iter() {
         y_pred.push(mlp(x));
-        println!("output {i}: {:?}", *y_pred[i].data.borrow());
     }
     // To make this prediction we need to be able to evaulate the performance
     // or our neural network using a single number. We call this single number
@@ -686,18 +687,19 @@ fn main() -> io::Result<()> {
     // zip ys and ys_pred together and then calculate the loss by taking the
     // predicted value and subtracting the actual value and then squaring it.
     let mut loss = Value::new(0.0);
+    println!("{:<20} {:10} {:<10}", "Predicted", "Target", "Local loss");
     for (y, y_pred) in ys.iter().zip(y_pred.iter()) {
         let local_loss = &*y.clone() - &*y_pred;
         let local_loss = &local_loss.pow(&Rc::new(Value::new(2.0)));
         println!(
-            "predicted: {}, target: {}, local_loss: {}",
+            "{:<20} {:<10} {:<10}",
             *y_pred.data.borrow(),
             *y.data.borrow(),
             *local_loss.data.borrow()
         );
         loss += (**local_loss).clone();
     }
-    println!("total loss: {}", *loss.data.borrow());
+    println!("Total loss: {}", *loss.data.borrow());
     // Now we want the loss to be low because that measns that each predicted
     // value is equal or close to its target value.
 
