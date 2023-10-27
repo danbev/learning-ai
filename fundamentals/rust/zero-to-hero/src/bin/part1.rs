@@ -700,8 +700,8 @@ fn main() -> io::Result<()> {
         loss += (**local_loss).clone();
     }
     println!("Total loss: {}", *loss.data.borrow());
-    // Now we want the loss to be low because that measns that each predicted
-    // value is equal or close to its target value.
+    // Now we want the loss to be low because that means that each predicted
+    // value is equal, or close to its target value.
 
     Value::backwards(Rc::new(loss.clone()));
     // Print the gradients of the loss with respect to each of the weights.
