@@ -1,5 +1,7 @@
 use crate::value::Value;
+use rand::prelude::*;
 use rand::Rng;
+use rand_chacha::ChaCha8Rng;
 use std::rc::Rc;
 
 /// This struct is the equivalent of the `Neuron` class in the python version.
@@ -8,14 +10,15 @@ use std::rc::Rc;
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct Neuron<const I: usize> {
-    bias: Rc<Value>,
-    weights: [Rc<Value>; I],
+    pub bias: Rc<Value>,
+    pub weights: [Rc<Value>; I],
 }
 
 #[allow(dead_code)]
 impl<const I: usize> Neuron<I> {
     pub fn new() -> Neuron<I> {
-        let mut rng = rand::thread_rng();
+        //let mut rng = rand::thread_rng();
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
         let weights: Vec<Rc<Value>> = (0..I)
             .map(|i| {
                 Rc::new(Value::new_with_label(

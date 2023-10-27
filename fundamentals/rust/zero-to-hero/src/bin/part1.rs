@@ -703,8 +703,18 @@ fn main() -> io::Result<()> {
     // Now we want the loss to be low because that means that each predicted
     // value is equal, or close to its target value.
 
-    // Run the backward pass (back propagation) to calculate the gradients
+    // Run the backward pass (back propagation) to calculate the gradients.
     Value::backwards(Rc::new(loss.clone()));
+
+    // Print out the first weights of the first layer as in the video.
+    println!(
+        "first layer weights.data: {:?}",
+        *mlp.first.neurons[0].weights[0].data.borrow()
+    );
+    println!(
+        "first layer weights.grad: {:?}",
+        *mlp.first.neurons[0].weights[0].grad.borrow()
+    );
 
     // Print the gradients of the loss with respect to each of the weights.
     std::fs::write("plots/part1_single_neuron10.dot", loss.dot()).unwrap();

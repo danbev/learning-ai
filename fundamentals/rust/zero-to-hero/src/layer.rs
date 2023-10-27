@@ -7,7 +7,7 @@ use std::rc::Rc;
 //
 #[derive(Debug)]
 pub struct Layer<const I: usize, const N: usize> {
-    neurons: Vec<Neuron<I>>,
+    pub neurons: Vec<Neuron<I>>,
 }
 
 impl<const I: usize, const N: usize> Layer<I, N> {

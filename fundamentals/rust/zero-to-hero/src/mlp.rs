@@ -6,8 +6,8 @@ use std::rc::Rc;
 //
 #[derive(Debug)]
 pub struct Mlp<const I: usize, const N: usize, const L: usize> {
-    first: Layer<I, N>,
-    layers: Vec<Layer<N, N>>,
+    pub first: Layer<I, N>,
+    pub layers: Vec<Layer<N, N>>,
 }
 
 impl<const I: usize, const N: usize, const L: usize> Mlp<I, N, L> {

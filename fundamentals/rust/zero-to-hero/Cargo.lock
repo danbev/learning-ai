@@ -805,6 +805,7 @@ dependencies = [
  "ndarray",
  "plotpy",
  "rand",
+ "rand_chacha",
  "russell_lab",
  "uuid",
 ]
