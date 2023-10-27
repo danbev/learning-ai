@@ -679,9 +679,10 @@ fn main() -> io::Result<()> {
         y_pred.push(mlp(x));
         println!("output {i}: {:?}", *y_pred[i].data.borrow());
     }
-    // Do make this prediction we need to be able to evaulate the performance
-    // or our neural network using single number. We call this single number
-    // the loss and it is a measure of how well our neural network is doing.
+    // To make this prediction we need to be able to evaulate the performance
+    // or our neural network using a single number. We call this single number
+    // the loss, and it is a measure of how well our neural network is doing.
+    //
     // zip ys and ys_pred together and then calculate the loss by taking the
     // predicted value and subtracting the actual value and then squaring it.
     let mut loss = Value::new(0.0);
