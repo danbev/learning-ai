@@ -9,6 +9,11 @@ To update the submodule run:
 $ git submodule update --recursive --remote
 ```
 
+Updating to the latest upstream llama.cpp:
+```console
+$ git submodule update --remote --merge
+```
+
 ### Debugging
 The examples in this project can be build with debug symbols enabled allowing
 for exploration of the llama.cpp, and ggml.cpp libraries. For example:
