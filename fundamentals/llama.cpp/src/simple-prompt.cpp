@@ -8,6 +8,10 @@ int main(int argc, char** argv) {
     params.model = "models/llama-2-13b-chat.Q4_0.gguf";
     std::cout << "llama.cpp example using model: " << params.model << std::endl;
 
+    std::string query = "What is LoRA?";
+    std::cout << "query: " << query << std::endl;
+    params.prompt = query;
+
     llama_backend_init(params.numa);
     llama_model_params model_params = llama_model_default_params();
 
@@ -18,9 +22,11 @@ int main(int argc, char** argv) {
     }
 
     llama_context_params ctx_params = llama_context_default_params();
+    ctx_params.seed  = 1234;
     ctx_params.n_ctx = 2048;
     ctx_params.n_threads = params.n_threads;
     ctx_params.n_threads_batch = params.n_threads;
+    ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
@@ -29,18 +35,17 @@ int main(int argc, char** argv) {
     }
 
     std::vector<llama_token> input_tokens;
-    std::string query = "What is LoRA?";
-    std::cout << "query: " << query << std::endl;
+    input_tokens = llama_tokenize(ctx, params.prompt, true);
 
-    input_tokens = llama_tokenize(ctx, query, true);
+
     std::cout << "input_tokens: " << std::endl;
     for (auto token : input_tokens) {
         std::cout << token << " :" << llama_token_to_piece(ctx, token) << std::endl;
     }
 
-    llama_batch batch = llama_batch_init(512, 0);
-    batch.n_tokens = input_tokens.size();
-    std::cout << "batch.n_tokens: " << batch.n_tokens << std::endl;
+    llama_batch batch = llama_batch_init(512, 0, 1);
+    //batch.n_tokens = input_tokens.size();
+    //std::cout << "batch.n_tokens: " << batch.n_tokens << std::endl;
 
     // So what this llmm_batch is used for is similar to the concept of context
     // we talked about in ../../notes/llm.md#context_size. Below we are adding
@@ -50,12 +55,10 @@ int main(int argc, char** argv) {
     // then run the inference again to predict the next token, now with more
     // context (the previous token). Hope this makes sense but looking at the
     // diagram in the notes might help.
-    for (int32_t i = 0; i < batch.n_tokens; i++) {
-        batch.token[i] = input_tokens[i];
-        batch.pos[i] = i;
-        batch.seq_id[i] = 0;
-        batch.logits[i] = false;
+    for (size_t i = 0; i < input_tokens.size(); i++) {
+        llama_batch_add(batch, input_tokens[i], i, { 0 }, false);
     }
+
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
 
@@ -68,17 +71,17 @@ int main(int argc, char** argv) {
 
     // This is the total number of tokens that we will generate, which recall
     // includes our query tokens (they are all in the llm_batch).
-    const int n_gen_tokens = 100;
+    const int n_gen_tokens = 32;
 
     int n_cur = batch.n_tokens;
     int n_decode = 0;
-    int n_vocab = llama_n_vocab(model);
-    std::cout << "n_vocab: " << n_vocab << std::endl;
+    //std::cout << "n_vocab: " << n_vocab << std::endl;
     std::cout << "LLM response:" << std::endl;
     while (n_cur <= n_gen_tokens) {
         {
             // logits are stored in the last token of the batch and are
             // logits are the raw unnormalized predictions
+            int n_vocab = llama_n_vocab(model);
             float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
             // logits will be an array of length 32000 because it will be resized
             // by the above call to llama_decode.
@@ -89,11 +92,7 @@ int main(int argc, char** argv) {
             // The following is populating the candidates vector with the
             // logit for each token in the vocabulary (32000).
             for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
-                float prob = 0.0f;
-                // recall that emplace (in-place construction of elements
-                // (emplace)) creates the object directly within the vectors
-                // memory without copying/moving it.
-                candidates.emplace_back(llama_token_data{ token_id, logits[token_id], prob });
+                candidates.emplace_back(llama_token_data{ token_id, logits[token_id], 0.0f });
             }
             // Here we are creating an unsorted array of token data from the vector.
             bool sorted = false;
@@ -103,7 +102,7 @@ int main(int argc, char** argv) {
             const llama_token highest_logit = llama_sample_token_greedy(ctx, &candidates_p);
 
             // is it an end of stream?
-            if (highest_logit == llama_token_eos(ctx) || n_cur == n_gen_tokens) {
+            if (highest_logit == llama_token_eos(model) || n_cur == n_gen_tokens) {
                 fprintf(stdout, "\n");
                 fflush(stdout);
                 break;
@@ -112,19 +111,12 @@ int main(int argc, char** argv) {
             // Next we get the string value for the token. This is called a piece
             // which I think comes from SentencePiece, and a token would be
             // one such piece (something like that).
-            std::string str = llama_token_to_piece(ctx, highest_logit);
-            if (str != "\n") {
-                fprintf(stdout, "%s", str.c_str());
-                fflush(stdout);
-            }
+            fprintf(stdout, "%s", llama_token_to_piece(ctx, highest_logit).c_str());
+            fflush(stdout);
 
-            // Push this new token for next evaluation
-            batch.n_tokens = 0;
-            batch.token[batch.n_tokens] = highest_logit;
-            batch.pos[batch.n_tokens] = n_cur;
-            batch.seq_id[batch.n_tokens] = 0;
-            batch.logits[batch.n_tokens] = true;
-            batch.n_tokens += 1;
+            // push this new token for next evaluation
+            llama_batch_clear(batch);
+            llama_batch_add(batch, highest_logit, n_cur, { 0 }, true);
             n_decode += 1;
         }
 
