@@ -129,6 +129,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    llama_batch_free(batch);
     llama_free(ctx);
     llama_free_model(model);
     llama_backend_free();
