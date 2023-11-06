@@ -31,6 +31,15 @@ which companies/orginizations are behind them.
 ### Hugging Face/BigScience
 * Bloom
 
+#### Zephyr-7B
+Is a fintuned version of Mistral 7B and has similar performance to Chat Llama
+70B but with a smaller size (7B vs 70B).
+
+TODO: explain the finetuning process that uses Direct Preference Optimization).
+
+### Mistral AI
+* Mistral 7B (https://mistral.ai/product/)
+
 ### MosaicML
 [MosaicML](https://www.mosaicml.com/) offers models that are completely free
 to use even for commercial purposes. 
