@@ -124,12 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tool_collection.add_tool(quadrant_tool.into());
 
     let tool_prompt = tool_collection.to_prompt_template().unwrap();
-    let template = StringTemplate::combine(vec![
-        tool_prompt,
-        StringTemplate::tera(
-            "You may ONLY use one tool at a time. Please perform the following task: {{task}}.",
-        ),
-    ]);
+    let template = StringTemplate::static_string(tool_prompt.to_string());
 
     let prompt = ChatMessageCollection::new()
         .with_system(template)
