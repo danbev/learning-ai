@@ -596,5 +596,10 @@ engine as an option.
 * Which LLM model should we use?  
   There are different models available; some are open-source and free, while
 others are not. We should investigate which models are available and ensure
-that they work for our use case.
+that they work for our use case. There is a relative new model from Hugging
+face named Zephry-7B which is said to have the same performance as Llama-70B
+which looks interesting. The Llama model I've mostly been using is Llama-7B and
+it would be interesting to compare the performance of these two models because
+of the sizes are the same but the performace of the Zephry model should be
+better.
 
