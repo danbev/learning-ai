@@ -64,7 +64,7 @@ pub struct ToolCollection<T> {
     tools: Vec<T>,
 }
 ```
-Notice that it is generic of T and we create a new ToolCollection with:
+Notice that it is generic over T and we create a new ToolCollection with:
 ```rust
     let mut tool_collection = ToolCollection::<Multitool>::new();
 ```
@@ -88,7 +88,7 @@ pub struct VectorStoreToolInput {
     limit: u32,
 }
 ```
-So we have query string and a limit for the number of results to return?
+So we have query string and a limit for the number of results to return.
 
 The output of the tool is:
 ```rust
@@ -109,8 +109,17 @@ where M: serde::Serialize + serde::de::DeserializeOwned, {
     pub metadata: Option<M>,
 }
 ```
-So Documents are pretty simple struces with a page_content string and optional
+So Documents are pretty simple strucs with a page_content string and optional
 metadata. Note that metadata might be very interesting as it allows for adding
-information about the origin the content I think. So it would allow us to be
+information about the origin the content (I think). So it would allow us to be
 able to provide references to the sources of information which can be important
 for content related to security.
+
+### Agent and Tools
+I'm currently trying to understand the Agent and Tools and how they work
+together. There is an example in crates/llm-chains-openai/examples/simple_agent.rs
+but the code in that file is commented out.
+
+I'm not sure what the correct way to use an Agent it when I want to have a
+vector database tool as a retrieval tool.
+Lets start with how are tools even invoked?
