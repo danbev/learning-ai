@@ -5,11 +5,12 @@ llama:
 CXXFLAGS = -g3 -Wall -Illama.cpp/ -Illama.cpp/common -Lllama.cpp/
 
 OBJS = llama.cpp/common.o \
+       llama.cpp/build-info.o \
        llama.cpp/ggml.o \
        llama.cpp/llama.o \
        llama.cpp/train.o \
        llama.cpp/ggml-alloc.o \
-       llama.cpp/k_quants.o \
+       llama.cpp/ggml-quants.o \
        llama.cpp/ggml-backend.o
 
 simple-prompt: src/simple-prompt.cpp | llama
