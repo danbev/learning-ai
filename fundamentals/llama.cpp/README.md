@@ -18,8 +18,7 @@ $ git submodule update --remote --merge
 The examples in this project can be build with debug symbols enabled allowing
 for exploration of the llama.cpp, and ggml.cpp libraries. For example:
 ```console
-(langch) $ !gdb
-gdb --args ./simple-prompt 
+$ gdb --args ./simple-prompt 
 Reading symbols from ./simple-prompt...
 
 (gdb) br simple-prompt.cpp:7
