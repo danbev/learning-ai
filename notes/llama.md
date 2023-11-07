@@ -22,10 +22,14 @@ separately.
 
 ### llama.cpp
 [llama.cpp](https://github.com/ggerganov/llama.cpp) is a library written in c
-and contains useful program that can be used to run inference on a Llama model,
-as well as quantize a model.
+and contains useful programs/examples that can be used to run inference on a
+Llama model, as well as quantize a model.
 So it can be used to run inference on a model, or to quantize a model and there
 are examples in the examples directory for how to do this.
+
+#### Sources
+This is just for getting an orientation of the headers and source cpp files
+that are used. 
 
 It can be run locally:
 ```console
@@ -74,8 +78,8 @@ We can inspect the type of this variable:
 ```console
 (gdb) ptype gpt_params
 type = struct gpt_params {
-    uint32_t seed;
-    int32_t n_threads;
+    uint32_t seed; // Random seed value
+    int32_t n_threads; 
     int32_t n_predict;
     int32_t n_ctx;
     int32_t n_batch;
@@ -89,6 +93,7 @@ type = struct gpt_params {
 I don't intend to step through the code but merely have the ability to inspect/
 debug it at a later time.
 
+Sampling parameters.
 
 ```console
 (gdb) p *ctx
@@ -110,11 +115,11 @@ type = struct ggml_context {
 }
 ```
 So this struct contains pointers to memory buffers which is where all tensor
-will be allocated. When stepping through the code I noticed that it
+will be allocated.
 
 
 #### Presence Penalty
-The presence penalty is a hyperparameter that is used controll the absence or
+The presence penalty is a hyperparameter that is used control the absence or
 presence of new tokens in the generated text.
 A value of 0 has no effect on token generation. A negative value will encourage
 the model to generate new tokens. A positive value will encourage the model to
