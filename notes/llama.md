@@ -20,6 +20,60 @@ It is based on the transformer architecture which some improvements like:
 TODO: I'm not familiar with any of the above so this so look into these
 separately.
 
+I've seen the achitecture of a transformer where there is an encoder and a
+decoder. But my understanding of Llama is that there is only an encoder.
+```
+                     +-----------+
+                     | Softmax   |
+                     +-----------+
+                          ↑
+                     +-----------+
+                     | Linear    |
+                     +-----------+
+                          ↑
+                     +-----------+
+                     | RMS Norm  |
+                     +-----------+
+                          ↑
+                          |
+                          |
+  +-----------------------|--------------------------------------------+
+  |      +--------------->+                                            |
+  |      |                ↑                                            |
+  |      |       +--------------------+                                |
+  |      |       | Feed Forward SwiGLU|                                |
+  |      |       +--------------------+                                |
+  |      |                ↑                                            |
+  |      |       +--------------------+                                |
+  |      |       | RMS Norm           |                                |
+  |      |       +--------------------+                                |
+  |      |                ↑                                            |
+  |      |                |                                            |
+  |      +----------------|                                            |
+  |    +----------------->+                                            |
+  |    |                  ↑                                            |
+  |    |   +-----------------------------------------------+           | N times
+  |    |   | Self Attention (Grouped Multi Query Attention)|           |
+  |    |   | with KV Cache                                 |           |
+  |    |   +-----------------------------------------------+           |
+  |    |     ↑ ROPE            ↑ ROPE                     ↑            |
+  |    |    Q|                K|                         V|            |
+  |    |     |                 |                          |            |
+  |    |     -----------------------------------------------           |
+  |    |                       |                                       |
+  |    |             +--------------------+                            |
+  |    |             | RMS Norm           |                            |
+  |    |             +--------------------+                            |
+  |    |                       |                                       |
+  |    +-----------------------|                                       |
+  |                            |                                       |
+  +----------------------------|---------------------------------------+
+                               |
+                     +--------------------+
+                     | Embeddings         |
+                     +--------------------+
+```
+
 ### llama.cpp
 [llama.cpp](https://github.com/ggerganov/llama.cpp) is a library written in c
 and contains useful programs/examples that can be used to run inference on a
