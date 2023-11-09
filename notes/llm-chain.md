@@ -275,32 +275,82 @@ the llama executor execute function looks like this:
 ```
 The source for this function is in crates/llm-chain-llama/src/executor.rs since
 we are using llama. Lets set a breakpoint in the execute function and the
-run_model function. Trying to step into async functions is a little messy and
-I've found that it is easier to set breakpoints in the functions and then
-continue.
-```console
-(gdb) br llm_chain_llama::executor::{impl#3}::execute
-(gdb) br llm_chain_llama::executor::Executor::run_model
-(gdb) r
-
-(gdb) bt 4
-#0  llm_chain_llama::executor::{impl#3}::execute (self=0x7fffffff4be8, options=0x7fffffff4dc8, 
-    prompt=0x7fffffff4d60) at src/executor.rs:220
-#1  0x00005555557d15c4 in llm_chain::frame::{impl#0}::format_and_execute::{async_fn#0}<llm_chain_llama::executor::Executor> () at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/frame.rs:50
-#2  0x000055555581e6b5 in llm_chain::step::{impl#0}::run::{async_fn#0}<llm_chain_llama::executor::Executor> ()
-    at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/step.rs:78
-#3  0x000055555587f064 in llama::main::{async_block#0} () at src/main-llama.rs:197
-(More stack frames follow...)
-(gdb) c
-```
+run_model function.
 
 ### LLama 2 execute_model walkthrough
 
 ```console
-(gdb) br llm_chain_llama::executor::Executor::run_model
+(gdb) br executor.rs:55
 (gdb) r
+Thread 1 "llama" hit Breakpoint 5, llm_chain_llama::executor::{impl#0}::run_model::{async_fn#0} ()
+    at src/executor.rs:55
+55	        let (sender, output) = Output::new_stream();
+```
+This section will not step through this code function..
 
-(gdb) l 57
+The first thing that happens is that a new OutputStream is created. 
+Stepping into `new_stream` we can see the following
+```console
+(gdb) l
+47	    /// Creates a new `Stream` output along with a sender to produce data.
+48	    pub fn new_stream() -> (mpsc::UnboundedSender<StreamSegment>, Self) {
+49	        let (sender, stream) = OutputStream::new();
+50	
+51	        (sender, Output::Stream(stream))
+52	    }
+```
+OutputStream looks like this:
+```console
+(gdb) ptype llm_chain::output::stream::OutputStream
+type = struct llm_chain::output::stream::OutputStream {
+  receiver: tokio::sync::mpsc::unbounded::UnboundedReceiver<llm_chain::output::stream::StreamSegment>,
+}
+```
+So we can see that has a single member which is a Tokio unbounded receiver which
+can be used to pass data of type StreamSegment:
+```console
+(gdb) ptype llm_chain::output::stream::StreamSegment
+type = enum llm_chain::output::stream::StreamSegment {
+  Role(llm_chain::prompt::chat::ChatRole),
+  Content(alloc::string::String),
+  Err(llm_chain::traits::ExecutorError),
+}
+```
+Stepping into the call to `OutputStream::new` we find:
+```console
+(gdb) s
+llm_chain::output::stream::OutputStream::new () at src/output/stream.rs:34
+34	        let (sender, receiver) = mpsc::unbounded_channel();
+```
+Here we are creating a Multiple Producer Single Consumer Tokio channel which is
+unbounded which means that a send call will never block/wait.
+Then the receiver used to create a new OutputStream (Self below) struct:
+```console
+(gdb) l
+30	}
+31	
+32	impl OutputStream {
+33	    pub(super) fn new() -> (mpsc::UnboundedSender<StreamSegment>, Self) {
+34	        let (sender, receiver) = mpsc::unbounded_channel();
+35	        (sender, Self { receiver })
+36	    }
+```
+We can inspect the second member of this returned tuple which is the Output:
+```console
+(gdb) ptype output
+type = enum llm_chain::output::Output {
+  Immediate(llm_chain::output::Immediate),
+  Stream(llm_chain::output::stream::OutputStream),
+}
+```
+And in this case we have a Stream output:
+```console
+(gdb) p output
+$3 = llm_chain::output::Output::Stream(llm_chain::output::stream::OutputStream
+```
+After that we are back in run_model:
+```console
+(gdb) l
 52	    // Run the LLAMA model with the provided input and generate output.
 53	    // Executes the model with the provided input and context parameters.
 54	    async fn run_model(&self, input: LlamaInvocation) -> Output {
@@ -311,6 +361,488 @@ continue.
 59	        let context_size = context_params.n_ctx as usize;
 60	        let answer_prefix = self.answer_prefix(&input.prompt);
 61	        tokio::task::spawn_blocking(move || {
+(gdb) f
+#0  llm_chain_llama::executor::{impl#0}::run_model::{async_fn#0} () at src/executor.rs:57
+57	        let context = self.context.clone();
 ```
-This section will not step through this code.
+We can inspect self, which is :
+```console
+(gdb) ptype self
+type = *mut llm_chain_llama::executor::Executor
 
+(gdb) ptype *self
+type = struct llm_chain_llama::executor::Executor {
+  context: alloc::sync::Arc<tokio::sync::mutex::Mutex<llm_chain_llama::context::LLamaContext>>,
+  options: llm_chain::options::Options,
+  context_params: llm_chain_llama::context::ContextParams,
+}
+```
+So a llama executor has context which is is wrapped in a Atomic Reference
+Counted pointer. In this case it is pointing to a Tokio Mutex which guards
+and LLamaContext:
+```console
+gdb) ptype llm_chain_llama::context::LLamaContext
+type = struct llm_chain_llama::context::LLamaContext {
+  ctx: *mut llm_chain_llama_sys::llama_context,
+}
+```
+And this is defined in llm-chain-llama/src/context.rs:
+```rust
+// Represents the LLamaContext which wraps FFI calls to the llama.cpp library.
+pub(crate) struct LLamaContext {
+    ctx: *mut llama_context,
+}
+```
+Now, llm_chain_llama_sys is a crate that is generated from the llama.cpp code
+and is using FFI (Foreign Function Interface) to call into the C++ code.
+This is an example of an opaque pointer so the actual implementation is hidden
+and instead this pointer is passed into functions in the cpp library where it
+can access the actual implementation. For example, in
+llm-chain-llama-sys/src/bindings.rs we have:
+```rust
+extern "C" {
+    pub fn llama_n_vocab(ctx: *const llama_context) -> ::std::os::raw::c_int;
+}
+```
+The actual implementation are in crates/llm-chain-llama-sys/llama.cpp/llama.cpp
+which is a git submodule.
+Next in run_module we have:
+```console
+(gdb) f
+#0  llm_chain_llama::executor::{impl#0}::run_model::{async_fn#0} () at src/executor.rs:58
+58	        let context_params = self.context_params.clone()
+(gdb) n
+(gdb) p context_params 
+$6 = llm_chain_llama::context::ContextParams {n_ctx: 3000, n_batch: 512, n_gpu_layers: 0, main_gpu: 0, tensor_split: 0x0, seed: 4294967295, f16_kv: true, vocab_only: false, use_mlock: false, use_mmap: true, embedding: false, low_vram: false, rope_freq_base: 10000, rope_freq_scale: 1, mul_mat_q: false, n_gqa: 1, rms_norm_eps: 4.99999987e-06}
+```
+Next is the context_size which is 3000 in this case. Following that we have:
+```console
+let answer_prefix = self.answer_prefix(&input.prompt);
+```
+Now, `input` is of type:
+```console
+(gdb) ptype input
+type = struct llm_chain_llama::options::LlamaInvocation {
+  n_threads: i32,
+  n_tok_predict: usize,
+  logit_bias: std::collections::hash::map::HashMap<i32, f32, std::collections::hash::map::RandomState>,
+  top_k: i32,
+  top_p: f32,
+  tfs_z: f32,
+  typical_p: f32,
+  temp: f32,
+  repeat_penalty: f32,
+  repeat_last_n: i32,
+  frequency_penalty: f32,
+  presence_penalty: f32,
+  mirostat: i32,
+  mirostat_tau: f32,
+  mirostat_eta: f32,
+  penalize_nl: bool,
+  stop_sequence: alloc::vec::Vec<alloc::string::String, alloc::alloc::Global>,
+  prompt: llm_chain::prompt::model::Data<alloc::string::String>,
+}
+```
+We can inspect the prompt using:
+```console
+(gdb) set print elements 0
+(gdb) p input.prompt
+$10 = llm_chain::prompt::model::Data<alloc::string::String>::Chat(llm_chain::prompt::chat::ChatMessageCollection<alloc::string::String> {messages: VecDeque(size=1) = {
+      llm_chain::prompt::chat::ChatMessage<alloc::string::String> {role: llm_chain::prompt::chat::ChatRole::System, body: "<s>[INST] <<SYS>>\nYou are a helpful chat assistant.\n\nYou are now entering command-only mode. You may only respond with YAML. You are provided with tools that you can invoke by naming the tool you wish to invoke along with it's input.\n\nTo invoke a tool write YAML like this, do not include output:\ncommand: Command\ninput: \n  <INPUT IN YAML>\n\n\nThe following are your tools:\n- name: VectorStoreTool\n  description: A tool that retrieves documents based on similarity to a given query.\n  description_context: \"Useful for when you need to answer questions about VEX documents, Red Hat Security Advisories (RHSA) information which use id's in the format RHSA-xxxx-xxxx. \\n", ' ' <repeats 12 times>, "Whenever you need information about VEX documents, RHSA information \\n", ' ' <repeats 12 times>, "you should ALWAYS use this. \\n", ' ' <repeats 12 times>, "Input should be a fully formed question.\"\n  input_format:\n    query: You can search for texts similar to this one in the vector database.\n    limit: The number of texts that will be returned from the vector database.\n  output_format:\n    texts: List of texts similar to the query.\n    error_msg: Error message received when trying to search in the vector database.\n\n\n\n\nHere are some previous interactions between the Assistant and a User:\n\nUser: Can you show me a summary of the security advisory RHSA-2020:5566?\nAssistant:\n```yaml\ncommand: VectorStoreTool\ninput:\n  query: \"RHSA-2020:5566\"\n  limit: 1\n```\n\nObservation: RHSA-2020:5566 is a security advisory related to openssl and has...\nAssistant:\n```yaml\ncommand: \"Final Answer\"\ninput: \"RHSA-2020:5566 is a security advisory related to openssl and has...\"}}\n```\n\nUser: Can you show me a summary of the security advisory RHSA-2020:2828?\nAssistant:\n```yaml\ncommand: VectorStoreTool\ninput:\n  query: \"RHSA-2020:2828\"\n  limit: 1\n```\n\nObservation: RHSA-2020:2828 is a security advisory related to something and has...\nAssistant:\n```yaml\ncommand: \"Final Answer\"\ninput: \"RHSA-2020:5566 is a security advisory related to something and has...\"}}\n```\n\nDo not include ``` in your responses.\n\n<</SYS>>\n\nCan you show me a summary of RHSA-2020:5566? [/INST] </s>\n        "}}})
+```
+And this is what is getting passed to `answer_prefix`:
+```console
+(gdb) l
+250	    fn answer_prefix(&self, prompt: &Prompt) -> Option<String> {
+251	        if let llm_chain::prompt::Data::Chat(_) = prompt {
+252	            // Tokenize answer prefix
+253	            // XXX: Make the format dynamic
+254	            let prefix = if prompt.to_text().ends_with('\n') {
+255	                ""
+256	            } else {
+257	                "\n"
+258	            };
+259	            Some(format!("{}{}:", prefix, ChatRole::Assistant))
+260	        } else {
+261	            None
+262	        }
+263	    }
+```
+In our case the prompt is of type Chat and the text ends with a newline so
+the prefix will be an empty string. This is then used to return a string in in
+the format 'Assistant:'. So basically just making sure that there is a newline
+before 'Assistent'.
+```console
+(gdb) p answer_prefix 
+$11 = core::option::Option<alloc::string::String>::Some("Assistant:")
+```
+If this was a different type of prompt then None would be returned.
+
+Next we have the following:
+```console
+(gdb) l
+56	        // Tokenize the stop sequence and input prompt.
+57	        let context = self.context.clone();
+58	        let context_params = self.context_params.clone();
+59	        let context_size = context_params.n_ctx as usize;
+60	        let answer_prefix = self.answer_prefix(&input.prompt);
+61	        tokio::task::spawn_blocking(move || {
+62	            let context_size = context_size;
+63	            let context = context.blocking_lock();
+64	            let tokenized_stop_prompt = tokenize(
+65	                &context,
+66	                input
+67	                    .stop_sequence
+68	                    .first() // XXX: Handle multiple stop seqs
+69	                    .map(|x| x.as_str())
+70	                    .unwrap_or("\n\n"),
+71	                false,
+72	            );
+```
+Lets set a break point in the closure and continue:
+```console
+(gdb) br executor.rs:63
+```
+Now, recall that context is a Arc Mutext which guards a LLamaContext. Here we
+are blocking the current thread, and recall that run_model is async so this is
+done from an async context. With the lock aquired we are then going to tokenize
+the input.stop_sequence:
+```console
+(gdb) p input.stop_sequence 
+$13 = Vec(size=1) = {"\n\n"}
+```
+Recall that tokenizing a just means to convert the string in to a vector of
+integers. 
+```console
+(gdb) br tokenizer.rs:51
+(gdb) c
+Continuing.
+[Thread 0x7ffff74226c0 (LWP 1723256) exited]
+[New Thread 0x7ffff6f8f6c0 (LWP 1723285)]
+[Switching to Thread 0x7ffff6f8f6c0 (LWP 1723285)]
+
+Thread 3 "tokio-runtime-w" hit Breakpoint 2, llm_chain_llama::tokenizer::tokenize (context=0x5555570be308, 
+    text="\n\n", add_bos=false) at src/tokenizer.rs:51
+51	    let mut res = Vec::with_capacity(text.len() + add_bos as usize);
+```
+```console
+(gdb) l
+50	pub(crate) fn tokenize(context: &LLamaContext, text: &str, add_bos: bool) -> Vec<llama_token> {
+51	    let mut res = Vec::with_capacity(text.len() + add_bos as usize);
+52	    let c_text = to_cstring(text);
+53	
+54	    let n = unsafe {
+55	        llama_tokenize(
+(gdb) l
+56	            **context,
+57	            c_text.as_ptr() as *const c_char,
+58	            res.as_mut_ptr(),
+59	            res.capacity() as i32,
+60	            add_bos,
+61	        )
+62	    };
+63	    assert!(n >= 0);
+64	    unsafe { res.set_len(n as usize) };
+65	    res
+```
+The first thing is that we create a new vectro with the capacity of the length
+"\n\n", and in this case bos (beggining of sentence) is false the length will
+be:
+```console
+(gdb) p text.length 
+$2 = 2
+``` 
+Next we have the call to to_cstring which will create a CString from the text
+which can be passed to C functions, it adds the null terminator and also makes
+sure that there are no null terminators in the string, in addition it also 
+handles clearing the memory when the CString is dropped.
+
+Next is a call to llama_tokenize which is a ffi function:
+```rust
+extern "C" {
+    pub fn llama_tokenize(
+        ctx: *mut llama_context,
+        text: *const ::std::os::raw::c_char,
+        tokens: *mut llama_token,
+        n_max_tokens: ::std::os::raw::c_int,
+        add_bos: bool,
+    ) -> ::std::os::raw::c_int;
+}
+```
+`tokens` is a pointer to the res Vec which is passed in as a mutable pointer so
+this will get updated by the function. Also llama_context is also mutable which
+might indicate that it also gets updated.
+We can find the implementation of llama_tokenize in
+crates/llm-chain-llama-sys/llama.cpp/llama.cpp:
+```cpp
+int llama_tokenize(
+        struct llama_context *ctx,
+                  const char *text,
+                 llama_token *tokens,
+                         int   n_max_tokens,
+                        bool   add_bos) {
+    return llama_tokenize_with_model(&ctx->model, text, tokens, n_max_tokens, add_bos);
+}
+
+int llama_tokenize_with_model(
+    const struct llama_model *model,
+                  const char *text,
+                 llama_token *tokens,
+                         int   n_max_tokens,
+                        bool   add_bos) {
+    auto res = llama_tokenize(model->vocab, text, add_bos);
+
+    if (n_max_tokens < (int) res.size()) {
+        fprintf(stderr, "%s: too many tokens\n", __func__);
+        return -((int) res.size());
+    }
+
+    for (size_t i = 0; i < res.size(); i++) {
+        tokens[i] = res[i];
+    }
+
+    return res.size();
+}
+
+static std::vector<llama_vocab::id> llama_tokenize(const llama_vocab &vocab,
+                                                   const std::string &text,
+                                                   bool bos) {
+    llama_tokenizer tokenizer(vocab);
+    std::vector<llama_vocab::id> output;
+
+    if (text.empty()) {
+        return output;
+    }
+
+    if (bos) {
+        output.push_back(llama_token_bos());
+    }
+
+    tokenizer.tokenize(text, output);
+    return output;
+}
+```
+This will tokenize the stop sequence and return a vector of tokens.
+```console
+(gdb) p *res.buf.ptr.pointer.pointer 
+$21 = 13
+(gdb) p *(res.buf.ptr.pointer.pointer+1)
+$22 = 13
+```
+In the vocab we have `linefeed_id = 13`. So we have taking the string "\n\n"
+and converted it into a vector of integers which according to the models
+vocabulary. This will later be used to check if the llm has generated such a
+token and to know if it should stop generating tokens. We will see this later.
+Back in run_model we then check that the context_size has not been exceeded
+and if it was send StreamSegment::Err(ExecutorError::ContextTooSmall) using
+the sender and then return from this function.
+
+Next we are going to take the input prompt and tokenize it just like we did
+with the stop sequence. This is done in the following code:
+```console
+(gdb) l
+74	            if tokenized_stop_prompt.len() > context_size {
+75	                must_send!(sender, StreamSegment::Err(ExecutorError::ContextTooSmall));
+76	                return;
+77	            }
+78	
+79	            let prompt_text = input.prompt.to_text();
+80	            let tokenized_input = tokenize(&context, prompt_text.as_str(), true);
+```
+Notice that this time bos is true so we will add a bos token to the vector.
+
+```console
+(gdb) p tokenized_input
+$25 = Vec(size=660) = {1, 3924, 29901, 529, 29879, 24566, 25580, 29962, 3532, 14816, 29903, 6778, 13, 3492, 526, 
+  263, 8444, 13563, 20255, 29889, 13, 13, 3492, 526, 1286, 18055, 1899, 29899, 6194, 4464, 29889, 887, 1122, 871, 
+  10049, 411, 612, 23956, 29889, 887, 526, 4944, 411, 8492, 393, 366, 508, 15928, 491, 22006, 278, 5780, 366, 6398, 
+  304, 15928, 3412, 411, 372, 29915, 29879, 1881, 29889, 13, 13, 1762, 15928, 263, 5780, 2436, 612, 23956, 763, 
+  445, 29892, 437, 451, 3160, 1962, 29901, 13, 6519, 29901, 10516, 13, 2080, 29901, 29871, 13, 29871, 529, 1177, 
+  12336, 2672, 612, 23956, 29958, 13, 13, 13, 1576, 1494, 526, 596, 8492, 29901, 13, 29899, 1024, 29901, 16510, 
+  9044, 12229, 13, 29871, 6139, 29901, 319, 5780, 393, 5663, 17180, 10701, 2729, 373, 29501, 304, 263, 2183, 2346, 
+  29889, 13, 29871, 6139, 29918, 4703, 29901, 376, 11403, 1319, 363, 746, 366, 817, 304, 1234, 5155, 1048, 478, 
+  5746, 10701, 29892, 4367, 25966, 14223, 2087, 1730, 3842, 313, 29934, 29950, 8132, 29897, 2472, 607, 671, 1178, 
+  29915, 29879, 297, 278, 3402, 390, 29950, 8132, 29899, 14633, 29899, 14633, 29889, 320, 29876, 9651, 1932, 1310, 
+  366, 817, 2472, 1048, 478, 5746, 10701, 29892, 390, 29950, 8132, 2472, 320, 29876, 9651...}
+```
+Notice that the first token is 1 which is the bos token.
+
+Next we are creating a copy of the tokenized_input:
+```console
+```console
+87	            let mut embd = tokenized_input.clone();
+```
+Following that we have:
+```console
+89	            // Evaluate the prompt in full.
+90	            bail!(
+91	                context
+92	                    .llama_eval(
+93	                        tokenized_input.as_slice(),
+94	                        tokenized_input.len() as i32,
+95	                        0,
+96	                        &input,
+97	                    )
+98	                    .map_err(|e| ExecutorError::InnerError(e.into())),
+99	                sender
+100	            );
+```
+context.llama_eval is a function in context.rs:
+```rust
+    // Evaluates the given tokens with the specified configuration.
+    pub fn llama_eval(
+        &self,
+        tokens: &[i32],
+        n_tokens: i32,
+        n_past: i32,
+        input: &LlamaInvocation,
+    ) -> Result<(), LLAMACPPErrorCode> {
+        let res =
+            unsafe { llama_eval(self.ctx, tokens.as_ptr(), n_tokens, n_past, input.n_threads) };
+        if res == 0 {
+            Ok(())
+        } else {
+            Err(LLAMACPPErrorCode(res))
+        }
+    }
+```
+This function is declared in llama.h:
+```c++
+    // Run the llama inference to obtain the logits and probabilities for the next token.
+    // tokens + n_tokens is the provided batch of new tokens to process
+    // n_past is the number of tokens to use from previous eval calls
+    // Returns 0 on success
+    LLAMA_API int llama_eval(
+            struct llama_context * ctx,
+               const llama_token * tokens,
+                             int   n_tokens,
+                             int   n_past,
+                             int   n_threads);
+```
+And the implementation is in llama.cpp:
+```cpp
+int llama_eval(
+        struct llama_context * ctx,
+           const llama_token * tokens,
+                         int   n_tokens,
+                         int   n_past,
+                         int   n_threads) {
+    if (!llama_eval_internal(*ctx, tokens, nullptr, n_tokens, n_past, n_threads, nullptr)) {
+        fprintf(stderr, "%s: failed to eval\n", __func__);
+        return 1;
+    }
+
+    // get a more accurate load time, upon first eval
+    // TODO: fix this
+    if (!ctx->has_evaluated_once) {
+        ctx->t_load_us = ggml_time_us() - ctx->t_start_us;
+        ctx->has_evaluated_once = true;
+    }
+
+    return 0;
+}
+```
+One thing to keep in mind here is that the version of llama.cpp used in llm-chain
+is currently:
+```console
+$ git submodule status
+ 468ea24fb4633a0d681f7ac84089566c1c6190cb llama.cpp (master-468ea24)
+```
+And this not the latest version of llama.cpp, for example the llama_batch struct
+does not exist in this version.
+
+```c++
+// evaluate the transformer
+//
+//   - lctx:      llama context
+//   - tokens:    new batch of tokens to process
+//   - embd       embeddings input
+//   - n_tokens   number of tokens
+//   - n_past:    the context size so far
+//   - n_threads: number of threads to use
+//
+static bool llama_eval_internal(
+         llama_context & lctx,
+     const llama_token * tokens,
+           const float * embd,
+                   int   n_tokens,
+                   int   n_past,
+                   int   n_threads,
+            const char * cgraph_fname) {
+
+    LLAMA_ASSERT((!tokens && embd) || (tokens && !embd));
+```
+After the call to llama_eval 
+```rust
+            let mut n_remaining = context_size - tokenized_input.len();
+            let mut n_used = tokenized_input.len() - 1;
+```
+
+```console
+(gdb) p tokenized_input.len
+$33 = 660
+(gdb) p n_remaining
+$34 = 2340
+```
+Next we have the following:
+```console
+104	            if let Some(prefix) = answer_prefix {
+105	                let tokenized_answer_prefix = tokenize(&context, prefix.as_str(), false);
+106	                if tokenized_answer_prefix.len() > context_size {
+107	                    must_send!(sender, StreamSegment::Err(ExecutorError::ContextTooSmall));
+108	                    return;
+```
+In our case answer_prefix is:
+```console
+(gdb) p answer_prefix
+$36 = core::option::Option<alloc::string::String>::Some("Assistant:")
+```
+So this is an Option what holds a String and it is Some in this case. So this
+is added to the tokenized input.prompt so that the last token will be
+"Assistant:" which the llm will then try to predict the next token.
+
+Next, tokenized_answer_prefix is passed to the llama_eval function:
+```rust
+                // Evaluate the answer prefix (the role -- should be Assistant: )
+                bail!(
+                    context
+                        .llama_eval(
+                            tokenized_answer_prefix.as_slice(),
+                            tokenized_answer_prefix.len() as i32,
+                            n_used as i32,
+                            &input,
+                        )
+                        .map_err(|e| ExecutorError::InnerError(e.into())),
+                    sender
+                );
+
+                n_remaining -= tokenized_answer_prefix.len();
+                n_used += tokenized_answer_prefix.len();
+                embd.extend(tokenized_answer_prefix);
+            }
+```
+Notice that embd is extended with the tokenized_answer_prefix and recall that
+embd is a copy of tokenized_input.
+
+Next, the embd vec is resized to the context_size (3000) and filled with 0s:
+```rust
+            embd.resize(context_size, 0);
+            let token_eos = llama_token_eos();
+            let mut stop_sequence_i = 0;
+```
+Next, we are going to use the embd vec which now contains the tokenized input
+prompt, plus the answer prefix which will be passed to llama_sample so that it
+can predict/sample the next token:
+```rust
+            // Generate remaining tokens.
+            let mut leftover_bytes: Vec<u8> = vec![];
+            while n_remaining > 0 {
+                let tok = context.llama_sample(
+                    context_size as i32,
+                    embd.as_slice(),
+                    n_used as i32,
+                    &input,
+                );
+            embd.resize(context_size, 0);
+            let token_eos = llama_token_eos();
+```
