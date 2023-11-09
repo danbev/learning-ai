@@ -254,3 +254,63 @@ it. But we can set a breakpoint in the function and then continue:
 (gdb) br frame.rs:48
 ```
 
+Frame's format_and_execute
+```rust
+    pub async fn format_and_execute(
+        &self,
+        parameters: &Parameters,
+    ) -> Result<Output, FormatAndExecuteError> {
+        let prompt = self.step.format(parameters)?;
+        Ok(self.executor.execute(self.step.options(), &prompt).await?)
+    }
+```
+The executor is the one we created and passed into the Step::run function and
+the llama executor execute function looks like this:
+```rust
+    async fn execute(&self, options: &Options, prompt: &Prompt) -> Result<Output, ExecutorError> {
+        let invocation = LlamaInvocation::new(self.get_cascade(options), prompt)
+            .map_err(|_| ExecutorError::InvalidOptions);
+        Ok(self.run_model(invocation?).await)
+    }
+```
+The source for this function is in crates/llm-chain-llama/src/executor.rs since
+we are using llama. Lets set a breakpoint in the execute function and the
+run_model function. Trying to step into async functions is a little messy and
+I've found that it is easier to set breakpoints in the functions and then
+continue.
+```console
+(gdb) br llm_chain_llama::executor::{impl#3}::execute
+(gdb) br llm_chain_llama::executor::Executor::run_model
+(gdb) r
+
+(gdb) bt 4
+#0  llm_chain_llama::executor::{impl#3}::execute (self=0x7fffffff4be8, options=0x7fffffff4dc8, 
+    prompt=0x7fffffff4d60) at src/executor.rs:220
+#1  0x00005555557d15c4 in llm_chain::frame::{impl#0}::format_and_execute::{async_fn#0}<llm_chain_llama::executor::Executor> () at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/frame.rs:50
+#2  0x000055555581e6b5 in llm_chain::step::{impl#0}::run::{async_fn#0}<llm_chain_llama::executor::Executor> ()
+    at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/step.rs:78
+#3  0x000055555587f064 in llama::main::{async_block#0} () at src/main-llama.rs:197
+(More stack frames follow...)
+(gdb) c
+```
+
+### LLama 2 execute_model walkthrough
+
+```console
+(gdb) br llm_chain_llama::executor::Executor::run_model
+(gdb) r
+
+(gdb) l 57
+52	    // Run the LLAMA model with the provided input and generate output.
+53	    // Executes the model with the provided input and context parameters.
+54	    async fn run_model(&self, input: LlamaInvocation) -> Output {
+55	        let (sender, output) = Output::new_stream();
+56	        // Tokenize the stop sequence and input prompt.
+57	        let context = self.context.clone();
+58	        let context_params = self.context_params.clone();
+59	        let context_size = context_params.n_ctx as usize;
+60	        let answer_prefix = self.answer_prefix(&input.prompt);
+61	        tokio::task::spawn_blocking(move || {
+```
+This section will not step through this code.
+
