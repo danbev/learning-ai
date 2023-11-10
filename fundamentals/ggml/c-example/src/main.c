@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
 
   // This creates a one dimensional tensor, so it will be like a list of numbers
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-  printf("x tensor type: %d (0 = GGML_TYPE_F32)\n", x->type);
+  printf("x tensor type: %s\n", ggml_type_name(x->type));
   printf("x tensor backend: %d (0 = GGML_BACKEND_CPU) \n", x->backend);
   printf("x tensor dimensions: %d\n", x->n_dims);
   printf("x tensor data: %p\n", x->data);
@@ -34,6 +34,10 @@ int main(int argc, char **argv) {
   // The following I'm guessing is a flag to indicate if this tensor should be
   // taking part in the automatic differentiation process or not.
   printf("x tensor is_param: %d\n", x->is_param);
+
+  // Example of updating a tensor:
+  struct ggml_tensor* updated = ggml_set_i32(x, 18);
+  printf("updated tensor data: %lf\n", *ggml_get_data_f32(updated));
 
   ggml_set_param(ctx, x);
 
