@@ -48,8 +48,11 @@ int main(int argc, char **argv) {
 
   // The following will create tensors that will make up the computation graph
   struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  ggml_set_name(a, "a");
   struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  ggml_set_name(b, "b");
   struct ggml_tensor* c = ggml_add(ctx, a, b);
+  ggml_set_name(c, "c");
 
   // The following will add the tensors to the computation graph (I think)
   ggml_build_forward_expand(c_graph, c);
@@ -61,6 +64,7 @@ int main(int argc, char **argv) {
   // And finally we compute the values
   ggml_graph_compute_with_ctx(ctx, c_graph, 1);
   printf("c = %f\n", ggml_get_f32_1d(c, 0));
+  ggml_graph_dump_dot(c_graph, NULL, "add.dot");
 
   struct ggml_tensor* inpL = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 513);
   printf("inpL tensor dimensions: %d\n", inpL->n_dims);
@@ -87,6 +91,9 @@ int main(int argc, char **argv) {
   // 0            12            24            36
   //      row0        row1            row2
 
+  ggml_format_name(matrix, "-bajja%d", 3);
+  ggml_format_name(matrix, "-bajja%d", 4);
+  printf("matrix name: %s\n", ggml_get_name(matrix));
   ggml_free(ctx);
   return 0;
 }
