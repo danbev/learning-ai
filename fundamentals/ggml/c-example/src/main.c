@@ -13,6 +13,30 @@ int main(int argc, char **argv) {
   struct ggml_context *ctx = ggml_init(params);
   printf("ctx mem size: %ld\n", ggml_get_mem_size(ctx));
   printf("ctx mem used: %ld\n", ggml_used_mem(ctx));
+
+  // This creates a one dimensional tensor, so it will be like a list of numbers
+  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  printf("x tensor type: %d (0 = GGML_TYPE_F32)\n", x->type);
+  printf("x tensor backend: %d (0 = GGML_BACKEND_CPU) \n", x->backend);
+  printf("x tensor dimensions: %d\n", x->n_dims);
+  printf("x tensor data: %p\n", x->data);
+  // This tensor was not created by an operation, for example if the tensor was
+  // created by a + b = c, c being the tensor then the op would be GGML_OP_ADD.
+  printf("x tensor operation: %d\n", x->op);
+  // ggml_tensor's are used as the base unit values in the library, similar to
+  // the Value struct in the LLM zero-to-hero tutorial. These values support
+  // autmoatic differentiation, so they have a grad field. 
+  printf("x tensor grad: %p\n", x->grad);
+  // src are the values that were used to create the tensor, for example if the
+  // tensor was created by a + b = c, then the src would be a and b.
+  printf("x tensor src: %p\n", x->src);
+  printf("x tensor name: %s\n", x->name);
+  // The following I'm guessing is a flag to indicate if this tensor should be
+  // taking part in the automatic differentiation process or not.
+  printf("x tensor is_param: %d\n", x->is_param);
+
+  ggml_set_param(ctx, x);
+
   ggml_free(ctx);
   return 0;
 }
