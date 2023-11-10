@@ -62,6 +62,31 @@ int main(int argc, char **argv) {
   ggml_graph_compute_with_ctx(ctx, c_graph, 1);
   printf("c = %f\n", ggml_get_f32_1d(c, 0));
 
+  struct ggml_tensor* inpL = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 513);
+  printf("inpL tensor dimensions: %d\n", inpL->n_dims);
+
+  // tensors are stored in row-major order which means that they are layed out
+  // row after row in memory: [ [ 1, 2 ],
+  //                            [ 3, 4 ],
+  //                            [ 5, 6 ] ]
+  struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 2);
+  printf("matrix ne[0]: %ld\n", matrix->ne[0]);
+  printf("matrix ne[1]: %ld\n", matrix->ne[1]);
+  // ne[0] is the number of bytes to move to get to the next element in a row.
+  printf("matrix nb[0]: %ld\n", matrix->nb[0]);
+  // ne[1] is the number of bytes to move to get to the next row.
+  printf("matrix nb[1]: %ld\n", matrix->nb[1]);
+  // So we have 4 bytes be value and 12 bytes per row.
+  // [1, 2, 3, 4, 5, 6]
+  // ne[0] = 3, ne[1] = 2
+  // nb[0] = 4, nb[1] = 12
+  // result->nb[1] = result->nb[0]*(result->ne[0]/ggml_blck_size(type));
+  // result->nb[1] = 4 * (3/1) = 12
+  // 
+  //    1    2        3    4        5   6
+  // 0            12            24            36
+  //      row0        row1            row2
+
   ggml_free(ctx);
   return 0;
 }
