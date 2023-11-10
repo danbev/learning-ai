@@ -11,7 +11,7 @@ ggml: ggml/build
 
 all: $(TARGET)
 
-main: src/main.c | ggml
+main: src/main.c
 	$(CC) $(CFLAGS) $^ -o main $(LDFLAGS) -lggml -lm
 
 .PHONY: clean
