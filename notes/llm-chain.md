@@ -286,10 +286,9 @@ Thread 1 "llama" hit Breakpoint 5, llm_chain_llama::executor::{impl#0}::run_mode
     at src/executor.rs:55
 55	        let (sender, output) = Output::new_stream();
 ```
-This section will not step through this code function..
 
 The first thing that happens is that a new OutputStream is created. 
-Stepping into `new_stream` we can see the following
+Stepping into `new_stream` we can see the following:
 ```console
 (gdb) l
 47	    /// Creates a new `Stream` output along with a sender to produce data.
@@ -323,8 +322,8 @@ llm_chain::output::stream::OutputStream::new () at src/output/stream.rs:34
 34	        let (sender, receiver) = mpsc::unbounded_channel();
 ```
 Here we are creating a Multiple Producer Single Consumer Tokio channel which is
-unbounded which means that a send call will never block/wait.
-Then the receiver used to create a new OutputStream (Self below) struct:
+unbounded, which means that a send call will never block/wait.
+Then the receiver is used to create a new OutputStream (Self below) struct:
 ```console
 (gdb) l
 30	}
@@ -348,6 +347,7 @@ And in this case we have a Stream output:
 (gdb) p output
 $3 = llm_chain::output::Output::Stream(llm_chain::output::stream::OutputStream
 ```
+
 After that we are back in run_model:
 ```console
 (gdb) l
@@ -365,7 +365,7 @@ After that we are back in run_model:
 #0  llm_chain_llama::executor::{impl#0}::run_model::{async_fn#0} () at src/executor.rs:57
 57	        let context = self.context.clone();
 ```
-We can inspect self, which is :
+We can inspect self, which is:
 ```console
 (gdb) ptype self
 type = *mut llm_chain_llama::executor::Executor
@@ -398,7 +398,8 @@ and is using FFI (Foreign Function Interface) to call into the C++ code.
 This is an example of an opaque pointer so the actual implementation is hidden
 and instead this pointer is passed into functions in the cpp library where it
 can access the actual implementation. For example, in
-llm-chain-llama-sys/src/bindings.rs we have:
+llm-chain-llama-sys/src/bindings.rs we have where we pass in the pointer to the
+context:
 ```rust
 extern "C" {
     pub fn llama_n_vocab(ctx: *const llama_context) -> ::std::os::raw::c_int;
@@ -406,6 +407,7 @@ extern "C" {
 ```
 The actual implementation are in crates/llm-chain-llama-sys/llama.cpp/llama.cpp
 which is a git submodule.
+
 Next in run_module we have:
 ```console
 (gdb) f
@@ -413,14 +415,38 @@ Next in run_module we have:
 58	        let context_params = self.context_params.clone()
 (gdb) n
 (gdb) p context_params 
-$6 = llm_chain_llama::context::ContextParams {n_ctx: 3000, n_batch: 512, n_gpu_layers: 0, main_gpu: 0, tensor_split: 0x0, seed: 4294967295, f16_kv: true, vocab_only: false, use_mlock: false, use_mmap: true, embedding: false, low_vram: false, rope_freq_base: 10000, rope_freq_scale: 1, mul_mat_q: false, n_gqa: 1, rms_norm_eps: 4.99999987e-06}
+$6 = llm_chain_llama::context::ContextParams {
+  n_ctx: 3000,
+  n_batch: 512,
+  n_gpu_layers: 0,
+  main_gpu: 0,
+  tensor_split: 0x0,
+  seed: 4294967295,
+  f16_kv: true,
+  vocab_only: false,
+  use_mlock: false,
+  use_mmap: true,
+  embedding: false,
+  low_vram: false,
+  rope_freq_base: 10000,
+  rope_freq_scale: 1,
+  mul_mat_q: false,
+  n_gqa: 1,
+  rms_norm_eps: 4.99999987e-06
+}
 ```
-Next is the context_size which is 3000 in this case. Following that we have:
+
+Next is the context_size which is 3000 (n_ctx) in this case.
+
+Following that we have:
 ```console
 let answer_prefix = self.answer_prefix(&input.prompt);
 ```
-Now, `input` is of type:
+Now, `input` parameter of the run_model function and is of type of type:
 ```console
+(gdb) ptype llm_chain_llama::executor::Executor::run_model
+type = fn (*mut llm_chain_llama::executor::Executor, llm_chain_llama::options::LlamaInvocation) -> llm_chain_llama::executor::{impl#0}::run_model::{async_fn_env#0}
+
 (gdb) ptype input
 type = struct llm_chain_llama::options::LlamaInvocation {
   n_threads: i32,
@@ -443,7 +469,8 @@ type = struct llm_chain_llama::options::LlamaInvocation {
   prompt: llm_chain::prompt::model::Data<alloc::string::String>,
 }
 ```
-We can inspect the prompt using:
+
+We can inspect input.the prompt using:
 ```console
 (gdb) set print elements 0
 (gdb) p input.prompt
@@ -469,16 +496,15 @@ And this is what is getting passed to `answer_prefix`:
 263	    }
 ```
 In our case the prompt is of type Chat and the text ends with a newline so
-the prefix will be an empty string. This is then used to return a string in in
+the prefix will be an empty string. This is then used to return a string in
 the format 'Assistant:'. So basically just making sure that there is a newline
-before 'Assistent'.
+before 'Assistent':
 ```console
 (gdb) p answer_prefix 
 $11 = core::option::Option<alloc::string::String>::Some("Assistant:")
 ```
-If this was a different type of prompt then None would be returned.
 
-Next we have the following:
+Next, back in run_method we have the following:
 ```console
 (gdb) l
 56	        // Tokenize the stop sequence and input prompt.
@@ -505,14 +531,18 @@ Lets set a break point in the closure and continue:
 ```
 Now, recall that context is a Arc Mutext which guards a LLamaContext. Here we
 are blocking the current thread, and recall that run_model is async so this is
-done from an async context. With the lock aquired we are then going to tokenize
+done from an async context. With the lock acquired we are then going to tokenize
 the input.stop_sequence:
 ```console
 (gdb) p input.stop_sequence 
 $13 = Vec(size=1) = {"\n\n"}
 ```
-Recall that tokenizing a just means to convert the string in to a vector of
-integers. 
+Recall that tokenizing in the context of a LLM is the process of splitting the
+string into units, and then mapping these units to indexes/ids of the models
+vocabulary. These tokens can then be passed as input to the LLM inference
+method. The llm can then use these indexes to look up the initial token
+embeddings. 
+
 ```console
 (gdb) br tokenizer.rs:51
 (gdb) c
@@ -546,7 +576,7 @@ Thread 3 "tokio-runtime-w" hit Breakpoint 2, llm_chain_llama::tokenizer::tokeniz
 65	    res
 ```
 The first thing is that we create a new vectro with the capacity of the length
-"\n\n", and in this case bos (beggining of sentence) is false the length will
+"\n\n", and in this case bos (begining of sentence) is false the length will
 be:
 ```console
 (gdb) p text.length 
@@ -637,6 +667,15 @@ Back in run_model we then check that the context_size has not been exceeded
 and if it was send StreamSegment::Err(ExecutorError::ContextTooSmall) using
 the sender and then return from this function.
 
+After returning to run_model we can print the tokenized_stop_prompt:
+```console
+(gdb) p tokenized_stop_prompt 
+$54 = Vec(size=2) = {13, 13}
+```
+So notice that what happend is that the string "\n\n" was converted into a
+vector of integers where each integer represents a token. And these are indexes
+into the models vocabulary.
+
 Next we are going to take the input prompt and tokenize it just like we did
 with the stop sequence. This is done in the following code:
 ```console
@@ -649,7 +688,8 @@ with the stop sequence. This is done in the following code:
 79	            let prompt_text = input.prompt.to_text();
 80	            let tokenized_input = tokenize(&context, prompt_text.as_str(), true);
 ```
-Notice that this time bos is true so we will add a bos token to the vector.
+Notice that this time bos (beggining of sentence) is true so we will add a bos
+token to the vector.
 
 ```console
 (gdb) p tokenized_input
@@ -665,7 +705,10 @@ $25 = Vec(size=660) = {1, 3924, 29901, 529, 29879, 24566, 25580, 29962, 3532, 14
   29915, 29879, 297, 278, 3402, 390, 29950, 8132, 29899, 14633, 29899, 14633, 29889, 320, 29876, 9651, 1932, 1310, 
   366, 817, 2472, 1048, 478, 5746, 10701, 29892, 390, 29950, 8132, 2472, 320, 29876, 9651...}
 ```
-Notice that the first token is 1 which is the bos token.
+Notice that the first token is 1 which is the bos token. At this point these
+tokens are just indexes into the models vocabulary and regardless of the
+sentence the same tokens will be used. So the token for bank might refer to a
+bank where we can deposit money or a river bank.
 
 Next we are creating a copy of the tokenized_input:
 ```console
@@ -845,4 +888,15 @@ can predict/sample the next token:
                 );
             embd.resize(context_size, 0);
             let token_eos = llama_token_eos();
+```
+llama_sample can be found in context.rs:
+```rust
+    // Executes the LLama sampling process with the specified configuration.
+    pub fn llama_sample(
+        &self,
+        n_ctx: i32,
+        last_n_tokens_data: &[i32],
+        last_n_tokens_size: i32,
+        input: &LlamaInvocation,
+    ) -> i32 {
 ```
