@@ -43,8 +43,24 @@ int main(int argc, char **argv) {
   printf("updated tensor name: %s\n", ggml_get_name(updated));
 
   // Create a computation graph (c = computation)
-  struct ggml_cgraph* graph = ggml_new_graph(ctx);
-  //ggml_set_param(ctx, x);
+  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
+  printf("c_graph size: %d\n", c_graph->size);
+
+  // The following will create tensors that will make up the computation graph
+  struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  struct ggml_tensor* c = ggml_add(ctx, a, b);
+
+  // The following will add the tensors to the computation graph (I think)
+  ggml_build_forward_expand(c_graph, c);
+  printf("c_graph after build_forward_expand: %d\n", c_graph->size);
+
+  // Now we set the values to be computed
+  ggml_set_f32(a, 3.0f);
+  ggml_set_f32(b, 2.0f);
+  // And finally we compute the values
+  ggml_graph_compute_with_ctx(ctx, c_graph, 1);
+  printf("c = %f\n", ggml_get_f32_1d(c, 0));
 
   ggml_free(ctx);
   return 0;
