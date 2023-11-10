@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
     .mem_size   = 16*1024*1024,
     .mem_buffer = NULL,
   };
-  struct ggml_context *ctx = ggml_init(params);
+  struct ggml_context* ctx = ggml_init(params);
   printf("ctx mem size: %ld\n", ggml_get_mem_size(ctx));
   printf("ctx mem used: %ld\n", ggml_used_mem(ctx));
 
@@ -39,7 +39,12 @@ int main(int argc, char **argv) {
   struct ggml_tensor* updated = ggml_set_i32(x, 18);
   printf("updated tensor data: %lf\n", *ggml_get_data_f32(updated));
 
-  ggml_set_param(ctx, x);
+  ggml_set_name(updated, "updated");
+  printf("updated tensor name: %s\n", ggml_get_name(updated));
+
+  // Create a computation graph (c = computation)
+  struct ggml_cgraph* graph = ggml_new_graph(ctx);
+  //ggml_set_param(ctx, x);
 
   ggml_free(ctx);
   return 0;
