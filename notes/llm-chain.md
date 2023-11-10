@@ -278,6 +278,26 @@ we are using llama. Lets set a breakpoint in the execute function and the
 run_model function.
 
 ### LLama 2 execute_model walkthrough
+To be able to step into llama.cpp we need to enable debug symbols to be include
+when building llama.cpp. This is done by modifying the build.rs file in
+llm-chain-llama-sys and modifying the following line:
+```console
+$ git diff
+diff --git a/crates/llm-chain-llama-sys/build.rs b/crates/llm-chain-llama-sys/build.rs
+index e85f682..1c98599 100644
+--- a/crates/llm-chain-llama-sys/build.rs
++++ b/crates/llm-chain-llama-sys/build.rs
+@@ -80,7 +80,7 @@ fn main() {
+     let mut code = std::process::Command::new("cmake");
+     let code = code
+         .arg("..")
+-        .arg("-DCMAKE_BUILD_TYPE=Release")
++        .arg("-DCMAKE_BUILD_TYPE=Debug")
+         .arg("-DBUILD_SHARED_LIBS=OFF")
+         .arg("-DLLAMA_ALL_WARNINGS=OFF")
+         .arg("-DLLAMA_ALL_WARNINGS_3RD_PARTY=OFF")
+
+```
 
 ```console
 (gdb) br executor.rs:55
@@ -712,9 +732,10 @@ bank where we can deposit money or a river bank.
 
 Next we are creating a copy of the tokenized_input:
 ```console
-```console
 87	            let mut embd = tokenized_input.clone();
 ```
+Why is this done?  
+
 Following that we have:
 ```console
 89	            // Evaluate the prompt in full.
@@ -762,6 +783,40 @@ This function is declared in llama.h:
                              int   n_past,
                              int   n_threads);
 ```
+Notice that this function returns an int which indicates if the call was
+successful or not, but there are no logits or probabilities returned. So these
+must be stored somewhere and the only place, apart from the tokens is the ctx
+which are both pointers.
+If we take a look in llama.cpp we can find the llama_context struct and look
+at it's members (I've remove the constructors and destructors, and other fields
+that are not relevant to this discussion):
+```c++
+struct llama_context {
+    std::mt19937 rng;
+    bool has_evaluated_once = false;
+
+    const llama_model & model;
+
+    bool model_owner = false;
+
+    // key + value cache for the self attention
+    struct llama_kv_cache kv_self;
+
+    size_t mem_per_token = 0;
+
+    // decode output (2-dimensional array: [n_tokens][n_vocab])
+    std::vector<float> logits;
+    bool logits_all = false;
+
+    // input embedding (1-dimensional array: [n_embd])
+    std::vector<float> embedding;
+
+    ...
+};
+```
+We can see that there is a logits vector which is a vector of floats and there
+is also a embedding vector which is also a vector of floats.
+
 And the implementation is in llama.cpp:
 ```cpp
 int llama_eval(
