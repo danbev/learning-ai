@@ -2,6 +2,7 @@
 
 #include "ggml/ggml.h"
 #include "ggml/ggml-alloc.h"
+#include "ggml/ggml-backend.h"
 
 int main(int argc, char **argv) {
   printf("GGML Example\n");
@@ -17,7 +18,7 @@ int main(int argc, char **argv) {
   // This creates a one dimensional tensor, so it will be like a list of numbers
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   printf("x tensor type: %s\n", ggml_type_name(x->type));
-  printf("x tensor backend: %d (0 = GGML_BACKEND_CPU) \n", x->backend);
+  printf("x tensor backend: %s \n", ggml_backend_type_name(x->backend));
   printf("x tensor dimensions: %d\n", x->n_dims);
   printf("x tensor data: %p\n", x->data);
   // This tensor was not created by an operation, for example if the tensor was
@@ -74,6 +75,7 @@ int main(int argc, char **argv) {
   // row after row in memory: [ [ 1, 2 ],
   //                            [ 3, 4 ],
   //                            [ 5, 6 ] ]
+  // [1, 2, 3, 4, 5, 6]
   struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 2);
   printf("matrix ne[0]: %ld\n", matrix->ne[0]);
   printf("matrix ne[1]: %ld\n", matrix->ne[1]);
