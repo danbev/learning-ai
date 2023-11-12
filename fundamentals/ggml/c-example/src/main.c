@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
   printf("x tensor data: %p\n", x->data);
   // This tensor was not created by an operation, for example if the tensor was
   // created by a + b = c, c being the tensor then the op would be GGML_OP_ADD.
-  printf("x tensor operation: %s\n", ggml_op_name(x->op));
+  printf("x tensor operation: %s, %s\n", ggml_op_name(x->op), ggml_op_symbol(x->op));
   // ggml_tensor's are used as the base unit values in the library, similar to
   // the Value struct in the LLM zero-to-hero tutorial. These values support
   // autmoatic differentiation, so they have a grad field. 
@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
   struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   ggml_set_name(b, "b");
   struct ggml_tensor* c = ggml_add(ctx, a, b);
+  printf("c tensor operation: %s, %s\n", ggml_op_name(c->op), ggml_op_symbol(c->op));
   ggml_set_name(c, "c");
 
   // The following will add the tensors to the computation graph (I think)
