@@ -5,7 +5,7 @@
 #include "ggml/ggml-backend.h"
 
 int main(int argc, char **argv) {
-  printf("GGML Example\n");
+  printf("GGML tensor example\n");
 
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024,
@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
   // This creates a one dimensional tensor, so it will be like a list of numbers
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   printf("x tensor type: %s\n", ggml_type_name(x->type));
-  printf("x tensor backend: %s \n", ggml_backend_type_name(x->backend));
+  printf("x tensor backend: %d \n", x->backend);
   printf("x tensor dimensions: %d\n", x->n_dims);
   printf("x tensor data: %p\n", x->data);
   // This tensor was not created by an operation, for example if the tensor was
@@ -43,34 +43,6 @@ int main(int argc, char **argv) {
   ggml_set_name(updated, "updated");
   printf("updated tensor name: %s\n", ggml_get_name(updated));
 
-  // Create a computation graph (c = computation)
-  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
-  printf("c_graph size: %d\n", c_graph->size);
-
-  // The following will create tensors that will make up the computation graph
-  struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-  ggml_set_name(a, "a");
-  struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-  ggml_set_name(b, "b");
-  struct ggml_tensor* c = ggml_add(ctx, a, b);
-  printf("c tensor operation: %s, %s\n", ggml_op_name(c->op), ggml_op_symbol(c->op));
-  ggml_set_name(c, "c");
-
-  // The following will add the tensors to the computation graph (I think)
-  ggml_build_forward_expand(c_graph, c);
-  printf("c_graph after build_forward_expand: %d\n", c_graph->size);
-
-  // Now we set the values to be computed
-  ggml_set_f32(a, 3.0f);
-  ggml_set_f32(b, 2.0f);
-  // And finally we compute the values
-  ggml_graph_compute_with_ctx(ctx, c_graph, 1);
-  printf("c = %f\n", ggml_get_f32_1d(c, 0));
-  ggml_graph_dump_dot(c_graph, NULL, "add.dot");
-
-  struct ggml_tensor* inpL = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 513);
-  printf("inpL tensor dimensions: %d\n", inpL->n_dims);
-
   // tensors are stored in row-major order which means that they are layed out
   // row after row in memory: [ [ 1, 2 ],
   //                            [ 3, 4 ],
@@ -94,8 +66,6 @@ int main(int argc, char **argv) {
   // 0            12            24            36
   //      row0        row1            row2
 
-  ggml_format_name(matrix, "-bajja%d", 3);
-  ggml_format_name(matrix, "-bajja%d", 4);
   printf("matrix name: %s\n", ggml_get_name(matrix));
   ggml_free(ctx);
   return 0;

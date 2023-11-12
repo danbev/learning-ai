@@ -11,8 +11,14 @@ ggml: ggml/build
 
 all: $(TARGET)
 
-main: src/main.c
-	$(CC) $(CFLAGS) $^ -o main $(LDFLAGS) -lggml -lm
+graph: src/graph.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
+tensor: src/tensor.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
+show-add-dot:
+	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
 .PHONY: clean
 clean:
