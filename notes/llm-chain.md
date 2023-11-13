@@ -297,6 +297,9 @@ index e85f682..1c98599 100644
          .arg("-DLLAMA_ALL_WARNINGS=OFF")
          .arg("-DLLAMA_ALL_WARNINGS_3RD_PARTY=OFF")
 ```
+Ok, so while doing this will allow use to step into llama.cpp it will perform
+so pourly that I though the program had deadlocked. So if we want to step into
+then we should also reset this before trying to run the example again.
 
 Next we set a breakpoint:
 ```console
