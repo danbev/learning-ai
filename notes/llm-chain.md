@@ -296,9 +296,9 @@ index e85f682..1c98599 100644
          .arg("-DBUILD_SHARED_LIBS=OFF")
          .arg("-DLLAMA_ALL_WARNINGS=OFF")
          .arg("-DLLAMA_ALL_WARNINGS_3RD_PARTY=OFF")
-
 ```
 
+Next we set a breakpoint:
 ```console
 (gdb) br executor.rs:55
 (gdb) r
@@ -428,7 +428,7 @@ extern "C" {
 The actual implementation are in crates/llm-chain-llama-sys/llama.cpp/llama.cpp
 which is a git submodule.
 
-Next in run_module we have:
+Next in `run_module` we have:
 ```console
 (gdb) f
 #0  llm_chain_llama::executor::{impl#0}::run_model::{async_fn#0} () at src/executor.rs:58
@@ -455,8 +455,7 @@ $6 = llm_chain_llama::context::ContextParams {
   rms_norm_eps: 4.99999987e-06
 }
 ```
-
-Next is the context_size which is 3000 (n_ctx) in this case.
+The context_size which is 3000 (n_ctx) in this case.
 
 Following that we have:
 ```console
@@ -489,8 +488,9 @@ type = struct llm_chain_llama::options::LlamaInvocation {
   prompt: llm_chain::prompt::model::Data<alloc::string::String>,
 }
 ```
+Most of these fields are explained in [llm.md](llm.md).
 
-We can inspect input.the prompt using:
+We can inspect input.prompt using:
 ```console
 (gdb) set print elements 0
 (gdb) p input.prompt
@@ -515,7 +515,7 @@ And this is what is getting passed to `answer_prefix`:
 262	        }
 263	    }
 ```
-In our case the prompt is of type Chat and the text ends with a newline so
+In our case the prompt is of type `Chat` and the text ends with a newline so
 the prefix will be an empty string. This is then used to return a string in
 the format 'Assistant:'. So basically just making sure that there is a newline
 before 'Assistent':
@@ -549,7 +549,7 @@ Lets set a break point in the closure and continue:
 ```console
 (gdb) br executor.rs:63
 ```
-Now, recall that context is a Arc Mutext which guards a LLamaContext. Here we
+Now, recall that context is a Arc Mutex which guards a LLamaContext. Here we
 are blocking the current thread, and recall that run_model is async so this is
 done from an async context. With the lock acquired we are then going to tokenize
 the input.stop_sequence:
@@ -559,9 +559,30 @@ $13 = Vec(size=1) = {"\n\n"}
 ```
 Recall that tokenizing in the context of a LLM is the process of splitting the
 string into units, and then mapping these units to indexes/ids of the models
-vocabulary. These tokens can then be passed as input to the LLM inference
-method. The llm can then use these indexes to look up the initial token
-embeddings. 
+vocabulary.
+These tokens can then be passed as input to the LLM inference method. The llm
+can then use these indexes to look up the initial token embeddings. 
+```
+                +---+    +------+    +----------+ 
+Text sequence:  | I |    | love |    | icecream | 
+                +---+    +------+    +----------+
+                  |         |            |   |
+                  ↓         ↓            ↓   +--------↓
+Tokens:         +---+    +------+    +----------+  +-----+
+                |201|    |  57  |    |   23005  |  | 889 |
+                +---+    +------+    +----------+  +-----+
+                  |         |            |   |        |
+                  ↓         ↓            ↓            ↓
+
+Embeddings:     201   : [0...512]
+                57    : [0...512]
+                23005 : [0...512]
+                889   : [0...512]
+```
+Note that these are the initial token embeddings and do not change, they are
+fixed. But as the embeddings are passed through the transformer layers they
+will be updated. The embeddings are updated by adding the output of the
+transformer layers to the embeddings.
 
 ```console
 (gdb) br tokenizer.rs:51
@@ -595,14 +616,14 @@ Thread 3 "tokio-runtime-w" hit Breakpoint 2, llm_chain_llama::tokenizer::tokeniz
 64	    unsafe { res.set_len(n as usize) };
 65	    res
 ```
-The first thing is that we create a new vectro with the capacity of the length
+The first thing is that we create a new vector with the capacity of the length
 "\n\n", and in this case bos (begining of sentence) is false the length will
 be:
 ```console
 (gdb) p text.length 
 $2 = 2
 ``` 
-Next we have the call to to_cstring which will create a CString from the text
+Next we have the call to `to_cstring` which will create a CString from the text
 which can be passed to C functions, it adds the null terminator and also makes
 sure that there are no null terminators in the string, in addition it also 
 handles clearing the memory when the CString is dropped.
@@ -622,6 +643,7 @@ extern "C" {
 `tokens` is a pointer to the res Vec which is passed in as a mutable pointer so
 this will get updated by the function. Also llama_context is also mutable which
 might indicate that it also gets updated.
+
 We can find the implementation of llama_tokenize in
 crates/llm-chain-llama-sys/llama.cpp/llama.cpp:
 ```cpp
@@ -681,13 +703,15 @@ $22 = 13
 ```
 In the vocab we have `linefeed_id = 13`. So we have taking the string "\n\n"
 and converted it into a vector of integers which according to the models
-vocabulary. This will later be used to check if the llm has generated such a
-token and to know if it should stop generating tokens. We will see this later.
-Back in run_model we then check that the context_size has not been exceeded
-and if it was send StreamSegment::Err(ExecutorError::ContextTooSmall) using
+vocabulary (tokens). This will later be used to check if the llm has generated
+such a token and to know if it should stop generating tokens. We will see this
+later.
+
+Back in `run_model` we then check that the context_size has not been exceeded
+and if it was, send StreamSegment::Err(ExecutorError::ContextTooSmall) using
 the sender and then return from this function.
 
-After returning to run_model we can print the tokenized_stop_prompt:
+After returning to `run_model` we can print the tokenized_stop_prompt:
 ```console
 (gdb) p tokenized_stop_prompt 
 $54 = Vec(size=2) = {13, 13}
@@ -783,10 +807,112 @@ This function is declared in llama.h:
                              int   n_past,
                              int   n_threads);
 ```
+
+```console
+(gdb) l
+4040	        struct llama_context * ctx,
+4041	           const llama_token * tokens,
+4042	                         int   n_tokens,
+4043	                         int   n_past,
+4044	                         int   n_threads) {
+4045	    if (!llama_eval_internal(*ctx, tokens, nullptr, n_tokens, n_past, n_threads, nullptr)) {
+4046	        fprintf(stderr, "%s: failed to eval\n", __func__);
+4047	        return 1;
+4048	    }
+```
+llama_eval_internal is defined takes the following parameters:
+```console
+(gdb) l -
+1770	//   - tokens:    new batch of tokens to process
+1771	//   - embd       embeddings input
+1772	//   - n_tokens   number of tokens
+1773	//   - n_past:    the context size so far
+1774	//   - n_threads: number of threads to use
+1775	//
+1776	static bool llama_eval_internal(
+1777	         llama_context & lctx,
+1778	     const llama_token * tokens,
+1779	           const float * embd,
+(gdb) l
+1780	                   int   n_tokens,
+1781	                   int   n_past,
+1782	                   int   n_threads,
+1783	            const char * cgraph_fname) {
+```
+Notice that `embd` is nullptr in our case, as is the cgraph_fname.
+Lets take a look at some of the argument values:
+```console
+gdb) p n_tokens
+$80 = 513
+(gdb) p n_past
+$81 = 0
+(gdb) p n_threads 
+$82 = 4
+(gdb) p embd 
+$83 = (const float *) 0x0
+```
+Some of these values are then stored in local variables:
+```console
+(gdb) l
+1793	    const int N = n_tokens;
+1794	
+1795	    const auto & model   = lctx.model;
+1796	    const auto & hparams = model.hparams;
+1797	
+1798	    const auto & kv_self = lctx.kv_self;
+1799	
+1800	    LLAMA_ASSERT(!!kv_self.ctx);
+1801	
+1802	    const int64_t n_embd      = hparams.n_embd;
+1803	    const int64_t n_vocab     = hparams.n_vocab;
+
+(gdb) p model.hparams
+$87 = {n_vocab = 32000, n_ctx = 3000, n_embd = 4096, n_mult = 256, n_head = 32,
+       n_head_kv = 32, n_layer = 32, n_rot = 128, f_ffn_mult = 1,
+       f_rms_norm_eps = 4.99999987e-06, rope_freq_base = 10000,
+       rope_freq_scale = 1, ftype = LLAMA_FTYPE_MOSTLY_Q8_0}
+```
+So we have a vocabulary of 32000 tokens in the model. The max context size of
+tokens is 3000. The `n_embd` is the dimension of the vector embeddings. So each
+token will be represented by a vector of 4096 floats.
+
+Later in the function we have:
+```console
+1809	    ggml_cgraph * gf = llama_build_graph(lctx, tokens, embd, n_tokens, n_past);
+```
+Here the computation graph (`ggml_cgraph`) is built which follows the llama
+architecture model.
+We can see the number of nodes and leafes using:
+```console
+(gdb) p gf.n_nodes
+$135 = 1188
+(gdb) p gf.n_leafs
+$136 = 327
+```
+Next the last node is extracted which is the output node:
+```console
+1821	    struct ggml_tensor * res = gf->nodes[gf->n_nodes - 1];
+
+(gdb) p res.n_dims
+$140 = 2
+(gdb) p res.name
+$141 = "result_output", '\000' <repeats 34 times>
+```
+Next we get a pointer to the second to last node/tensor which is the embeddings:
+```
+1822	    struct ggml_tensor * embeddings = gf->nodes[gf->n_nodes - 2];
+```
+Next we have the following:
+```console
+1864	    ggml_graph_compute_helper(lctx.work_buffer, gf, n_threads);
+```
+
+
 Notice that this function returns an int which indicates if the call was
 successful or not, but there are no logits or probabilities returned. So these
 must be stored somewhere and the only place, apart from the tokens is the ctx
 which are both pointers.
+
 If we take a look in llama.cpp we can find the llama_context struct and look
 at it's members (I've remove the constructors and destructors, and other fields
 that are not relevant to this discussion):
