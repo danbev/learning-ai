@@ -86,6 +86,7 @@ async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> 
         embeddings,
         None,
         None,
+        None,
     );
 
     if add_doc {
@@ -106,7 +107,7 @@ async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> 
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let qdrant = build_local_qdrant(true).await;
+    let qdrant = build_local_qdrant(false).await;
 
     let llama_opts = options!(
         Model: ModelRef::from_path("./models/llama-2-7b-chat.ggmlv3.q4_0.bin"),
@@ -142,22 +143,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query = "Can you show me a summary of RHSA-2020:5566?";
     println!("Query: {}", query);
 
-    let sys_prompt = r#"
-[INST] <<SYS>>
+    let sys_prompt = r#"<s>[INST] <<SYS>>
+You are a helpful chat assistant.
+
 {{ system_prompt }}
+
+Here are some previous interactions between the Assistant and a User:
+
+User: Can you show me a summary of the security advisory RHSA-2020:5566?
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-2020:5566"
+  limit: 1
+```
+
+Observation: RHSA-2020:5566 is a security advisory related to openssl and has...
+Assistant:
+```yaml
+command: "Final Answer"
+input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
+```
+
 <</SYS>>
 
-{{ user_message }} [/INST]
+{{ user_message }} [/INST] </s>
         "#;
 
     let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(sys_prompt));
-    println!("Prompt: {}", prompt);
     let sys_message = tool_collection.to_prompt_template().unwrap().to_string();
-    let user_message = "Please perform the following task: {{task}}";
-
+    println!("System prompt: {}", prompt);
     for _ in 0..2 {
         let result = Step::for_prompt_template(prompt.clone().into())
-            .run(&parameters!("task" => query, "system_prompt" => sys_message.clone(), "user_message" => user_message), &exec)
+            .run(&parameters!("task" => query, "system_prompt" => sys_message.clone(), "user_message" => query), &exec)
             .await
             .unwrap();
 
@@ -166,10 +185,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?
             .primary_textual_output()
             .unwrap();
+        println!("Assistent text: {}", assistent_text);
         match tool_collection.process_chat_input(&assistent_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
-                println!("YAML: {:?}", yaml);
+                //println!("YAML: {:?}", yaml);
                 let texts = yaml.get("texts").unwrap();
                 let mut joined_text = String::new();
                 if let Some(sequence) = texts.as_sequence() {
@@ -182,15 +202,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                let prompt = ChatMessageCollection::new()
-                    .with_system(StringTemplate::tera(
-                       "<s>[INST] <<SYS>> You are a friendly assistent and help answer questions.\n<</SYS>>\nUse the following as additional context: {{texts}} [/INST]",
-                    ))
-                    .with_user(StringTemplate::combine(vec![
-                        StringTemplate::static_string(query),
-                    ]));
+                println!("Joined text: {}", joined_text);
+                let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
+                    "<s>[INST] <<SYS>> You are a friendly assistent and help answer questions.
+                       Use the following as additional context: {{texts}} <</SYS>>
+
+                       {{ user_message }} [/INST]",
+                ));
+                //.with_user(StringTemplate::combine(vec![
+                //StringTemplate::static_string(query),
+                //]));
                 let result = Step::for_prompt_template(prompt.clone().into())
-                    .run(&parameters!("texts" => joined_text), &exec)
+                    .run(
+                        &parameters!("texts" => joined_text, "user_message" => query),
+                        &exec,
+                    )
                     .await
                     .unwrap();
                 println!("Result: {}", result);

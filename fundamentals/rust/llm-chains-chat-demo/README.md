@@ -33,3 +33,8 @@ The update fixes a flaw in the OpenSSL Diffie-Hellman (DH) key exchange implemen
 
 It is recommended to install the updated openssl packages as soon as possible to mitigate this vulnerability. You can find further details and instructions on how to update your systems in the Red Hat Security Advisory at the following URL: [RHSA-2020:5566](https://access.redhat.com/errata/RHSA-2020:5566).
 ```
+
+The is also an example that uses Llama:
+```console
+$ cargo r -q --bin llama
+```
