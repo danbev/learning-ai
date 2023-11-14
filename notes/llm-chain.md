@@ -80,7 +80,6 @@ And we can add tools to this collection using:
 Notice the call to `.into()` which will call the From implementation for
 QdrantTool and convert it into a Multitool. 
 
-
 Lets start with the VectorStoreToolInput:
 ```rust
 pub struct VectorStoreToolInput {
@@ -99,7 +98,6 @@ pub struct VectorStoreToolOutput {
 ```
 So this is just a vector of strings.
 
-
 Documents are represented as:
 ```rust
 #[derive(Debug)]
@@ -109,11 +107,99 @@ where M: serde::Serialize + serde::de::DeserializeOwned, {
     pub metadata: Option<M>,
 }
 ```
-So Documents are pretty simple strucs with a page_content string and optional
-metadata. Note that metadata might be very interesting as it allows for adding
+So Documents are pretty simple structs with a `page_content` string and optional
+`metadata`. Note that metadata might be very interesting as it allows for adding
 information about the origin the content (I think). So it would allow us to be
 able to provide references to the sources of information which can be important
 for content related to security.
+
+In the example we have we first pass the query to the LLM and it is expected
+to understand that if we have a query related to VEX documents that is should
+respond with a YAML document in the format:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-2020:5566"
+  limit: 1
+```
+We will then take that response and pass it to the tools using:
+```console
+(gdb) br parsing.rs:73
+(gdb) r
+(gdb) bt 5
+#0  llm_chain::parsing::extract_yaml<llm_chain::tools::collection::ToolInvocationInput> (
+    code_block="\n command: VectorStoreTool\n input: \n   query: \"RHSA-2020:5566\"\n   limit: 1")
+    at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/parsing.rs:73
+
+#1  0x00005555557e32cc in llm_chain::parsing::find_yaml<llm_chain::tools::collection::ToolInvocationInput> (
+    text="\n command: VectorStoreTool\n input: \n   query: \"RHSA-2020:5566\"\n   limit: 1")
+    at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/parsing.rs:137
+
+#2  0x000055555581ad5d in llm_chain::tools::collection::ToolCollection<llama::Multitool>::get_tool_invocation<llama::Multitool> (self=0x7fffffff5d00, 
+    data="\n command: VectorStoreTool\n input: \n   query: \"RHSA-2020:5566\"\n   limit: 1")
+    at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/tools/collection.rs:59
+
+#3  0x000055555581a2c7 in llm_chain::tools::collection::{impl#0}::process_chat_input::{async_fn#0}<llama::Multitool>
+    () at /home/danielbevenius/work/ai/llm-chain/crates/llm-chain/src/tools/collection.rs:82
+
+#4  0x000055555587feb7 in llama::main::{async_block#0} () at src/main-llama.rs:189
+```
+We can take a look what the `extract_yaml` is trying to parse
+```console
+(gdb) p code_block
+$3 = "\n command: VectorStoreTool\n input: \n   query: \"RHSA-2020:5566\"\n   limit: 1"
+```
+
+```console
+78	    pub async fn process_chat_input(
+(gdb) l
+79	        &self,
+80	        data: &str,
+81	    ) -> Result<String, ToolUseError<<T as Tool>::Error>> {
+82	        let tool_invocation = self.get_tool_invocation(data)?;
+83	        let output = self
+84	            .invoke(&tool_invocation.command, &tool_invocation.input)
+85	            .await?;
+86	        serde_yaml::to_string(&output).map_err(|e| e.into())
+87	    }
+88
+```
+So this will pass the output from the LLM to the `get_tool_invocation` function
+which will try to parse it as YAML (in this case, Markdown is also supported).
+If it is able to parse it will return a ToolInvocationInput which is defined as:
+```rust
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ToolInvocationInput {
+    pub command: String,
+    pub input: serde_yaml::Value,
+}
+```
+In our case this will be:
+```console
+(gdb) p tool_invocation.command
+$13 = "VectorStoreTool"
+```
+And tool_invocation.command will be passed to Collections::invoke and also the
+command.input which is a serde_yaml::Value.
+```console
+(gdb) l
+41	
+42	    pub async fn invoke(
+43	        &self,
+44	        name: &str,
+45	        input: &serde_yaml::Value,
+46	    ) -> Result<serde_yaml::Value, ToolUseError<<T as Tool>::Error>> {
+47	        let tool = self
+48	            .tools
+49	            .iter()
+50	            .find(|t| t.matches(name))
+(gdb) l
+51	            .ok_or(ToolUseError::ToolNotFound)?;
+52	        tool.invoke(input.clone()).await.map_err(|e| e.into())
+53	    }
+```
+And then we can see that the tool is invoked on the last line.
+
 
 ### Agent and Tools
 I'm currently trying to understand the Agent and Tools and how they work
@@ -1084,3 +1170,9 @@ llama_sample can be found in context.rs:
         input: &LlamaInvocation,
     ) -> i32 {
 ```
+
+
+### Tools
+This section will try to explain how Tools get invoked in llm-chain. The tool
+used will be VectorStoreTool.
+
