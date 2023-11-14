@@ -144,9 +144,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Query: {}", query);
 
     let sys_prompt = r#"<s>[INST] <<SYS>>
-You are a helpful chat assistant.
+Assistant is designed to assist with a wide range of tasks.
 
 {{ system_prompt }}
+
 
 Here are some previous interactions between the Assistant and a User:
 
@@ -184,7 +185,7 @@ input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
             .await?
             .primary_textual_output()
             .unwrap();
-        //println!("Assistent text: {}", assistent_text);
+        println!("Assistent text: {}", assistent_text);
         match tool_collection.process_chat_input(&assistent_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
