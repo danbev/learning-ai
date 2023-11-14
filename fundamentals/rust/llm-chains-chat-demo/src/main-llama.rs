@@ -173,8 +173,7 @@ input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
 
     let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(sys_prompt));
     let sys_message = tool_collection.to_prompt_template().unwrap().to_string();
-    println!("System prompt: {}", prompt);
-    for _ in 0..2 {
+    for _ in 0..1 {
         let result = Step::for_prompt_template(prompt.clone().into())
             .run(&parameters!("task" => query, "system_prompt" => sys_message.clone(), "user_message" => query), &exec)
             .await
@@ -185,11 +184,11 @@ input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
             .await?
             .primary_textual_output()
             .unwrap();
-        println!("Assistent text: {}", assistent_text);
+        //println!("Assistent text: {}", assistent_text);
         match tool_collection.process_chat_input(&assistent_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
-                //println!("YAML: {:?}", yaml);
+                println!("YAML: {:?}", yaml);
                 let texts = yaml.get("texts").unwrap();
                 let mut joined_text = String::new();
                 if let Some(sequence) = texts.as_sequence() {
@@ -202,16 +201,13 @@ input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
                         }
                     }
                 }
-                println!("Joined text: {}", joined_text);
+                //println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
                     "<s>[INST] <<SYS>> You are a friendly assistent and help answer questions.
                        Use the following as additional context: {{texts}} <</SYS>>
 
                        {{ user_message }} [/INST]",
                 ));
-                //.with_user(StringTemplate::combine(vec![
-                //StringTemplate::static_string(query),
-                //]));
                 let result = Step::for_prompt_template(prompt.clone().into())
                     .run(
                         &parameters!("texts" => joined_text, "user_message" => query),
@@ -219,11 +215,12 @@ input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
                     )
                     .await
                     .unwrap();
-                println!("Result: {}", result);
+                let output = result.to_immediate().await?;
+                println!("output: {}", output);
                 break;
             }
             Err(e) => {
-                println!("Error: {}", e);
+                eprintln!("Error: {}", e);
             }
         }
     }
