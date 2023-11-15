@@ -15,7 +15,7 @@ the following 10 categories:
 9 Truck
 ```
 These don't really have a natural number representation, so to represent the
-Cat we use a vector of 10 elemenet, where the Cat is "turned on" and the rest
+Cat we use a vector of 10 elements, where the Cat is "turned on" and the rest
 are "off":
 ```
 [0 0 0 1 0 0 0 0 0 0]

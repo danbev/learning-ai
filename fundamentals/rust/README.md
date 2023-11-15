@@ -7,6 +7,6 @@
 * [zero-to-hero](./zero-to-hero/README.md) Rust implementatoin of "Neural Networks: Zero to Hero" (work in progress)
 
 
-[llm]: https://oauth2.sigstore.dev/auth/.well-known/openid-configuration
+[llm]: https://github.com/rustformers/llm
 [llm-chains]: https://github.com/sobelio/llm-chain/
 [smartcore]: https://github.com/smartcorelib/smartcore
