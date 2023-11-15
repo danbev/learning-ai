@@ -4,12 +4,12 @@ operate on matrices/tensors of numbers, not text. Embedding vectors are a way
 to turn text into vectors with the elements of the vector being numbers so that
 text can be used with neural networks.
 
-How this text to vectors of number is done can differs and one example is doing
+How this text to vectors of numbers is done can differ, and one example is doing
 [one-hot-encoding](./one-hot-encoding.md). Another option is using a count
 based approach. And we also have the option to use embeddings which is what this
 document will address.
 
-Is a way of representing data like strings, music, video as points in a
+It's a way of representing data like strings, music, video as points in an
 n-dimension space. Doing this can allow similar data points to cluster together.
 
 Word to vector (Word2Vec) was invented by Google in 2013 which takes as input
