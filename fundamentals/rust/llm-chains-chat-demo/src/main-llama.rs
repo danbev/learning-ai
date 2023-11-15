@@ -148,7 +148,6 @@ Assistant is designed to assist with a wide range of tasks.
 
 {{ system_prompt }}
 
-
 Here are some previous interactions between the Assistant and a User:
 
 User: Can you show me a summary of the security advisory RHSA-2020:5566?
@@ -166,6 +165,8 @@ Assistant:
 command: "Final Answer"
 input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
 ```
+
+All responses must be in YAML.
 
 <</SYS>>
 
@@ -204,7 +205,7 @@ input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
                 }
                 //println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
-                    "<s>[INST] <<SYS>> You are a friendly assistent and help answer questions.
+                    "<s>[INST] <<SYS>> You are an assistent and help answer questions. Only reply with the answer to the question and nothing else.
                        Use the following as additional context: {{texts}} <</SYS>>
 
                        {{ user_message }} [/INST]",
