@@ -43,4 +43,28 @@ Thread 2 "tokio-runtime-w" received signal SIGABRT, Aborted.
     at /home/danielbevenius/.cargo/registry/src/index.crates.io-6f17d22bba15001f/tokio-1.33.0/src/runtime/blocking/task.rs:42
 (More stack frames follow...)
 ```
-_work in progress_
+The issue was that I was not handling the MaxContextSize option correctly, or
+actually at all in the Embeddings code. After updating the code to handle this
+the above error went away.
+
+The options for all models are in:
+crates/llm-chain/src/options.rs:
+```rust
+>>#[derive(EnumDiscriminants, Clone, Debug, Serialize, Deserialize)]              
+  pub enum Opt {                                                                  
+      /// The name or path of the model used.                                     
+      Model(ModelRef),                                                            
+      /// The API key for the model service.                                      
+      ApiKey(String),                                                             
+      /// The number of threads to use for parallel processing.                   
+      /// This is common to all models.                                           
+      NThreads(usize),                                                            
+      /// The maximum number of tokens that the model will generate.              
+      /// This is common to all models.                                           
+      MaxTokens(usize),                                                           
+      /// The maximum context size of the model.                                  
+      MaxContextSize(usize), 
+      ...
+}
+```
+And while this was passed into the Embeddings code it was not used.
