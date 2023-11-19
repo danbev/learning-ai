@@ -1,32 +1,31 @@
-#include "common.h"
+//#include "common.h"
 #include "llama.h"
 
 #include <iostream>
+#include <vector>
 
 int main(int argc, char** argv) {
-    gpt_params params;
-    params.model = "models/llama-2-13b-chat.Q4_0.gguf";
-    std::cout << "llama.cpp example using model: " << params.model << std::endl;
-
-    std::string query = "What is LoRA?";
-    std::cout << "query: " << query << std::endl;
-    params.prompt = query;
-
-    llama_backend_init(params.numa);
     llama_model_params model_params = llama_model_default_params();
+    std::string model_path = "models/llama-2-7b-chat.Q4_0.gguf";
+    std::cout << "llama.cpp example using model: " << model_path << std::endl;
 
-    llama_model* model = llama_load_model_from_file(params.model.c_str(), model_params);
+    std::string prompt = "Who is Austin Powers?";
+    std::cout << "prompt: " << prompt << std::endl;
+
+    bool numa = false;
+    llama_backend_init(numa);
+
+    llama_model* model = llama_load_model_from_file(model_path.c_str(), model_params);
     if (model == NULL) {
-        fprintf(stderr , "%s: error: failed to to load model %s\n" , __func__, params.model.c_str());
+        fprintf(stderr , "%s: error: failed to to load model %s\n" , __func__, model_path.c_str());
         return 1;
     }
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.seed  = 1234;
     ctx_params.n_ctx = 2048;
-    ctx_params.n_threads = params.n_threads;
-    ctx_params.n_threads_batch = params.n_threads;
-    ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
+    //ctx_params.n_threads = params.n_threads;
+    //ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
@@ -34,13 +33,29 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<llama_token> input_tokens;
-    input_tokens = llama_tokenize(ctx, params.prompt, true);
+    const int add_bos_token = llama_add_bos_token(model);
+    // SPM = SentencePiece Model
+    const bool add_bos  = add_bos_token != -1 ? bool(add_bos_token) : (llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM);
 
+    int n_tokens = prompt.length() + add_bos;
+    std::vector<llama_token> input_tokens(n_tokens);
+    int max_tokens = 512;
+    n_tokens = llama_tokenize(model, prompt.c_str(), prompt.length(), input_tokens.data(), max_tokens, true, true);
 
-    std::cout << "input_tokens: " << std::endl;
+    std::cout << "n_tokens: " << std::endl;
     for (auto token : input_tokens) {
-        std::cout << token << " :" << llama_token_to_piece(ctx, token) << std::endl;
+        std::vector<char> result(8, 0);
+        const int n_tokens = llama_token_to_piece(model, token, result.data(), result.size());
+        if (n_tokens < 0) {
+            result.resize(-n_tokens);
+            int check = llama_token_to_piece(model, token, result.data(), result.size());
+            std::cout << "check: " << check << std::endl;
+        } else {
+            result.resize(n_tokens);
+        }
+
+        std::string token_str = std::string(result.data(), result.size());
+        std::cout << "token_str: " << token_str << std::endl;
     }
 
     llama_batch batch = llama_batch_init(512, 0, 1);
@@ -55,8 +70,17 @@ int main(int argc, char** argv) {
     // then run the inference again to predict the next token, now with more
     // context (the previous token). Hope this makes sense but looking at the
     // diagram in the notes might help.
-    for (size_t i = 0; i < input_tokens.size(); i++) {
-        llama_batch_add(batch, input_tokens[i], i, { 0 }, false);
+    bool logits = false;
+    const std::vector<llama_seq_id>& seq_ids = { 0 };
+
+    std::cout << "batch.n_tokens: " << batch.n_tokens << std::endl;
+    for (size_t pos = 0; pos < input_tokens.size(); pos++) {
+        //llama_batch_add(batch, input_tokens[pos], pos, seq_ids, logits);
+        batch.token[batch.n_tokens] = input_tokens[pos];
+        batch.pos[batch.n_tokens] = pos,
+        batch.n_seq_id[batch.n_tokens] = seq_ids.size();
+        batch.logits[batch.n_tokens] = logits;
+        batch.n_tokens++;
     }
 
     // Instruct llama to generate the logits for the last token
@@ -111,12 +135,17 @@ int main(int argc, char** argv) {
             // Next we get the string value for the token. This is called a piece
             // which I think comes from SentencePiece, and a token would be
             // one such piece (something like that).
-            fprintf(stdout, "%s", llama_token_to_piece(ctx, highest_logit).c_str());
-            fflush(stdout);
+            //fprintf(stdout, "%s", llama_token_to_piece(ctx, highest_logit).c_str());
+            //fflush(stdout);
 
             // push this new token for next evaluation
-            llama_batch_clear(batch);
-            llama_batch_add(batch, highest_logit, n_cur, { 0 }, true);
+            llama_batch_free(batch);
+            //llama_batch_init(batch, highest_logit, n_cur, { 0 }, true);
+            batch.token[batch.n_tokens] = highest_logit;
+            batch.pos[batch.n_tokens] = n_cur,
+            batch.n_seq_id[batch.n_tokens] = { 0 };
+            batch.logits[batch.n_tokens] = true; // logits
+            batch.n_tokens++;
             n_decode += 1;
         }
 
