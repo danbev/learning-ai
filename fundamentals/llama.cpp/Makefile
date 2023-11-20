@@ -1,5 +1,11 @@
 # Make llama.cpp
 llama: 
+	cd llama.cpp && make -j8
+
+# Use the following target with causion as it will probably mess up and
+# actual run of a specific program. Just use it for debugging/learning and
+# then switch back to the normal target for testing.
+llama-debug: 
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
 CXXFLAGS = -g3 -Wall -Illama.cpp/ -Illama.cpp/common -Lllama.cpp/
@@ -13,7 +19,7 @@ OBJS = llama.cpp/common.o \
        llama.cpp/ggml-quants.o \
        llama.cpp/ggml-backend.o
 
-simple-prompt: src/simple-prompt.cpp | llama
+simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
 
 pre-simple-prompt: src/simple-prompt.cpp
@@ -24,3 +30,6 @@ update-ggml:
 
 clean:
 	$(RM) -f simple-prompt
+
+clean-llama:
+	cd llama.cpp && make clean
