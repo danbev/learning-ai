@@ -2,7 +2,7 @@
 llama: 
 	cd llama.cpp && make -j8
 
-# Use the following target with causion as it will probably mess up and
+# Use the following target with causion as it will probably mess up an
 # actual run of a specific program. Just use it for debugging/learning and
 # then switch back to the normal target for testing.
 llama-debug: 
