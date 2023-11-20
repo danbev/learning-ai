@@ -25,7 +25,7 @@ simple-prompt: src/simple-prompt.cpp
 pre-simple-prompt: src/simple-prompt.cpp
 	$(CXX) -E $(CXXFLAGS) $^  -o pre-simple-prompt.cpp
 
-update-ggml:
+update-llama:
 	git submodule update --remote --merge
 
 clean:
