@@ -1141,6 +1141,7 @@ dependencies = [
  "async-trait",
  "llm-chain",
  "llm-chain-llama",
+ "llm-chain-llama-sys",
  "llm-chain-openai",
  "llm-chain-qdrant",
  "qdrant-client",
