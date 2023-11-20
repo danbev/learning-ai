@@ -6,7 +6,7 @@
 
 int main(int argc, char** argv) {
     llama_model_params model_params = llama_model_default_params();
-    std::string model_path = "/home/danielbevenius/work/ai/llama.cpp/models/llama-2-13b-chat.Q4_0.gguf";
+    std::string model_path = "models/llama-2-13b-chat.Q4_0.gguf";
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
     std::string prompt = "What is LoRA?\n";
@@ -108,7 +108,6 @@ int main(int argc, char** argv) {
 
     int n_cur = batch.n_tokens;
     int n_decode = 0;
-    //std::cout << "n_vocab: " << n_vocab << std::endl;
     while (n_cur <= n_len) {
         {
             int n_vocab = llama_n_vocab(model);
@@ -181,7 +180,7 @@ int main(int argc, char** argv) {
         n_cur += 1;
 
         // With the new token added to the batch, we can now predict the
-        // next token with the logit from above and repeat the process.
+        // next token.
         if (llama_decode(ctx, batch)) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
