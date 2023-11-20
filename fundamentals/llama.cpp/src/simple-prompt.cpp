@@ -34,28 +34,39 @@ int main(int argc, char** argv) {
     }
 
     const int add_bos_token = llama_add_bos_token(model);
-    // SPM = SentencePiece Model
-    const bool add_bos  = add_bos_token != -1 ? bool(add_bos_token) : (llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM);
-
+    const bool add_bos  = add_bos_token != -1 ? bool(add_bos_token) :
+        (llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM); // SPM = SentencePiece Model
     int n_tokens = prompt.length() + add_bos;
     std::vector<llama_token> input_tokens(n_tokens);
-    int max_tokens = 512;
-    n_tokens = llama_tokenize(model, prompt.c_str(), prompt.length(), input_tokens.data(), max_tokens, true, true);
+    n_tokens = llama_tokenize(model,
+                              prompt.data(),
+                              prompt.length(),
+                              input_tokens.data(),
+                              input_tokens.size(),
+                              true,
+                              false);
 
-    std::cout << "n_tokens: " << std::endl;
-    for (auto token : input_tokens) {
+    std::cout << "n_tokens: " << n_tokens << std::endl;
+
+    for (int i = 0; i < n_tokens; i++) {
+        std::cout << "input_tokens[" << i << "]: " << input_tokens[i] << std::endl;
+    //for (auto token : input_tokens) {
         std::vector<char> result(8, 0);
-        const int n_tokens = llama_token_to_piece(model, token, result.data(), result.size());
+        int token_len = result.size();
+        int n_tokens = llama_token_to_piece(model, input_tokens[i], result.data(), token_len);
+        // llama_token_to_piece will return the negative length of the token if
+        // it is longer that the passed in result.length. If that is the case
+        // then we need to resize the result vector to the length of the token
+        // and call llama_token_to_piece again.
         if (n_tokens < 0) {
             result.resize(-n_tokens);
-            int check = llama_token_to_piece(model, token, result.data(), result.size());
-            std::cout << "check: " << check << std::endl;
+            int new_len = llama_token_to_piece(model, input_tokens[i], result.data(), result.size());
+            std::cout << "new_len: " << new_len << " vs token_len: " << token_len << std::endl;
         } else {
             result.resize(n_tokens);
         }
-
         std::string token_str = std::string(result.data(), result.size());
-        std::cout << "token_str: " << token_str << std::endl;
+        std::cout << "token_str: " << token_str.c_str() << std::endl;
     }
 
     llama_batch batch = llama_batch_init(512, 0, 1);
