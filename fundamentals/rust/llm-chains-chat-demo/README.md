@@ -29,6 +29,7 @@ retrieve data from the vector database related to the query "Can you show me a
 summary of RHSA-2020:5566?", This will then be used as the context for a new
 request to the LLM answer the query.
 
+#### OpenAI example
 Then we can run the OpenAI example using:
 ```console
 $ cargo r -q --bin openai
@@ -40,7 +41,16 @@ The update fixes a flaw in the OpenSSL Diffie-Hellman (DH) key exchange implemen
 It is recommended to install the updated openssl packages as soon as possible to mitigate this vulnerability. You can find further details and instructions on how to update your systems in the Red Hat Security Advisory at the following URL: [RHSA-2020:5566](https://access.redhat.com/errata/RHSA-2020:5566).
 ```
 
-The is also an example that uses Llama:
+
+#### Llama example
+This examples uses llm-chain-llama for inference and also uses llm-chain-llama
+for embeddings. This examples depends upon open pull requests which have updated
+llm-chain-llama to use a [later] version of llama.cpp which is able to handle
+the new gguf model format, and also adds support for llama [embedddings]. 
+
 ```console
 $ cargo r -q --bin llama
 ```
+
+[embeddings]: https://github.com/sobelio/llm-chain/pull/245
+[later]: https://github.com/sobelio/llm-chain/pull/244

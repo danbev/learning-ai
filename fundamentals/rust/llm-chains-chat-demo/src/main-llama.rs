@@ -18,7 +18,8 @@ use llm_chain::{multitool, parameters};
 use llm_chain_qdrant::{Qdrant, QdrantError};
 use std::sync::Arc;
 
-use llm_chain_openai::embeddings::{Embeddings, OpenAIEmbeddingsError};
+//use llm_chain_openai::embeddings::{Embeddings, OpenAIEmbeddingsError};
+use llm_chain_llama::embeddings::{Embeddings, LlamaEmbeddingsError};
 use qdrant_client::prelude::{QdrantClient, QdrantClientConfig};
 use qdrant_client::qdrant::{CreateCollection, Distance, VectorParams, VectorsConfig};
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ type QdrantTool = VectorStoreTool<Embeddings, EmptyMetadata, Qdrant<Embeddings, 
 type QdrantToolInput = VectorStoreToolInput;
 type QdrantToolOutput = VectorStoreToolOutput;
 type QdrantToolError =
-    VectorStoreToolError<QdrantError<OpenAIEmbeddingsError>, OpenAIEmbeddingsError>;
+    VectorStoreToolError<QdrantError<LlamaEmbeddingsError>, LlamaEmbeddingsError>;
 
 multitool!(
     Multitool,
@@ -47,11 +48,12 @@ multitool!(
     BashToolError
 );
 
-async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> {
+async fn build_local_qdrant(add_doc: bool, opts: Options) -> Qdrant<Embeddings, EmptyMetadata> {
     let config = QdrantClientConfig::from_url("http://localhost:6334");
     let client = Arc::new(QdrantClient::new(Some(config)).unwrap());
     let collection_name = "vec-documents".to_string();
-    let embedding_size = 1536;
+    //let embedding_size = 1536;
+    let embedding_size = 4096;
 
     if !client
         .has_collection(collection_name.clone())
@@ -78,9 +80,9 @@ async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> 
             .unwrap();
     }
 
-    let embeddings = llm_chain_openai::embeddings::Embeddings::default();
+    let embeddings = llm_chain_llama::embeddings::Embeddings::new_with_options(opts).unwrap();
 
-    let qdrant = Qdrant::<llm_chain_openai::embeddings::Embeddings, EmptyMetadata>::new(
+    let qdrant = Qdrant::<llm_chain_llama::embeddings::Embeddings, EmptyMetadata>::new(
         client,
         collection_name,
         embeddings,
@@ -107,13 +109,12 @@ async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> 
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let qdrant = build_local_qdrant(false).await;
-
     let llama_opts = options!(
-        Model: ModelRef::from_path("./models/llama-2-7b-chat.ggmlv3.q4_0.bin"),
+        Model: ModelRef::from_path("./models/llama-2-7b-chat.Q4_0.gguf"),
         ModelType: "llama",
-        MaxContextSize: 3000_usize,
-        MaxTokens: 200_usize,
+        MaxContextSize: 4096usize,
+        MaxTokens: 4096_usize,
+        MaxBatchSize: 4096_usize,
         Temperature: 1.0, // disabled
         TopP: 1.0, // 1.0 is the default and means no top-p sampling
         TopK: 0,  //
@@ -130,6 +131,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TypicalP: 1.0, // disabled
         TfsZ: 1.0 // disabled
     );
+    let qdrant = build_local_qdrant(true, llama_opts.clone()).await;
+
     let exec = executor!(llama, llama_opts.clone())?;
     let quadrant_tool = QdrantTool::new(
         qdrant,
@@ -190,7 +193,7 @@ All responses must be in YAML.
         match tool_collection.process_chat_input(&assistant_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
-                println!("YAML: {:?}", yaml);
+                println!("-------> YAML: {:?}", yaml);
                 let texts = yaml.get("texts").unwrap();
                 let mut joined_text = String::new();
                 if let Some(sequence) = texts.as_sequence() {
@@ -203,7 +206,7 @@ All responses must be in YAML.
                         }
                     }
                 }
-                //println!("Joined text: {}", joined_text);
+                println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
                     "<s>[INST] <<SYS>> You are an assistant and help answer questions. Only reply with the answer to the question and nothing else.
                        Use the following as additional context: {{texts}} <</SYS>>
@@ -222,7 +225,7 @@ All responses must be in YAML.
                 break;
             }
             Err(e) => {
-                eprintln!("Error: {}", e);
+                eprintln!("process_chat_input error: {:?}", e);
             }
         }
     }
