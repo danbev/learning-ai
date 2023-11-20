@@ -18,7 +18,7 @@ replace it with a pure Rust solution in the future.
 
 Create a virtual python environment and install the requirements:
 ```
-$ python3 -m penv zeroh
+$ python3 -m venv zeroh
 $ source zeroh/bin/activate
 (zeroh) $ pip install -r requirements.txt
 ```

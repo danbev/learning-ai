@@ -4,6 +4,12 @@ This example is intended to mimic the python chat demo in
 that it does not use an in-memory vector database but instead an external Qdrant
 database which needs to be running.
 
+### Requirements
+
+Ensure you have the development header files for clang installed, e.g.
+  * `clang-devel` (fedora)
+  * `libclang-dev` (ubuntu)
+
 __work in progress__
 
 ### Running

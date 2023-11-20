@@ -143,12 +143,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap();
 
-        let assistent_text = result
+        let assistant_text = result
             .to_immediate()
             .await?
             .primary_textual_output()
             .unwrap();
-        match tool_collection.process_chat_input(&assistent_text).await {
+        match tool_collection.process_chat_input(&assistant_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
                 let texts = yaml.get("texts").unwrap();
@@ -165,7 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let prompt = ChatMessageCollection::new()
                     .with_system(StringTemplate::tera(
-                       "You are a friendly assistent and help answer questions. Use the following as additional context: {{texts}}.",
+                       "You are a friendly assistant and help answer questions. Use the following as additional context: {{texts}}.",
                     ))
                     .with_user(StringTemplate::combine(vec![
                         StringTemplate::static_string(query),

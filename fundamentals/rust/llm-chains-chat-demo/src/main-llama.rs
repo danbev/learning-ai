@@ -181,13 +181,13 @@ All responses must be in YAML.
             .await
             .unwrap();
 
-        let assistent_text = result
+        let assistant_text = result
             .to_immediate()
             .await?
             .primary_textual_output()
             .unwrap();
-        println!("Assistent text: {}", assistent_text);
-        match tool_collection.process_chat_input(&assistent_text).await {
+        println!("Assistant text: {}", assistant_text);
+        match tool_collection.process_chat_input(&assistant_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
                 println!("YAML: {:?}", yaml);
@@ -205,7 +205,7 @@ All responses must be in YAML.
                 }
                 //println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
-                    "<s>[INST] <<SYS>> You are an assistent and help answer questions. Only reply with the answer to the question and nothing else.
+                    "<s>[INST] <<SYS>> You are an assistant and help answer questions. Only reply with the answer to the question and nothing else.
                        Use the following as additional context: {{texts}} <</SYS>>
 
                        {{ user_message }} [/INST]",
