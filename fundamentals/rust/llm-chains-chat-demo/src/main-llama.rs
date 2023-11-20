@@ -86,7 +86,6 @@ async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> 
         embeddings,
         None,
         None,
-        None,
     );
 
     if add_doc {
