@@ -1,5 +1,4 @@
 #include "llama.h"
-//#include "common.h"
 
 #include <cstdio>
 #include <string>
@@ -33,6 +32,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Tokenize the prompt.
     const int add_bos_token = llama_add_bos_token(model);
     const bool add_bos  = add_bos_token != -1 ? bool(add_bos_token) :
         (llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM); // SPM = SentencePiece Model
@@ -58,18 +58,20 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "\n");
 
-    //std::string token_str = std::string(input_tokens.data(), input_tokens.size());
+    // Create a new batch
+    llama_batch batch = llama_batch_init(512,/*embd*/ 0, /*n_seq_max*/ 1);
+    // batch.token will be a pointer to llam_token with a bytes size of 2048
+    // sizeof(llama_token) = 4, 4 * n_tokens = 2048, so it will be able to
+    // store 512 tokens.
+    // batch.pos is similarly a pointer to llama_pos with a bytes size of 2048
+    // sizeof(llama_pos) = 4, 4 * n_tokens = 2048, so it will be able to
+    // store 512 positions.
+    // n_seq_max is the max number of sequences in the batch.
+    // batch.logits is an array of bools with a bytes size of 512.
 
-    //fprintf(stdout, "input_tokens[%d]: %s\n", i, token_str.c_str());
-    //fprintf(stdout, "input_tokens size: %ld\n", input_tokens.size());
-
-    llama_batch batch = llama_batch_init(512, 0, 1);
-
-    // So llama_batch is used for is similar to the concept of context
-    // we talked about in ../../notes/llm.md#context_size. Below we are adding
-    // the input query tokens to this batch/context.
-    const std::vector<llama_seq_id>& seq_ids = { 0 };
-
+    // Next we are doing to populate the batch we created above. For each token
+    // of the tokenized prompt we are going to add it to the the batch.
+    const std::vector<llama_seq_id>& seq_ids = { 0 }; // seq_ids.length = 1
     for (size_t i = 0; i < input_tokens.size(); i++) {
         // the token of this batch entry.
         batch.token[batch.n_tokens] = input_tokens[i];
@@ -88,6 +90,7 @@ int main(int argc, char** argv) {
 
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
+    fprintf(stderr, "batch.n_tokens: %d\n", batch.n_tokens);
 
     fprintf(stderr, "prompt: %s", prompt.c_str());
     fflush(stderr);
@@ -127,6 +130,7 @@ int main(int argc, char** argv) {
 
             // Find the token with the highest raw score (logit) and return it.
             const llama_token new_token_id = llama_sample_token_greedy(ctx, &candidates_p);
+            // This is the token id that the model predicted.
 
             // is it an end of stream?
             if (new_token_id == llama_token_eos(model) || n_cur == n_len) {
@@ -135,43 +139,41 @@ int main(int argc, char** argv) {
                 break;
             }
 
-            // Next we get the string value for the token. This is called a piece
-            // which I think comes from SentencePiece, and a token would be
-            // one such piece (something like that).
-            std::vector<char> result(8, 0);
-            int n_tokens = llama_token_to_piece(model, new_token_id, result.data(), result.size());
+            // Next we get the string value for the token id. This is called a
+            // piece // which I think comes from SentencePiece.
+            // We don't know that actual length of the token so we are using 
+            // 8 here a "guess". If the token is longer than 8 bytes then we
+            // will resize the result vector and call llama_token_to_piece again.
+            std::vector<char> piece(8, 0);
+            int n_tokens = llama_token_to_piece(model, new_token_id, piece.data(), piece.size());
             // llama_token_to_piece will return the negative length of the token if
             // it is longer that the passed in result.length. If that is the case
             // then we need to resize the result vector to the length of the token
             // and call llama_token_to_piece again.
             if (n_tokens < 0) {
-                result.resize(-n_tokens);
-                int new_len = llama_token_to_piece(model, new_token_id, result.data(), result.size());
+                piece.resize(-n_tokens);
+                int new_len = llama_token_to_piece(model, new_token_id, piece.data(), piece.size());
             } else {
-                result.resize(n_tokens);
+                piece.resize(n_tokens);
             }
-            std::string token_str = std::string(result.data(), result.size());
-            fprintf(stderr, "%s", token_str.c_str());
+            std::string piece_str = std::string(piece.data(), piece.size());
+            fprintf(stderr, "%s", piece_str.c_str());
             // stdout is line buffered and we are not printing a newline so we
             // above so we need to call flush.
             fflush(stderr);
 
+            // So we initially had a batch of size equal to the number of tokens
+            // of the prompt. Now, we want to pass in the token that we just
+            // predicted to the model and get the logits for the next token.
+
             // Update the number of tokens in the batch to 0.
             batch.n_tokens = 0;
-
-            //fprintf(stderr, "batch.pos: %d\n", batch.pos[batch.n_tokens]);
-            const std::vector<llama_seq_id>& seq_ids = { 0 };
-            // Update the token to the new predicted token id.
-            batch.token[batch.n_tokens] = new_token_id;
-            // Update the position in the sequence of this batch entry.
-            batch.pos[batch.n_tokens] = n_cur,
-            batch.n_seq_id[batch.n_tokens] = seq_ids.size();
-            for (size_t s = 0; s < seq_ids.size(); ++s) {
-                batch.seq_id[batch.n_tokens][s] = seq_ids[s];
-            }
-            batch.logits[batch.n_tokens] = true;
+            batch.token[0] = new_token_id;
+            batch.pos[0] = n_cur,
+            batch.n_seq_id[0] = 1;
+            batch.seq_id[0][0] = 0;
+            batch.logits[0] = true;
             batch.n_tokens++;
-            //llama_batch_add(batch, new_token_id, n_cur, { 0 }, true);
 
             n_decode += 1;
         }
@@ -185,6 +187,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    fprintf(stdout, "Decoded %d tokens\n", n_decode);
     llama_batch_free(batch);
     llama_free(ctx);
     llama_free_model(model);
