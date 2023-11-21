@@ -214,3 +214,119 @@ information. Recall that this is data which is setup as input to for
 llama_decode and I think this is used when embeddings are already available
 perhaps. TODO: verify this.
 The `pos` is the position of the tokens in the sequence.
+
+
+### llama_batch
+This struct holdes `input` data for llama_decode. For example, if we pass in
+a prompt of "What is LoRA" that would first be tokenized and then the tokens
+will be added to the batch. An example of this can be found in
+[simple-prompt.cpp](../fundamentals/llama.cpp/src/simple-prompt.cpp).
+
+An instance of a batch contains a count of the number of tokens (or embeddings)
+that this batch holds. In the above case n_tokens would be 7.
+```c++
+    llama_batch batch = llama_batch_init(512, /*embd*/ 0, /*n_seq_max*/ 1);
+    for (size_t i = 0; i < input_tokens.size(); i++) {
+        // the token of this batch entry.
+        batch.token[batch.n_tokens] = input_tokens[i];
+        // the position in the sequence of this batch entry.
+        batch.pos[batch.n_tokens] = i,
+        // the sequence id (if any) of this batch entry.
+        batch.n_seq_id[batch.n_tokens] = seq_ids.size();
+        for (size_t s = 0; s < seq_ids.size(); ++s) {
+            batch.seq_id[batch.n_tokens][s] = seq_ids[s];
+        }
+        // Determins if the logits for this token should be generated or not.
+        batch.logits[batch.n_tokens] = false;
+        // Increment the number of tokens in the batch.
+        batch.n_tokens++;
+    }
+```
+We can take a look at the third token in this batch using:
+
+```console
+$ gdb --args ./simple-prompt
+(gdb) br llama.cpp:5514
+(gdb) r
+(gdb) p batch
+$10 = {n_tokens = 7, token = 0xc4fb20, embd = 0x0, pos = 0x894ab0, n_seq_id = 0x897d10, seq_id = 0x898520, 
+  logits = 0x895b50 "", all_pos_0 = 0, all_pos_1 = 0, all_seq_id = 0}
+
+(gdb) p batch.token[3]
+$6 = 4309
+
+(gdb) p batch.pos[3]
+$7 = 3
+```
+
+Now, I think I understand that position is the position of this token in the
+input sequence.
+
+But I'm not sure what `n_seq_id` is. There is one for each token in the batch
+so it has a size of 7 (n_tokens). 
+```console
+(gdb) p batch.n_seq_id[3]
+$13 = 1
+
+(gdb) p *batch.seq_id[3]
+$9 = 0
+```
+Lets see if we can figure this out by looking at `llama_decode` and how it
+uses these sequence values. If we set these pointers to null and rerun we
+will be able to see how llama_decode uses these values:
+```c++
+    batch.n_seq_id = nullptr;
+    batch.seq_id = nullptr;
+```
+We have the following if statement in llama_decode:
+```c++
+    std::vector<int32_t> n_seq_id;
+    std::vector<llama_seq_id *> seq_id_arr;
+    std::vector<std::vector<llama_seq_id>> seq_id;
+
+    if (batch.seq_id == nullptr) {
+        n_seq_id.resize(n_tokens);
+        seq_id.resize(n_tokens);
+        seq_id_arr.resize(n_tokens);
+        for (uint32_t i = 0; i < n_tokens; i++) {
+            n_seq_id[i] = 1;
+            seq_id[i].resize(1);
+
+            seq_id[i][0] = batch.all_seq_id;
+            seq_id_arr[i] = seq_id[i].data();
+        }
+
+        batch.n_seq_id = n_seq_id.data();
+        batch.seq_id = seq_id_arr.data();
+    }
+```
+First notice that 3 vectors are initialized and these will be populated if
+the batch.seq_id is null. Each entry in the `n_seq_id` vector will be set to 1,
+and the `seq_id` will be resized to that size (1) as well. Next, the actual
+value of the sequence id is set to `batch.all_seq_id` which is 0.
+Finally `batch.n_seq_id` and `batch.seq_id` are set to point to this data.
+Hmm, so the batch position tells use the position of the token in this batch.
+
+```
+batch tokenized from "What is LoRA", n_tokens = 7
+
+batch.token[0] = 0      batch.pos[0] = 0  n_seq_id[0] = 1 seq_id[0][0] = 0
+batch.token[1] = 1      batch.pos[1] = 1  n_seq_id[1] = 1 seq_id[1][0] = 0
+batch.token[2] = 338    batch.pos[2] = 2  n_seq_id[2] = 1 seq_id[2][0] = 0
+batch.token[3] = 4309   batch.pos[3] = 3  n_seq_id[3] = 1 seq_id[3][0] = 0
+batch.token[4] = 4717   batch.pos[4] = 3  n_seq_id[4] = 1 seq_id[4][0] = 0
+batch.token[5] = 29973  batch.pos[5] = 5  n_seq_id[5] = 1 seq_id[5][0] = 0
+batch.token[6] = 13     batch.pos[6] = 6  n_seq_id[6] = 1 seq_id[6][0] = 0
+                                                          (size=1)       ↑
+                                                                    sequence number
+```
+It is possible to set the values of the sequences to something else. For
+example, if we set the sequence id of the first token to 1, and the sequence id
+of the second token to 2, then we will have two sequences in this batch.
+```c++
+    batch.n_seq_id[0] = 1;
+    batch.seq_id[0][0] = 1;
+    batch.n_seq_id[1] = 1;
+    batch.seq_id[1][0] = 2;
+```
+I'm still not sure how this is useful.
