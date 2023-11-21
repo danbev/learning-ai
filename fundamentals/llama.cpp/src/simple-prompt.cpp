@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
         batch.token[batch.n_tokens] = input_tokens[i];
         // the position in the sequence of this batch entry.
         batch.pos[batch.n_tokens] = i,
-        // the sequence id (if any) of this batch entry.
+        // the number of sequence id's (if any) of this batch entry.
         batch.n_seq_id[batch.n_tokens] = seq_ids.size();
         for (size_t s = 0; s < seq_ids.size(); ++s) {
             batch.seq_id[batch.n_tokens][s] = seq_ids[s];
@@ -87,6 +87,8 @@ int main(int argc, char** argv) {
         // Increment the number of tokens in the batch.
         batch.n_tokens++;
     }
+    //batch.n_seq_id = nullptr;
+    //batch.seq_id = nullptr;
 
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
@@ -108,9 +110,9 @@ int main(int argc, char** argv) {
 
     int n_cur = batch.n_tokens;
     int n_decode = 0;
+    int n_vocab = llama_n_vocab(model);
     while (n_cur <= n_len) {
         {
-            int n_vocab = llama_n_vocab(model);
             // logits are stored in the last token of the batch and are the 
             // raw unnormalized predictions.
             float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
