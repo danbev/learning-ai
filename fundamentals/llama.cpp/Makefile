@@ -26,7 +26,7 @@ pre-simple-prompt: src/simple-prompt.cpp
 	$(CXX) -E $(CXXFLAGS) $^  -o pre-simple-prompt.cpp
 
 update-llama:
-	git submodule update --remote --merge
+	git submodule update --remote --merge llama.cpp
 
 clean:
 	$(RM) -f simple-prompt
