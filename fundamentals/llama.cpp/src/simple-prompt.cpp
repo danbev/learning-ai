@@ -106,13 +106,13 @@ int main(int argc, char** argv) {
 
     // This is the total number of tokens that we will generate, which recall
     // includes our query tokens (they are all in the llm_batch).
-    const int n_len = 32;
+    const int n_len = 40;
 
     int n_cur = batch.n_tokens;
-    int n_decode = 0;
+    int n_decode = batch.n_tokens;
     int n_vocab = llama_n_vocab(model);
+    //while (true) {
     while (n_cur <= n_len) {
-        {
             // logits are stored in the last token of the batch and are the 
             // raw unnormalized predictions.
             float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
@@ -177,7 +177,6 @@ int main(int argc, char** argv) {
             batch.n_tokens++;
 
             n_decode += 1;
-        }
 
         n_cur += 1;
 
@@ -188,7 +187,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    fprintf(stdout, "Decoded %d tokens\n", n_decode);
+    fprintf(stdout, "\nDecoded %d tokens\n", n_decode);
     llama_batch_free(batch);
     llama_free(ctx);
     llama_free_model(model);
