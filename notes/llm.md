@@ -224,7 +224,7 @@ Lets say we have the following vocabulary:
 "lemon": 0.005
 ```
 And say we set top_k = 4. This means that we will only consider the 4 top most
-probable words for the next selection and then sample from the.
+probable words for the next selection and then sample from them.
 
 Unlike Nucleus Sampling (top_p), which considers a variable number of tokens
 based on a probability threshold, top_k sampling always considers a fixed number
@@ -272,6 +272,7 @@ Here the original probablity is the probability of the token given to the token
 by the LLM. The repetition penalty is a value between 1 and infinity. A value
 of 1 will not do anything as we in this case are just raising the probability
 to the power of 1 which is just the original probability.
+
 Now, a value greater than one will actually make the probability, a value
 between 0-1, smaller which might seem counter intuitive but it makes sense if we
 think about it:
@@ -279,6 +280,7 @@ think about it:
 0.20^1.2  = 0.16
 0.20^-1.2 = 0.25
 ```
+
 * A Repetition Penalty greater than 1 discourages repetition by reducing the
 probabilities of already-appeared tokens.
 
@@ -289,8 +291,8 @@ probabilities of already-appeared tokens.
 #### Frequency penalty
 This is a hyperparameter that is simlar to the repetition penalty but instead
 controls the likelihood of generating tokens that are inherently frequent in the
-language model's training data, whereas repetition penalty is about the the
-tokens in the generated text.
+language model's training data, whereas repetition penalty is about the tokens
+in the generated text.
 
 The following is applied to each token in the vocabulary:
 ```
@@ -304,13 +306,13 @@ common words. Repetition Penalty is useful when you want to avoid repetitive
 text in longer sequences.
 
 ##### Presence penalty
-This hyperparameter influences the models output and controlls the presence or
+This hyperparameter influences the models output and controls the presence or
 absence of new token in the generated text.
 
-If this value i 0 then there is no effect at all for this hyperparameter.
-If this value is > 0 the model i discouraged from introducing new tokens that
+If this value is 0 then there is no effect at all for this hyperparameter.
+If this value is > 0, the model is discouraged from introducing new tokens that
 are not strongly supported by the context (the model is more conservative).
-If this value is < 0 the model is encouraged to introduce new tokens, eveni if
+If this value is < 0 the model is encouraged to introduce new tokens, even if
 they are not strongly supported by the context (the model is more creative).
 
 When the model is generating text, it computes a probability distribution over
