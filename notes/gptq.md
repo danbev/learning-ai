@@ -53,7 +53,7 @@ This was something that has confused be in the past so it was nice to finally
 get an answer to what this suffixes mean.
 
 There is also a new format called
-[GGUF](https://github.com/philpax/ggml/blob/gguf-spec/docs/gguf.md) which is a
+[GGUF](https://github.com/ggerganov/ggml/blob/master/docs/gguf.md) which is a
 replacement for GGML.
 
 ### AutoGPTQ
