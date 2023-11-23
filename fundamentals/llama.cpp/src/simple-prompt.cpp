@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     // Next we are doing to populate the batch we created above. For each token
     // of the tokenized prompt we are going to add it to the the batch.
     const std::vector<llama_seq_id>& seq_ids = { 0 }; // seq_ids.length = 1
-    for (size_t i = 0; i < n_tokens; i++) {
+    for (int i = 0; i < n_tokens; i++) {
         // the token of this batch entry.
         batch.token[batch.n_tokens] = input_tokens[i];
         // the position in the sequence of this batch entry.
@@ -117,14 +117,23 @@ int main(int argc, char** argv) {
     // includes our query tokens (they are all in the llm_batch).
     const int n_len = 80;
 
+
     int n_cur = batch.n_tokens;
     int n_decode = batch.n_tokens;
     int n_vocab = llama_n_vocab(model);
+
+    float* all_logits = llama_get_logits(ctx);
+    // All the logits are stored in a 2d vector std::vector<float> logits
+    // where the first dimension is the number of tokens in the batch and
+    // the second dimension is the number of tokens in the vocabulary.
+    float* last_logits = all_logits + (batch.n_tokens - 1) * n_vocab;
+    
     //while (true) {
     while (n_cur <= n_len) {
         // logits are stored in the last token of the batch and are the 
         // raw unnormalized predictions.
-        float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
+        //float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
+        float* logits = all_logits + (batch.n_tokens - 1) * n_vocab;
 
         std::vector<llama_token_data> candidates;
         candidates.reserve(n_vocab);
