@@ -11,16 +11,40 @@ $ git submodule init
 
 To update the submodule run:
 ```console
-$ git submodule update
+$ make update-ggml
 ```
 
 ### Building
 ```console
-$ make main
+$ make tensor
 ```
 
 ### Running
+The LD_LIBRARY_PATH environment variable must be set to the location of the
+GGML library. For example:
 ```console
-$ ./main
-GGML Example
+$ export LD_LIBRARY_PATH=ggml/build/src
+```
+
+```console
+$ ./tensor
+GGML tensor example
+ctx mem size: 16777216
+ctx mem used: 0
+x tensor type: f32
+x tensor backend: 0 
+x tensor dimensions: 1
+x tensor data: 0x7f0b48022190
+x tensor operation: NONE, none
+x tensor grad: (nil)
+x tensor src: 0x7f0b480220d8
+x tensor name: 
+x tensor is_param: 0
+updated tensor data: 18.000000
+updated tensor name: updated
+matrix ne[0]: 3
+matrix ne[1]: 2
+matrix nb[0]: 4
+matrix nb[1]: 12
+matrix name: 
 ```
