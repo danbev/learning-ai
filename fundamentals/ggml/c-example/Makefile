@@ -6,7 +6,8 @@ LDFLAGS = -Lggml/build/src/
 ggml-init:
 	cd ggml && rm -rf build && mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Debug .. && make
 
-ggml: ggml/build
+.PHONY: ggml
+ggml:
 	cd ggml/build && make
 
 all: $(TARGET)
@@ -19,6 +20,9 @@ tensor: src/tensor.c
 
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
+
+update-ggml:
+	git submodule update --remote --merge ggml
 
 .PHONY: clean
 clean:
