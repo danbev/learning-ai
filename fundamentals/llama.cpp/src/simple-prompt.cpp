@@ -9,6 +9,10 @@ int main(int argc, char** argv) {
     std::string model_path = "models/llama-2-13b-chat.Q4_0.gguf";
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
+    // If the prompt provided is in the form or a question like it is here
+    // the model will predict the first token to be a new line, completing the
+    // prompt with a new line. It will then predict the next token to be the
+    // another new line.
     std::string prompt = "What is LoRA?";
 
     bool numa = false;
@@ -22,7 +26,7 @@ int main(int argc, char** argv) {
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.seed  = 1234;
-    ctx_params.n_ctx = 512;
+    ctx_params.n_ctx = 1024;
     ctx_params.n_threads = 4;
     ctx_params.n_threads_batch = 4;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_LINEAR;
