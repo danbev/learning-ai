@@ -1,0 +1,13 @@
+[package]
+name = "part1"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+zero-to-hero = { path = "../micrograd" }
+approx = "0.5.1"
+ndarray = "0.15.6"
+plotpy = "0.4.2"
+russell_lab = "0.5.0"
