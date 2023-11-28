@@ -4,8 +4,8 @@ use plotpy::{Curve, Plot};
 use std::cell::RefCell;
 use std::io::{self};
 use std::rc::Rc;
-use zero_to_hero::mlp::Mlp;
-use zero_to_hero::value::Value;
+use micrograd::mlp::Mlp;
+use micrograd::value::Value;
 
 fn f(xs: Array1<f64>) -> Array1<f64> {
     xs.mapv(|x| 3.0 * x * x - 4.0 * x + 5.0)

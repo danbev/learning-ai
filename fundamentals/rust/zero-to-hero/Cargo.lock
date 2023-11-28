@@ -309,6 +309,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "micrograd"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "rand_chacha",
+ "uuid",
+]
+
+[[package]]
 name = "ndarray"
 version = "0.15.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -373,17 +382,17 @@ name = "part1"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "micrograd",
  "ndarray",
  "plotpy",
  "russell_lab",
- "zero-to-hero",
 ]
 
 [[package]]
 name = "part2"
 version = "0.1.0"
 dependencies = [
- "zero-to-hero",
+ "micrograd",
 ]
 
 [[package]]
@@ -786,12 +795,3 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
-
-[[package]]
-name = "zero-to-hero"
-version = "0.1.0"
-dependencies = [
- "rand",
- "rand_chacha",
- "uuid",
-]
