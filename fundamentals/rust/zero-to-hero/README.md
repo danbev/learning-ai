@@ -36,7 +36,7 @@ here which might take away from the learning experience.
 The Rust code for this first part of the series can be found in
 [part1.rs](./src/bin/part1.rs) and can be run with the following command:
 ```console
-(zeroh) $ cargo run --bin part1
+(zeroh) $ cargo run -p part1
 ```
 The following plot shows the function the will be used in the  `intro` section:
 
