@@ -204,16 +204,45 @@ A llmm_batch is simlilar to the contept of context we talked about
 [llm.md](../../notes/llm.md#context_size). Below we are adding the input query
 tokens to this batch/context. So it will initially just contain the tokens for
 our query. But after running the inference, we will append the next token to the
-batch and run the inference again and then run the inferencex again to predict
+batch and run the inference again and then run the inference again to predict
 the next token, now with more context (the previous token).
 
 The `embd` is the embedding of the tokens (I think). So this was not obvious to
 me at first, but recall that the tokens just integer representations of
 works/subwords, like a mapping. But they don't contains any semantic
-information. Recall that this is data which is setup as input to for
-llama_decode and I think this is used when embeddings are already available
-perhaps. TODO: verify this.
+information. Recall that this is data which is setup as input for llama_decode
+and I think this is used when embeddings are already available perhaps.
+TODO: verify this.
 The `pos` is the position of the tokens in the sequence.
+
+### Key-Value Cache
+This section tries to explain the key-value cache used in the llama2
+architecture. This is the caching of the key and value matrices that are used
+in the attention architecture.
+
+First lets take a look at inference without the key-value cache. Now the
+following example we are starting with input tokens with a dimension of 2.
+So for each token that we have we have a vector of size 2. And we will assume
+that the first token is the start of sentence token and that the model is going
+to predict the next token. What it predict does not matter to make the point
+here so just ignore the actual values.
+```
+Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
+
+input token [1 2] (Start of Sentence)
+
+Time=1
+[  Q       K^T      QK^T  ] x  V  
+ [1 2]   . [1]    = [5]     x [1 2] = [5 10]
+           [2]
+
+Time=2
+[  Q       K^T      QK^T  ]  x   V  
+ [1 2 ]  . [1  5] = [5  25 ] x [1  2] = 
+ [5 10]    [2 10]   [25 125]   [5 10]
+
+Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
+```
 
 
 ### llama_batch
@@ -330,3 +359,31 @@ of the second token to 2, then we will have two sequences in this batch.
     batch.seq_id[1][0] = 2;
 ```
 I'm still not sure how this is useful.
+
+### tensor-split
+There is model_param value which is a pointer to floats and the size of this
+array is the value of LLAMA_MAX_DEVICES. This value is defined in llama.h:
+```c++
+
+#ifdef GGML_USE_CUBLAS                                                             
+#include "ggml-cuda.h"                                                          
+#define LLAMA_MAX_DEVICES GGML_CUDA_MAX_DEVICES                                    
+#else                                                                              
+#define LLAMA_MAX_DEVICES 1                                                        
+#endif // GGML_USE_CUBLAS     
+...
+
+struct llama_model_params {                                                 
+    int32_t n_gpu_layers; // number of layers to store in VRAM                 
+    int32_t main_gpu;     // the GPU that is used for scratch and small tensors
+    const float * tensor_split; // how to split layers across multiple GPUs (size: LLAMA_MAX_DEVICES)
+    ...
+}
+```
+So in the case where cuBLAS (CUDA Basic Linear Algebra Subroutine) is used the
+size of this array will be the maximum number of devices that can be used.
+The values in this array will be of type float and and would be how the layers
+of the neural network should be split accorss the devices. This allows for
+specifying that more layers should be stored on one device than another. For
+example [0.7, 0.3] would mean that 70% of the layers should be stored on the
+first device and 30% on the second device.
