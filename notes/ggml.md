@@ -9,13 +9,13 @@ of how to use GGML.
 For me it help to draw parallels between GGML and part1 of zero-to-hero, where
 we created a Value struct which in addition of holding a value, would also have
 a gradient, and an operation and children if the value was created by an
-operation. The Value struct also supported autoamtic differentiation. In a
-simliar manner GGML has a Tensor struct which holds a value, a gradient, and
-an operation and a src array which is simlar to the children in zero-to-hero in
-that is would contain the left hand side and right hand side of an operation.
-The Tensor struct also supports automatic differentiation and also the ability
-do create dot draphs. GGML contains more than that but then tensor is the basic
-structure.
+operation. The Value struct also supported automatic differentiation. In a
+simliar manner GGML has a `tensor` struct which holds a value, a gradient, and
+an operation and a `src` array which is simlar to the children in zero-to-hero
+in that is would contain the left hand side and right hand side of an operation.
+
+The tensor struct also supports ability do generate dot draphs. GGML contains
+more than that but then tensor one of the is the basic structure.
 
 GGML files contain binary-encoded data, including version number,
 hyperparameters, vocabulary, and weights.
