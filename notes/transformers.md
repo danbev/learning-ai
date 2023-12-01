@@ -98,8 +98,8 @@ encoding to each of the embeddings. In the original paper this used absolute
 position encoding. I've written about this is
 [vector-embeddings.md](./vector-embeddings.md).
 So we have our input matrix which in our case is a 4x512 matrix, where each
-is one of the tokens in the input sentence. We take this matrix and make 3
-copies:
+is one of the tokens in the input sentence. We take this matrix and make 4
+copies but we will only focus on the first three for now:
 ```
  +--------+          +-------+
  | Input  | -------> | Query |
@@ -110,6 +110,9 @@ copies:
                      +-------+
             -------> | Value |
                      +-------+
+                                               +--------------+
+            -------------------------------->  | Feed forward |
+                                               +--------------+
 ```
 The attention function looks like this:
 ```
@@ -166,10 +169,86 @@ give us the attention scores for each of the words/tokens.
 I just want to point out that this was using a single Q, K, and V matrix which
 could be called single head attention. And also notice that there were now
 learnable parameters in this case. We only used the input matrix which was
-copied into Q, K, and V.
-In actual implementation what is used is something called multi-head attention
-which I'll try to explain now.
+copied into Q, K, and V. In actual implementation what is used is something
+called multi-head attention which I'll try to explain now.
 
+So we have our input matrix like before and we create copies of it just the
+same as for single head attention:
+```
+ +--------+          +-------+
+ | Input  | -------> | Query |
+ |        |          +-------+
+ +--------+ -------> +-------+
+                     |  Key  | 
+                     +-------+
+                     +-------+
+            -------> | Value |
+                     +-------+
+                                               +--------------+
+            -------------------------------->  | Feed forward |
+                                               +--------------+
+```
+But we also have additional matrices which are learnable, meaning they can be
+updated by the model during training.   
+```
+ +--------+          +-------+    +-------+    +-------+
+ | Input  | -------> | Query | X  | W^q   | =  |   Q'  |
+ |        |          +-------+    +-------+    +-------+
+ +--------+ -------> +-------+    +-------+    +-------+
+                     |  Key  | X  | W^k   | =  |   K'  |
+                     +-------+    +-------+    +-------+
+                     +-------+    +-------+    +-------+
+            -------> | Value | X  | W^v   | =  |   V'  |
+                     +-------+    +-------+    +-------+
+```
+
+The multi-head attention function looks like this:
+```
+MultiHeadAttention(Q, K, V) = Concat(head_1, ..., head_h) x W^o
+head_i = Attention(QW^qᵢ, KW^kᵢ, VW^Vᵢ)
+Attention(Q, K, V) = softmax(Q, K, V) x V
+
+h = number of heads
+dₖ = d_model / h         For example 4 heads and d_model = 512, dₖ = 128
+```
+If we look at the Attention function it is the same as we saw earlier. What is
+new is that we are going to split the the matrices Q', K', and V' into smaller
+matrices. This is the number of heads that we have. So for example if we want
+to have 4 heads and the embedding dimension size is 512, then we will have 4
+4x126 matrices. Each one of these are called a head and the are separate from
+each there are used to perform the single-head attention function that we went
+through above. 
+```
+Attention(Q'₀, K'₀, V'₀) = softmax((Q'₀, K'₀, V'₀)/√dₖ) x V'₀
+Attention(Q'₁, K'₁, V'₁) = softmax((Q'₁, K'₁, V'₁)/√dₖ) x V'₁
+Attention(Q'₂, K'₂, V'₂) = softmax((Q'₂, K'₂, V'₂)/√dₖ) x V'₂
+Attention(Q'₃, K'₃, V'₃) = softmax((Q'₃, K'₃, V'₃)/√dₖ) x V'₃
+```
+Those will output 4 (sequence_length x dₖ) matrices. So why would we want to do
+this?  
+Well, notice how each attention calculation will still be using all the words/
+tokens of the input sequence but fewer dimensions than with the single head
+attention. This has implication for the softmax calculation which now only sees
+a subset of the embedding dimension values. It is this that allows each of then
+heads to "focus" on different parts of the dimension space and it is what
+causes the model to learn different things about the input sequence.
+
+These matrices are then concatenated into a single matrix:
+```
+                               +---------+
+Concat(head_1, ..., head_h) =  |    H    |
+                               | (4, 512)|
+                               +---------+
+```
+An this matrix is then multiplied by a learnable parameter matrix W^o:
+```
+        +---------+     +-----------+    +-------+   (MH-A=MultiHead-Attention)
+        |    H    |     |    W^o    |    | MH-A  |
+        | (4, 512)|  X  | (512, 512)| =  |(4,512)|
+        +---------+     +-----------+    +-------+
+```
+Notice that we did not have additional matrices which we in the single head
+attention model.
 
 
 We start with our tokenized input, the embedded vector(s) that represents some
