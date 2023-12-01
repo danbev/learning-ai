@@ -68,9 +68,109 @@ Bert-large has 24 encoders and 340M learnable parameters.
 Text-to-Text Transfer Transformer (T5) is a transformer model that is trained.
 
 ### Scaled dot product attention
-In standard attention uses 3 martixes, a query matrix, a key matrix, and a value
-matrix. The query and key matrixes contain weights, and the value matrix
-contains an embedding of the value (the input).
+Standard attention uses 3 martixes, a query matrix, a key matrix, and a value
+matrix. 
+
+Let's start with the following input sentence "Dan loves icecream". The first
+step it split this into tokens, so we will have might get 4 tokens:
+```
+["Dan", "loves", "ice", "cream"]
+```
+Next, these words are mapped to token id from the model's vocabulary:
+```
+ [1003]  [82]  [371]  [10004]
+```
+Now, the model will the take these input and map them into embeddings which
+might be of a dimension of say 512. So we will have 4 vectors of 512 dimensions
+```
+1003  [0      ...        512]
+82    [0      ...        512]
+371   [0      ...        512]
+10004 [0      ...        512]
+```
+If the same work appears multiple times in the input, the same embedding will
+be used for each occurance. So there is currently no context or association
+between these works/token embeddings. The only contain information about each
+work/token itself and nothing about the context in which it appears.
+
+So with these embeddings the first thing in the model is to add a positional
+encoding to each of the embeddings. In the original paper this used absolute
+position encoding. I've written about this is
+[vector-embeddings.md](./vector-embeddings.md).
+So we have our input matrix which in our case is a 4x512 matrix, where each
+is one of the tokens in the input sentence. We take this matrix and make 3
+copies:
+```
+ +--------+          +-------+
+ | Input  | -------> | Query |
+ |        |          +-------+
+ +--------+ -------> +-------+
+                     |  Key  | 
+                     +-------+
+                     +-------+
+            -------> | Value |
+                     +-------+
+```
+The attention function looks like this:
+```
+Attention(Q, K, V) = softmax((Q x Kᵗ)/√embedding_dim) x V
+
+embedding_dim = 512 in our example
+```
+Lets start with looking at the nominator which is the matrix multiplication of
+Q and K transposed:
+```
+   +----------------+   +-------+     +--------+
+   |      Q         |   |  Key  |     |        |
+   |                | X |       |  =  |        |   
+   |  (4, 512)      |   |(512,4)|     | (4, 4) |
+   +----------------+   |       |     +--------+
+                        |       |
+                        |       |
+                        +-------+
+```
+So, lets just think about this for a second. We know we copied the input
+matrix to Q and K. So I think we can visualize the attention score matrix like
+this:
+```       Dan  loves ice  cream
+          (A)   (B)  (C)  (D)
+          +-------------------+
+Dan (A)   |AA | AB  | AC | AD |
+          |-------------------|
+loves (B) |BA | BB  | BC | BD |
+          |-------------------|
+ice (C)   |CA | CB  | CC | CD |
+          |-------------------|
+cream (D) |DA | DB  | DC | DD |
+          +-------------------+
+```
+So AB is the dot product of the embeddings for word "Dan" and the embeddings for
+the word "loves". Notice how we are "comparing" the word "Dan" with all the
+other words in the sentence. And we done this for all words as well. The dot
+product will give us some value that indicates how similar the two words are (
+how far apart they are in the embedding space).
+
+The next thing we do is we scale the values in the matrix by dividing them by
+the square root of the embedding dimension. Recall that this called the
+`scaled dot product attentions` and this is the scaling part. This is done to
+avoid stability issues if the dot product values are too large.
+
+So we divide each value in the matrix with the square root of the embedding
+dimension. After that we apply the softmax function to the matrix. This will
+give us a matrix where the values are between 0 and 1 and the sum of the values
+in each row will be 1. This matrix tells us how much attention we should pay to
+each word in the input sentence. We take this matrix and multiply is with the
+V matrix which is just the input matrix unchanged. The resulting matrix will
+give us the attention scores for each of the words/tokens.
+
+I just want to point out that this was using a single Q, K, and V matrix which
+could be called single head attention. And also notice that there were now
+learnable parameters in this case. We only used the input matrix which was
+copied into Q, K, and V.
+In actual implementation what is used is something called multi-head attention
+which I'll try to explain now.
+
+
 
 We start with our tokenized input, the embedded vector(s) that represents some
 text, so in this example we assume that the input has already been through
@@ -86,7 +186,7 @@ token 2   |  |  |  |  |
           +--+--+--+--+
 ```
 
-So we will have the folling matrix multiplications:
+So we will have the following matrix multiplications:
 ```
        X                 W_Q              Q
   +--+--+--+--+      +--+--+--+
@@ -198,6 +298,7 @@ matrix, and the values in this matrix contain the attention scores. What this is
 doing is calculating the distances between the key matrix vectors to the query
 vector (just one?). This can be done by looking at the angle between the vectors
 or calculating the dot product.
+
 Smaller values in the attention score mean that we should pay less attention to
 them and larger values mean that we should pay more attention to those tokens.
 
