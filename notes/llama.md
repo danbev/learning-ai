@@ -220,11 +220,11 @@ This section tries to explain the key-value cache used in the llama2
 architecture. This is the caching of the key and value matrices that are used
 in the attention architecture.
 
-First lets take a look at inference without the key-value cache. Now the
+First lets take a look at inference without the key-value cache. Now in the
 following example we are starting with input tokens with a dimension of 2.
 So for each token that we have we have a vector of size 2. And we will assume
 that the first token is the start of sentence token and that the model is going
-to predict the next token. What it predict does not matter to make the point
+to predict the next token. What it predicts does not matter to make the point
 here so just ignore the actual values.
 ```
 Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
@@ -232,21 +232,430 @@ Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
 input token [1 2] (Start of Sentence)
 
 Time=1
-[  Q       K^T      QK^T  ] x  V  
- [1 2]   . [1]    = [5]     x [1 2] = [5 10]
-           [2]
+[  Q       K^T      QK^T  ] *  V  
+ [1 2]   . [1]    = [5]     * [1 2] = [5 10]
+           [2]    
 
+  (dot product)   (scalar multiplication because [5] is a single number)
+```
+So we can see that we have performed the dot product of the query and the key
+and then multiplied that by the value matrix. Lets pretend that the output of
+this is then the probability of the next token, and that token was selected from
+the models vocabulary (we are ignoring softmax etc here).
+
+So for the next token we then append the predicted token to the input tokens
+and run the inference again.
+```
 Time=2
-[  Q       K^T      QK^T  ]  x   V  
- [1 2 ]  . [1  5] = [5  25 ] x [1  2] = 
- [5 10]    [2 10]   [25 125]   [5 10]
+[  Q       K^T      QK^T  ]  *   V  
+ [1 2 ]  . [1  5] = [5  25 ] * [1  2] = [5*1 + 25*5     5*2 +  25*10] = [130  260]
+ [5 10]    [2 10]   [25 125]   [5 10]   [25*1 + 125*5  25*2 + 125*10]   [650 1300]
+  (dot product)     (matrix multiplication)
+```
+Once again we will take the last token and append it to the input tokens and
+run the inference again.
+```
+Time=3
+[  Q                 K^T      QK^T  ]  *   V  
+ [1     2 ]   . [1  5  650] = [5    25    3250   ] =
+ [5     10]     [2 10 1300]   [25   125   16250  ]
+ [650 1300]                   [3250 16250 2210000]
+```
+Notice that we have calculated the dot product for the first and second token
+again!
+The transformer architecture needs to have all the previous tokens in the
+sequence to predict the next token but we don't have to recalculate the dot
+product every time. We can cache the key and value matrices and then just
+use a single input token, the last token predicted and not append that token to
+the input:
+```
+Time=2
+[  Q       K^T      QK^T  ]  *   V  
+ [5 10 ]  . [1  5] = [25  125] * [1 5 ] = [650 1300]
+            [2 10]               [2 10]
+```
+By adding the output token to the Key and the Value matrices we perform fewer
+operations. This is the key-value cache.
+So for every token processed it needs to be added to the Key and Value cache
+matrices to be use in the next predition.
 
-Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
+
+Let's take a look at how this is implemented in llama.cpp. I'll be using
+simple-prompt to demonstrate this.
+```console
+$ gdb --args ./simple-prompt
+(gdb) br simple-prompt.cpp:34
+(gdb) r
+(gdb) f
+#1  0x0000000000408fab in main (argc=1, argv=0x7fffffffd198) at src/simple-prompt.cpp:34
+34	    llama_context * ctx = llama_new_context_with_model(model, ctx_params);
+(gdb) s
+gdb) l
+8736	        return nullptr;
+8737	    }
+8738	
+8739	    llama_context * ctx = new llama_context(*model);
+(gdb) p ctx.kv_self
+$5 = {has_shift = false, head = 0, size = 0, used = 0, n = 0, cells = std::vector of length 0, capacity 0, k = 0x0, 
+  v = 0x0, ctx = 0x0, buf = {data = 0x0, size = 0, fallback = false}}
+```
+At this stage the kv_self is uninitialized. We can inspect this struct using:
+```console
+gdb) ptype ctx.kv_self
+type = struct llama_kv_cache {
+    bool has_shift;
+    uint32_t head;
+    uint32_t size;
+    uint32_t used;
+    uint32_t n;
+    std::vector<llama_kv_cell> cells;
+    ggml_tensor *k;
+    ggml_tensor *v;
+    ggml_context *ctx;
+    llama_buffer buf;
+  public:
+    ~llama_kv_cache(void);
+}
+```
+We can see we have two pointers to ggml_tensor. These are the key and value
+matrices.
+
+```console
+(gdb) ptype llama_kv_cell
+type = struct llama_kv_cell {
+    llama_pos pos;
+    llama_pos delta;
+    std::set<int> seq_id;
+  public:
+    bool has_seq_id(const llama_seq_id &) const;
+}
+```
+A little further down we have:
+```console
+(gdb) s
+8789 if (!llama_kv_cache_init(ctx->model.hparams, ctx->kv_self, memory_type, cparams.n_ctx, model->n_gpu_layers)) {
+Notice that we are passing in `ctx->kv_self`, and the cparams.n_ctx which is
+the context length set to 1024 in this case.
+```console
+(gdb) s
+1518	static bool llama_kv_cache_init(
+(gdb) l
+1519	        const struct llama_hparams & hparams,
+1520	             struct llama_kv_cache & cache,
+1521	                         ggml_type   wtype,
+1522	                          uint32_t   n_ctx,
+1523	                               int   n_gpu_layers) {
+1524	    const uint32_t n_embd  = hparams.n_embd_gqa();
+1525	    const uint32_t n_layer = hparams.n_layer;
+1526	
+1527	    const int64_t n_mem      = n_layer*n_ctx;
+1528	    const int64_t n_elements = n_embd*n_mem;
+```
+The first line had be asking what `gqa` is and I think this stands for
+grouped query attention. 
+```console
+(gdb) s
+1532	    cache.head = 0;
+(gdb) s
+1533	    cache.size = n_ctx;
+(gdb) s
+1534	    cache.used = 0;
+(gdb) s
+1536	    cache.cells.clear();
+(gdb) p cache
+$20 = (llama_kv_cache &) @0xc624c8: {has_shift = false, head = 0, size = 1024, used = 0, n = 0, 
+  cells = std::vector of length 0, capacity 0, k = 0x0, v = 0x0, ctx = 0x0, buf = {data = 0x0, size = 0, 
+    fallback = false}}
+
+1536	    cache.cells.clear();
+(gdb) n
+1537	    cache.cells.resize(n_ctx);
+(gdb) n
+(gdb) p cache
+$21 = (llama_kv_cache &) @0xc624c8: {has_shift = false, head = 0, size = 1024, used = 0, n = 0, 
+  cells = std::vector of length 1024, capacity 1024 = {{pos = -1, delta = 0, seq_id = std::set with 0 elements}, {
+      pos = -1, delta = 0, seq_id = std::set with 0 elements}, {pos = -1, delta = 0, 
+      seq_id = std::set with 0 elements}, {pos = -1, delta = 0, seq_id = std::set with 0 elements}, {pos = -1, 
+      ...
+1544	    params.mem_buffer = cache.buf.data;
+(gdb) s
+1545	    params.no_alloc   = false;
+(gdb) s
+1547	    cache.ctx = ggml_init(params);
+```
+So we can see here that we are going to initialize context for ggml. I did not
+notice that `ggml_context *ctx` was a member of `llama_kv_cache`.
+Next we are going to create a one dimensional tensor of GGML_TYPE_F16 (half
+precision float) with 209715200 elements.
+```console
+1554	    cache.k = ggml_new_tensor_1d(cache.ctx, wtype, n_elements);
+(gdb) p n_elements
+$31 = 209715200
+(gdb) p wtype
+$32 = GGML_TYPE_F16
+```
+Hmm, the size of the tensor don't make sense to me yet. The 1d tensor is like
+a list of number and it's size is 209715200. And the type of these slots is
+F16 so that would be 2 bytes per slot, so 16 bytes per slot.
+```console
+llama_new_context_with_model: kv self size  =  800.00 MiB
 ```
 
+```console
+gdb) s
+8804	            ctx->logits.reserve(hparams.n_vocab);
+(gdb) p hparams.n_vocab
+$40 = 32000
+```
+That is pretty much it for the intialization of the llama_context. This will
+return us to simple_prompt.cpp:
+```console
+4	    llama_context * ctx = llama_new_context_with_model(model, ctx_params);
+35	    if (ctx == NULL) {
+36	        fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
+37	        return 1;
+38	    }
+```
+Now, lets look what happens when decode is called and how this interacts with
+the key-value cache.
+```console
+(gdb) br simple-prompt.cpp:115
+Breakpoint 2 at 0x40949e: file src/simple-prompt.cpp, line 115.
+(gdb) c
+Continuing.
+batch.n_tokens: 6
+batch.tokens: [1, 1724, 338, 4309, 4717, 29973, ]
+prompt: What is LoRA?
+Breakpoint 2, main (argc=1, argv=0x7fffffffd198) at src/simple-prompt.cpp:115
+115	    if (llama_decode(ctx, batch) != 0) {
+```
+And the batch looks like this:
+```console
+(gdb) p batch
+$54 = {n_tokens = 6, token = 0xc63980, embd = 0x0, pos = 0x8a86f0, n_seq_id = 0x8ab7b0, seq_id = 0x8abfc0, 
+  logits = 0x8a9790 "", all_pos_0 = 0, all_pos_1 = 0, all_seq_id = 0}
+(gdb) s
+5678	    const auto n_batch = cparams.n_batch;
+(gdb) s
+(gdb) p n_batch
+$56 = 512
+```
+So, n_batch is the maximum number of tokens that can be in a single batch, and
+n_tokens is the number of tokens in the current batch.
+```console
+(gdb) n
+5682	    int n_threads = n_tokens == 1 ? cparams.n_threads : cparams.n_threads_batch;
+```
+I found this a little interesting and because I've always called decode with
+a number of tokens, never a single token. But thinking back the example with
+the key-value cache and how it would pass in a single token as the input but
+the key and value matrices would contain all the previous tokens.
+```console
+(gdb) n
+5695	    auto & kv_self = lctx.kv_self;
+
+5734	    // if we have enough unused cells before the current head ->
+5735	    //   better to start searching from the beginning of the cache, hoping to fill it
+5736	    if (kv_self.head > kv_self.used + 2*n_tokens) {
+5737	        kv_self.head = 0;
+5738	    }
+5739	
+5740	    if (!llama_kv_cache_find_slot(kv_self, batch)) {
+```
+```console
+1584	// find an empty slot of size "n_tokens" in the cache
+1585	// updates the cache head
+1586	// Note: On success, it's important that cache.head points
+1587	// to the first cell of the slot.
+1588	static bool llama_kv_cache_find_slot(
+1589	           struct llama_kv_cache & cache,
+1590	        const struct llama_batch & batch) {
+1591	    const uint32_t n_ctx    = cache.size;
+1592	    const uint32_t n_tokens = batch.n_tokens;
+1593	
+1594	    if (n_tokens > n_ctx) {
+1595	        LLAMA_LOG_ERROR("%s: n_tokens=%d > n_ctx=%d\n", __func__, n_tokens, n_ctx);
+1596	        return false;
+1597	    }
+```
+In this case we have the max context size in token of 1024 and the number of
+tokens in the batch is 6:
+```console
+(gdb) p n_ctx
+$69 = 1024
+(gdb) p n_tokens
+$70 = 6
+```
+The number of tokens in the batch cannot exceed the max context size.
+```console
+(gdb) l
+1599	    uint32_t n_tested = 0;
+1600	
+1601	    while (true) {
+1602	        if (cache.head + n_tokens > n_ctx) {
+1603	            n_tested += n_ctx - cache.head;
+1604	            cache.head = 0;
+1605	            continue;
+1606	        }
+```
+So we are going to loop and the first thing we to is check if the head plus the
+number of tokens in the batch exceed the max number of tokens allowed.  If this
+is the case then n_tested is incremented with the max context size minus the
+cache head.
+Lets pretent that we have a head that is 1020 and the number of tokens is 6 and
+n_ctx is 1024. Then 1020+6=1026 and 1026 > 1024. And n_tested will become
+1024-1020=4. And the head will be set to 0. And then the loop will continue but
+this time head will be zero. And the if statement will compare 6 > 1024 which
+is false and skip the body of the if statement.
+```console
+1608	        bool found = true;
+1609	        for (uint32_t i = 0; i < n_tokens; i++) {
+1610	            if (cache.cells[cache.head + i].pos >= 0) {
+1611	                found = false;
+1612	                cache.head += i + 1;
+(gdb) l
+1613	                n_tested   += i + 1;
+1614	                break;
+1615	            }
+1616	        }
+```
+So we are going to loop over all the 6 tokens in the batch.
+```console
+(gdb) p i
+$83 = 0
+(gdb) p cache.head
+$84 = 0
+
+(gdb) p cache.cells[cache.head + i].pos
+$85 = -1
+```
+cache.cells is a vector of size 1024, the max number of tokens allowed. And
+each entry in this  vector is currently not set, its position is -1. So in our
+case this will false and the if block will not be executed. So this is making
+sure that from the current head there are n_tokens number of slots available.
+That will lead us to the following code:
+```console
+1628	    for (uint32_t i = 0; i < n_tokens; i++) {
+1629	        cache.cells[cache.head + i].pos = batch.pos[i];
+1630	
+1631	        for (int32_t j = 0; j < batch.n_seq_id[i]; j++) {
+1632	            cache.cells[cache.head + i].seq_id.insert(batch.seq_id[i][j]);
+1633	        }
+1634	    }
+1635	
+1636	    cache.used += n_tokens;
+1637	
+1638	    return true;
+```
+And it makes sence that we again will loop over the 6 tokens in the batch and
+now add them to the cells. 
+```console
+gdb) p cache.cells
+$106 = std::vector of length 1024, capacity 1024 = {
+{pos = 0, delta = 0, seq_id = std::set with 1 element = {[0] = 0}},
+{pos = 1, delta = 0, seq_id = std::set with 1 element = {[0] = 0}},
+{pos = 2, delta = 0, seq_id = std::set with 1 element = {[0] = 0}},
+{pos = 3, delta = 0, seq_id = std::set with 1 element = {[0] = 0}},
+{pos = 4, delta = 0, seq_id = std::set with 1 element = {[0] = 0}},
+{pos = 5, delta = 0, seq_id = std::set with 1 element = {[0] = 0}},
+```
+That is it for finding a slot in the key-value cache.
+```console
+(gdb) s
+5747	    kv_self.n = std::min(
+                (int32_t) cparams.n_ctx,
+                std::max(32, GGML_PAD(llama_kv_cache_cell_max(kv_self), 32))
+            );
+```
+A cell is considered in use if its position is greater than or equal to zero and
+it's sequence id is not empty. So that should return 6 in our case:
+```console
+(gdb) p llama_kv_cache_cell_max(kv_self)
+$108 = 6
+(gdb) p cparams.n_ctx
+$109 = 1024
+(gdb) p kv_self.n
+$110 = 32
+```
+What is kv_self.n?  
+
+```console
+(gdb) f
+#0  llama_decode_internal (lctx=..., batch=...) at llama.cpp:5751
+5751	    ggml_allocr_reset(lctx.alloc);
+(gdb) n
+5753	    ggml_cgraph * gf = llama_build_graph(lctx, batch);
+```
+So we are building a compute graph for this batch.
+```console
+(gdb) n
+5757	    struct ggml_tensor * res        = gf->nodes[gf->n_nodes - 1];
+```
+The result tensor is the last node in the graph.
+The embedding tensor is the second to last node in the graph:
+```console
+(gdb) n
+5758	    struct ggml_tensor * embeddings = gf->nodes[gf->n_nodes - 2];
+```
+```console
+(gdb) n
+5816	    ggml_graph_compute_helper(lctx.work_buffer, gf, n_threads);
+```
+This will now run the compute graph which involves starting threads:
+```console
+gdb) n
+[New Thread 0x7ffe072eb6c0 (LWP 2085673)]
+[New Thread 0x7ffe06aea6c0 (LWP 2085674)]
+[New Thread 0x7ffe062e96c0 (LWP 2085675)]
+[Thread 0x7ffe062e96c0 (LWP 2085675) exited]
+[Thread 0x7ffe06aea6c0 (LWP 2085674) exited]
+[Thread 0x7ffe072eb6c0 (LWP 2085673) exited]
+5825	        if (kv_self.has_shift) {
+```
+Next, we have:
+```console
+5823	    // update the kv ring buffer
+5824	    {
+5825	        if (kv_self.has_shift) {
+5826	            kv_self.has_shift = false;
+5827	            for (uint32_t i = 0; i < kv_self.size; ++i) {
+5828	                kv_self.cells[i].delta = 0;
+5829	            }
+```
+The `llama_kv_cache` is a ringbuffer and when the buffer is full and we need to
+add data the oldest data is overwritten which I believe is called shifting.
+This false in our case.
+```console
+5832	        kv_self.head += n_tokens;
+(gdb) s
+5835	        if (kv_self.head >= kv_self.size) {
+(gdb) p kv_self.head
+$118 = 6
+(gdb) p kv_self.size
+$119 = 1024
+```
+So that was the initial prompt which has now been decode and then we will use
+the logits to predict the next token. This will be a single token which we will
+then pass into llama_decode:
+```console
+(gdb) 
+206	        if (llama_decode(ctx, batch)) {
+(gdb) p batch
+$125 = {n_tokens = 1, token = 0xc63980, embd = 0x0, pos = 0x8a86f0, n_seq_id = 0x8ab7b0, seq_id = 0x8abfc0, 
+  logits = 0x8a9790 "\001", all_pos_0 = 0, all_pos_1 = 0, all_seq_id = 0}
+(gdb) p batch.pos[0]
+$126 = 6
+```
+Notice that this time around the kv_self is:
+```console
+(gdb) p lctx.kv_self
+$128 = {has_shift = false, head = 6, size = 1024, used = 6, n = 32,
+...
+```
+_wip_
 
 ### llama_batch
-This struct holdes `input` data for llama_decode. For example, if we pass in
+This struct holds `input` data for llama_decode. For example, if we pass in
 a prompt of "What is LoRA" that would first be tokenized and then the tokens
 will be added to the batch. An example of this can be found in
 [simple-prompt.cpp](../fundamentals/llama.cpp/src/simple-prompt.cpp).
