@@ -652,6 +652,10 @@ Notice that this time around the kv_self is:
 $128 = {has_shift = false, head = 6, size = 1024, used = 6, n = 32,
 ...
 ```
+I'm trying to understand where the kv_self is used. I can see that it is updated
+as we saw above. Where is the Q and the K^T calculation done?
+For this we have to take a look at how the compute graph is built. This is done
+in build_llama.
 _wip_
 
 ### llama_batch
@@ -796,3 +800,85 @@ of the neural network should be split accorss the devices. This allows for
 specifying that more layers should be stored on one device than another. For
 example [0.7, 0.3] would mean that 70% of the layers should be stored on the
 first device and 30% on the second device.
+
+
+The llama_batch struct looks like this:
+```c++
+   // Input data for llama_decode
+    // A llama_batch object can contain input about one or many sequences
+    // The provided arrays (i.e. token, embd, pos, etc.) must have size of n_tokens
+    //
+    // - token  : the token ids of the input (used when embd is NULL)
+    // - embd   : token embeddings (i.e. float vector of size n_embd) (used when token is NULL)
+    // - pos    : the positions of the respective token in the sequence
+    // - seq_id : the sequence to which the respective token belongs
+    // - logits : if zero, the logits for the respective token will not be output
+    //
+    typedef struct llama_batch {
+        int32_t n_tokens;
+        llama_token  *  token;
+        float        *  embd;
+        llama_pos    *  pos;
+        int32_t      *  n_seq_id;
+        llama_seq_id ** seq_id;
+        int8_t       *  logits;
+
+        // NOTE: helpers for smooth API transition - can be deprecated in the future
+        //       for future-proof code, use the above fields instead and ignore everything below
+        //
+        // pos[i] = all_pos_0 + i*all_pos_1
+        //
+        llama_pos    all_pos_0;  // used if pos == NULL
+        llama_pos    all_pos_1;  // used if pos == NULL
+        llama_seq_id all_seq_id; // used if seq_id == NULL
+    } llama_batch;
+```
+`n_tokens` is hte number of tokens in this batch.
+`token` is a int pointer to tokens.
+`embd` is a float pointer to embeddings.
+`pos` is a pointer to the position of the tokens in the sequence. So each tokens
+will in the batch will have a value in this array which is of size `n_tokens`.
+`n_seq_id` is the number of sequence ids. I still don't understand what the
+sequence ids are used for. Perhaps that are used for parallel processing?
+`seq_id` is the sequence id for each token in the batch. So each token will
+have a sequence id.
+
+`all_pos_0` is only used if pos is NULL.
+`all_pos_1` is only used if pos is NULL.
+So if the pos array/pointer is null then the decode function will check for
+this condition and populate a std::vector(llama_pos> with the size of n_tokens.
+It will then iterate through the range of 0..n_tokens and set the pos values:
+```
+all_pos_0 = 0
+all_pos_1 = 1
+
+   pos[i] = all_pos_0 + i * all_pos_1
+
+   pos[0] = 0 + 0 * 1 = 0
+   pos[1] = 0 + 1 * 1 = 1
+   pos[2] = 0 + 2 * 1 = 2
+```
+And we can specify that the position starts with a value other than 0:
+```
+all_pos_0 = 4
+all_pos_1 = 1
+
+   pos[0] = 4 + 0 * 1 = 4
+   pos[1] = 4 + 1 * 1 = 5
+   pos[2] = 4 + 2 * 1 = 6
+```
+So this is a just way of specifying the position of the tokens in the sequence
+and something we could have done manually ourselves.
+Also not that this is deprecated in llama.cpp.
+```
+        // NOTE: helpers for smooth API transition - can be deprecated in the future
+        //       for future-proof code, use the above fields instead and ignore everything below
+        //
+        // pos[i] = all_pos_0 + i*all_pos_1
+        //
+        llama_pos    all_pos_0;  // used if pos == NULL
+        llama_pos    all_pos_1;  // used if pos == NULL
+        llama_seq_id all_seq_id; // used if seq_id == NULL
+```
+
+`all_seq_id` is only used if seq_id is NULL.
