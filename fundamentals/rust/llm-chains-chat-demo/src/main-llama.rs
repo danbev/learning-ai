@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TypicalP: 1.0, // disabled
         TfsZ: 1.0 // disabled
     );
-    let qdrant = build_local_qdrant(true, llama_opts.clone()).await;
+    let qdrant = build_local_qdrant(false, llama_opts.clone()).await;
 
     let exec = executor!(llama, llama_opts.clone())?;
     let quadrant_tool = QdrantTool::new(
@@ -153,34 +153,30 @@ Assistant is designed to assist with a wide range of tasks.
 
 Here are some previous interactions between the Assistant and a User:
 
-User: Can you show me a summary of the security advisory RHSA-2020:5566?
+User: Can you show me a summary of the security advisory RHSA-1820:1234?
 Assistant:
 ```yaml
 command: VectorStoreTool
 input:
-  query: "RHSA-2020:5566"
+  query: "RHSA-1820:1234"
   limit: 1
 ```
 
-Observation: RHSA-2020:5566 is a security advisory related to openssl and has...
-Assistant:
-```yaml
-command: "Final Answer"
-input: "RHSA-2020:5566 is a security advisory related to openssl and has..."}}
-```
-
-All responses must be in YAML.
+All responses must be in YAML. Don't include ``` in your responses. 
 
 <</SYS>>
 
-{{ user_message }} [/INST] </s>
+{{ task }} [/INST] </s>
         "#;
 
     let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(sys_prompt));
     let sys_message = tool_collection.to_prompt_template().unwrap().to_string();
     for _ in 0..1 {
         let result = Step::for_prompt_template(prompt.clone().into())
-            .run(&parameters!("task" => query, "system_prompt" => sys_message.clone(), "user_message" => query), &exec)
+            .run(
+                &parameters!("task" => query, "system_prompt" => sys_message.clone()),
+                &exec,
+            )
             .await
             .unwrap();
 

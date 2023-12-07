@@ -79,8 +79,6 @@ int main(int argc, char** argv) {
 
     // Next we are doing to populate the batch we created above. For each token
     // of the tokenized prompt we are going to add it to the the batch.
-    const std::vector<llama_seq_id>& seq_ids = { 0 }; // seq_ids.length = 1
-
     for (int i = 0; i < n_tokens; i++) {
         // the token of this batch entry.
         batch.token[i] = input_tokens[i];
