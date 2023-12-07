@@ -136,14 +136,14 @@ All of Assistant's communication is performed using this JSON format.
 
 Assistant can also use tools by responding to the user with tool use instructions in the same "action" and "action_input" JSON format. Tools available to Assistant are:
 
-- "google-serper": Useful for when you search the web for answers.
-  - To use the goggle-serper tool, Assistant should write like so:
+- "google_serper": Useful for when you search the web for answers.
+  - To use the goggle_serper tool, Assistant should write like so:
     ```json
-    {{"action": "google-serper",
+    {{"action": "google_serper",
       "action_input": "query"}}
     ```
 
-- "VEX": Useful for when you need to answer questions about security advisory VEX documents in the format RHSA-XXXX:XXXX, where X can be any number. Don't use this tool for details about CVEs but instead use 'google-serper' for that.
+- "VEX": Useful for when you need to answer questions about security advisory VEX documents in the format RHSA-XXXX:XXXX, where X can be any number. Don't use this tool for details about CVEs but instead use 'google_serper' for that.
   - To use the VEX tool, Assistant should write like so:
     ```json
     {{"action": "VEX",
@@ -168,10 +168,11 @@ Assistant:
 User: Could you explain what CVE-2020-14386 is about?
 Assistant:
 ```json
-{{"action": "google-serper",
+{{"action": "google_serper",
  "action_input": "CVE-2020-14386"}}
 ```
-User: 16.0
+
+Observation: CVE-2020-14386 is a vulnerability in the Linux kernel that allows a local attacker to...
 Assistant:
 ```json
 {{"action": "Final Answer",
