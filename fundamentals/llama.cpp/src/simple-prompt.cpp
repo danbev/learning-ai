@@ -80,18 +80,17 @@ int main(int argc, char** argv) {
     // Next we are doing to populate the batch we created above. For each token
     // of the tokenized prompt we are going to add it to the the batch.
     const std::vector<llama_seq_id>& seq_ids = { 0 }; // seq_ids.length = 1
+
     for (int i = 0; i < n_tokens; i++) {
         // the token of this batch entry.
-        batch.token[batch.n_tokens] = input_tokens[i];
+        batch.token[i] = input_tokens[i];
         // the position in the sequence of this batch entry.
-        batch.pos[batch.n_tokens] = i,
+        batch.pos[i] = i,
         // the number of sequence id's (if any) of this batch entry.
-        batch.n_seq_id[batch.n_tokens] = seq_ids.size();
-        for (size_t s = 0; s < seq_ids.size(); ++s) {
-            batch.seq_id[batch.n_tokens][s] = seq_ids[s];
-        }
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = 0;
         // Determins if the logits for this token should be generated or not.
-        batch.logits[batch.n_tokens] = false;
+        batch.logits[i] = false;
         // Increment the number of tokens in the batch.
         batch.n_tokens++;
     }
