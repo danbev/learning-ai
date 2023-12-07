@@ -882,3 +882,73 @@ Also not that this is deprecated in llama.cpp.
 ```
 
 `all_seq_id` is only used if seq_id is NULL.
+```c++
+    std::vector<int32_t>                   n_seq_id;
+    std::vector<llama_seq_id *>            seq_id_arr;
+    std::vector<std::vector<llama_seq_id>> seq_id;
+
+    if (batch.seq_id == nullptr) {
+        n_seq_id.resize(n_tokens);
+        seq_id.resize(n_tokens);
+        seq_id_arr.resize(n_tokens);
+        for (uint32_t i = 0; i < n_tokens; i++) {
+            n_seq_id[i] = 1;
+            seq_id[i].resize(1);
+            seq_id[i][0] = batch.all_seq_id;
+            seq_id_arr[i] = seq_id[i].data();
+        }
+
+        batch.n_seq_id = n_seq_id.data();
+        batch.seq_id = seq_id_arr.data();
+    }
+```
+So we will first create `n_seq_id`, `seq_id`, and `seq_id_arr` vectors of size
+3 in this case. And 'batch.all_seq_id' is 0.
+```
+seq_id[  [0],
+         [0], 
+         [0],
+      ]
+```
+
+Lets start with `n_seq_id` which is an array and each token in a batch will have
+an entry in this array. The value in this position specifies the number of
+sequences that the token is part of (still not sure exactly what this means of
+how it is used but hopefully that will clear up).
+Lets say that we have a batch of 3 tokens and the second token is part of two
+sequences:
+```
+n_seq_id[1] = 2;
+```
+The corresponding entry in the `seq_id` vector will point to a vector of size
+2 in that case.
+```
+seq_id[  [0],
+         [1, 2], 
+         [0],
+      ]
+```
+One usage of the n_seq_id is in `llama_kv_cache_find_slot`:
+```c++
+    for (uint32_t i = 0; i < n_tokens; i++) {
+        cache.cells[cache.head + i].pos = batch.pos[i];
+
+        for (int32_t j = 0; j < batch.n_seq_id[i]; j++) {
+            cache.cells[cache.head + i].seq_id.insert(batch.seq_id[i][j]);
+        }
+    }
+
+    cache.used += n_tokens;
+```
+So for each token in the batch an entry at `cache.head + ` will be updated with
+the current tokens position. And notice that it will loop through the number
+of sequences that the current token has, which is the value of `n_seq_id` which
+is a member of th llama_kv_cell struct:
+```c++
+struct llama_kv_cell {
+    llama_pos pos   = -1;
+    llama_pos delta = 0;
+
+    std::set<llama_seq_id> seq_id;
+};
+```
