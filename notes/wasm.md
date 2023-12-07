@@ -49,3 +49,7 @@ I'd like to investigate this further to see exactly what is out there in regards
 to this, like how the existing wasm example work and what they are using.
 Perhaps taking advantage of the web assembly component model is not something
 that has been done yet and might be a good idea to explore.
+
+Things to explore:
+* [wasi-nn](https://github.com/WebAssembly/wasi-nn)
+* [ggml wasi-nn backend](https://github.com/second-state/wasmedge-wasi-nn/tree/ggml/rust)
