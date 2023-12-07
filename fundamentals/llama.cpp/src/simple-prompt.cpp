@@ -84,9 +84,9 @@ int main(int argc, char** argv) {
         batch.token[i] = input_tokens[i];
         // the position in the sequence of this batch entry.
         batch.pos[i] = i,
-        // the number of sequence id's (if any) of this batch entry.
+        // the number of sequence id's of this batch entry.
         batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
+        batch.seq_id[i][0] = 0;  // the sequence id
         // Determins if the logits for this token should be generated or not.
         batch.logits[i] = false;
         // Increment the number of tokens in the batch.
@@ -186,14 +186,14 @@ int main(int argc, char** argv) {
         // of the prompt. Now, we want to pass in the token that we just
         // predicted to the model and get the logits for the next token.
 
-        // Update the number of tokens in the batch to 0.
-        batch.n_tokens = 0;
-        batch.token[0] = new_token_id;
-        batch.pos[0] = n_cur,
-        batch.n_seq_id[0] = 1;
-        batch.seq_id[0][0] = 0;
+        // Update the batch to include the new token id, and the position of the
+        // token in the sequence.
+        batch.n_tokens = 1; // We are only passing in one token.
+        batch.token[0] = new_token_id; // the new token id.
+        batch.pos[0] = n_cur, // the position in the sequence.
+        //batch.n_seq_id[0] = 1;  // the number of sequences for this token.
+        //batch.seq_id[0][0] = 0; // the actual sequence id.
         batch.logits[0] = true;
-        batch.n_tokens++;
 
         n_decode += 1;
         n_cur += 1;
