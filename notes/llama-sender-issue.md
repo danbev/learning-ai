@@ -6,6 +6,7 @@ $ cd fundamentals/rust/llm-chains-chat-demo
 $ env RUST_BACKTRACE=full cargo r --bin llama
 ```
 
+Error:
 ```console
 VectorStoreTool description called!
 MultiTool Checking VectorStoreTool against VectorStoreTool
@@ -117,3 +118,42 @@ stack backtrace:
   50:                0x0 - <unknown>
 ```
 
+### Troubleshooting
+Now, we we recall (see [llm-chain.md](./llm-chain.md) for details) that the
+llama executor sets up a sender using the following code:
+```rust
+    // Run the LLAMA model with the provided input and generate output.
+    // Executes the model with the provided input and context parameters.
+    async fn run_model(&self, input: LlamaInvocation) -> Output {
+        let (sender, output) = Output::new_stream();
+         ...
+    }
+```
+
+```rust
+    /// Creates a new `Stream` output along with a sender to produce data.
+    pub fn new_stream() -> (mpsc::UnboundedSender<StreamSegment>, Self) {
+        let (sender, stream) = OutputStream::new();
+
+        (sender, Output::Stream(stream))
+    }
+```
+And OutputStream::new looks like this:
+```rust
+impl OutputStream {
+    pub(super) fn new() -> (mpsc::UnboundedSender<StreamSegment>, Self) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (sender, Self { receiver })
+    }
+```
+So this is a Tokio unbounded channel. The documentation for this channel states:
+```
+If the Receiver handle is dropped, then messages can no longer be read out of
+the channel. In this case, all further attempts to send will result in an error.
+Additionally, all unread messages will be drained from the channel and dropped.
+```
+Could it be that the receiver has been dropped for some reason which is
+causing the above error?  
+
+This was a mistake on my part where I was not handling the output from an
+earlier call to the executor. 
