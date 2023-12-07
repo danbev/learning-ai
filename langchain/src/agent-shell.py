@@ -18,6 +18,11 @@ print(f'{shell_tool.description=}')
 
 llm = ChatOpenAI(temperature=0)
 
+# In this case the AgentType is CHAT_ZERO_SHOT_REACT_DESCRIPTION which is
+# a zero-shot meaning that the complete context is provided by the agent and
+# there is no memory of previous interactions. The REACT part is the ReAct,
+# reason and act, part of the agent. The description indicates that the agent
+# will trigger tools based on the description of the tool.
 self_ask_with_search = initialize_agent(
     [shell_tool], llm, agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION, verbose=True
 )
