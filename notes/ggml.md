@@ -42,7 +42,7 @@ $25 = {struct ggml_context *(struct ggml_init_params)} 0x429d89 <ggml_init>
 ```
 So the function `ggml_init` returns an instance of `struct ggml_context`
 initialized with the parameters. The `struct ggml_context` is an opaque struct
-so we can simply use `ptype ggml_context` to see what it contains. But we can
+so we can't simply use `ptype ggml_context` to see what it contains. But we can
 list it using:
 ```console
 (gdb) list ggml.c:4188
@@ -290,4 +290,3 @@ Lets turn our attention to the llama_init_from_gpt_params function:
 std::tie(model, ctx) = llama_init_from_gpt_params(params);
 ```
 
-### Tensor
