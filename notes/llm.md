@@ -186,7 +186,7 @@ would want it to be more creative and thus have a highter temperature value.
 
 #### Top_p
 This is a hyperparameter that uses a technique called nucleus sampling. This
-works like follows, we start by sorting the words in our very limited
+works as follows, we start by sorting the words in our very limited
 vocabulary:
 ```
 "apple": 0.5
@@ -252,7 +252,7 @@ TODO: Explain this better
 This is introduced in the paper: https://openreview.net/pdf?id=W1G1JZEIy5_ and
 is also related sampling of generated tokens, so in the same "category" as
 top_p and top_k I think. It is about controlling perplexity, which is a measure
-of how well a language model predicts a sample of text.
+of how well a language model predicts a sample of text (lower is better).
 
 It sounds like MIROSTAT also uses top_k sampling but unlike traditional top-k
 sampling, MIROSTAT adaptively adjusts the value of k to control the perplexity.
