@@ -58,7 +58,7 @@ vex_chain = RetrievalQA.from_chain_type(
 )
 
 tools = load_tools(["google-serper", "llm-math"], llm=llm)
-tools.append(Tool(name="VEX", func=vex_chain.run, description="useful for when you need to answer questions about the VEX documents which are security advisories in the format RHSA-XXXX:XXXX, where X can be any number."))
+tools.append(Tool(name="VEX", func=vex_chain.run, description="useful for when you need to answer questions about the VEX documents which are security advisories in the format RHSA-XXXX:XXXX, where X can be any number. Don't use this tool for details about CVEs but instead use google-serper for that."))
 
 memory = ConversationBufferWindowMemory(
     memory_key='chat_history',
