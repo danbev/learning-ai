@@ -4,11 +4,9 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 
-pub const WORD_START: char = '^'; // '<' => "<S>"
-pub const WORD_END: char = '$'; // '>' => "<E>"
+pub const WORD_BOUNDARY: char = '.';
 
 pub struct Data {
-    file_name: String,
     words: Vec<String>,
     chars: BTreeSet<char>,
     stoi: HashMap<char, usize>,
@@ -28,17 +26,15 @@ impl Data {
             }
         }
         let mut stoi: HashMap<char, usize> = HashMap::new();
+        stoi.insert(WORD_BOUNDARY, 0);
         for (i, ch) in chars.iter().enumerate() {
-            stoi.insert(*ch, i);
+            stoi.insert(*ch, i + 1);
         }
-        stoi.insert(WORD_START, 26);
-        stoi.insert(WORD_END, 27);
         let itos: HashMap<usize, char> = stoi.iter().map(|(k, v)| (*v, *k)).collect();
 
         println!("stoi: {stoi:?}");
         println!("itos: {itos:?}");
         Ok(Self {
-            file_name: file_name.to_string(),
             words,
             chars,
             stoi,
@@ -51,10 +47,6 @@ impl Data {
         reader.lines().collect()
     }
 
-    pub fn file_name(&self) -> &str {
-        &self.file_name
-    }
-
     pub fn words(&self) -> &Vec<String> {
         &self.words
     }
@@ -63,8 +55,8 @@ impl Data {
         &self.chars
     }
 
-    pub fn stoi(&self, ch: char) -> &usize {
-        &self.stoi[&ch]
+    pub fn stoi(&self, ch: char) -> usize {
+        self.stoi[&ch]
     }
     pub fn itos(&self, i: usize) -> &char {
         &self.itos[&i]

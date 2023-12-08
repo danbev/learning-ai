@@ -34,7 +34,7 @@ Since the idea is to follow along with the series, I won't decribe what it does
 here which might take away from the learning experience.
 
 The Rust code for this first part of the series can be found in
-[part1.rs](./src/bin/part1.rs) and can be run with the following command:
+[part1](./part1/src/main.rs) and can be run with the following command:
 ```console
 (zeroh) $ cargo run -p part1
 ```
@@ -94,6 +94,27 @@ containing, after backpropagation:
 And then we have...
 
 ![image](./plots/part1_single_neuron10.svg)
+
+
+### Part2: Building makemore
+The second [part] of the series is called 
+`The spelled-out intro to language modeling: building makemore`.
+
+This part uses the [tch crate](https://crates.io/crates/tch), so you'll need 
+[pytorch](https://pytorch.org/get-started/locally/) and extract it to the
+current directory. 
+```console
+$ wget https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.0.1%2Bcpu.zip
+$ unzip libtorch-cxx11-abi-shared-with-deps-2.0.1+cpu.zip
+$ export LIBTORCH=$PWD/libtorch
+$ export LD_LIBRARY_PATH=$PWD/libtorch/lib:$LD_LIBRARY_PATH
+```
+The Rust code for this part of the series can be found in
+[part2](./part2/src/main.rs) and can be run with the following command:
+```console
+(zeroh) $ cargo run -p part2
+```
+It's still a work-in-progress!
 
 [Neural Networks:  Zero to Hero]: https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ
 [part1]: https://www.youtube.com/watch?v=VMj-3S1tku0&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=2

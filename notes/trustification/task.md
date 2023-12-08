@@ -521,7 +521,7 @@ First, is this something that we are allowed to pursue?
 #### Vector database
 Which vector database should we use and what are the implications of having one
 with regards to deploying and managing one.
-See [vector-databases.md](../../vector-databases.md) for some of the Rust
+See [vector-databases.md](../vector-databases.md) for some of the Rust
 options (see end of document).
 
 What information would we need to store in the vector store/database?
@@ -548,7 +548,7 @@ google_serper or other tools to retrieve this information.
 
 So we need to implement the agent and integrate it with the LLM. This would be a
 Rust implementation of the agent I'm assuming. There are a few options for this
-listed in [rust.md](../../rust.md). In the examples above we have been using 
+listed in [rust.md](../rust.md). In the examples above we have been using 
 LangChain and an equivalent in Rust would be llm-chains.
 
 After some looking around in llm-chain I found this open
