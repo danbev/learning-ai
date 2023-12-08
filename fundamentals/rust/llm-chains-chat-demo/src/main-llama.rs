@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query = "Can you show me a summary of RHSA-2020:5566?";
     println!("Query: {}", query);
 
-    let sys_prompt = r#"<s>[INST] <<SYS>>
+    let sys_prompt = r#"<<SYS>>
 Assistant is designed to assist with a wide range of tasks.
 
 {{ system_prompt }}
@@ -162,14 +162,16 @@ input:
   limit: 1
 ```
 
-All responses must be in YAML. Don't include ``` in your responses. 
+All responses must be in YAML.
 
 <</SYS>>
-
-{{ task }} [/INST] </s>
         "#;
 
-    let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(sys_prompt));
+    let prompt = ChatMessageCollection::new()
+        .with_system(StringTemplate::tera(sys_prompt))
+        .with_user(StringTemplate::tera(
+            "Please perform the following task: {{task}}.",
+        ));
     let sys_message = tool_collection.to_prompt_template().unwrap().to_string();
     for _ in 0..1 {
         let result = Step::for_prompt_template(prompt.clone().into())
@@ -204,10 +206,10 @@ All responses must be in YAML. Don't include ``` in your responses.
                 }
                 println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
-                    "<s>[INST] <<SYS>> You are an assistant and help answer questions. Only reply with the answer to the question and nothing else.
+                    "<<SYS>> You are an assistant and help answer questions. Only reply with the answer to the question and nothing else.
                        Use the following as additional context: {{texts}} <</SYS>>
 
-                       {{ user_message }} [/INST]",
+                       {{ user_message }}",
                 ));
                 let result = Step::for_prompt_template(prompt.clone().into())
                     .run(

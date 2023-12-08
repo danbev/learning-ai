@@ -952,3 +952,98 @@ struct llama_kv_cell {
     std::set<llama_seq_id> seq_id;
 };
 ```
+
+Hmm, I think what I've been missing might be that a batch can contain one or
+more tokens, and each token has a position related with it.
+For example, we could have an initial prompt that we pass as input put to
+`llama_decode` which we know takes a batch:
+```
+   batch_0:
+           n_tokens: 3
+           token: [102, 23, 2993]
+           pos: [0, 1, 2]
+           n_seq_id: [1, 1, 1]
+           seq_id: [[0], [0], [0]]
+```
+And then we call one of the sampling functions, like `llama_sample_greedy`, to
+get a new token id. We will then send this token id and have the llm infer
+the next token. This time we only send a single token as input:
+```
+   batch_1:
+           n_tokens: 1
+           token: [1186]
+           pos: [3]
+           n_seq_id: [1]
+           seq_id: [[0]]
+```
+But notice that we have updated the position of the token in the sequence to be
+3 and the sequence id is still 0. So we are still in the same sequence but
+we have moved to the next token in the sequence. And we can continue to do this
+until we have a new sequence. For example, we could have a new sequence that
+starts with the token 0:
+```
+   batch_2:
+           n_tokens: 1
+           token: [0]
+           pos: [0]
+           n_seq_id: [1]
+           seq_id: [[1]]
+``` 
+Now, how about the case where we have multiple sequence ids in a batch. For
+example:
+```
+sequence_0: Dan loves ice cream
+            batch.n_tokens: 4
+            batch.pos: [0, 1, 2, 3]
+            batch.n_seq_id: [1, 1, 1, 1]
+            batch.seq_id: [[0], [0], [0], [0]]
+```
+
+An entry in the kv cache contains a position and also an vector of sequence
+ids like we also saw above:
+```c++
+struct llama_kv_cell {
+    llama_pos pos   = -1;
+    llama_pos delta = 0;
+
+    std::set<llama_seq_id> seq_id;
+};
+When a batch is processes and added into the kv cache, all the tokens in the
+batch will be iterated over and the next available slot will be found, head+i,
+will set that kv cache entry's pos to the current tokens position. The same
+iteration will also add the sequence ids of the current token to the same kv
+cache entry.
+We can add a second sequence to a batch by using the following:
+```c++
+llama_batch batch = llama_batch_init(512, 0, 2);
+for (int i = 0; i < n_tokens; i++) {
+  batch.token[i] = input_tokens[i];
+  batch.pos[i] = i;
+  batch.n_seq_id[i] = 2;
+  batch.seq_id[i][0] = 0;
+  batch.seq_id[i][1] = 1;
+  batch.logits[i] = false;
+  batch.n_tokens++;
+}
+```
+Now, I can see the usefulness of having sequence ids for example if I start
+with one query and then ask a completely different question I want to have it
+evaluated separate from the first, but I might also want to come back to the
+first.
+
+TODO: Figure out the usage of multiple sequence ids in a batch.
+
+### Tensors
+```console
+llm_load_print_meta: vocab type       = SPM
+llm_load_print_meta: n_vocab          = 32000
+llm_load_print_meta: n_merges         = 0
+llm_load_print_meta: n_ctx_train      = 4096
+llama_model_loader: loaded meta data with 19 key-value pairs and 291 tensors
+from ./models/llama-2-7b-chat.Q4_0.gguf (version GGUF V2)
+
+llama_model_loader: - tensor    0:  token_embd.weight q4_0 [4096, 32000, 1, 1]
+```
+This is the embeddings for the model. Recall that the model has a context size
+of 4096 and a vocab size of 32000. So for each token in the vocabulary there
+is en embedding with a dimension of 4096.
