@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 tch = "0.13.0"
+ndarray = "0.15.6"
+plotters = "0.3"
+
