@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MaxContextSize: 4096usize,
         MaxTokens: 4096_usize,
         MaxBatchSize: 4096_usize,
-        Temperature: 1.0, // disabled
+        Temperature: 0.3, // disabled
         TopP: 1.0, // 1.0 is the default and means no top-p sampling
         TopK: 0,  //
         RepeatPenalty: 1.0, // disbled
@@ -129,7 +129,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         NThreads: 4_usize,
         Stream: false,
         TypicalP: 1.0, // disabled
-        TfsZ: 1.0 // disabled
+        TfsZ: 1.0, // disabled
+        StopSequence: vec!["\n \n".to_string()]
     );
     let qdrant = build_local_qdrant(false, llama_opts.clone()).await;
 
@@ -146,37 +147,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query = "Can you show me a summary of RHSA-2020:5566?";
     println!("Query: {}", query);
 
-    let sys_prompt = r#"<<SYS>>
-Assistant is designed to assist with a wide range of tasks.
+    let sys_prompt = r#"
+[INST] <<SYS>>
 
 {{ system_prompt }}
 
+Only respond with the YAML followed by </s> and nothing else.
+
 Here are some previous interactions between the Assistant and a User:
 
-User: Can you show me a summary of the security advisory RHSA-1820:1234?
+User: What is RHSA-1820:1234?
 Assistant:
 ```yaml
 command: VectorStoreTool
 input:
   query: "RHSA-1820:1234"
-  limit: 1
+  limit: 3
 ```
 
-All responses must be in YAML.
+User: Can you show me the details about advisory RHSA-1721:4231?
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4231"
+  limit: 3
+```
+
+User: What is RHSA-1721:4231?
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4231"
+  limit: 3
+```
+
+Do not output anything apart from valid YAML. Do not output any text or other information.
 
 <</SYS>>
-        "#;
 
-    let prompt = ChatMessageCollection::new()
-        .with_system(StringTemplate::tera(sys_prompt))
-        .with_user(StringTemplate::tera(
-            "Please perform the following task: {{task}}.",
-        ));
-    let sys_message = tool_collection.to_prompt_template().unwrap().to_string();
+{{ user_message }} [/INST]"#;
+
+    let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(sys_prompt));
+    /*
+    .with_user(StringTemplate::tera(
+        "Please perform the following task: {{task}}  [/INST]",
+    ));
+    */
+    let tools_prompt = tool_collection.to_prompt_template().unwrap().to_string();
     for _ in 0..1 {
         let result = Step::for_prompt_template(prompt.clone().into())
             .run(
-                &parameters!("task" => query, "system_prompt" => sys_message.clone()),
+                &parameters!("user_message" => query, "system_prompt" => tools_prompt.clone()),
                 &exec,
             )
             .await
@@ -206,16 +229,11 @@ All responses must be in YAML.
                 }
                 println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
-                    "<<SYS>> You are an assistant and help answer questions. Only reply with the answer to the question and nothing else.
-                       Use the following as additional context: {{texts}} <</SYS>>
+                    "[INST] <<SYS>>\nYou are an assistant and help answer questions. Only reply with the answer to the question and nothing else. Use the following as additional context: {{texts}} \n<<SYS>>\n\n ",
+                )).with_user(StringTemplate::tera("{{ task  }} [/INST]"));
 
-                       {{ user_message }}",
-                ));
                 let result = Step::for_prompt_template(prompt.clone().into())
-                    .run(
-                        &parameters!("texts" => joined_text, "user_message" => query),
-                        &exec,
-                    )
+                    .run(&parameters!("texts" => joined_text, "task" => query), &exec)
                     .await
                     .unwrap();
                 let output = result.to_immediate().await?;
