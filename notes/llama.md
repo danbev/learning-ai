@@ -186,6 +186,10 @@ of tokens in the generated text. Setting this to 1 will not have any effect on
 token generation. A value of 0 will encourage the model to repeat tokens. A
 value greater than 1 will encourage the model to not repeat tokens.
 
+I ran into this issue with the llam-chains-chat-demo where the llm would just
+repeat the new-line token over and over until the context size was reached.
+Adding a repeat penalty of 1.1 fixed this issue and is something to be aware of.
+
 #### llm-chain-llama
 llm-chain have what they refer to as drivers, at the time of this writing there
 are two drivers: OpenAI and Llama. Llama uses a binding to llama.cpp, and is
