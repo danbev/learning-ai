@@ -183,15 +183,6 @@ input:
   limit: 4
 ```
 
-[INST] User: Are thre any CVE's associated with RHSA-1721:4233? [/INST]
-Assistant:
-```yaml
-command: VectorStoreTool
-input:
-  query: "RHSA-1721:4233"
-  limit: 4
-```
-
 Your output should only be YAML and include query, and limit fields. Do not output any other text or other information.
 
 <</SYS>>
