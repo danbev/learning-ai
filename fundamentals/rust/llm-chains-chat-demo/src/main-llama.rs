@@ -115,12 +115,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MaxContextSize: 4096usize,
         MaxTokens: 4096_usize,
         MaxBatchSize: 4096_usize,
-        Temperature: 0.3, // disabled
+        Temperature: 0.1,
         TopP: 1.0, // 1.0 is the default and means no top-p sampling
-        TopK: 0,  //
-        RepeatPenalty: 1.0, // disbled
-        RepeatPenaltyLastN: 0_usize, // disabled
-        FrequencyPenalty: 0.0, // disabled
+        TopK: 0,
+        RepeatPenalty: 1.1,
+        RepeatPenaltyLastN: 5_usize, // disabled
+        FrequencyPenalty: 1.0, // disabled
         PresencePenalty: 0.0, // disabled
         Mirostat: 0_i32, // disabled
         MirostatTau: 1.0,
@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Stream: false,
         TypicalP: 1.0, // disabled
         TfsZ: 1.0, // disabled
-        StopSequence: vec!["\n \n".to_string()]
+        StopSequence: vec!["\n\n".to_string()]
     );
     let qdrant = build_local_qdrant(false, llama_opts.clone()).await;
 
@@ -152,38 +152,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 {{ system_prompt }}
 
-Only respond with the YAML followed by </s> and nothing else.
+Only respond with the YAML and nothing else.
 
 Here are some previous interactions between the Assistant and a User:
 
-User: What is RHSA-1820:1234?
+[INST] User: What is RHSA-1820:1234? [/INST]
 Assistant:
 ```yaml
 command: VectorStoreTool
 input:
   query: "RHSA-1820:1234"
-  limit: 3
+  limit: 4
 ```
 
-User: Can you show me the details about advisory RHSA-1721:4231?
+[INST] User: Can you show me the details about advisory RHSA-1721:4231? [/INST]
 Assistant:
 ```yaml
 command: VectorStoreTool
 input:
   query: "RHSA-1721:4231"
-  limit: 3
+  limit: 4
 ```
 
-User: What is RHSA-1721:4231?
+[INST] User: Is is RHSA-1721:4231 about an OpenSSL exploit? [/INST]
 Assistant:
 ```yaml
 command: VectorStoreTool
 input:
   query: "RHSA-1721:4231"
-  limit: 3
+  limit: 4
 ```
 
-Do not output anything apart from valid YAML. Do not output any text or other information.
+[INST] User: Are thre any CVE's associated with RHSA-1721:4233? [/INST]
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4233"
+  limit: 4
+```
+
+Your output should only be YAML and include query, and limit fields. Do not output any other text or other information.
 
 <</SYS>>
 
@@ -214,7 +223,7 @@ Do not output anything apart from valid YAML. Do not output any text or other in
         match tool_collection.process_chat_input(&assistant_text).await {
             Ok(tool_output) => {
                 let yaml = serde_yaml::from_str::<serde_yaml::Value>(&tool_output).unwrap();
-                println!("-------> YAML: {:?}", yaml);
+                //println!("-------> YAML: {:?}", yaml);
                 let texts = yaml.get("texts").unwrap();
                 let mut joined_text = String::new();
                 if let Some(sequence) = texts.as_sequence() {
@@ -227,9 +236,9 @@ Do not output anything apart from valid YAML. Do not output any text or other in
                         }
                     }
                 }
-                println!("Joined text: {}", joined_text);
+                //println!("Joined text: {}", joined_text);
                 let prompt = ChatMessageCollection::new().with_system(StringTemplate::tera(
-                    "[INST] <<SYS>>\nYou are an assistant and help answer questions. Only reply with the answer to the question and nothing else. Use the following as additional context: {{texts}} \n<<SYS>>\n\n ",
+                    "[INST] <<SYS>>\nYou are an assistant and help answer questions. Only reply with the answer to the question and nothing else. Use the following as additional context: {{texts}} \n<<SYS>>\n\n",
                 )).with_user(StringTemplate::tera("{{ task  }} [/INST]"));
 
                 let result = Step::for_prompt_template(prompt.clone().into())

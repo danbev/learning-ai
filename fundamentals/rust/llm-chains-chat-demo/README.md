@@ -50,6 +50,9 @@ the new gguf model format, and also adds support for llama [embedddings].
 
 ```console
 $ cargo r -q --bin llama
+Query: Can you show me a summary of RHSA-2020:5566?
+output: Sure! Here is a summary of RHSA-2020:5566:
+"The Red Hat Security Advisory RHSA-2020:5566 is related to a security vulnerability in the OpenSSL library, specifically CVE-2020-3716. The vulnerability is a type confusion issue in the SSL/TLS heartbeat extension, which can allow an attacker to manipulate the SSL/TLS connection and potentially execute arbitrary code on the vulnerable system. The advisory recommends applying the appropriate updates to address this vulnerability."
 ```
 
 [embeddings]: https://github.com/sobelio/llm-chain/pull/245
