@@ -1047,3 +1047,20 @@ llama_model_loader: - tensor    0:  token_embd.weight q4_0 [4096, 32000, 1, 1]
 This is the embeddings for the model. Recall that the model has a context size
 of 4096 and a vocab size of 32000. So for each token in the vocabulary there
 is en embedding with a dimension of 4096.
+
+### Inspecting a token
+Sometimes you might have a token id and want to know what it represents. This
+can be done opening a program in a debugger. For example:
+```console
+$ gdb -args ./simple-prompt
+Reading symbols from ./simple-prompt...
+(gdb) br simple-prompt.cpp:21
+Breakpoint 1 at 0x408ea2: file src/simple-prompt.cpp, line 21.
+(gdb) r
+```
+After the model has loaded we can then inspect the token embeddings, in this
+case I wanted to know what the token id 29871 represents
+```console
+(gdb) p model.vocab.id_to_token[29871]
+$6 = {text = "▁", score = -1e+09, type = LLAMA_TOKEN_TYPE_NORMAL}
+```
