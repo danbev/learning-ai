@@ -24,6 +24,9 @@ fn main() -> io::Result<()> {
 
     create_plot(&counts, &data, "part2-count-grid");
 
+    // Set the seed for reproducibility of values in the next part.
+    tch::manual_seed(2147483647);
+
     Ok(())
 }
 
