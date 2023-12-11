@@ -179,6 +179,13 @@ A value of 0 has no effect on token generation. A negative value will encourage
 the model to generate new tokens. A positive value will encourage the model to
 not generate new tokens.
 
+
+#### Repeat Penalty
+The repeat penalty is a hyperparameter that is used to control the repetition
+of tokens in the generated text. Setting this to 1 will not have any effect on
+token generation. A value of 0 will encourage the model to repeat tokens. A
+value greater than 1 will encourage the model to not repeat tokens.
+
 #### llm-chain-llama
 llm-chain have what they refer to as drivers, at the time of this writing there
 are two drivers: OpenAI and Llama. Llama uses a binding to llama.cpp, and is
