@@ -190,6 +190,14 @@ I ran into this issue with the llam-chains-chat-demo where the llm would just
 repeat the new-line token over and over until the context size was reached.
 Adding a repeat penalty of 1.1 fixed this issue and is something to be aware of.
 
+#### Frequency Penalty
+The frequency penalty is a hyperparameter that is used to control the frequency
+of tokens in the generated text. Setting this to 1 will not have any effect on
+token generation. A value of 0 will encourage the model to generate tokens that
+are more frequent. A value greater than 1 will encourage the model to generate
+tokens that are less frequent.
+
+
 #### llm-chain-llama
 llm-chain have what they refer to as drivers, at the time of this writing there
 are two drivers: OpenAI and Llama. Llama uses a binding to llama.cpp, and is
@@ -233,7 +241,7 @@ in the attention architecture.
 
 First lets take a look at inference without the key-value cache. Now in the
 following example we are starting with input tokens with a dimension of 2.
-So for each token that we have we have a vector of size 2. And we will assume
+So for each token that we have, we have a vector of size 2. And we will assume
 that the first token is the start of sentence token and that the model is going
 to predict the next token. What it predicts does not matter to make the point
 here so just ignore the actual values.
@@ -274,6 +282,7 @@ Time=3
 ```
 Notice that we have calculated the dot product for the first and second token
 again!
+
 The transformer architecture needs to have all the previous tokens in the
 sequence to predict the next token but we don't have to recalculate the dot
 product every time. We can cache the key and value matrices and then just
@@ -289,7 +298,6 @@ By adding the output token to the Key and the Value matrices we perform fewer
 operations. This is the key-value cache.
 So for every token processed it needs to be added to the Key and Value cache
 matrices to be use in the next predition.
-
 
 Let's take a look at how this is implemented in llama.cpp. I'll be using
 simple-prompt to demonstrate this.
@@ -1075,3 +1083,110 @@ case I wanted to know what the token id 29871 represents
 (gdb) p model.vocab.id_to_token[29871]
 $6 = {text = "▁", score = -1e+09, type = LLAMA_TOKEN_TYPE_NORMAL}
 ```
+
+### Prompting llama2
+This page https://gpus.llm-utils.org/llama-2-prompt-template/, and also
+https://huggingface.co/blog/llama2#how-to-prompt-llama-2, specifies that
+a prompt look as follows:
+```
+<s>[INST] <<SYS>>
+{your_system_message}
+<</SYS>>
+
+{user_message_1} [/INST]
+```
+This is how the model was trained and so this is what it expects.
+This might sound obvious but I ran into this issue when trying to create a
+prompt that would use retrieval augmented generation (RAG). I was trying to add
+some additional examples of interactions for the model as a system message but
+I originally specified them something like this:
+```
+    let sys_prompt = r#"
+[INST] <<SYS>>
+
+{{ system_prompt }}
+
+Only respond with the YAML and nothing else.
+
+Here are some previous interactions between the Assistant and a User:
+
+User: What is RHSA-1820:1234?
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1820:1234"
+  limit: 4
+```
+
+User: Can you show me the details about advisory RHSA-1721:4231?
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4231"
+  limit: 4
+```
+
+User: Is is RHSA-1721:4231 about an OpenSSL exploit?
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4231"
+  limit: 4
+```
+
+Your output should only be YAML and include query, and limit fields. Do not output any other text or other information.
+
+<</SYS>>
+
+{{ user_message }} [/INST]"#;
+```
+Sometimes the llm would get this right but most of the times it would not and
+not create a valid YAML. After a while I relized my mistake and changed the user
+messages in the examples to include the `[INST]` and `[/INST]` tags:
+```
+    let sys_prompt = r#"
+[INST] <<SYS>>
+
+{{ system_prompt }}
+
+Only respond with the YAML and nothing else.
+
+Here are some previous interactions between the Assistant and a User:
+
+[INST] User: What is RHSA-1820:1234? [/INST]
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1820:1234"
+  limit: 4
+```
+
+[INST] User: Can you show me the details about advisory RHSA-1721:4231? [/INST]
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4231"
+  limit: 4
+```
+
+[INST] User: Is is RHSA-1721:4231 about an OpenSSL exploit? [/INST]
+Assistant:
+```yaml
+command: VectorStoreTool
+input:
+  query: "RHSA-1721:4231"
+  limit: 4
+```
+
+Your output should only be YAML and include query, and limit fields. Do not output any other text or other information.
+
+<</SYS>>
+
+{{ user_message }} [/INST]"#;
+```
+With those changes the llm was able to generate valid YAML for the examples.
