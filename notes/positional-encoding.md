@@ -1,7 +1,7 @@
 ## Positional Encoding
 Positional encoding is used in transformers to give the model some notion of
 position of the tokens in a word sequence. This is done by adding a positional
-encoding vector to the input embedding vector. In an RNN, the position of the
+encoding vector with the input embedding vector. In an RNN, the position of the
 token in the sequence is encoded in the hidden state of the RNN which is because
 RNNs are sequential models. Transformers are not sequential models and so we
 need to add some notion of position to the input embedding vector.
