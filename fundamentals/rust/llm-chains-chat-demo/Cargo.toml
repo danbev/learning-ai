@@ -7,19 +7,23 @@ edition = "2021"
 anyhow = "1.0.75"
 async-trait = "0.1.74"
 #llm-chain = "0.12.3"
-llm-chain = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain" }
+#llm-chain = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain" }
 #llm-chain = { git = "https://github.com/sobelio/llm-chain.git", branch = "main" }
+llm-chain = { git = "https://github.com/danbev/llm-chain.git", branch = "embeddings-plus-updated-llama.cpp" }
 
 #llm-chain-llama = "0.12.3"
-llm-chain-llama = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-llama" }
+#llm-chain-llama = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-llama" }
 #llm-chain-llama = { git = "https://github.com/sobelio/llm-chain.git", branch = "main" }
+llm-chain-llama = { git = "https://github.com/danbev/llm-chain.git", branch = "embeddings-plus-updated-llama.cpp" }
 
 #llm-chain-openai = "0.12.3"
-llm-chain-openai = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-openai" }
+#llm-chain-openai = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-openai" }
+llm-chain-openai = { git = "https://github.com/danbev/llm-chain.git", branch = "embeddings-plus-updated-llama.cpp" }
 #llm-chain-openai = { git = "https://github.com/sobelio/llm-chain.git", branch = "main" }
 
 #llm-chain-qdrant = { git = "https://github.com/sobelio/llm-chain.git", branch = "main" }
-llm-chain-qdrant = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-qdrant" }
+#llm-chain-qdrant = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-qdrant" }
+llm-chain-qdrant = { git = "https://github.com/danbev/llm-chain.git", branch = "embeddings-plus-updated-llama.cpp" }
 qdrant-client = "1.6.0"
 
 serde = "1.0.189"
