@@ -5,7 +5,10 @@ and LLAMA (1 & 2).
 I've written about positional encoding in
 [positional-encoding.md](positional-encoding.md) which discussed absolute
 positional embeddings. The goal here is the same, to introduce encode position
-into the embeddings.
+but instead of adding this to the embeddings it will add them to the query and
+key matrices by rotating them. The idea is to make the dot product of the query
+and key vectors position-aware, encoding the relative positions of tokens into
+the attention mechanism.
 
 We can also have relative positional embeddings where we try to encode the
 distance between tokens.
