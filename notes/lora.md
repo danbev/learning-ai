@@ -6,8 +6,8 @@ anything except very powerful hardware, and very expensive to train from
 scratch.
 So LoRA is a method that decomposes the original weight matrix into smaller
 matrices which are called update matrices. The update matrices are then used
-to create new layers that are and only the weights in these smaller layers are
-updated during training.
+to create new layers that are then the only weights that are updated during
+training.
 
 The new layers are called the adaptation layers. This is possible by the fact
 that large weight matrices are often low-rank matrices which means that it can
@@ -78,7 +78,7 @@ When we train a model from scratch it looks something like this:
 
 ```
 
-With fine-tuning we don't updated the pre-trained weights, we only update the 
+With fine-tuning we don't update the pre-trained weights, we only update the 
 weights in the new layers that we add to the model. So it looks something like
 this:
 ```
@@ -98,7 +98,7 @@ this:
                     ↑             ↑
                     |             |
                 +------------------+
-                |    x inputs       |
+                |    x inputs      |
                 +------------------+
 
 ````
@@ -139,12 +139,12 @@ And then we merge the changes with the frozen weights:
 ```
 Notice that we are adding the pre-trained weights to the new weights.
 So looking at that we are only updating the weights in the new layers A and B
-but we still we still need to do matrix multiplication of the inputs and W,
-and then add the results to A and B. But the computation of A and B which would
-be done on GPUs is much less than the computation of W which would be done on
-CPUs. So we are saving a lot of computation by only updating the weights in the
-new layers I think. Remember that the above example is very very small and
-the real weight matrices would be much larger.
+but we still need to do matrix multiplication of the inputs and W, and then add
+ the results to A and B. But the computation of A and B which would be done on
+GPUs is much less than the computation of W which would be done on CPUs. So we
+ are saving a lot of computation by only updating the weights in the new layers
+I think. Remember that the above example is very very small and the real weight
+matrices would be much larger.
 
 ### Matrix decomposition
 It has been shown that large weight matrices can be described by smaller
