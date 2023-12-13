@@ -48,6 +48,13 @@ for embeddings. This examples depends upon open pull requests which have updated
 llm-chain-llama to use a [later] version of llama.cpp which is able to handle
 the new gguf model format, and also adds support for llama [embedddings]. 
 
+This example needs have a LLM model downloaded and stored in the `models`
+directory:
+```console
+$ make download-model
+```
+
+Then we can run the Llama example using:
 ```console
 $ cargo r -q --bin llama
 Query: Can you show me a summary of RHSA-2020:5566?
