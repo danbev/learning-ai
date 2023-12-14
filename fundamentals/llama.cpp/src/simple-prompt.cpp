@@ -128,13 +128,15 @@ int main(int argc, char** argv) {
     // where the first dimension is the number of tokens in the batch and
     // the second dimension is the number of tokens in the vocabulary.
     float* last_logits = all_logits + (batch.n_tokens - 1) * n_vocab;
+
+    int n_batch_tokens = batch.n_tokens;
     
     //while (true) {
     while (n_cur <= n_len) {
         // logits are stored in the last token of the batch and are the 
         // raw unnormalized predictions.
         //float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
-        float* logits = all_logits + (batch.n_tokens - 1) * n_vocab;
+        float* logits = all_logits + (n_batch_tokens - 1) * n_vocab;
 
         std::vector<llama_token_data> candidates;
         candidates.reserve(n_vocab);
@@ -188,22 +190,25 @@ int main(int argc, char** argv) {
 
         // Update the batch to include the new token id, and the position of the
         // token in the sequence.
-        batch.n_tokens = 1; // We are only passing in one token.
-        batch.token[0] = new_token_id; // the new token id.
-        batch.pos[0] = n_cur, // the position in the sequence.
-        //batch.n_seq_id[0] = 1;  // the number of sequences for this token.
-        //batch.seq_id[0][0] = 0; // the actual sequence id.
-        batch.logits[0] = true;
+        llama_batch single_token_batch = llama_batch_init(1,/*embd*/ 0, /*n_seq_max*/ 1);
+        single_token_batch.n_tokens = 1; // We are only passing in one token.
+        single_token_batch.token[0] = new_token_id; // the new token id.
+        single_token_batch.pos[0] = n_cur, // the position in the sequence.
+        single_token_batch.n_seq_id[0] = 1;  // the number of sequences for this token.
+        single_token_batch.seq_id[0][0] = 0; // the actual sequence id.
+        single_token_batch.logits[0] = true;
+        n_batch_tokens = single_token_batch.n_tokens;
 
         n_decode += 1;
         n_cur += 1;
 
         // With the new token added to the batch, we can now predict the
         // next token.
-        if (llama_decode(ctx, batch)) {
+        if (llama_decode(ctx, single_token_batch)) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
         }
+        llama_batch_free(single_token_batch);
     }
     fprintf(stdout, "\nDecoded %d tokens\n", n_decode);
     llama_batch_free(batch);
