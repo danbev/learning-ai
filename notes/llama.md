@@ -1100,7 +1100,7 @@ This might sound obvious but I ran into this issue when trying to create a
 prompt that would use retrieval augmented generation (RAG). I was trying to add
 some additional examples of interactions for the model as a system message but
 I originally specified them something like this:
-```
+````
     let sys_prompt = r#"
 [INST] <<SYS>>
 
@@ -1142,11 +1142,11 @@ Your output should only be YAML and include query, and limit fields. Do not outp
 <</SYS>>
 
 {{ user_message }} [/INST]"#;
-```
+````
 Sometimes the llm would get this right but most of the times it would not and
 not create a valid YAML. After a while I relized my mistake and changed the user
 messages in the examples to include the `[INST]` and `[/INST]` tags:
-```
+````
     let sys_prompt = r#"
 [INST] <<SYS>>
 
@@ -1188,5 +1188,5 @@ Your output should only be YAML and include query, and limit fields. Do not outp
 <</SYS>>
 
 {{ user_message }} [/INST]"#;
-```
+````
 With those changes the llm was able to generate valid YAML for the examples.
