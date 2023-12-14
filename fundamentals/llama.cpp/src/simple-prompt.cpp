@@ -9,7 +9,7 @@ int main(int argc, char** argv) {
     std::string model_path = "models/llama-2-13b-chat.Q4_0.gguf";
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
-    // If the prompt provided is in the form or a question like it is here
+    // If the prompt provided is in the form of a question like it is here
     // the model will predict the first token to be a new line, completing the
     // prompt with a new line. It will then predict the next token to be the
     // another new line.
