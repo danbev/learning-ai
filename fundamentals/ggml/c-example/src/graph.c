@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
   printf("ctx mem size: %ld\n", ggml_get_mem_size(ctx));
   printf("ctx mem used: %ld\n", ggml_used_mem(ctx));
 
-  // Create a computation graph (c = computation)
+  // Create a computation graph (c = computation  in ggml_cgraph)
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   printf("c_graph size: %d\n", c_graph->size);
 
