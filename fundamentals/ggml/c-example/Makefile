@@ -26,6 +26,8 @@ update-ggml:
 
 .PHONY: clean
 clean:
-	${RM} -f $(TARGET)
-	${RM} -rf ggml/build
+	${RM} -f graph tensor
 
+
+clean-ggml:
+	${RM} -rf ggml/build
