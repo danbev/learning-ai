@@ -44,7 +44,7 @@ multitool!(
 async fn build_local_qdrant(add_doc: bool) -> Qdrant<Embeddings, EmptyMetadata> {
     let config = QdrantClientConfig::from_url("http://localhost:6334");
     let client = Arc::new(QdrantClient::new(Some(config)).unwrap());
-    let collection_name = "vec-documents".to_string();
+    let collection_name = "openai-vec-documents".to_string();
     let embedding_size = 1536;
 
     if !client
@@ -108,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::var("OPENAI_API_KEY").expect(
         "You need an OPENAI_API_KEY env var with a valid OpenAI API key to run this example",
     );
-    let qdrant = build_local_qdrant(false).await;
+    let qdrant = build_local_qdrant(true).await;
 
     let openai_opts = options!(
         Stream: false
