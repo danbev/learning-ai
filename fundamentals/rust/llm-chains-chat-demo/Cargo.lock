@@ -1088,7 +1088,7 @@ checksum = "c4cd1a83af159aa67994778be9070f0ae1bd732942279cabb14f86f986a21456"
 [[package]]
 name = "llm-chain"
 version = "0.13.0"
-source = "git+https://github.com/danbev/llm-chain.git?branch=embeddings-plus-updated-llama.cpp#b27be315890ab238ab86b88123d20e9da72faba7"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#e6e02fbc4bc22aa2920231fdf4e80ea4a1b3fd35"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1113,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-llama"
 version = "0.13.0"
-source = "git+https://github.com/danbev/llm-chain.git?branch=embeddings-plus-updated-llama.cpp#b27be315890ab238ab86b88123d20e9da72faba7"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#e6e02fbc4bc22aa2920231fdf4e80ea4a1b3fd35"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1129,7 +1129,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-llama-sys"
 version = "0.13.0"
-source = "git+https://github.com/danbev/llm-chain.git?branch=embeddings-plus-updated-llama.cpp#b27be315890ab238ab86b88123d20e9da72faba7"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#e6e02fbc4bc22aa2920231fdf4e80ea4a1b3fd35"
 dependencies = [
  "bindgen",
 ]
@@ -1137,7 +1137,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-openai"
 version = "0.13.0"
-source = "git+https://github.com/danbev/llm-chain.git?branch=embeddings-plus-updated-llama.cpp#b27be315890ab238ab86b88123d20e9da72faba7"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#e6e02fbc4bc22aa2920231fdf4e80ea4a1b3fd35"
 dependencies = [
  "async-openai",
  "async-trait",
@@ -1154,7 +1154,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-qdrant"
 version = "0.13.0"
-source = "git+https://github.com/danbev/llm-chain.git?branch=embeddings-plus-updated-llama.cpp#b27be315890ab238ab86b88123d20e9da72faba7"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#e6e02fbc4bc22aa2920231fdf4e80ea4a1b3fd35"
 dependencies = [
  "anyhow",
  "async-trait",
