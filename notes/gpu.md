@@ -77,6 +77,53 @@ where the registers are per CPU core.
 Every core in an SM has a register file, which is a collection of registers
 used exclusively by that core.
 
+Threads are the smallest unit of execution in a GPU and execute part of the
+kernel. Just a note about the name "kernel" as the first thing I thought about
+was the linux kernel. In this case I think it comes from that what we want
+executed is a small portion of our program, a part of it that we want to
+optimize (and which can benifit from parallelization). So this is the "kernel",
+it is the "core" computation unit of our program, or the "essential" part that
+is being computed.
+
+A block is a group of threads that execute the same kernel and can communicate
+with each other via shared memory. This means that a block is specific to an
+SM as the shared memory is per SM.
+
+A grid is a collection of blocks that execute the same kernel. This grid is
+distributed across the SMs of the GPU. So while an individual block is specific
+to an SM, other blocks in the same grid can be on other SMs.
+
+Each SM can execute multiple blocks at the same time. And each SM has multiple
+/many cores, and each of these cores can execute one or more threads at the
+same time.
+
+The cores are what actually do the work and execute the threads. Each core can
+execute one thread at a time.
+```
++-------------------------------------+
+|               Grid                  |
+|                                     |
+|    +------------+  +------------+   |
+|    |   Block 1  |  |   Block 2  |   |
+|    |            |  |            |   |
+|    | T1 T2 .. Tn|  | T1 T2 .. Tn|   |
+|    +------------+  +------------+   |
+|    +------------+  +------------+   |
+|    |   Block 3  |  |   Block 4  |   |
+|    |            |  |            |   |
+|    | T1 T2 .. Tn|  | T1 T2 .. Tn|   |
+|    +------------+  +------------+   |
+|              ...                    |
+|    +------------+  +------------+   |
+|    |  Block N-1 |  |   Block N  |   |
+|    |            |  |            |   |
+|    | T1 T2 .. Tn|  | T1 T2 .. Tn|   |
+|    +------------+  +------------+   |
+|                                     |
++-------------------------------------+
+```
+TODO: add notes about threadIdx, blockIdx, blockDim, gridDim
+
 
 It is also possible to have multiple buses between the GPU and system memory
 which is called parallelization. This way the GPU can keep transferring data
