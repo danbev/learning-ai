@@ -3,10 +3,9 @@ LoRA is an example of Parameter Efficient Fine-Tuning (PEFT).
 
 The motivation for LoRA is that most LLM's are too big to be fine-tuned on
 anything except very powerful hardware, and very expensive to train from
-scratch.
-So LoRA is a method that decomposes the original weight matrix into smaller
-matrices which are called update matrices. The update matrices are then used
-to create new layers that are then the only weights that are updated during
+scratch. So LoRA is a method that decomposes the original weight matrix into
+smaller matrices which are called update matrices. The update matrices are then
+used to create new layers that are then the only weights that are updated during
 training.
 
 The new layers are called the adaptation layers. This is possible by the fact
@@ -31,8 +30,8 @@ W = A * B
 
   B = [1  2  3]             dim: 1*3 (r*n)
 
-  [2]             [2  4 6 ]
-  [3] [1  2  3] = [3  6 9 ]  
+  [2]             [2  4  6]
+  [3] [1  2  3] = [3  6  9]  
   [4]             [4  8 12]
        ↑              ↑
        |              |
@@ -45,7 +44,7 @@ matrix into two smaller matrices. We can reconstruct the original matrix by
 multiplying the two smaller matrices together.
 
 So, now imagine that matrix A above is our weight matrix in a neural network.
-This would be a lot larger in a nueral network, but the concepts still applies.
+This would be a lot larger in a neural network, but the concepts still applies.
 We can decompose this matrix into two smaller matrices U and V.
 Notice that instead of having 9 values we reduced that into 6 values in memory
 which might not seem like a lot but when the matrix is very large this can
@@ -55,12 +54,13 @@ So the idea here is that instead of re-training the entire model we can
 decompose the weight matrix and train the smaller matrices instead and it will
 have the same effect.
 
-Initially A is initialized randomly using a Gaussian/normal distribution.
+Initially A is initialized randomly using a gaussian/normal distribution.
 Then B is initialized to 0. So the product of A and B is zero to begin with.
 Then ΔW is scaled by α/r where α is a scaling constant.
 
 ### Fine tuning
-When we train a model from scratch it looks something like this:
+When we train a model from scratch the back propagation looks something like
+this:
 ```
       +------------------+
       |   hidden layer   |
@@ -103,7 +103,7 @@ this:
 
 ````
 So we end up with two matrices because we have decomposed the original weight
-matrix. The LoRA matrices can be merged with the frozen weights with does not
+matrix. The LoRA matrices can be merged with the frozen weights which does not
 increase the size of the model, which is one of the strengths of LoRA. Other
 solutions like the "adapter" method would increase the size of the model as
 the trained weights of the adapter are then taken and they extend the
@@ -140,9 +140,9 @@ And then we merge the changes with the frozen weights:
 Notice that we are adding the pre-trained weights to the new weights.
 So looking at that we are only updating the weights in the new layers A and B
 but we still need to do matrix multiplication of the inputs and W, and then add
- the results to A and B. But the computation of A and B which would be done on
+the results to A and B. But the computation of A and B which would be done on
 GPUs is much less than the computation of W which would be done on CPUs. So we
- are saving a lot of computation by only updating the weights in the new layers
+are saving a lot of computation by only updating the weights in the new layers
 I think. Remember that the above example is very very small and the real weight
 matrices would be much larger.
 
@@ -204,5 +204,3 @@ TODO: explain Adam optimizer
 I usually prefer to have examples that run locally but for a lora example where
 training/fine tuning is involved having access to GPU(s) is almost required.
 I've got a Colab Pro account which gives me access to a GPU.
-
-
