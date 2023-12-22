@@ -25,6 +25,9 @@ simple-prompt: src/simple-prompt.cpp
 pre-simple-prompt: src/simple-prompt.cpp
 	$(CXX) -E $(CXXFLAGS) $^  -o pre-simple-prompt.cpp
 
+finetune: src/finetune.cpp
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+
 update-llama:
 	git submodule update --remote --merge llama.cpp
 
@@ -33,3 +36,20 @@ clean:
 
 clean-llama:
 	cd llama.cpp && make clean
+
+download-falcon-model:
+	git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/tiiuae/falcon-7b
+
+# This target requires the falcon model to be downloaded first.
+convert-falcon-model:
+	@python3.11 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements-hf-to-gguf.txt && \
+		python3.11 llama.cpp/convert-hf-to-gguf.py falcon-7b \
+	        --outfile models/falcon-7b.gguf --outtype f16
+
+quantize-falcon-model:
+	./llama.cpp/quantize models/falcon-7b.gguf models/falcon-7b.Q4_0.gguf Q4_0
+
+
