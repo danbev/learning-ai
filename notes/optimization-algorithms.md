@@ -110,19 +110,26 @@ The idea of momentum in the context of SGD comes from physics, particularly the
 concept of momentum in motion. It's like a ball rolling downhill; the momentum
 term increases the speed of the descent. So instead of just taking the current
 gradient into account it also take the previous gradient into account. So it
-need to keep a vector values that contain a combination of the gradients from
-current step and the velocity of the previous step, scaled by a parameter known
-as the momentum coefficient.
+needs to keep a vector of values that contain a combination of the gradients
+from current step and the velocity of the previous step, scaled by a parameter
+known as the momentum coefficient.
 ```
 vₜ= the velocity at time step t.
 μ = the momentum coefficient (between 0 - 1)
 α = the learning rate
 ```
+Note that if the momemtum is 0 then this is just like standard SGD. And if it is
+1 it is like a ball rocking back and forth. A value of 0.8-0.9 is usually a good
+value for the momentum coefficient which is like having a little friction so
+that the "ball" eventually slows down and stops.
 
 ### AdaGrad
 Adaptive Gradient Algorithm (AdaGrad) is an algorithm for gradient-based
 optimization that adapts the learning rate to the parameters, performing larger
 updates for infrequent parameters, and smaller updates for frequent parameters.
+
+The more you have updated a feature already the less you will update it in the
+future.
 
 One issue with AdaGrad is that of diminishing learning rates, which prevents the
 method from converging to the global optimum.
@@ -130,6 +137,8 @@ method from converging to the global optimum.
 ### RMSProp
 Root mean squared (SMS) propagation is an adaptive rate optimization simliar to
 AdaGrad and intented to address the issue of diminishing learning rates.
+Also a problem with AdaGrad is that it is slow the sum of gradients squared only
+grows and never shrinks.
 
 ### Adam
 Adaptive Movement Estimation (Adam) is an adaptive learning rate optimization
