@@ -32,7 +32,7 @@ update-llama:
 	git submodule update --remote --merge llama.cpp
 
 clean:
-	$(RM) -f simple-prompt
+	$(RM) -f simple-prompt finetune
 
 clean-llama:
 	cd llama.cpp && make clean
@@ -53,3 +53,20 @@ quantize-falcon-model:
 	./llama.cpp/quantize models/falcon-7b.gguf models/falcon-7b.Q4_1.gguf Q4_1
 
 
+download-llama-model:
+	cd && models && \
+	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf?download=true
+
+download-shakespeare:
+	wget https://raw.githubusercontent.com/brunoklein99/deep-learning-notes/master/shakespeare.txt
+
+finetune-llama-2-7b.Q4_0-model:
+	./finetune \
+        --model-base models/llama-2-7b.Q4_0.gguf \
+        --checkpoint-in chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-llama-2-7b.Q4_0-shakespeare-ITERATION.gguf \
+        --lora-out lora-llama-2-7b.Q4_0-shakespeare-ITERATION.bin \
+        --train-data "shakespeare.txt" \
+        --save-every 10 \
+        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --use-checkpointing
