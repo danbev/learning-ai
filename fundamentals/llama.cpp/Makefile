@@ -50,6 +50,6 @@ convert-falcon-model:
 	        --outfile models/falcon-7b.gguf --outtype f16
 
 quantize-falcon-model:
-	./llama.cpp/quantize models/falcon-7b.gguf models/falcon-7b.Q4_0.gguf Q4_0
+	./llama.cpp/quantize models/falcon-7b.gguf models/falcon-7b.Q4_1.gguf Q4_1
 
 
