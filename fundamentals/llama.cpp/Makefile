@@ -58,7 +58,7 @@ download-llama-model:
 	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf?download=true
 
 download-shakespeare:
-	wget https://raw.githubusercontent.com/brunoklein99/deep-learning-notes/master/shakespeare.txt
+	wget -P data/ https://raw.githubusercontent.com/brunoklein99/deep-learning-notes/master/shakespeare.txt
 
 finetune-llama-2-7b.Q4_0-model:
 	./finetune \
@@ -66,7 +66,7 @@ finetune-llama-2-7b.Q4_0-model:
         --checkpoint-in chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf \
         --checkpoint-out chk-llama-2-7b.Q4_0-shakespeare-ITERATION.gguf \
         --lora-out lora-llama-2-7b.Q4_0-shakespeare-ITERATION.bin \
-        --train-data "shakespeare.txt" \
+        --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing
