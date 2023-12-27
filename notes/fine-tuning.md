@@ -1,16 +1,16 @@
 ## Fine-tuning an LLM
-First fine-tuning is about taking a pre-trained model and training it on a
+First fine-tuning is about taking a pre-trained model and training it on
 specific domain knowledge, or a specific task. This will make the model more
 accurate for that specific task. So instead of a general model we will have a
 speciallized one.
 
 
 ### Pre-training (for the general/base model)
-First data is required to be gathered for the training, and it might need
-to be pre-processed, for example by removing sensitive information, correcting
-errors, etc.
-We then take that data an tokenize which is just the process of splitting the
-data into smaller units. These tokens are the feed into a transformer neural
+First data is required to be gathered for the training process, and it might
+need to be pre-processed, for example by removing sensitive information,
+correcting errors, etc.
+We then take that data and tokenize it, which is just the process of splitting
+the data into smaller units. These tokens are the feed into a transformer neural
 network and the network is trained to predict the next token in the sequence and
 will adjust the weights during this process.
 
@@ -20,8 +20,9 @@ and is a very expensive process.
 
 ### Fine-tuning
 This is the process of taking the pre-trained model and training it on a
-specific task. This is where things like making the model be an expert in
-answering questions (chat), or generating code.
+specific task, or specific domain knowledge that might not have been present (
+or not enough) in the training input data. This is where things like making the
+model be an expert in answering questions (chat), or generating code.
 We need to make sure that the data we use here is also pre-processed similar to
 what was done for the pre-training data.
 
