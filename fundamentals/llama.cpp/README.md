@@ -189,4 +189,40 @@ train_opt_callback: iter=     4 sample=17/27520 sched=0.040000 loss=2.046678 dt=
 train_opt_callback: iter=     5 sample=21/27520 sched=0.050000 loss=2.475715 dt=00:05:43 eta=02:23:17 |---->
 train_opt_callback: iter=     6 sample=25/27520 sched=0.060000 loss=2.484926 dt=00:05:46 eta=02:18:47 |---->
 :train_opt_callback: iter=     7 sample=29/27520 sched=0.070000 loss=2.131633 dt=00:05:53 eta=02:15:21 |-------->
+gtrain_opt_callback: iter=     8 sample=33/27520 sched=0.080000 loss=3.031846 dt=00:05:48 eta=02:07:56 |>
+train_opt_callback: iter=     9 sample=37/27520 sched=0.090000 loss=2.695413 dt=00:05:48 eta=02:02:08 |-->
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q4_0-shakespeare-10.gguf
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-10.bin
+save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin
+train_opt_callback: iter=    10 sample=41/27520 sched=0.100000 loss=2.781403 dt=00:05:47 eta=01:55:55 |->
+train_opt_callback: iter=    11 sample=45/27520 sched=0.110000 loss=2.144866 dt=00:05:58 eta=01:53:24 |-------->
+train_opt_callback: iter=    12 sample=49/27520 sched=0.120000 loss=2.300252 dt=00:05:54 eta=01:46:19 |------>
+^Ptrain_opt_callback: iter=    13 sample=53/27520 sched=0.130000 loss=2.814412 dt=00:05:54 eta=01:40:23 |->
+train_opt_callback: iter=    14 sample=57/27520 sched=0.140000 loss=2.255224 dt=00:05:45 eta=01:32:09 |------->
+train_opt_callback: iter=    15 sample=61/27520 sched=0.150000 loss=2.278017 dt=00:05:41 eta=01:25:24 |------>
+train_opt_callback: iter=    16 sample=65/27520 sched=0.160000 loss=2.077713 dt=00:05:37 eta=01:18:47 |-------->
+train_opt_callback: iter=    17 sample=69/27520 sched=0.170000 loss=2.336711 dt=00:05:38 eta=01:13:18 |------>
+train_opt_callback: iter=    18 sample=73/27520 sched=0.180000 loss=2.242626 dt=00:05:39 eta=01:07:57 |------->
+train_opt_callback: iter=    19 sample=77/27520 sched=0.190000 loss=2.361472 dt=00:05:40 eta=01:02:21 |------>
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q4_0-shakespeare-20.gguf
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-20.bin
+save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin
+train_opt_callback: iter=    20 sample=81/27520 sched=0.200000 loss=2.328380 dt=00:05:39 eta=00:56:37 |------>
+train_opt_callback: iter=    21 sample=85/27520 sched=0.210000 loss=2.167545 dt=00:05:38 eta=00:50:47 |-------->
+train_opt_callback: iter=    22 sample=89/27520 sched=0.220000 loss=2.301173 dt=00:05:39 eta=00:45:13 |------>
+train_opt_callback: iter=    23 sample=93/27520 sched=0.230000 loss=2.635886 dt=00:05:37 eta=00:39:24 |--->
+train_opt_callback: iter=    24 sample=97/27520 sched=0.240000 loss=2.472879 dt=00:05:41 eta=00:34:10 |----->
+train_opt_callback: iter=    25 sample=101/27520 sched=0.250000 loss=2.402841 dt=00:05:40 eta=00:28:22 |----->
+train_opt_callback: iter=    26 sample=105/27520 sched=0.260000 loss=1.968541 dt=00:05:36 eta=00:22:25 |---------->
+train_opt_callback: iter=    27 sample=109/27520 sched=0.270000 loss=2.039970 dt=00:05:37 eta=00:16:53 |--------->
+train_opt_callback: iter=    28 sample=113/27520 sched=0.280000 loss=2.072679 dt=00:05:38 eta=00:11:17 |--------->
+train_opt_callback: iter=    29 sample=117/27520 sched=0.290000 loss=1.905186 dt=00:05:51 eta=00:05:51 |---------->
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q4_0-shakespeare-30.gguf
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-30.bin
+save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin
+train_opt_callback: iter=    30 sample=121/27520 sched=0.300000 loss=1.846082 dt=00:06:16 eta=0.0ms |----------->
+main: total training time: 02:57:51
 ```
