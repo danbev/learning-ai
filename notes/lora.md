@@ -43,6 +43,16 @@ a matrix. And notice that we haven't lost any information by decomposing the
 matrix into two smaller matrices. We can reconstruct the original matrix by
 multiplying the two smaller matrices together.
 
+But one thing to note is that the `rank` is a parameter LoRA and is something
+that we can set ourselves, whereas in linear algebra this is something that is
+a property of the matrix based on its element and this is fixed. This confused
+me a lot initially as I was thinking about the rank as in the linear algebra
+definition of rank. But the rank in LoRA is something that we can set ourselves.
+We can think of the original matrix as a recipe for making a "fancy" dish. It
+contains a lot of ingredients and steps. With the rank in LoRA we are saying
+that we still want to make the same dish but we will use fewer ingredients and
+steps. The number of ingredients and steps is the rank in LoRA.
+
 So, now imagine that matrix W above is our weight matrix in a neural network.
 This would be a lot larger in a neural network, but the concepts still applies.
 We can decompose this matrix into two smaller matrices A and B.
