@@ -181,7 +181,7 @@ But do note that the same memory requirements are needed for inference plus
 the memory requirements for the adaptation matrices. So the inference memory
 requirements will increase a little. But this depends on whether the pre-trained
 model is merged with the adaptation matrices or not. If the pre-trained model
-are merged with the adaptation matrices then the memory requirements will not
+is merged with the adaptation matrices then the memory requirements will not
 increase.
 
 
@@ -197,8 +197,7 @@ Lets say we have matrix A and we want to decompose it into smaller matrices:
 Where U and V are orthogonal matrices and Σ is a diagonal matrix. The diagonal
 
 ### Adam optimizer
-LoRA uses Adam form model optimization.
-TODO: explain Adam optimizer
+LoRA uses [Adam](./optimization-algorithms.md) optimization.
 
 ### LoRA Example
 I usually prefer to have examples that run locally but for a lora example where
