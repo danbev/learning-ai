@@ -13,9 +13,9 @@ that large weight matrices are often low-rank matrices which means that it can
 be approximated by the product of two smaller matrices.
 
 Lets take a look at an example to clarify:
-A matrix `A` of dimensions `m * n` and rank `r` can be written as the product
-of two matrices `U` and `V`, where `U` has dimensions `m *r` and `V` has
-the dimensions `r * n`.
+A matrix `W` of dimensions `m * n` and rank `r` can be written as the product
+of two matrices `A` and `B`, where `A` has dimensions `m * r` and `B` has the
+dimensions `r * n`.
 
 ```
 W = A * B
@@ -43,9 +43,9 @@ a matrix. And notice that we haven't lost any information by decomposing the
 matrix into two smaller matrices. We can reconstruct the original matrix by
 multiplying the two smaller matrices together.
 
-So, now imagine that matrix A above is our weight matrix in a neural network.
+So, now imagine that matrix W above is our weight matrix in a neural network.
 This would be a lot larger in a neural network, but the concepts still applies.
-We can decompose this matrix into two smaller matrices U and V.
+We can decompose this matrix into two smaller matrices A and B.
 Notice that instead of having 9 values we reduced that into 6 values in memory
 which might not seem like a lot but when the matrix is very large this can
 make a big difference.
