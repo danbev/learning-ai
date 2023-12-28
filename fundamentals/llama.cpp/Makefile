@@ -70,3 +70,14 @@ finetune-llama-2-7b.Q4_0-model:
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing
+
+finetune-llama-2-7b.Q4_0-model-debug:
+	gdb --args ./finetune \
+        --model-base models/llama-2-7b.Q4_0.gguf \
+        --checkpoint-in chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-llama-2-7b.Q4_0-shakespeare-ITERATION.gguf \
+        --lora-out lora-llama-2-7b.Q4_0-shakespeare-ITERATION.bin \
+        --train-data "data/shakespeare.txt" \
+        --save-every 10 \
+        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --use-checkpointing
