@@ -85,6 +85,27 @@ features (area and bedrooms) but in real life we might have hundreds of
 features which means that we would have to calculate the partial derivative
 for each of the features which can be very time consuming.
 
+Gradient decent formula (same as above but with different notation as it might
+be written like this in places):
+```
+θ_new = θ_old - α * ∇J(θ)
+
+θ = represents the parameters of funtion we are trying to optimize which are
+    the weights.
+α = learning rate.
+- = the opposite of the gradient, which is because we want to go down the hill.
+∇ = Nabla symbol which is the gradient.
+∇(J)(θ) = the gradient of the cost function J with respect to the parameters θ.
+          This tells us the slope of the hill under our feet.
+```
+The process is an iterative process where we start with an initial guess for
+the θ, and then repetedly update it until theta converges to a value that
+minimizes the cost function J(θ). Convergence means that the values of the
+parameters θ stop changing significantly with each iteration, or they change
+within a very small predefined threshold.
+When we can't go downward anymore we are done or after a specific number of
+iterations (or perhaps a combination of both).
+
 ### Stochastic Gradient Descent (SGD)
 Building off of the previous section SGD tried to address the issue with having
 to calculate the error for all the samples in the training dataset. In this case
