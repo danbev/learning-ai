@@ -146,9 +146,29 @@ algorithm that's been designed specifically for training deep neural networks.
 It takes ideas from both RMSProp and Momentum.
 
 
-
-
-
 The words that are not used frequently will have a gradient of
 zero.
 
+### First-order Optimization Algorithms
+These are algorithms that use the first derivative (gradient) of the objective
+function, and examples of these are the ones we discussed above, like SGD,
+AdaGrad, RMSProp, and Adam. These are effient to compute but because the only
+use the slope/gradient they can sometimes lead to less accurate steps in complex
+landscapes. 
+
+### Second-order Optimization Algorithms
+These are algorithms that use the second derivative, a Hessian matrix that
+provides information about the curvature of the function.
+These are more accurate but are more expensive to compute because calculating
+the Hessian matrix is more complex. But since this method takes the curvature
+into consideration, and not just the slope, it can take more effient steps.
+In first-order optimization algorithms we specify a learning rate, but in
+second-order optimization algorithms we don't need to specify a learning rate
+because the Hessian matrix provides information about the curvature of the
+function and the step size is automatically adjusted based on this information.
+This can lead to faster convergence and removes the burden of learning rate
+tuning. The algorithm dynamically adjusts the step size based on the local
+curvature of the loss function.
+
+Examples of second-order optimization algorithms are Newton's method,
+BFSG (Broyden-Fletcher-Goldfarb-Shanno), and L-BFGS (Limited-memory BFGS).
