@@ -85,3 +85,11 @@ finetune-llama-2-7b.Q4_0-model-debug:
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing
+
+llama-main:
+	cd llama.cpp && make main
+
+finetune-predict: llama-main
+	./llama.cpp/main -m models/llama-2-7b.Q4_0.gguf \
+        --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
+	-p "Love's fire heats water"
