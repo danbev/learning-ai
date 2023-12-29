@@ -226,3 +226,31 @@ save_as_llama_lora: saving to lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin
 train_opt_callback: iter=    30 sample=121/27520 sched=0.300000 loss=1.846082 dt=00:06:16 eta=0.0ms |----------->
 main: total training time: 02:57:51
 ```
+So that took about 3 hours to run on my machine. And the base model I used was
+quantized which meant that an ran into a warning when using the model:
+```console
+$ ./llama.cpp/main -m models/llama-2-7b.Q4_0.gguf \
+   --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
+	-p "Love's fire heats water"
+
+llama_apply_lora_from_file_internal: warning: using a lora adapter with a
+quantized model may result in poor quality, use a f16 or f32 base model
+with --lora-base
+
+sampling: 
+	repeat_last_n = 64, repeat_penalty = 1.100, frequency_penalty = 0.000, presence_penalty = 0.000
+	top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.800
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+sampling order: 
+CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temp 
+generate: n_ctx = 512, n_batch = 512, n_predict = -1, n_keep = 0
+
+Love's fire heats water into steam and drives the turbine.nahmong
+```
+So this is not very accurate and I was hoping for a completion like:
+```
+Love's fire heats water, water cools not love.
+```
+I tried using a larger base model, like a Q8, but the time estimated to was
+around 15 hours. I think I'll need a GPU for this and one option might be to use
+colab but I've also been looking at getting an external GPU (eGPU).
