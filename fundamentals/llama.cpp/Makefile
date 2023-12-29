@@ -53,9 +53,13 @@ quantize-falcon-model:
 	./llama.cpp/quantize models/falcon-7b.gguf models/falcon-7b.Q4_1.gguf Q4_1
 
 
-download-llama-model:
-	cd && models && \
-	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf?download=true
+download-llama-7b-q4:
+	cd models && \
+	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf
+
+download-llama-7b-q8:
+	cd models && \
+	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q8_0.gguf
 
 download-shakespeare:
 	wget -P data/ https://raw.githubusercontent.com/brunoklein99/deep-learning-notes/master/shakespeare.txt
