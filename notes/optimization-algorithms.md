@@ -38,10 +38,11 @@ area         bedrooms     price
 
    price = w₁ * area + w₂ * bedrooms + b
 ```
-So we would have take the first entry and perform the following calculation:
+So we would take the first entry and perform the following calculation:
 ```
 w₁ = 1, w₂ = 1, b = 1
 
+   price = w₁ * area + w₂ * bedrooms + b
    price = w₁ * 2600 + w₂ * 3 + b
    price = 2600 + 3 + 1
    price = 2604
@@ -57,6 +58,8 @@ total_error = error₁ + error₂ + error₃ + error₄ + error₅ + error₆
 
 MSE = 1/n * total_error
 MSE = 1/6 * total_error
+
+MSE = Mean Squared Error
 ```
 What we then do is that we take the partial derivative of the MSE with respect
 to each of the weights and the bias. This gives us the gradient for each of
@@ -66,83 +69,117 @@ following formula:
 w₁ = w₁ - α * ∂MSE/∂w₁
 w₂ = w₂ - α * ∂MSE/∂w₂
 b = b - α * ∂MSE/∂b
+
+∂ = partial derivative
+α = learning/step rate
 ```
 Where α is the learning rate. This is the rate at which we update the weights
 and the bias. If we set α to a high value we might overshoot the minimum and
 if we set it to a low value it will take a long time to converge.
-We takes these new values for the weights and the bias and repeat the process
+
+We take these new values for the weights and the bias and repeat the process
 until we reach a minimum. Each one of these iterations is called an epoch.
+
 We keep doing this until we reach an acceptable error rate/loss, which should be
-as close to zero as possible. When this is achieved we values in the weights
+as close to zero as possible. When this is achieved the values in the weights
 and bias which should be correct enough that we can predict the price of a
 house given the area and the number of bedrooms. The above is called batch 
 gradient decent.
+
 Notice that we went through all the training samples and calculated the error,
 which means calculating the gradient for all the samples. In our case this is
-not really a problem which such as small data but if we have millions of
+not really a problem which such as small data set, but if we have millions of
 samples this can be very inefficient. Also in this example we only have two
-features (area and bedrooms) but in real life we might have hundreds of
-features which means that we would have to calculate the partial derivative
-for each of the features which can be very time consuming.
+features (area and bedrooms) but in real life we might have
+hundreds/thousand/millsions of features which means that we would have to
+calculate the partial derivative for each of the features which can be very time
+consuming.
 
-Gradient decent formula (same as above but with different notation as it might
-be written like this in places):
+The following is the Gradient decent formula (same as above but with different
+notation as it might be written like this in places):
 ```
 θ_new = θ_old - α * ∇J(θ)
 
-θ = represents the parameters of funtion we are trying to optimize which are
+θ = represents the parameters of function we are trying to optimize which are
     the weights.
-α = learning rate.
+α = step size/learning rate.
 - = the opposite of the gradient, which is because we want to go down the hill.
 ∇ = Nabla symbol which is the gradient.
-∇(J)(θ) = the gradient of the cost function J with respect to the parameters θ.
+∇(J)(θ) = the gradient of the cost function J, with respect to the parameters θ.
           This tells us the slope of the hill under our feet.
 ```
 The process is an iterative process where we start with an initial guess for
-the θ, and then repetedly update it until theta converges to a value that
-minimizes the cost function J(θ). Convergence means that the values of the
-parameters θ stop changing significantly with each iteration, or they change
-within a very small predefined threshold.
-When we can't go downward anymore we are done or after a specific number of
-iterations (or perhaps a combination of both).
+θ, and then repetedly update until theta converges to a value that minimizes the
+cost function J(θ). Convergence means that the values of the parameters θ stop
+changing significantly with each iteration, or they change within a very small
+predefined threshold. When we can't go downward anymore we are done or after a
+specific number of iterations (or perhaps a combination of both).
+
 
 ### Stochastic Gradient Descent (SGD)
-Building off of the previous section SGD tried to address the issue with having
+Building off of the previous section SGD tries to address the issue with having
 to calculate the error for all the samples in the training dataset. In this case
-we only take one sample at a time and calculate the error and update the weights
-and bias. This is called an iteration. We then repeat this process until we
-reach a minimum. This is called stochastic gradient decent. The problem with
-this approach is that it is very noisy and it might not converge to a minimum
-but instead bounce around the minimum. This is because we are only taking one
-sample at a time and the error for that sample might be very high or very low
-which means that the gradient will be very high or very low. This will cause
-the weights and bias to jump around the minimum. This is not a problem if we
-have a lot of samples but if we have a small dataset this can be a problem.
+we only take one random sample at a time and calculate the error and update the
+weights and bias. This is called an iteration. We then repeat this process until
+we reach a minimum. This is called stochastic (random) gradient decent.
+
+The problem with this approach is that it since we pick a random sample each
+interation the calculated gradients can vary significantly between each
+iteration. This is because we are only taking one sample at a time and the error
+for that sample might be very high or very low which means that the gradient
+will be very high or very low. This is called noise. This noise can actually be
+beneficial. It adds a degree of randomness that can help the algorithm escape
+local minima, potentially leading to better solutions in complex loss
+landscapes.
+
+This will cause the weights and bias to jump around the minimum. This is not a
+problem if we have a lot of samples but if we have a small dataset this can be
+a problem.
 
 ### Stochastic Gradient Descent with Mini-Batches
-This builds upon SGD but adds small batches of values to calculate instead of
-a single value. The ideas is to avoid the noise/bouncing of SGD and still be
-not have to calculate the error for all the samples. So instead of taking one
-sample at a time we take a small batch.
+This builds upon SGD but adds small batches of random values to calculate
+instead of a single value. The ideas is to avoid the noise/bouncing of SGD and
+still be not have to calculate the error for all the samples. So instead of
+taking one sample at a time we take a small batch.
 
 
 ### Stochastic Gradient Descent with Momentum
 The idea of momentum in the context of SGD comes from physics, particularly the
-concept of momentum in motion. It's like a ball rolling downhill; the momentum
-term increases the speed of the descent. So instead of just taking the current
-gradient into account it also take the previous gradient into account. So it
-needs to keep a vector of values that contain a combination of the gradients
-from current step and the velocity of the previous step, scaled by a parameter
-known as the momentum coefficient.
+concept of momentum in motion. It's like a ball rolling down hill; the momentum
+term increases the speed of the descent.
+
+So instead of just taking the current gradient into account, it also take the
+previous gradient into account. So it needs to keep a vector of values that
+contain a combination of the gradients from current step and the velocity of the
+previous step, scaled by a parameter known as the momentum coefficient.
+
+First, we update the velocity vector:
 ```
-vₜ= the velocity at time step t.
-μ = the momentum coefficient (between 0 - 1)
-α = the learning rate
+v = αv − η ∇f(θ) 
+v = the velocity vector containing the accumlated gradients updates from the
+    previous steps.
+α = alpha is the momentum coefficient and this hyperparameter dictates how much
+    of the previous velocity vector influences the current update.
+η = eta is the learning rate and is also a hyperparameter.
+∇f(θ) = ∇(Nabla/Del) is the symbol for the gradient operator. f(θ) is function
+        of theta which represents the loss function with respect to the model
+        parameters.
+
+θ = theta which are the weights (parameters of the model)
 ```
-Note that if the momemtum is 0 then this is just like standard SGD. And if it is
-1 it is like a ball rocking back and forth. A value of 0.8-0.9 is usually a good
-value for the momentum coefficient which is like having a little friction so
-that the "ball" eventually slows down and stops.
+And then we update the weights/parameters:
+```
+θ = θ + v
+```
+This helpful with saddle points where the slope of the function is zero but it
+is not a local max or min. Because of momentum for us to have arrived at the
+saddle point we must have been moving down hill and therefor the velocity vector
+will case the update to the weights to be larger and we will/can help move past
+the saddle point. But it is also possible that the momentum will cause us to
+miss a local minimum and the velocity could cause us to overshoot it. This is
+controlled by the momentum coefficient alpha (α). There are adaptive learning
+rate variants like AdaGrad and Adam that can help with this issue of
+overshooting.
 
 ### AdaGrad
 Adaptive Gradient Algorithm (AdaGrad) is an algorithm for gradient-based
@@ -166,9 +203,7 @@ Adaptive Movement Estimation (Adam) is an adaptive learning rate optimization
 algorithm that's been designed specifically for training deep neural networks.
 It takes ideas from both RMSProp and Momentum.
 
-
-The words that are not used frequently will have a gradient of
-zero.
+The words that are not used frequently will have a gradient of zero.
 
 ### First-order Optimization Algorithms
 These are algorithms that use the first derivative (gradient) of the objective
@@ -193,3 +228,26 @@ curvature of the loss function.
 
 Examples of second-order optimization algorithms are Newton's method,
 BFSG (Broyden-Fletcher-Goldfarb-Shanno), and L-BFGS (Limited-memory BFGS).
+
+### Newton's Method
+The following is the normal gradient decent we saw earlier, but instead of using
+θ we are using X (just to get used to using other symbols as I've see X used
+frequently in places):
+```
+Gradient decent:
+Xₖ₊₁ = Xₖ - α * ∇J(Xₖ)
+
+Newtons method:
+Xₖ₊₁ = Xₖ - [replace with matrix] * ∇J(Xₖ)
+Xₖ₊₁ = Xₖ - ∇²f(Xₖ)⁻¹ * ∇J(Xₖ)
+              ↑           ↑
+            matrix       vector
+```
+The matrix is the inverse of the Hessian matrix and the vector is the gradient
+of the cost function. The Hessian matrix is the second derivative of the cost
+function. The Hessian matrix is a square matrix and is used to calculate the
+local curvature of a function of many variables.
+
+The result of the matrix vector multiplication is a vector that indicates how
+much and in what direction to adjust Xₖ.
+
