@@ -41,9 +41,11 @@ W = A * B
 Recall that the rank is the number of linearly independent rows or columns in
 a matrix. And notice that we haven't lost any information by decomposing the
 matrix into two smaller matrices. We can reconstruct the original matrix by
-multiplying the two smaller matrices together.
+multiplying the two smaller matrices together. While the above example shows
+that we are using the same rank as the original matrix we can also use a lower
+rank (not possible in this example as we already have rank of 1).
 
-But one thing to note is that the `rank` is a parameter LoRA and is something
+But one thing to note is that the `rank` is a parameter in LoRA and is something
 that we can set ourselves, whereas in linear algebra this is something that is
 a property of the matrix based on its element and this is fixed. This confused
 me a lot initially as I was thinking about the rank as in the linear algebra
@@ -53,20 +55,28 @@ contains a lot of ingredients and steps. With the rank in LoRA we are saying
 that we still want to make the same dish but we will use fewer ingredients and
 steps. The number of ingredients and steps is the rank in LoRA.
 
+Just to make one thing clear is that the rank in LoRA is often much smaller than
+the rank of the matrix W. One way to think about this is that we are only
+interested in slightly adjusting the features/weights of the base model and not
+overhauling the entire model. We want to capture the adjustments for the new
+tasks being trained/fine-tuned on so that it performs well on the new tasks. It
+is beneficial if the base model is trained on similar things and not completely
+different to get the best results.
+
 So, now imagine that matrix W above is our weight matrix in a neural network.
 This would be a lot larger in a neural network, but the concepts still applies.
 We can decompose this matrix into two smaller matrices A and B.
 Notice that instead of having 9 values we reduced that into 6 values in memory
-which might not seem like a lot but when the matrix is very large this can
-make a big difference.
+which might not seem like a lot but when the matrix is very large this can make
+a big difference.
 
 So the idea here is that instead of re-training the entire model we can
 decompose the weight matrix and train the smaller matrices instead and it will
 have the same effect.
 
-Initially A is initialized randomly using a gaussian/normal distribution.
-Then B is initialized to 0. So the product of A and B is zero to begin with.
-Then ΔW is scaled by α/r where α is a scaling constant.
+Initially `A` is initialized randomly using a gaussian/normal distribution.
+Then `B` is initialized to 0. So the product of `A` and `B` is zero to begin
+with.  Then `ΔW` is scaled by `α/r` where `α` is a scaling constant.
 
 ### Fine tuning
 When we train a model from scratch the back propagation looks something like
@@ -103,7 +113,7 @@ this:
                |                |     A*B     |
       +-------------------+  +-----------+ +-----------+
       | pretrained weights|  | A weights | | B weights |
-      |   Wₙ*ₙ (fixed)    |  |  Aₘ*ₙ x   | | Bₘ*ₙ x    |
+      |   Wₘ*ₙ (fixed)    |  |  Aₘ*ᵣ x   | | Bᵣ*ₙ x    |
       +-------------------+  +-----------+ +-----------+
                     ↑             ↑
                     |             |
@@ -114,9 +124,9 @@ this:
 ````
 So we end up with two matrices because we have decomposed the original weight
 matrix. The LoRA matrices can be merged with the frozen weights which does not
-increase the size of the model, which is one of the strengths of LoRA. Other
-solutions like the "adapter" method would increase the size of the model as
-the trained weights of the adapter are then taken and they extend the
+increase the size of the model, which is one of the strengths of LoRA.
+Other solutions like the "adapter" method would increase the size of the model
+as the trained weights of the adapter are then taken and they extend the
 pre-trained models' weights. But LoRA does not exclude other methods, they
 could still be used in addition to LoRA.
 
