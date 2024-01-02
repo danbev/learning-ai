@@ -182,21 +182,71 @@ rate variants like AdaGrad and Adam that can help with this issue of
 overshooting.
 
 ### AdaGrad
-Adaptive Gradient Algorithm (AdaGrad) is an algorithm for gradient-based
-optimization that adapts the learning rate to the parameters, performing larger
-updates for infrequent parameters, and smaller updates for frequent parameters.
+Adaptive Gradient Algorithm (AdaGrad) is an extension of traditional gradient
+decent which adapts the learning rate (the Ada(pt) part of the name) to the
+parameters, performing larger updates for infrequent parameters, and smaller
+updates for frequent parameters.
 
-The more you have updated a feature already the less you will update it in the
-future.
+AdaGrad modifies the general learning rate at each time step for every
+parameter, based on the past gradients that have been computed for that
+parameter.
 
-One issue with AdaGrad is that of diminishing learning rates, which prevents the
-method from converging to the global optimum.
+So the learning rate is adapted for each parameter/weight. AdaGrad holds an
+array of size N (the number of parameters) and the value in this array, is the
+accumulated square of the gradients for each parameter. Recall that we are
+talking about stochastic gradient decent, so a random sample will be taken and
+the gradient will be calculated for that sample. This gradient will be squared
+and then added to the array for that parameter. The next time this parameter is
+randomly selected the gradient will be squared and added to the value in the
+array for that parameter. 
+
+Each parameters value in G will increase with each iteration since we take the
+gradient and square it and then add it to the existing value in G[g]. Something
+like following for each step:
+```
+G[i] += g²
+```
+The update equation then looks like this:
+```
+                   η
+θ_new = θ_old - ------- * g
+                 √(G+ε)  
+
+θ = theta which are the weights (parameters of the model)
+η = eta is the global learning rate and is also a hyperparameter.
+G = the accumulated square of the gradients for each parameter.
+ε = epsilon is a small value added to the denominator to avoid division by zero.
+g = the gradient for the current step.
+```
+Now, like we mentioned above the accumulated square gradient will increase the
+more a parameter is updated. But notice that this is then scaled by the global
+learning rate (η)/√(G+ε). So the more a parameter is updated the larger its
+accumulated gradient value in the G array will be, but this will then be scaled
+by the global learning rate. For example:
+```
+η = 1
+
+  1 / 2.5 = 0.4
+  1 / 5.0 = 0.2
+```
+So the larger the gradient the smaller the value will be smaller which means
+that the effective learning rate for that parameter decreases over time.
+If a parameter has a large gradient this is like rough terrain and we want to
+take smaller steps. If a parameter has a small gradient this is like smooth
+terrain and we want to take larger steps.
+
+The accumulated squared gradient in the denominator keeps increasing over time,
+which continuously decreases the effective learning rate for each parameter.
+As training progresses, this can lead to an excessively small learning rate,
+causing the model to stop learning prematurely. This is particularly problematic
+in long training sessions and for deep learning where learning rates need to be
+more dynamic throughout the training process.
 
 ### RMSProp
 Root mean squared (SMS) propagation is an adaptive rate optimization simliar to
 AdaGrad and intented to address the issue of diminishing learning rates.
-Also a problem with AdaGrad is that it is slow the sum of gradients squared only
-grows and never shrinks.
+Also a problem with AdaGrad is that it is slow and the sum of gradients squared
+only grows and never shrinks.
 
 ### Adam
 Adaptive Movement Estimation (Adam) is an adaptive learning rate optimization
