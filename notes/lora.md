@@ -111,7 +111,7 @@ this:
                |                      |
                |                +-----*-------+
                |                |     A*B     |
-      +-------------------+  +-----------+ +-----------+
+      +-------------------+  +-----------+ +-----------+   r = LoRA rank
       | pretrained weights|  | A weights | | B weights |
       |   Wₘ*ₙ (fixed)    |  |  Aₘ*ᵣ x   | | Bᵣ*ₙ x    |
       +-------------------+  +-----------+ +-----------+
@@ -123,8 +123,13 @@ this:
 
 ````
 So we end up with two matrices because we have decomposed the original weight
-matrix. The LoRA matrices can be merged with the frozen weights which does not
-increase the size of the model, which is one of the strengths of LoRA.
+matrix. Notice that matrix A has the dimensions `m * r` and matrix B has the
+dimensions `r * n`, and multiplying them together gives us a new matrix with
+the dimensions `m * n` which is the same as the original weight matrix.
+
+The LoRA matrices can be merged (matrix addition) with the frozen weights which
+does not increase the size of the model, which is one of the strengths of LoRA.
+
 Other solutions like the "adapter" method would increase the size of the model
 as the trained weights of the adapter are then taken and they extend the
 pre-trained models' weights. But LoRA does not exclude other methods, they
@@ -160,11 +165,7 @@ And then we merge the changes with the frozen weights:
 Notice that we are adding the pre-trained weights to the new weights.
 So looking at that we are only updating the weights in the new layers A and B
 but we still need to do matrix multiplication of the inputs and W, and then add
-the results to A and B. But the computation of A and B which would be done on
-GPUs is much less than the computation of W which would be done on CPUs. So we
-are saving a lot of computation by only updating the weights in the new layers
-I think. Remember that the above example is very very small and the real weight
-matrices would be much larger.
+the results to A and B. 
 
 ### Matrix decomposition
 It has been shown that large weight matrices can be described by smaller
@@ -175,22 +176,27 @@ decomposition.
 Recall that the rank of a matrix is the number of unique rows or columns in the
 matrix. If we have columns or rows that are linear combinations of other rows or
 columns then we can remove them and still get the same results. This is what
-the LoRA paper suggests and where the "low-rank" comes in LoRA comes from.
+the LoRA paper suggests and where the "low-rank" comes in LoRA comes from but
+we must not confuse the rank of the weight matrix with the rank of the LoRA as
+mentioned above.
 
 ### Inference time
 During inference the base model can stay the same and the adaptation matrices
 can be swapped. So it should be possible to have a single basemodel and
 multiple adaptation matrices for different tasks. This would be a lot more
-memory efficient than having multiple models for different tasks.
+memory efficient than having multiple models for different tasks where result
+of the A and B metrices are merged with the base model.
 
-So the base model need to first be loaded which could be done upon application
+So the base model needs to first be loaded which could be done upon application
 or container startup. The different lora models can be loaded as needed and
 they can all share the same base model.
 
-As an example of the number of parameters vs the number of parameters in
-the base model:
+As an example of the number of parameters in lora, vs the number of parameters
+in the base model:
 ```
-trainable params: 2457600 || all params: 3005015040 || trainable%: 0.08178328451893539
+lora trainable params: 2457600 
+           all params: 3005015040 
+            trainable: 0.08178328451893539
 ```
 This is one of the strengths of LoRA. The number of trainable parameters is
 much smaller than the number of parameters in the model. This means that it
@@ -198,12 +204,11 @@ should be possible to train the model on a smaller GPU than would be required
 to train the model from scratch.
 
 But do note that the same memory requirements are needed for inference plus
-the memory requirements for the adaptation matrices. So the inference memory
-requirements will increase a little. But this depends on whether the pre-trained
-model is merged with the adaptation matrices or not. If the pre-trained model
-is merged with the adaptation matrices then the memory requirements will not
-increase.
-
+the memory requirements for the adaptation matrices if they are not merged with
+the base-model. So the inference memory requirements will increase a little. But
+this depends on whether the pre-trained model is merged with the adaptation
+matrices or not. If the pre-trained model is merged with the adaptation matrices
+then the memory requirements will not increase.
 
 ### Singular Value Decomposition (SVD)
 Is a linear algebra method that can be used to decompose a matrix into smaller
