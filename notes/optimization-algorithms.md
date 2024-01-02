@@ -243,10 +243,60 @@ in long training sessions and for deep learning where learning rates need to be
 more dynamic throughout the training process.
 
 ### RMSProp
-Root mean squared (SMS) propagation is an adaptive rate optimization simliar to
-AdaGrad and intented to address the issue of diminishing learning rates.
-Also a problem with AdaGrad is that it is slow and the sum of gradients squared
-only grows and never shrinks.
+Root Mean Squared (SMS) Propagation is an adaptive rate optimization which was
+designed to address some of the shortcomings of AdaGrad. In particular it
+addresses the issue of the learning rate becoming too small over time. RMSprop
+modifies AdaGrad to make it more suitable for deep neural networks.
+
+Instead of accumulating all past squared gradients, RMSprop keeps/calculates
+a moving average which is used to keep track of the recent history of the
+squared gradients. Recent is the key here so that we don't take into account all
+the previous squared gradients, so we focus on more recent trends.
+```
+E[g²]ₜ= β * E[g²]ₜ₋₁ + (1 - β) * gₜ²
+
+E[g²]ₜ= the moving average of the squared gradients for the current step.
+β = beta is the decay factor and is a hyperparameter (normally something like
+    0.9) and this determines how much of the past information we want to retain.
+E[g²]ₜ₋₁ = the moving average of the squared gradients for the previous step.
+gₜ = the current gradient.
+gₜ² = the current gradient squared.
+```
+Lets break that down a little:
+```
+β * E[g²]ₜ₋₁
+```
+This is what carries forward the previous moving average and this is like the
+memory of the algorithm since it retains information from the past step.
+```
+(1 - β) * gₜ²
+```
+This adds a portion of the current gradient squared to the moving average and is
+the new information to be incorporated into the moving gradient.
+So by adjusting the value of beta we can control how much of the past
+information to be retained. A larger beta means that we retain more, longer
+memory, of the past information and a smaller beta means that we focus on more
+recent data.
+
+So imagine that we have a parameter that at one point had a large gradient but
+more recently has had smaller gradients. The moving average will be a
+might eventually ignore the previous large gradient and focus on the more recent
+making the gradients smoother.
+
+The update equation then looks like this:
+```
+              η
+θₜ₊₁ = θₜ - ----------- * gₜ
+            √E[g²]ₜ + ε
+
+θₜ₊₁ = the new updated parameter.
+θₜ = the parameter for the current step.
+η = eta is the global learning rate and is also a hyperparameter.
+E[g²]ₜ = the moving average of the squared gradients for the current step.
+ε = epsilon is a small value added to the denominator to avoid division by zero.
+gₜ = the gradient for the current step.
+```
+
 
 ### Adam
 Adaptive Movement Estimation (Adam) is an adaptive learning rate optimization
