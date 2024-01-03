@@ -297,13 +297,172 @@ E[g²]ₜ = the moving average of the squared gradients for the current step.
 gₜ = the gradient for the current step.
 ```
 
+RMSprop's performance is sensitive to the choice of the decay factor β for the
+moving average of squared gradients. Choosing an appropriate β is crucial, as
+it determines how much of the past gradients are considered. An inappropriate
+value can lead to suboptimal convergence. We also have the learning rate η and
+like other gradient descent methods, RMSprop's efficiency depends on the
+learning rate and finding the right learning rate often requires trial and error
+or grid search, which can be time-consuming.
+
 
 ### Adam
-Adaptive Movement Estimation (Adam) is an adaptive learning rate optimization
+Adaptive Moment Estimation (Adam) is an adaptive learning rate optimization
 algorithm that's been designed specifically for training deep neural networks.
 It takes ideas from both RMSProp and Momentum.
 
-The words that are not used frequently will have a gradient of zero.
+The Moment term comes from statistics and it was not something I'd come across
+before so lets just go though that quickly. 
+Lets say we have the following dataset:
+```
+  [12 14 14 17 18]
+
+                                            x        x  x
+  |--|--|--|--|--|--|--|--|--|--|--|--x--|--x--|--|--|--|--|--|--|--|
+  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22
+```
+We can calculate the average distance from 0 using:
+```
+  ∑ xᵢ   12 + 14 + 14 + 17 + 18
+  --- = ---------------------- = 15
+    n               5
+```
+The first moment is really just that and is written as:
+```
+ μ'₁ = ∑ xᵢ / n
+```
+So on average the above dataset is a distance of 15 units from 0 and using the
+first moment we can get a sense of where the average is. But we don't know how
+the values are spread out, for example if all five values were 15 then the
+average would still be 15 but the value would be spread out differently. The
+second moment provides a away to detect this spread and does so by squaring the
+values and then taking the average:
+```
+∑ xᵢ²   12² + 14² + 14² + 17² + 18²
+  --- = -------------------------- = 229.8
+    n                 5
+
+∑ xᵢ²   15² + 15² + 15² + 15² + 14²
+  --- = -------------------------- = 225
+    n                 5
+
+ μ'₂ = ∑ x²ᵢ / n
+```
+And we can see that we are now able to see that the if the second moment is
+higher this indicates that it is more spread out. It is also possible to center
+these value around the mean by subtracting the mean from each value and then
+squaring them and then taking the average:
+```
+∑ (xᵢ - μ'₁)² (12 - 15)² + (14 - 15)² + (14 - 15)² + (17 - 15)² + (18 - 15)²
+  --------- = ------------------------------------------------------------- = 4.8
+       n                                   5
+
+∑ (xᵢ - μ'₁)² (15 - 15)² + (15 - 15)² + (15 - 15)² + (15 - 15)² + (15 - 15)²
+  --------- = ------------------------------------------------------------- = 0
+       n                                   5
+```
+
+In RMSprop we stored the moving average of the squared gradients and for SGD
+with Momentum we stored the velocity vector. And in Adam we will therefore have
+two arrays of size N, named `m` and `v`.
+
+The `m` vector is similar to the momentum vector in SGD with momentum and stores
+the moving average of the gradients for each parameter/weight. This is the
+first moment.
+
+The update of `m` vector looks like this:
+```
+mₜ = β₁ * mₜ₋₁ + (1 - β₁) * gₜ
+
+mₜ = the moving average of the gradients for the current step.
+β₁ = beta₁ is the first moment decay rate and is a hyperparameter (typical value is 0.9)
+     and determines how much of the past gradients we want to retain in the
+     moving average.
+mₜ₋₁ = the moving average of the gradients for the previous step.
+gₜ = the current gradient.
+```
+So thinking back to the above paragraph about the first moment, the `m` vector
+is the first moment and is the moving average of the gradients for each
+parameter/weight. It is not the complete average as we can configure how much
+of the past values to take into account. So this would give us an idea of
+the average gradients for a parameter over time (possible over the entire
+history or a reset subset of the history depending on the value of beta₁). 
+
+The `v` vector is similar to the RMSprop vector and stores the moving average of
+the squared gradients for each parameter/weight, similar to the gradient
+accumulation in RMSprop.
+
+The update of `v` vector looks like this:
+```
+vₜ = β₂ * vₜ₋₁ + (1 - β₂) * gₜ²
+
+vₜ = the moving average of the squared gradients for the current step.
+β₂ = beta₂ is the second moment decay rate and is a hyperparameter (typical value is 0.999)
+     and determines the weighting given to the past values in the moving average.
+vₜ₋₁ = the second moment vector from the previous iteration.
+gₜ² = the current gradient squared.
+```
+
+Initially the `m` and `v` vectors are initialized to zero. This is a problem
+because if we have a parameter that has a large gradient then the `m` and `v`
+vectors will be zero and the update will be very small. 
+
+```
+mₜ = β₁ * mₜ₋₁ + (1 - β₁) * gₜ
+mₜ = 0.9 * 0 + (1 - 0.9) * 12.35
+mₜ = 1.235
+```
+Now, we apply the bias correction
+```
+^     mₜ
+mₜ = ---
+     1 - βᵗ₁
+
+mₜ = 1.235
+t = 1 (first iteration)
+β₁ = 0.9
+
+^    1.235     1.235
+mₜ = ------- = ----- = 12.35
+     1 - 0.9    0.1
+```
+Notice how this compensates for the initial low gradient when the `m` vector was
+initialized to zero. This is called bias correction. And not that as `t` gets
+larger the less impact the bias correction has:
+```
+t = 100
+
+^    1.235       1.235
+mₜ = -------   = ----------- = 1.235
+     1 - 0.9¹⁰⁰  0.99999734
+```
+The same correction will be done for the `v` vector as well.
+
+So the update process will be:
+```
+Update the first moment vector:
+mₜ = β₁ * mₜ₋₁ + (1 - β₁) * gₜ
+
+Bias correction for first moment:
+m_hatₜ = mₜ / (1 - βᵗ₁)
+
+Update the second moment vector:
+vₜ = β₂ * vₜ₋₁ + (1 - β₂) * gₜ²
+
+Bias correction for second moment:
+v_hatₜ = vₜ / (1 - βᵗ₂)
+
+Update the parameters:
+               η        
+θₜ₊₁ = θₜ - ------- * m_hatₜ
+            √v_hatₜ + ε
+
+η = (eta) is the global learning rate.
+m_hatₜ = the bias corrected first moment vector.
+v_hatₜ = the bias corrected second moment vector.
+ε = (epsilon) is a small value added to the denominator to avoid division by zero.
+```
+
 
 ### First-order Optimization Algorithms
 These are algorithms that use the first derivative (gradient) of the objective
