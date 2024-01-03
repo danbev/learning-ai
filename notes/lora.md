@@ -125,6 +125,7 @@ this:
     have a greater impact on the original weight matrix. A lower value means
     that the changes introduces by the low-rank matrices will have a more subtle
     impact on the original weight matrix.
+    This is often calculated as alpha/r where r is the rank of the low-rank.
 ````
 So we end up with two matrices because we have decomposed the original weight
 matrix. Notice that matrix A has the dimensions `m * r` and matrix B has the
