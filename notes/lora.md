@@ -106,7 +106,7 @@ this:
               |   hidden layer   |        h = W₀x + ΔWx = W₀x + AB
               +------------------+
                       ↑       
-                     W + AB
+                     W + α AB
                +------+---------------+
                |                      |
                |                +-----*-------+
@@ -121,6 +121,10 @@ this:
                 |    x inputs      |
                 +------------------+
 
+α = alpha (scaling constant). A higher value means that low-rank matrices will
+    have a greater impact on the original weight matrix. A lower value means
+    that the changes introduces by the low-rank matrices will have a more subtle
+    impact on the original weight matrix.
 ````
 So we end up with two matrices because we have decomposed the original weight
 matrix. Notice that matrix A has the dimensions `m * r` and matrix B has the
