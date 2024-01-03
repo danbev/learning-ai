@@ -93,3 +93,6 @@ finetune-predict: llama-main
 	./llama.cpp/main -m models/llama-2-7b.Q4_0.gguf \
         --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
 	-p "Love's fire heats water"
+
+check-finetune-include:
+	/home/danielbevenius/work/c++/include-what-you-use/build/bin/include-what-you-use -Illama.cpp -I/usr/lib/clang/17/include/ -Illama.cpp/common llama.cpp/examples/finetune/finetune.cpp
