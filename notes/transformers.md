@@ -485,6 +485,9 @@ output of the multihead attention layer. These are simply added together:
 V = Value matrix.
 MHA = Multi-Head Attention output
 ```
+This is residual connection/skip connection.
+
+
 So `v_mha` is a matrix where each row represents one transformed input token:
 ```
 'Dan':   [0.1, 0.2, 0.3, 0.4]
@@ -579,3 +582,72 @@ And then normalize:
 ``` 
 So in batch normalization, the tokens can influence each other, but this is not
 the case in layer normalization as each token is handled completely separably.
+
+### Feedforward layer
+In the transformer acrhitecture, we have the multi-head attention layer,
+followed by a Add&Norm layer, and then we have a feedforward layer.
+This layer has two linear transformations with a ReLU activation function in
+between them.
+
+So lets say that the output from the Add&Norm layer is:
+```
+'Dan':   [0.1, 0.2, 0.3, 0.4]
+'loves': [0.5, 0.6, 0.7, 0.8]
+'ice':   [0.9, 1.0, 1.1, 1.2]
+'cream': [1.3, 1.4, 1.5, 1.6]
+```
+This layer transforms the dimesion of the vector from 4 to lets say 8. So we
+would have a weight matrix of size 4x8 which the above matrix would be
+multiplied with creating a 8x8 matrix.
+
+```
+        (4x4)             FeedForward Weight Matrix 1 (4x8)
+      +--+--+--+--+      +--+--+--+--+--+--+--+--+
+Dan   |  |  |  |  |      |  |  |  |  |  |  |  |  |
+      +--+--+--+--+      +--+--+--+--+--+--+--+--+
+loves |  |  |  |  |      |  |  |  |  |  |  |  |  |
+      +--+--+--+--+      +--+--+--+--+--+--+--+--+
+ice   |  |  |  |  |      |  |  |  |  |  |  |  |  |
+      +--+--+--+--+      +--+--+--+--+--+--+--+--+
+cream |  |  |  |  |      |  |  |  |  |  |  |  |  |
+      +--+--+--+--+      +--+--+--+--+--+--+--+--+
+                                     |-----------|
+                                           ↑
+                                      new dimensions
+```
+An activation function is then applied to each element of the 4x8 matrix.
+The increased dimension in the feedforward layer of a Transformer model is
+achieved through a weight matrix, and the values in this matrix are learned
+during the training process. These values become part of the model's learned
+parameters (weights).
+
+This is done so that the model can learn more complex relationships between the tokens.
+
+This 4x8 matrix is then passed to a second linear transformation which usually
+reduces the dimension back to 4. So this would be a 4x8 matrix multiplied by
+a 8x4 matrix which would produce a 4x4 matrix.
+```
+         (4x8)                     FeedForward Weight Matrix 2 (8x4)
+      +--+--+--+--+--+--+--+--+    +--+--+--+--+
+Dan   |  |  |  |  |  |  |  |  |    |  |  |  |  |
+      +--+--+--+--+--+--+--+--+    +--+--+--+--+
+loves |  |  |  |  |  |  |  |  |    |  |  |  |  |
+      +--+--+--+--+--+--+--+--+    +--+--+--+--+
+ice   |  |  |  |  |  |  |  |  |    |  |  |  |  |
+      +--+--+--+--+--+--+--+--+    +--+--+--+--+
+cream |  |  |  |  |  |  |  |  |    |  |  |  |  |
+      +--+--+--+--+--+--+--+--+    +--+--+--+--+
+                                   |  |  |  |  |
+                                   +--+--+--+--+
+                                   |  |  |  |  |
+                                   +--+--+--+--+
+                                   |  |  |  |  |
+                                   +--+--+--+--+
+                                   |  |  |  |  |
+                                   +--+--+--+--+
+```
+And this will result in a 4x4 matrix, the same size as before the feedforward
+layer. This matrix has been transformed from the higher-dimensional space back
+to the original dimensionality, but with values that have been processed through
+both layers of the feedforward network.
+
