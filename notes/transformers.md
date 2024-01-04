@@ -32,9 +32,10 @@ converted into [embeddings](./embeddings.md) which are vectors of numbers that
 represent the tokens. These embeddings are then fed into the neural network.
 
 
-### Transformer Architecture overview
-Encoder:
+### Transformer Architecture Overview
 ```
+[Encoder]
+
 +-----------------------------+
 | Input Sequence              |
 | "Dan loves icecream"        |
@@ -80,6 +81,83 @@ Encoder:
 | +-------------------------+  |
 | | Add & Norm              |  |
 | +-------------------------+  |
+|   |Q        |K              |
+|   |         |                |
++---|---------|----------------+
+    |         +---------------------+
+    +-----------------------------+ |
+                                  | |
+[Decoder]                         | |
+                                  | |
++-----------------------------+   | |
+| Outputs Sequence            |   | |
+| "Dan älskar glass"          |   | |
++-----------------------------+   | |
+             |                    | |
+             ↓                    | |
++-----------------------------+   | |
+| Tokenization & Embedding    |   | |
++-----------------------------+   | |
+             |                    | |
+             ↓                    | |
++-----------------------------+   | |
+| Positional Encoding         |   | |
++-----------------------------+   | |
+             |                    | |
+             ↓                    | |
++------------------------------+  | |
+| Decoder Layer 1              |  | |
+|            |                 |  | |
+|+-----------|                 |  | |
+||           |                 |  | |
+|| +---------+---------+       |  | |
+|| |Q        |K        |V      |  | |
+|| +-------------------------+ |  | |
+|| | Masked Multi-Head       | |  | |
+|| | Attention               | |  | |
+|| +-------------------------+ |  | |
+||            |                |  | |
+|+--+         |                |  | |
+|   ↓         ↓                |  | |
+| +-------------------------+  |  | |
+| | Add & Norm              |  |  | |
+| +-------------------------+  |  | |
+|    |        +-------------------+ |
+|+---|        |         +-----------+
+||   |        |         |      |
+||   ↓V       ↓Q        ↓ K    |
+|| +------------------------+  |
+|| | Multi-Head Attention   |  |
+|| +------------------------+  |
+||            |                |
+|+--+         |                |
+|   ↓         ↓                |
+| +-------------------------+  |
+| | Add & Norm              |  |
+| +-------------------------+  |
+|             |                |
+|+------------|                |
+||            |                |
+||            ↓                |
+|| +-------------------------+ |
+|| | Feed-Forward Network    | |
+|| +-------------------------+ |
+||            |                |
+|+--+         |                |
+|   ↓         ↓                |
+| +-------------------------+  |
+| | Add & Norm              |  |
+| +-------------------------+  |
+|             |                |
+|             ↓                |
+| +-------------------------+  |
+| |  Linear layer           |  |
+| +-------------------------+  |
+|             |                |
+|             ↓                |
+| +-------------------------+  |
+| |  Soft max               |  |
+| +-------------------------+  |
 +------------------------------+
 ```
 
@@ -87,37 +165,15 @@ Encoder:
 Are used for classification and regression tasks.
 
 ### Decoders
-Are used for text generation tasks.
+Are used for text generation tasks, like translation and summarization.
 
 ### Encoder-Decoder
 Are used for task like generative text like translation or summarization.
+So if we wanted to train a model to translate a sentence from English to
+Swedish, we would have the English sentence as input and the Swedish sentence
+as the output. The model would then be trained to predict the Swedish sentence
+given the English sentence.
 
-### Generative Pretrained Transformer (GPT)
-
-### Bidirectional Encoder Representation from Transformers (BERT)
-
-#### CLS token
-This is a token in the embedding which stands for classification. This is used
-to represent the entire input sequence.
-From ChatGPT4: 
-```
-It's important to note that despite the "classification" origin of its name, the
-"CLS" token is used in all tasks where we need an aggregate representation of
-the entire sequence, whether it's classification, named entity recognition, etc.
-
-For example, if we're classifying a sentence as positive or negative
-(sentiment analysis), we would feed the sentence into BERT, which would add the
-"CLS" token to the start of the sentence. BERT processes the entire sequence and
-outputs a vector for each token, but we would only use the vector corresponding
-to the "CLS" token to make the positive/negative prediction.
-```
-
-Bert-small has 4 encoders and 15M learnable parameters.
-Bert-base has 12 encoders and 110M learnable parameters.
-Bert-large has 24 encoders and 340M learnable parameters.
-
-### T5
-Text-to-Text Transfer Transformer (T5) is a transformer model that is trained.
 
 ### Scaled dot product attention
 Standard attention uses 3 martixes, a query matrix, a key matrix, and a value
@@ -651,3 +707,26 @@ layer. This matrix has been transformed from the higher-dimensional space back
 to the original dimensionality, but with values that have been processed through
 both layers of the feedforward network.
 
+
+#### CLS token
+This is a token in the embedding which stands for classification. This is used
+to represent the entire input sequence.
+From ChatGPT4: 
+```
+It's important to note that despite the "classification" origin of its name, the
+"CLS" token is used in all tasks where we need an aggregate representation of
+the entire sequence, whether it's classification, named entity recognition, etc.
+
+For example, if we're classifying a sentence as positive or negative
+(sentiment analysis), we would feed the sentence into BERT, which would add the
+"CLS" token to the start of the sentence. BERT processes the entire sequence and
+outputs a vector for each token, but we would only use the vector corresponding
+to the "CLS" token to make the positive/negative prediction.
+```
+
+Bert-small has 4 encoders and 15M learnable parameters.
+Bert-base has 12 encoders and 110M learnable parameters.
+Bert-large has 24 encoders and 340M learnable parameters.
+
+### T5
+Text-to-Text Transfer Transformer (T5) is a transformer model that is trained.
