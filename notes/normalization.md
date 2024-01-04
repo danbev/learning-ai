@@ -9,9 +9,9 @@ sum = 70
 mean = 7
 ```
 The standard deviation tells us how much each value deviates from the mean on
-average. Note that this says each value, so we need iterator over all the
-values. It also says on average, so we need to sum them up and then devide by
-the number of elemements.
+average. Note that this says each value, so we need to iterate over all the
+values. It also says on average, so we need to sum them up, and then devide by
+the number of elements.
 
 Let calculate this manually:
 ```
@@ -56,6 +56,7 @@ value = (value - mean) / std
 ```
 By subtracting the mean, we are shifting the dataset so that it's centered
 around zero.
+
 Why do we want to center the data around zero?  
 Optimization Algorithms: Many machine learning algorithms, especially those that
 use gradient descent as an optimization technique, converge faster when the data
