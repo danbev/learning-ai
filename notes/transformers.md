@@ -31,6 +31,58 @@ with. This is done by first tokenizing the text, and then these tokens are
 converted into [embeddings](./embeddings.md) which are vectors of numbers that
 represent the tokens. These embeddings are then fed into the neural network.
 
+
+### Transformer Architecture overview
+Encoder:
+```
++-----------------------------+
+| Input Sequence              |
+| "Dan loves icecream"        |
++-----------------------------+
+             |
+             ↓
++-----------------------------+
+| Tokenization & Embedding    |
++-----------------------------+
+             |
+             ↓
++-----------------------------+
+| Positional Encoding         |
++-----------------------------+
+             |
+             ↓
++------------------------------+
+| Encoder Layer 1              |
+|            |                 |
+|+-----------|                 |
+||           |                 |
+|| +---------+---------+       |
+|| |Q        |K        |V      |
+|| +-------------------------+ |
+|| | Multi-Head Attention    | |
+|| +-------------------------+ |
+||            |                |
+|+--+         |                |
+|   ↓         ↓                |
+| +-------------------------+  |
+| | Add & Norm              |  |
+| +-------------------------+  |
+|             |                |
+|+------------|                |
+||            |                |
+||            ↓                |
+|| +-------------------------+ |
+|| | Feed-Forward Network    | |
+|| +-------------------------+ |
+||            |                |
+|+--+         |                |
+|   ↓         ↓                |
+| +-------------------------+  |
+| | Add & Norm              |  |
+| +-------------------------+  |
++------------------------------+
+```
+
 ### Encoders
 Are used for classification and regression tasks.
 
@@ -405,6 +457,7 @@ Attention matrix:
                      +--+--+
 ```
 
+
 ### Out of Vocabulary
 This is part of transformers which enable them to tokenize words that are not
 in their vocabulary. This is done by using a subword tokenizer where a word is
@@ -414,3 +467,115 @@ For example: `tokenization` would be spit into `token` `##ization` where `##`
 is a special token that indicates that the previous token is a subword of a
 complete word.
 
+### Add & Norm layer
+This is a layer(s) that is used in transformers. It is used to normalize the
+output of the attention layer. It is called Add&Norm because it adds the
+output of the attention layer to the input (value matrix) and then normalizes
+it. What is normalization? I've written about this in
+[normalization.md](./normalization.md).
+
+In the encoder, the first Add&Norm layer comes after the multi-head attention
+layer. There are two inputs into this layer, the first is the original value
+matrix which notice is passed around, this is called a residual connection or
+a skip connection, the multi-head attention layer. The second input is the
+output of the multihead attention layer. These are simply added together:
+```
+   v_mha = V + MHA
+
+V = Value matrix.
+MHA = Multi-Head Attention output
+```
+So `v_mha` is a matrix where each row represents one transformed input token:
+```
+'Dan':   [0.1, 0.2, 0.3, 0.4]
+'loves': [0.5, 0.6, 0.7, 0.8]
+'ice':   [0.9, 1.0, 1.1, 1.2]
+'cream': [1.3, 1.4, 1.5, 1.6]
+
+D = 4 (is the dimension of the embeddings for each token)
+```
+Lets take one row, which is how layer normalization is performed:
+```
+Calculate the mean:
+μ₀ = 1/D ∑ 0.1 + 0.2 + 0.3 + 0.4
+μ₀ = 1/4 1 = 0.25
+
+Calculate the variance:
+σ²₀ = 1/D ∑ (0.1 - 0.25)² + (0.2 - 0.25)² + (0.3 - 0.25)² + (0.4 - 0.25)²
+σ²₀ = 1/4 (-0.15)² + (-0.05)² + 0.05² + 0.15²)
+σ²₀ = 1/4 (0.0225 + 0.0025 + 0.0025 + 0.0225)
+σ²₀ = 1/4 (0.05)
+σ²₀ = 0.0125
+
+And then normalize:
+   0.1 - 0.25
+   ---------- = -1.3411
+    √0.0125
+```
+So we do this for the entire first row which will produce the following values:
+```
+'Dan': [-1.3411, -0.4470, 0.4470, 1.3411]
+```
+By doing this for each token indepentently we make sure that the model looks at
+the word `Dan` and understands it in its own right, not influenced by other
+tokens. 
+
+```
+'Dan':   [-1.3411, -0.4470, 0.4470, 1.3411]
+'loves': [-1.3411, -0.4470, 0.4470, 1.3411]
+'ice':   [-1.3411, -0.4470, 0.4470, 1.3411]
+'cream': [-1.3411, -0.4470, 0.4470, 1.3411]
+```
+These values are the same just because of the dummy values that I initialized
+used and would normally differ.
+
+To understand this a little better I think it might help to look at what
+batch normalization would look like as well.
+In this case we don't take each row but instead each column, starting with the
+first one:
+```
+'Dan':   [0.1, 0.2, 0.3, 0.4]
+'loves': [0.5, 0.6, 0.7, 0.8]
+'ice':   [0.9, 1.0, 1.1, 1.2]
+'cream': [1.3, 1.4, 1.5, 1.6]
+```
+So that the values produces for the first column will include values from
+all the tokens, 'Dan' 0.1, 'loves' 0.5, 'ice' 0.9, and 'cream' 1.3:
+```
+Calculate the mean:
+μ₀ = 1/D ∑ 0.1 + 0.5 + 0.9 + 1.3
+μ₀ = 1/4 2.8
+μ₀ = 0.7
+
+Calculate the variance:
+σ²₀ = 1/D ∑ (0.1 - 0.7)² + (0.5 - 0.7)² + (0.9 - 0.7)² + (1.3 - 0.7)²
+σ²₀ = 1/4 (-0.6)² + (-0.2)² + 0.2² + 0.6²)
+σ²₀ = 1/4 (0.36 + 0.04 + 0.04 + 0.36)
+σ²₀ = 1/4 (0.8)
+σ²₀ = 0.2
+
+And then normalize:
+   0.1 - 0.7
+   --------- = -1.3416
+    √0.2
+
+   0.5 - 0.7
+   --------- = -0.4472
+    √0.2
+
+   0.9 - 0.7
+   --------- = 0.4472
+    √0.2
+
+
+   1.3 - 0.7
+   --------- = 1.3416
+    √0.2
+
+'Dan':   [-1.3416]
+'loves': [-0.4472]
+'ice':   [0.4472]
+'cream': [1.3416]
+``` 
+So in batch normalization, the tokens can influence each other, but this is not
+the case in layer normalization as each token is handled completely separably.
