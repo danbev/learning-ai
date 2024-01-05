@@ -134,7 +134,7 @@ sequence grows with each step as the model generates a new word.
 |+--+         |                |  | |
 |   ↓         ↓                |  | |
 | +-------------------------+  |  | |
-| | Add & Norm              |  |  | |
+| | Add&Norm                |  |  | |
 | +-------------------------+  |  | |
 |    |        +-------------------+ |
 |+---|        |         +-----------+
@@ -147,7 +147,7 @@ sequence grows with each step as the model generates a new word.
 |+--+         |                |
 |   ↓         ↓                |
 | +-------------------------+  |
-| | Add & Norm              |  |
+| | Add&Norm                |  |
 | +-------------------------+  |
 |             |                |
 |+------------|                |
@@ -160,7 +160,7 @@ sequence grows with each step as the model generates a new word.
 |+--+         |                |
 |   ↓         ↓                |
 | +-------------------------+  |
-| | Add & Norm              |  |
+| | Add&Norm                |  |
 | +-------------------------+  |
 |             |                |
 |             ↓                |
@@ -405,6 +405,123 @@ them and larger values mean that we should pay more attention to those tokens.
 Next the output attention layer is passed to the Add&Norm layer which take it
 as input and also takes a copy of the Value matrix which is passed around input
 what is called a skip connection or a residual connection.
+
+### Masked Multi-Head Attention
+We also have multi-head attention as described about in the decoder but there
+is another layer called masked multi-head attention. This while training, well
+it is also used during inference but bare with me, where if we have a
+translation task, the input to the decoder is the target sequence (the
+translated version of the input sequence to the encoder). But we don't want the
+decoders attention mechanism to take into account tokens that are ahead of the
+current token. 
+Lets say we are training a model and the input sequence is "Dan älskar glass"
+which is Swedish for "Dan loves icecream" which is the target sequence which is
+the input to the decoder. We don't want the computation of the first token `Dan`
+to take into any account of the tokens ahead of it, like "loves", "ice", and
+"cream". So we mask those tokens out. This is done by setting the attention
+scores for those tokens to negative infinity. This will cause the softmax
+function to output 0 for those tokens:
+```       Dan  loves ice  cream
+          +-------------------+
+Dan       |0.9| ~inf|~inf|~inf|
+          |-------------------|
+loves     |0.3| 0.9 |~inf|~inf|
+          |-------------------|
+ice       |0.1| 2.3 |0.9 |~inf|
+          |-------------------|
+cream     |2.0| -1.5|0.2 |0.9 |
+          +-------------------+
+```
+When performing inference the input to the decoder is that start of sequence
+token and nothing else, and the decoder will generate the next token in the
+sequence and add that to the input and continue like that. In this case there
+no future tokens to mask but this is done for consistency (I think).
+
+Encoders are used for classification and regression tasks.
+Decoders are used for text generation tasks, like translation and summarization.
+
+Encoder-Decoder are used for task like generative text like translation or
+summarization. So if we wanted to train a model to translate a sentence from
+English to Swedish, we would have the English sentence as input and the Swedish
+sentence as the output. The model would then be trained to predict the Swedish
+sentence given the English sentence.
+
+Now, lets take a closer look at the boxes of the above diagram.
+I've written about embeddings in [vector-embeddings.md](./vector-embeddings.md)
+and positional encoding in [positional-encoding.md](./positional-encoding.md) so
+lets skip them for now and start with the encoder layer.
+So the next layer, or most often multiple layers, is the multi-head attention.
+
+### Multi-Head Attention
+Standard attention uses 3 martixes, a query matrix, a key matrix, and a value
+matrix. 
+
+Let's start with the following input sentence "Dan loves icecream". The first
+step it split this into tokens, so we will have might get 4 tokens:
+```
+["Dan", "loves", "ice", "cream"]
+```
+Next, these words are mapped to token id from the model's vocabulary:
+```
+ [1003]  [82]  [371]  [10004]
+```
+Now, the model will the take these input and map them into embeddings which
+might be of a dimension of say 512. So we will have 4 vectors of 512 dimensions
+```
+'Dan'   1003  [0      ...        512]
+'loves' 82    [0      ...        512]
+'ice'   371   [0      ...        512]
+'cream' 10004 [0      ...        512]
+```
+If the same word appears multiple times in the input, the same embedding will
+be used for each occurance. So there is currently no context or association
+between these words/token embeddings. They only contain information about each
+word/token itself, and nothing about the context in which it appears.
+
+So with these embeddings the first thing in the model is to add a positional
+encoding to each of the embeddings. In the original paper this used absolute
+position encoding. I've written about this is
+[vector-embeddings.md](./vector-embeddings.md).
+
+So we have our input matrix which in our case is a 4x512 matrix, where each
+entry is one of the tokens in the input sentence. We take this matrix and make
+four copies, but we will only focus on the first three for now:
+```
+ +--------+          +-------+
+ | Input  | -------> | Query |
+ |        |          +-------+
+ +--------+ -------> +-------+
+                     |  Key  | 
+                     +-------+
+                     +-------+
+            -------> | Value |
+                     +-------+
+                                               +--------------+
+            -------------------------------->  | Feed forward |
+                                               +--------------+
+```
+The attention function looks like this:
+```
+Attention(Q, K, V) = softmax((Q x Kᵗ)/√embedding_dim) x V
+
+embedding_dim = 512 in our example
+```
+Lets start with looking at the nominator which is the matrix multiplication of
+Q and K transposed:
+```
+   +----------------+   +-------+     +--------+
+   |      Q         |   |  Key  |     |        |
+   |                | X |       |  =  |        |   
+   |  (4, 512)      |   |(512,4)|     | (4, 4) |
+   +----------------+   |       |     +--------+
+                        |       |
+                        |       |
+                        +-------+
+```
+So, lets just think about this for a second. We know we copied the input
+matrix to Q and K. So I think we can visualize the attention score matrix like
+this:
+```       Dan  loves ice  cream
 
 ### Add&Norm layer
 This is a layer(s) that is used in transformers. It is used to normalize the
