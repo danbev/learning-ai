@@ -33,6 +33,18 @@ represent the tokens. These embeddings are then fed into the neural network.
 
 
 ### Transformer Architecture Overview
+One thing to keep in mind when looking at the "diagram" below is that it is used
+while training a model and also when the model is used for inference. So during
+training the weights and biases are updated and the finished result of training
+is a model that can be used for inference (where the weights are just loaded
+and not updated).
+
+This destinction is particularly important when looking at the decoder as the
+"input" to the decoder during training might be the target sequence (for example
+ when doing translation would be the translated sentence in the target language)
+, but during inference the input will be the start-of-sequence-token and this
+sequence grows with each step as the model generates a new word.
+
 ```
 [Encoder]
 
@@ -91,7 +103,9 @@ represent the tokens. These embeddings are then fed into the neural network.
                                   | |
 +-----------------------------+   | |
 | Outputs Sequence            |   | |
-| "Dan älskar glass"          |   | |
+|                             |   | |
+| Training: "Dan älskar glass"|   | |
+| Inference: "<sos>"          |   | |      sos = start of sequence token
 +-----------------------------+   | |
              |                    | |
              ↓                    | |
