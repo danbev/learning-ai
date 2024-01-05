@@ -17,19 +17,24 @@ static const size_t tensor_alignment = 32;
 
 struct my_llama_hparams {
     uint32_t n_vocab    = 32000;
+    // The max number of tokens the model can consider at once.
     uint32_t n_ctx      = 512;
+    // The size of the embeddings, so each token is represented by a vector
+    // of 4096 dimensions.
     uint32_t n_embd     = 4096;
+    // The dimension of the feedforward layer within each transformer block.
     uint32_t n_ff       = 11008;
+    // The number of attention heads.
     uint32_t n_head     = 32;
     uint32_t n_head_kv  = 32;
     uint32_t n_layer    = 32;
 
-    // float f_norm_eps     = 1e-5f; // falcon
     float f_norm_rms_eps = 1e-5f; // llama
 
     float rope_freq_base  = 10000.0f;
     float rope_freq_scale = 1.0f;
 
+    // Number of grouped query attention heads.
     uint32_t n_gqa() const {
         return n_head/n_head_kv;
     }
@@ -48,22 +53,35 @@ struct my_llama_hparams {
 };
 
 struct my_llama_layer {
-    // normalization
-    struct ggml_tensor * attention_norm;
+    // Normalization layer 
+    struct ggml_tensor* attention_norm;
 
-    // attention
-    struct ggml_tensor * wq;
-    struct ggml_tensor * wk;
-    struct ggml_tensor * wv;
-    struct ggml_tensor * wo;
+    // Attention layer tensors (weight matrices):
+    // Weight for the Query matrix
+    struct ggml_tensor* wq;
+    // Weight for the Key matrix
+    struct ggml_tensor* wk;
+    // Weight for the Value matrix
+    struct ggml_tensor* wv;
+    // Weight for the Output matrix
+    struct ggml_tensor* wo;
 
-    // normalization
-    struct ggml_tensor * ffn_norm;
+    // Normalization weights for the feedforward layer.
+    struct ggml_tensor* ffn_norm;
 
-    // ff
-    struct ggml_tensor * w1;
-    struct ggml_tensor * w2;
-    struct ggml_tensor * w3;
+    // Feed-Forward layer consists of two linear transformations with a ReLU
+    // This is the non-linear transformation, sometimes called 'gate' which
+    // is be Similar to the GELU activation function.
+    struct ggml_tensor* gate; // w1
+
+    // The second linear layer will use the w2 matrix, sometimes called 'down'
+    // to scale the matrix back down to the original input dimensions after the
+    // non-linear transformation has operated matrix.
+    struct ggml_tensor* down; // w2
+
+    // The first linear layer will use the w3 matrix, sometimes called 'up' to
+    // increase/expand the dimensionality of the input matrix.
+    struct ggml_tensor* up; // w3
 };
 
 struct my_llama_model {
@@ -320,9 +338,9 @@ static void init_model(struct llama_model * input, struct my_llama_model * model
         layer.wv             = llama_get_model_tensor(input, tni(LLM_TENSOR_ATTN_V, i));
         layer.wo             = llama_get_model_tensor(input, tni(LLM_TENSOR_ATTN_OUT, i));
         layer.ffn_norm       = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_NORM, i));
-        layer.w1             = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_GATE, i));
-        layer.w2             = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_DOWN, i));
-        layer.w3             = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_UP, i));
+        layer.gate           = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_GATE, i));
+        layer.down           = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_DOWN, i));
+        layer.up             = llama_get_model_tensor(input, tni(LLM_TENSOR_FFN_UP, i));
 
         assert_shape_1d(layer.attention_norm, hparams.n_embd);
         assert_shape_2d(layer.wq,             hparams.n_embd, hparams.n_embd);
@@ -330,9 +348,9 @@ static void init_model(struct llama_model * input, struct my_llama_model * model
         assert_shape_2d(layer.wv,             hparams.n_embd, hparams.n_embd_gqa());
         assert_shape_2d(layer.wo,             hparams.n_embd, hparams.n_embd);
         assert_shape_1d(layer.ffn_norm,       hparams.n_embd);
-        assert_shape_2d(layer.w1,             hparams.n_embd, hparams.n_ff);
-        assert_shape_2d(layer.w2,             hparams.n_ff,   hparams.n_embd);
-        assert_shape_2d(layer.w3,             hparams.n_embd, hparams.n_ff);
+        assert_shape_2d(layer.gate,           hparams.n_embd, hparams.n_ff);
+        assert_shape_2d(layer.down,           hparams.n_ff,   hparams.n_embd);
+        assert_shape_2d(layer.up,             hparams.n_embd, hparams.n_ff);
     }
 }
 
@@ -683,13 +701,13 @@ static struct ggml_tensor * llama_build_lora_finetune_graphs(
 
         struct ggml_tensor * attention_norm = add_to_f32(ctx, layer.attention_norm, ggml_mul_mat(ctx, llayer.attention_norm_a, llayer.attention_norm_b));
         struct ggml_tensor * ffn_norm = add_to_f32(ctx, layer.ffn_norm, ggml_mul_mat(ctx, llayer.ffn_norm_a, llayer.ffn_norm_b));
-        struct ggml_tensor * wq = add_to_f32(ctx, layer.wq, ggml_mul_mat(ctx, llayer.wq_a, llayer.wq_b));
-        struct ggml_tensor * wk = add_to_f32(ctx, layer.wk, ggml_mul_mat(ctx, llayer.wk_a, llayer.wk_b));
-        struct ggml_tensor * wv = add_to_f32(ctx, layer.wv, ggml_mul_mat(ctx, llayer.wv_a, llayer.wv_b));
-        struct ggml_tensor * wo = add_to_f32(ctx, layer.wo, ggml_mul_mat(ctx, llayer.wo_a, llayer.wo_b));
-        struct ggml_tensor * w1 = add_to_f32(ctx, layer.w1, ggml_mul_mat(ctx, llayer.w1_a, llayer.w1_b));
-        struct ggml_tensor * w2 = add_to_f32(ctx, layer.w2, ggml_mul_mat(ctx, llayer.w2_a, llayer.w2_b));
-        struct ggml_tensor * w3 = add_to_f32(ctx, layer.w3, ggml_mul_mat(ctx, llayer.w3_a, llayer.w3_b));
+        struct ggml_tensor * wq   = add_to_f32(ctx, layer.wq, ggml_mul_mat(ctx, llayer.wq_a, llayer.wq_b));
+        struct ggml_tensor * wk   = add_to_f32(ctx, layer.wk, ggml_mul_mat(ctx, llayer.wk_a, llayer.wk_b));
+        struct ggml_tensor * wv   = add_to_f32(ctx, layer.wv, ggml_mul_mat(ctx, llayer.wv_a, llayer.wv_b));
+        struct ggml_tensor * wo   = add_to_f32(ctx, layer.wo, ggml_mul_mat(ctx, llayer.wo_a, llayer.wo_b));
+        struct ggml_tensor * gate = add_to_f32(ctx, layer.gate, ggml_mul_mat(ctx, llayer.w1_a, llayer.w1_b));
+        struct ggml_tensor * down = add_to_f32(ctx, layer.down, ggml_mul_mat(ctx, llayer.w2_a, llayer.w2_b));
+        struct ggml_tensor * up   = add_to_f32(ctx, layer.up, ggml_mul_mat(ctx, llayer.w3_a, llayer.w3_b));
 
         struct ggml_tensor * t02 = ggml_rms_norm     (ctx, cur, rms_norm_eps);                       set_name(t02, "t02");     assert_shape_2d(t02, n_embd, N*n_batch);
         struct ggml_tensor * t03 = ggml_repeat       (ctx, attention_norm, t02);                     set_name(t03, "t03");     assert_shape_2d(t03, n_embd, N*n_batch);
@@ -732,11 +750,11 @@ static struct ggml_tensor * llama_build_lora_finetune_graphs(
         struct ggml_tensor * t22 = ggml_rms_norm     (ctx, t21, rms_norm_eps);                       set_name(t22, "t22");     assert_shape_2d(t22, n_embd, N*n_batch);
         struct ggml_tensor * t23 = ggml_repeat       (ctx, ffn_norm, t22);                           set_name(t23, "t23");     assert_shape_2d(t23, n_embd, N*n_batch);
         struct ggml_tensor * t24 = ggml_mul          (ctx, t23, t22);                                set_name(t24, "t24");     assert_shape_2d(t24, n_embd, N*n_batch);
-        struct ggml_tensor * t25 = ggml_mul_mat      (ctx, w3, t24);                                 set_name(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
-        struct ggml_tensor * t26 = ggml_mul_mat      (ctx, w1, t24);                                 set_name(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
+        struct ggml_tensor * t25 = ggml_mul_mat      (ctx, up, t24);                                 set_name(t25, "t25");     assert_shape_2d(t25, n_ff, N*n_batch);
+        struct ggml_tensor * t26 = ggml_mul_mat      (ctx, gate, t24);                                 set_name(t26, "t26");     assert_shape_2d(t26, n_ff, N*n_batch);
         struct ggml_tensor * t27 = ggml_silu         (ctx, t26);                                     set_name(t27, "t27");     assert_shape_2d(t27, n_ff, N*n_batch);
         struct ggml_tensor * t28 = ggml_mul          (ctx, t27, t25);                                set_name(t28, "t28");     assert_shape_2d(t28, n_ff, N*n_batch);
-        struct ggml_tensor * t29 = ggml_mul_mat      (ctx, w2, t28);                                 set_name(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
+        struct ggml_tensor * t29 = ggml_mul_mat      (ctx, down, t28);                                 set_name(t29, "t29");     assert_shape_2d(t29, n_embd, N*n_batch);
         struct ggml_tensor * t30 = ggml_add          (ctx, t29, t21);                                set_name(t30, "t30");     assert_shape_2d(t30, n_embd, N*n_batch);
         cur = t30;
         if (enable_checkpointing) {
@@ -796,9 +814,9 @@ static struct ggml_tensor * llama_build_lora_finetune_graphs(
         ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.wk, 1.0f));
         ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.wv, 1.0f));
         ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.wo, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.w1, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.w2, 1.0f));
-        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.w3, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.gate, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.down, 1.0f));
+        ggml_build_forward_expand(gb, ggml_scale_inplace(ctx, layer.up, 1.0f));
     }
 
     // allocating checkpoints in one block to reduce memory fragmentation
@@ -1542,18 +1560,18 @@ int main(int argc, char ** argv) {
     llama_mparams.vocab_only = false;
 
     printf("%s: model base = '%s'\n", __func__, params.fn_model_base);
-    struct llama_model * lmodel = llama_load_model_from_file(params.fn_model_base, llama_mparams);
+    struct llama_model* lmodel = llama_load_model_from_file(params.fn_model_base, llama_mparams);
 
     struct llama_context_params llama_cparams = llama_context_default_params();
-    struct llama_context * lctx = llama_new_context_with_model(lmodel, llama_cparams);
+    struct llama_context* lctx = llama_new_context_with_model(lmodel, llama_cparams);
 
     struct my_llama_model model;
     init_model(lmodel, &model, params.fn_model_base, params.common.n_ctx);
 
     struct my_llama_lora lora;
 
-    struct train_state      * train = init_train_state();
-    struct ggml_opt_context * opt   = train->opt;
+    struct train_state* train = init_train_state();
+    struct ggml_opt_context* opt = train->opt;
 
     // set params from command line
     if (params.custom_f_norm_rms_eps) {
@@ -1701,11 +1719,11 @@ int main(int argc, char ** argv) {
         NULL,                       // mem_buffer
         true,                       // no_alloc
     };
-    struct ggml_context * ctx_input = ggml_init(ctx_input_params);
+    struct ggml_context* ctx_input = ggml_init(ctx_input_params);
 
     // the input tensors
-    struct ggml_tensor * tokens_input  = ggml_new_tensor_2d(ctx_input, GGML_TYPE_I32, n_tokens, n_batch);
-    struct ggml_tensor * target_probs  = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
+    struct ggml_tensor* tokens_input  = ggml_new_tensor_2d(ctx_input, GGML_TYPE_I32, n_tokens, n_batch);
+    struct ggml_tensor* target_probs  = ggml_new_tensor_3d(ctx_input, GGML_TYPE_F32, n_vocab,  n_tokens, n_batch);
 
     // measure required memory for input tensors
     size_t max_input_size = GGML_PAD(ggml_nbytes(tokens_input), tensor_alignment) +
@@ -1729,14 +1747,14 @@ int main(int argc, char ** argv) {
         NULL,                           // mem_buffer
         true,                           // no_alloc
     };
-    struct ggml_context * ctx_compute = NULL;
+    struct ggml_context* ctx_compute = NULL;
 
-    struct ggml_tensor * loss   = NULL;
-    struct ggml_tensor * logits = NULL;
+    struct ggml_tensor* loss = NULL;
+    struct ggml_tensor* logits = NULL;
 
-    struct ggml_cgraph * gf     = NULL;
-    struct ggml_cgraph * gb     = NULL;
-    struct ggml_cgraph * gb_tmp = NULL;
+    struct ggml_cgraph* gf = NULL;
+    struct ggml_cgraph* gb = NULL;
+    struct ggml_cgraph* gb_tmp = NULL;
 
     // measure required memory for compute tensors
     size_t best_compute_size = SIZE_MAX;
