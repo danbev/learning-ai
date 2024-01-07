@@ -41,6 +41,19 @@ Fedora release 39 (Thirty Nine)
 Fedora release 39 (Thirty Nine)
 ```
 
+```console
+$ uname -r
+6.6.6-200.fc39.x86_64
+```
+
+```console
+$ gcc --version
+gcc (GCC) 13.2.1 20231205 (Red Hat 13.2.1-6)
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+```
+
 This used `boltd` which is a thunderbolt daemon that is used to managing
 Thunderbolt 3 connections. This will be used when we connect the eGPU to the
 laptop using a thunderbolt cable. Thunderbolt 3 is a high-speed I/O interface
@@ -86,3 +99,107 @@ Install the CUDA toolkit using the following command:
 $ sudo dnf -y install cuda-toolkit-12-3
 ```
 
+Export the following environment variables:
+```console
+$ export PATH=/usr/local/cuda-12.3/bin:$PATH
+$ export LD_LIBRARY_PATH=/usr/local/cuda-12.3/lib64:$LD_LIBRARY_PATH
+```
+Check the CUDA compiler (NVIDIA compiler nvcc) version:
+```console
+$ nvcc --version
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2023 NVIDIA Corporation
+Built on Wed_Nov_22_10:17:15_PST_2023
+Cuda compilation tools, release 12.3, V12.3.107
+Build cuda_12.3.r12.3/compiler.33567101_0
+```
+
+### NVIDIA Compiler Driver
+When we pass a `.cu` file to the `nvcc` compiler will separate the source code
+CUDA code, which is the code marked with `__global__`, `__device__`, and
+`__host__`. The standard C++ code will be passed to the host compiler.
+
+The CUDA driver uses and intermediate language called PTX (Parallel Thread
+Execution)
+
+Different object files are generated for the host and device code which are
+then linked together by nvcc into a single executable. This involves also
+linking the CUDA runtime library. Can we see this using `ldd`:
+```console
+$ nm hello-world | grep cuda
+0000000000483c10 r libcudart_static_fffac0a7aec5c7251ef9ec61c4e31af88b5d1e45
+0000000000403e70 t _Z16cudaLaunchKernelIcE9cudaErrorPKT_4dim3S4_PPvmP11CUstream_st
+...
+```
+This shows that the executable is statically linked to the CUDA runtime library.
+
+The device object code is embedded into the host object code. We can see this
+using `objdump`:
+```console
+$ objdump -hw hello-world 
+
+hello-world:     file format elf64-x86-64
+
+Sections:
+Idx Name                  Size      VMA               LMA               File off  Algn  Flags
+  0 .interp               0000001c  0000000000400350  0000000000400350  00000350  2**0  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  1 .note.gnu.property    00000020  0000000000400370  0000000000400370  00000370  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  2 .note.gnu.build-id    00000024  0000000000400390  0000000000400390  00000390  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 .note.ABI-tag         00000020  00000000004003b4  00000000004003b4  000003b4  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  4 .gnu.hash             00000024  00000000004003d8  00000000004003d8  000003d8  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  5 .dynsym               00000ea0  0000000000400400  0000000000400400  00000400  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  6 .dynstr               00000752  00000000004012a0  00000000004012a0  000012a0  2**0  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  7 .gnu.version          00000138  00000000004019f2  00000000004019f2  000019f2  2**1  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  8 .gnu.version_r        000000a0  0000000000401b30  0000000000401b30  00001b30  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  9 .rela.dyn             00000060  0000000000401bd0  0000000000401bd0  00001bd0  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 10 .rela.plt             00000e40  0000000000401c30  0000000000401c30  00001c30  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 11 .init                 0000001b  0000000000403000  0000000000403000  00003000  2**2  CONTENTS, ALLOC, LOAD, READONLY, CODE
+ 12 .plt                  00000990  0000000000403020  0000000000403020  00003020  2**4  CONTENTS, ALLOC, LOAD, READONLY, CODE
+ 13 .text                 00078fe2  00000000004039b0  00000000004039b0  000039b0  2**4  CONTENTS, ALLOC, LOAD, READONLY, CODE
+ 14 .fini                 0000000d  000000000047c994  000000000047c994  0007c994  2**2  CONTENTS, ALLOC, LOAD, READONLY, CODE
+ 15 .rodata               0000f760  000000000047d000  000000000047d000  0007d000  2**5  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 16 .nv_fatbin            00000f40  000000000048c760  000000000048c760  0008c760  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 17 .nvFatBinSegment      00000030  000000000048d6a0  000000000048d6a0  0008d6a0  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 18 __nv_module_id        0000000f  000000000048d6d0  000000000048d6d0  0008d6d0  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 19 .eh_frame_hdr         0000337c  000000000048d6e0  000000000048d6e0  0008d6e0  2**2  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 20 .eh_frame             00010958  0000000000490a60  0000000000490a60  00090a60  2**3  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 21 .tbss                 00001000  00000000004a2000  00000000004a2000  000a2000  2**12  ALLOC, THREAD_LOCAL
+ 22 .init_array           00000020  00000000004a2000  00000000004a2000  000a2000  2**3  CONTENTS, ALLOC, LOAD, DATA
+ 23 .fini_array           00000010  00000000004a2020  00000000004a2020  000a2020  2**3  CONTENTS, ALLOC, LOAD, DATA
+ 24 .data.rel.ro          00004480  00000000004a2040  00000000004a2040  000a2040  2**5  CONTENTS, ALLOC, LOAD, DATA
+ 25 .dynamic              00000210  00000000004a64c0  00000000004a64c0  000a64c0  2**3  CONTENTS, ALLOC, LOAD, DATA
+ 26 .got                  00000018  00000000004a66d0  00000000004a66d0  000a66d0  2**3  CONTENTS, ALLOC, LOAD, DATA
+ 27 .got.plt              000004d8  00000000004a6fe8  00000000004a6fe8  000a6fe8  2**3  CONTENTS, ALLOC, LOAD, DATA
+ 28 .data                 00000058  00000000004a74c0  00000000004a74c0  000a74c0  2**5  CONTENTS, ALLOC, LOAD, DATA
+ 29 .bss                  00001bf8  00000000004a7520  00000000004a7520  000a7518  2**5  ALLOC
+ 30 .comment              00000088  0000000000000000  0000000000000000  000a7518  2**0  CONTENTS, READONLY
+ 31 .annobin.notes        0000018c  0000000000000000  0000000000000000  000a75a0  2**0  CONTENTS, READONLY
+ 32 .gnu.build.attributes 00000168  00000000004ab118  00000000004ab118  000a772c  2**2  CONTENTS, READONLY, OCTETS
+```
+When we have kernel launch code in the host code the CUDA runtime libaray will
+extract the device code from the binary (I think) and sends this along with
+the execution configuration to the GPU.
+Keep in mind that that kernel execution is asynchronous and the host code will
+continue to execute after the kernel launch.
+
+The fat binary is a package that includes compiled device code in multiple
+formats for different GPU architectures. It may contain both PTX (Parallel
+Thread Execution) intermediate representation and cubin (CUDA binary) files.
+When the CUDA runtime loads the executable, it selects the appropriate binary
+from the fat binary for the target GPU architecture. If no direct binary is
+available, the PTX code can be JIT (Just-In-Time) compiled by the CUDA driver
+for the specific GPU in the system.
+
+
+### CUDA libraries
+
+The CUDA Runtime API is contained in libcudart.so is the CUDA runtime library.
+It contains the functions that are used by the CUDA device code to interact with
+the CUDA runtime. It also contains the functions that are used by the host code
+to interact with the CUDA runtime. This is a higher level API than the CUDA
+Driver API and handle things like devices initialization, context management, 
+and memory allocation.
+
+The CUDA Driver API is contained in libcuda.so. This is a lower level API than
+the CUDA Runtime API and is used to interact directly with the CUDA driver. It
+provides more control.
