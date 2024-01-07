@@ -8,6 +8,13 @@ __global__ void helloWorld() {
 int main() {
     helloWorld<<<1, 1>>>();
 
+    cudaError_t cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "helloWorld launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        return 1;
+    }
+
+
     // Wait for GPU to finish before accessing on host
     // which is for printf to sync the output buffer with the host
     // or else the order of the output will be messed up.
