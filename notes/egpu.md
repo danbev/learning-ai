@@ -1,10 +1,10 @@
 ### Externa GPU (eGPU)
-This document contains note about setting up and configuring an external GPU
+This document contains notes about setting up and configuring an external GPU
 to be used with my laptop which is a Lenovo Thinkpad P1 Gen 3.
 
 My main motivation for getting an external GPU is to be able to run CUDA
-programs on my laptop and I'm not really interested in using it for the
-montitor at this point.
+programs, and indirectly for having a GPU to improve performance of AI tasks
+like training/inference of large language models.
 
 ### Hardware
 The external GPU enclosure I am using is a Sonnet Technologies, Inc. eGPU
@@ -57,7 +57,7 @@ This is free software; see the source for copying conditions.  There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 ```
 
-This used `boltd` which is a thunderbolt daemon that is used to managing
+My system uses `boltd` which is a thunderbolt daemon that is used to managing
 Thunderbolt 3 connections. This will be used when we connect the eGPU to the
 laptop using a thunderbolt cable. Thunderbolt 3 is a high-speed I/O interface
 that can handle data, video, and power over a single cable and is commonly used
@@ -208,7 +208,11 @@ the CUDA Runtime API and is used to interact directly with the CUDA driver. It
 provides more control.
 
 ### GPU Driver
-
+The driver acts as a bridge between the OS and the GPU hardware. It allows the
+software to communicate with the GPU hardware without having to know specifics
+of the hardware.
+The CUDA driver is responsible loading the compiled CUDA binary, or JIT
+compiling PTX code) and executing it on the GPU cores.
 
 ### Exploration code
 Some exploration code can be found in [gpu/cuda](../gpu/cuda).
