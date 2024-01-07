@@ -10,6 +10,9 @@ montitor at this point.
 The external GPU enclosure I am using is a Sonnet Technologies, Inc. eGPU
 Breakaway Box 750ex, and the GPU is MSI GEFORCE RTX 4070 VENTUS 3X E 12G OC.
 
+![image](./egpu.jpg)
+
+
 ### OS/Tools
 My laptop is running Fedora 39:
 ```console
@@ -203,3 +206,9 @@ and memory allocation.
 The CUDA Driver API is contained in libcuda.so. This is a lower level API than
 the CUDA Runtime API and is used to interact directly with the CUDA driver. It
 provides more control.
+
+### GPU Driver
+
+
+### Exploration code
+Some exploration code can be found in [gpu/cuda](../gpu/cuda).
