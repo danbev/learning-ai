@@ -90,36 +90,160 @@ single slot but there were two power cables and I was not sure at first which
 one to use but they looked pretty simliar so I just picked one and it worked.
 I had to push down the cables inside the enclosure to be able to fit the card
 in. 
-After the card was in I connected the enclosure to my laptop using the provided
-thunderbolt cable. I then connected the enclosure to power and turned it on.
-Now, at this point my current display which is an externa monitor just froze
-which I took as a bad sign and my system crashed but, after thinking about it
-a bit more it might have been that connecting the enclosure to my laptop it
-took over as the main display and that I should connect the monitor to the
-graphics card instead. TODO: try this out.
-
 
 ### Installing and configurating CUDA
 
-Install the CUDA toolkit using the following command:
 ```console
-$ sudo dnf -y install cuda-toolkit-12-3
+$ lspci |grep -E "VGA|3D"
+00:02.0 VGA compatible controller: Intel Corporation CometLake-H GT2 [UHD Graphics] (rev 05)
+09:00.0 VGA compatible controller: NVIDIA Corporation AD104 [GeForce RTX 4070] (rev a1)
 ```
 
-Export the following environment variables:
+Check that secure boot is disabled:
 ```console
-$ export PATH=/usr/local/cuda-12.3/bin:$PATH
-$ export LD_LIBRARY_PATH=/usr/local/cuda-12.3/lib64:$LD_LIBRARY_PATH
+$ mokutil --sb-state
+SecureBoot disabled
 ```
-Check the CUDA compiler (NVIDIA compiler nvcc) version:
+
+Download [driver] from NVIDIA website.
+Change the permissions of the downloaded file to be executable:
 ```console
+$ ls ~/Downloads/NVIDIA-Linux-x86_64-535.146.02.run 
+/home/danielbevenius/Downloads/NVIDIA-Linux-x86_64-535.146.02.run
+$ chmod +x ~/Downloads/NVIDIA-Linux-x86_64-535.146.02.run
+```
+
+Swith user to root and update the system:
+```console
+$ sudo -i
+$ dnf update
+```
+If there were kernel updates then reboot the system:
+```console
+$ reboot
+```
+
+Install required packages:
+```console
+$ dnf install kernel-devel kernel-headers gcc make dkms acpid libglvnd-glx libglvnd-opengl libglvnd-devel pkgconfig
+```
+
+Disable the nouveau driver which is the open source driver for NVIDIA cards:
+```console
+$ echo "blacklist nouveau" >> /etc/modprobe.d/blacklist.conf
+```
+Add the following to `/etc/default/grub`:
+```
+GRUB_CMDLINE_LINUX="rhgb quiet rd.driver.blacklist=nouveau nvidia-drm.modeset=1"
+```
+
+Update grub:
+```console
+grub2-mkconfig -o /boot/grub2/grub.cfg
+```
+
+Remove the nouveau driver:
+```console
+dnf remove xorg-x11-drv-nouveau
+```
+
+Backup old initramfs nouveau image:
+```console
+$ mv /boot/initramfs-$(uname -r).img /boot/initramfs-$(uname -r)-nouveau.img
+```
+Create a new initramfs image:
+```console
+$ dracut /boot/initramfs-$(uname -r).img $(uname -r)
+```
+
+Set the system to boot to `multi-user` state where network services are started
+but not GUI. So switch back to graphical we set 'graphical.target`:
+```console
+$ systemctl set-default multi-user.target
+```
+We can check the current default using:
+```console
+$ systemctl get-default
+```
+Now, reboot and login and then switch to root (note that this will be a command
+line login and not the "usaual graphical login"):
+```console
+$ reboot
+$ sudo -i
+```
+Run the NVIDIA installer:
+```console
+$ /home/danielbevenius/Downloads/NVIDIA-Linux-x86_64-535.146.02.run
+```
+I opted to install the 32 bit compatibility libraries as well, and DKMS, but
+selected not to update the X configuration file as I'm only interested in
+using the driver for AI/ML task and not to drive my monitor.
+
+After that set the system to boot to graphical:
+```console
+$ systemctl set-default graphical.target
+$ reboot
+```
+Followed https://www.if-not-true-then-false.com/2015/fedora-nvidia-guide.
+
+After all that we should be able to see the GPU:
+```console
+$ nvidia-smi
+Mon Jan  8 09:48:07 2024       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.146.02             Driver Version: 535.146.02   CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA GeForce RTX 4070        Off | 00000000:09:00.0 Off |                  N/A |
+|  0%   30C    P8               5W / 200W |    285MiB / 12282MiB |      0%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|    0   N/A  N/A      4081    C+G   ...seed-version=20240107-180120.236000      274MiB |
++---------------------------------------------------------------------------------------+
+```
+We can see the Driver version is 535.146.02 and the CUDA version is 12.2.
+
+So we should install the CUDA toolkit version 12.2:
+```console
+$ sudo dnf -y install cuda-toolkit-12-2
+```
+Update the PATH and LD_LIBRARY_PATH environment variables:
+```console
+$ export PATH=/usr/local/cuda-12.2/bin:$PATH
+$ export LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH
+```
+There is a [cuda-env.sh](./cuda-env.sh) script that can be used to set these.
+
+Check the CUDA compiler (NVIDIA compiler nvcc) version:
 $ nvcc --version
 nvcc: NVIDIA (R) Cuda compiler driver
 Copyright (c) 2005-2023 NVIDIA Corporation
-Built on Wed_Nov_22_10:17:15_PST_2023
-Cuda compilation tools, release 12.3, V12.3.107
-Build cuda_12.3.r12.3/compiler.33567101_0
+Built on Tue_Aug_15_22:02:13_PDT_2023
+Cuda compilation tools, release 12.2, V12.2.140
+Build cuda_12.2.r12.2/compiler.33191640_0
 ```
+
+#### Restore
+The following are the steps that created in case I needed to restor the systemctl
+after the changes above
+```
+$ mv /boot/initramfs-6.6.9-200.fc39.x86_64-nouveau.img /boot/initramfs-6.6.9-200.fc39.x86_64.img 
+```
+Remove `GRUB_CMDLINE_LINUX` from from /etc/default/grub
+```console
+dnf install xorg-x11-drv-nouveau
+rm /etc/modprobe.d/blacklist.conf
+```
+
 
 ### NVIDIA Compiler Driver
 When we pass a `.cu` file to the `nvcc` compiler will separate the source code
@@ -270,3 +394,5 @@ We can see this used in .ptx files generated by `nvcc`:
 .target sm_52
 ```
 What version does the RTX 4070 use?  
+
+[driver]: https://www.nvidia.com/content/DriverDownloads/confirmation.php?url=/XFree86/Linux-x86_64/535.146.02/NVIDIA-Linux-x86_64-535.146.02.run&lang=us&type=geforcem
