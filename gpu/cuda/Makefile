@@ -1,9 +1,9 @@
 
 hello-world: src/hello-world.cu
-	nvcc -allow-unsupported-compiler -o $@ $<
+	nvcc -o $@ $<
 
 hello-world-ptx: src/hello-world.cu
-	nvcc -ptx -allow-unsupported-compiler $<
+	nvcc -ptx $<
 	@cat hello-world.ptx
 
 
