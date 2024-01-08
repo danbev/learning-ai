@@ -4,6 +4,7 @@ hello-world: src/hello-world.cu
 
 hello-world-ptx: src/hello-world.cu
 	nvcc -ptx -allow-unsupported-compiler $<
+	@cat hello-world.ptx
 
 
 .PHONY: clean
