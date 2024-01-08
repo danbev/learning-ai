@@ -1,6 +1,6 @@
 
 hello-world: src/hello-world.cu
-	nvcc -o $@ $<
+	nvcc -lnppc -o $@ $<
 
 hello-world-ptx: src/hello-world.cu
 	nvcc -ptx $<

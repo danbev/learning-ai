@@ -1,3 +1,4 @@
+#include <npp.h>
 #include <stdio.h>
 
 // CUDA Kernel function to print "Hello World"
@@ -21,6 +22,17 @@ int main() {
     cudaDeviceSynchronize();
 
     printf("Hello World from CPU!\n");
+
+    const char* gpu_name = nppGetGpuName();
+    printf("GPU name: %s\n", gpu_name);
+    int sms = nppGetGpuNumSMs();
+
+    printf("Number of Streaming Multiprocessors: %d\n", sms);
+
+    int threads_per_sm = nppGetMaxThreadsPerSM();
+    printf("Max number of threads per SM: %d\n", threads_per_sm);
+    int threads_per_block = nppGetMaxThreadsPerBlock();
+    printf("Max number of threads per block: %d\n", threads_per_block);
 
     return 0;
 }
