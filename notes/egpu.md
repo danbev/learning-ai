@@ -207,6 +207,7 @@ $ export LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH
 There is a [cuda-env.sh](./cuda-env.sh) script that can be used to set these.
 
 Check the CUDA compiler (NVIDIA compiler nvcc) version:
+```
 $ nvcc --version
 nvcc: NVIDIA (R) Cuda compiler driver
 Copyright (c) 2005-2023 NVIDIA Corporation
