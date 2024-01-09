@@ -9,6 +9,8 @@ hello-world-ptx: src/hello-world.cu
 threads: src/threads.cu
 	nvcc -lnppc -o $@ $<
 
+inc: src/inc.cu
+	nvcc -lnppc -o $@ $<
 
 .PHONY: clean
 clean:
