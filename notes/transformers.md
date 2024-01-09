@@ -642,8 +642,19 @@ the case in layer normalization as each token is handled completely separably.
 ### Feedforward layer
 In the transformer acrhitecture, we have the multi-head attention layer,
 followed by a Add&Norm layer, and then we have a feedforward layer.
+
 This layer has two linear transformations with a ReLU activation function in
-between them.
+between them. The first linear transformation expands the dimension of the input
+matrix, and the activation (like ReLU or GELU) function is applied to each
+element of the matrix. The second linear transformation reduces the dimension
+back to the original. I've seen names for the tensors in places, for example in
+[llama.cpp](https://github.com/ggerganov/llama.cpp/blob/128de3585b0f58b1e562733448fc00109f23a95d/llama.cpp#L1401-L1404) where up (ffn_up) is used for the first transformation which expands the
+dimentions, gate (ffn_gate) is used as the activation function (I'm not sure why
+the name is gate but perhaps this is because the activation function will
+prevent values from passing through depending on their value), and down
+(ffn_down) is used for the second transformation which reduces the dimension
+back to the original.
+
 
 So lets say that the output from the Add&Norm layer is:
 ```
@@ -677,7 +688,8 @@ achieved through a weight matrix, and the values in this matrix are learned
 during the training process. These values become part of the model's learned
 parameters (weights).
 
-This is done so that the model can learn more complex relationships between the tokens.
+This is done so that the model can learn more complex relationships between the
+tokens.
 
 This 4x8 matrix is then passed to a second linear transformation which usually
 reduces the dimension back to 4. So this would be a 4x8 matrix multiplied by
