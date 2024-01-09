@@ -1,6 +1,11 @@
+CUDA_DIR = /usr/local/cuda-12.2/lib64
+
 # Make llama.cpp
 llama: 
 	cd llama.cpp && make -j8
+
+llama-cuda: 
+	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1
 
 # Use the following target with causion as it will probably mess up an
 # actual run of a specific program. Just use it for debugging/learning and
@@ -17,16 +22,26 @@ OBJS = llama.cpp/common.o \
        llama.cpp/train.o \
        llama.cpp/ggml-alloc.o \
        llama.cpp/ggml-quants.o \
-       llama.cpp/ggml-backend.o
+       llama.cpp/ggml-backend.o \
+       llama.cpp/ggml-cuda.o 
 
 simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+
+simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+simple-prompt-cuda: simple-prompt
+
+monitor-gpu:
+	@nvidia-smi -l
 
 pre-simple-prompt: src/simple-prompt.cpp
 	$(CXX) -E $(CXXFLAGS) $^  -o pre-simple-prompt.cpp
 
 finetune: src/finetune.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+
+finetune-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+finetune-cuda: finetune
 
 update-llama:
 	git submodule update --remote --merge llama.cpp

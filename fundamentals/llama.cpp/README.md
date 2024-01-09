@@ -49,10 +49,35 @@ $ git submodule add https://github.com/ggerganov/llama.cpp llama.cpp
 $ git submodule update --init --recursive
 ```
 
+#### CUDA support
+If a GPU is available and the CUDA toolkit is installed llama.cpp can be built
+with cuBLAS support using the following commands:
+```console
+$ make clean-llama
+$ make llama-cuda
+```
+For details about installing and configuring CUDA on Fedora 39 see
+[egpu.md](../../notes/egpu.md).
+
+
+To build an example that uses the GPU run:
+```console
+$ source cuda-env.sh
+$ make simple-prompt-cuda
+```
+
+You can monitor the gpu usage using:
+```console
+$ make monitor-gpu
+```
+This uses the `nvidia-smi` command to monitor the GPU usage and can be closed
+using CTRL+C.
+
 ### Finetuning
 This section describes how to build and configure the finetuning example.
 
-First, the model needs to be downloads:
+First, the model needs a base-model that will be fine-turned on a specific
+task to be downloads:
 ```console
 $ make download-llama-model
 ```
@@ -227,7 +252,7 @@ train_opt_callback: iter=    30 sample=121/27520 sched=0.300000 loss=1.846082 dt
 main: total training time: 02:57:51
 ```
 So that took about 3 hours to run on my machine. And the base model I used was
-quantized which meant that an ran into a warning when using the model:
+quantized which meant that I ran into a warning when using the model:
 ```console
 $ ./llama.cpp/main -m models/llama-2-7b.Q4_0.gguf \
    --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
@@ -253,4 +278,4 @@ Love's fire heats water, water cools not love.
 ```
 I tried using a larger base model, like a Q8, but the time estimated to was
 around 15 hours. I think I'll need a GPU for this and one option might be to use
-colab but I've also been looking at getting an external GPU (eGPU).
+colab but I'm also going to try this using an external GPU (eGPU).
