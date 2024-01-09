@@ -23,11 +23,12 @@ designed to do a lot of work with a small amount of power.
 |        GPU Architecture           |
 |                                   |
 |    +---------------------------+  |
-|    |       Global Memory       |  |
+|    | SM1  | SM2  | ... | SMn   |  |    SM = Streaming Multiprocessor
 |    +---------------------------+  |
-|    | SM1  | SM2  | ... | SMn   |  |
+|    |   L2 Cache                |  |
 |    +---------------------------+  |
-|    |  Shared/Global Memory     |  |
+|    |  Global Memory/VRAM/      |  |
+|    |  GPU RAM/DRAM             |  |
 |    +---------------------------+  |
 +-----------------------------------+
 
@@ -48,17 +49,28 @@ designed to do a lot of work with a small amount of power.
 |    +---------------------------+  |
 |                                   |
 +-----------------------------------+
-
 ```
+For example the GPU I have has got 12 GB of Global Memory (VRAM). And it has
+the following number of cores:
+```console
+$ nvidia-settings -q TotalDedicatedGPUMemory -t
+12282
+$ nvidia-settings -q CUDACores -t
+5888
+```
+And it looks like this GPU has 46 SMs which would give 128 cores per SM(
+(5888/46) = 128).
+
 Lets think about input data to a process, for example an array that we want to
 sum all the element of. 
 
-1) Input data is indeed copied from the host's main memory to the GPU's global
-memory. 
+1) Input data is copied from the host's main memory to the GPU's global memory. 
 
 2) Data needed for processing by a specific set of threads within an SM is then
-copied to the SM's shared memory. This memory is shared among all cores and this
-is something that I think the programmer has to do explicitly.
+copied to the SM's shared memory. This memory is shared among all cores in the
+streaming multiprocessor and this is something that I think the programmer has
+to do explicitly.
+
 For data that might not fit into the SMs shared memory, it will be accessed from
 the GPUs global memory, and this data will be cached in the SMs L1 cache. Note
 that the L1 cache is not involved in the SMs shared memory accesses.
@@ -72,18 +84,29 @@ memory.
 5) Finally, the results are copied back to the host's main memory.
 
 
-The registers on the SMs are are per GPU thread which is not the case for a CPU
+The registers on the SMs are per GPU thread which is not the case for a CPU
 where the registers are per CPU core.
 Every core in an SM has a register file, which is a collection of registers
-used exclusively by that core.
+used exclusively by that core. The term register "file" has always confused me
+but in computing "file" has older roots, where it was used to describe a
+collection of related data. In early computing, a "file" could refer to a
+collection of data cards, for example. So a register file is a collection of
+registers which are memory locations on the chip itself.
 
-Threads are the smallest unit of execution in a GPU and execute part of the
-kernel. Just a note about the name "kernel" as the first thing I thought about
-was the linux kernel. In this case I think it comes from that what we want
+Threads are executed by GPU cores and they execute the kernel. Just a note about
+the name "kernel" as the first thing I thought about was the linux kernel or
+something like that. In this case I think it comes from that what we want
 executed is a small portion of our program, a part of it that we want to
-optimize (and which can benifit from parallelization). So this is the "kernel",
+optimize (and which can benefit from parallelization). So this is the "kernel",
 it is the "core" computation unit of our program, or the "essential" part that
 is being computed.
+
+Each thread has its own program counter, registers, stack and local memory (off
+chip so is slower than registers). But individual threads are not the unit of
+execution on the cores, instead something called a warp is the unit of
+execution. A warp is a collection of 32 threads that execute the same
+instruction in a SIMD fashion. So all the threads in a warp execute the same
+instruction at the same time, but on different data. 
 
 A block is a group of threads that execute the same kernel and can communicate
 with each other via shared memory. This means that a block is specific to an
@@ -97,8 +120,15 @@ Each SM can execute multiple blocks at the same time. And each SM has multiple
 /many cores, and each of these cores can execute one or more threads at the
 same time.
 
+We specify the number of blocks, which is the same thing as the size of the
+grid, when we create the kernel. The GPUs scheduler will then distribute the
+blocks across the available SMs. So each block is assigned to an SM and the SM
+is responsible for executing the blocks  assigned to it, managing the warps and
+threads within those blocks.
+
 The cores are what actually do the work and execute the threads. Each core can
 execute one thread at a time.
+
 ```
 +-------------------------------------+
 |               Grid                  |
@@ -122,8 +152,64 @@ execute one thread at a time.
 |                                     |
 +-------------------------------------+
 ```
-TODO: add notes about threadIdx, blockIdx, blockDim, gridDim
+So if we launch a kernel with the following configuration and we specify how
+many blocks and threads per block we want to use:
+```c++
+    int thread_blocks = 2;
+    int threads_per_block = 4;
+    helloWorld<<<thread_blocks, threads_per_block>>>();
+```
+The we would have something like:
+```
+Grid:
++---------+---------+
+| Block 0 | Block 1 |
++---------+---------+
 
+Each Block (4 Threads):
+Block 0: +----+----+----+----+   T0 = thread_id = 0
+         | T0 | T1 | T2 | T3 |   T1 = thread_id = 1
+         +----+----+----+----+   T2 = thread_id = 2
+                                 T3 = thread_id = 3
+
+Block 1: +----+----+----+----+   T0 = thread_id = 0
+         | T0 | T1 | T2 | T3 |   T1 = thread_id = 1
+         +----+----+----+----+   T2 = thread_id = 2
+                                 T3 = thread_id = 3
+```
+So 8 threads in total will execute the kernel. On thing to notice is that within
+a block the thread ids are the same (0, 1, 2, 3 in this case). To get a unique
+thread id we also need to take the block into account.
+
+A warp is a group of 32 threads that execute the same instruction at the same
+time. So for our above examples this would be something like:
+```
+Warp Execution (32 Threads per Warp):
++-----+-----+-----+-----+-----+-----+-----+-----+----+ ... +----+
+|T0_b₀|T1_b₀|T2_b₀|T3_b₀|T0_b₁|T1_b₁|T2_b₁|T3_b₁| XX | ... | XX |
++-----+-----+-----+-----+-----+-----+-----+-----+----+ ... +----+
+   0     1     2     3     4     5     6     7    8    ...   31
+
+XX = inactive threads
+```
+Each SM can execute multiple blocks at the same time.
+The GPU scheduler will distribute the blocks accross the available SMs. So each
+block is assigned to an SM and the SM is responsible for executing all the
+threads in that block. If we specify more blocks than there are SMs then the
+scheduler will queue the blocks and execute as SMs become available.
+Inside each block, threads are grouped into warps which contain 32 threads each.
+
+The built-in variable threadIdx is a 3-component vector (x, y, z) that holds the
+index of the current thread within the block.
+The built-in variable blockIdx is a 3-component vector (x, y, z) that holds the
+index of the current block within the grid. blockDim contains the dimensions of
+the block which is how many threads there are in each dimension of the block.
+If we only have one dimension we can use the x component of the block dimension:
+```c++
+int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+```
+So is we access the 5th element in an array then blockIdx.x would be 1, and
+blockDim.x would be 4. So the threadId would be 5.
 
 It is also possible to have multiple buses between the GPU and system memory
 which is called parallelization. This way the GPU can keep transferring data
