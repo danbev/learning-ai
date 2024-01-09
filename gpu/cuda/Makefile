@@ -12,6 +12,9 @@ threads: src/threads.cu
 inc: src/inc.cu
 	nvcc -lnppc -o $@ $<
 
+array-add: src/array-add.cu
+	nvcc -lnppc -o $@ $<
+
 .PHONY: clean
 clean:
 	${RM} hello-world threads inc hello-world.ptx
