@@ -14,4 +14,4 @@ inc: src/inc.cu
 
 .PHONY: clean
 clean:
-	${RM} hello-world threads
+	${RM} hello-world threads inc hello-world.ptx
