@@ -6,7 +6,10 @@ hello-world-ptx: src/hello-world.cu
 	nvcc -ptx $<
 	@cat hello-world.ptx
 
+threads: src/threads.cu
+	nvcc -lnppc -o $@ $<
+
 
 .PHONY: clean
 clean:
-	${RM} hello-world
+	${RM} hello-world threads
