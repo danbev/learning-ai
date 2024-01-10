@@ -751,3 +751,12 @@ by itself.
 For example: `tokenization` would be spit into `token` `##ization` where `##`
 is a special token that indicates that the previous token is a subword of a
 complete word.
+
+### Computational Complexity
+The computational complexity is proportional to the square of the sequence
+length (N²), where N is the number of tokens in the sequence. This means that
+as the sequence gets longer, the amount of computation (and memory) required
+grows quadratically. To understand why it's N², consider that for each token in
+the sequence, the self-attention mechanism computes a score with every other
+token, including itself. So, if you have N tokens, each token attends to N
+tokens, leading to N x N comparisons or computations.
