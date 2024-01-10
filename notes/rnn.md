@@ -29,7 +29,7 @@ inputs [yesterdays value, todays value, tomorrows value ?]
 inputs [0, 0]
         |
 +-------+
-|  Input          W₁        b₁        y₁          w₂         b₂      output
+|  Input          W₁        b₁        y₁          w₃         b₂      output
 | +------+      +----+     +---+     +----+      +---+      +--+    +-----+
 +→|  0   | ---> |1.2 | --> |+0 | --> |ReLU| ---> |1.5| ---> |0 | -->|     |
   +------+      +----+ (+) +---+     +----+      +---+ (+)  +--+    +-----+
@@ -37,6 +37,7 @@ inputs [0, 0]
                         |  +---+        | 
                         +--|   |--------+
                            +---+
+                            W₂
 
 y₁ = relu((0*1.2) + 0)
 y₁ = relu(0)
@@ -54,7 +55,7 @@ and the addition of b₂. This will give us the predicted value of "tomorrow":
 inputs [0, 0]
            |
 +----------+
-|  Input          W₁        b₁        y₁          w₂         b₂      output
+|  Input          W₁        b₁        y₁          w₃         b₂      output
 | +------+      +----+     +---+     +----+      +---+      +--+    +-----+
 +→|  0   | ---> |1.2 | --> |+0 | --> |ReLU| ---> |1.5| ---> |0 | -->|     |
   +------+      +----+ (+) +---+     +----+      +---+ (+)  +--+    +-----+
@@ -62,6 +63,7 @@ inputs [0, 0]
                         |  +----+       | y₁
                         +--|-0.5|-------+
                            +----+
+                             W₂
 
   (today * w₁) + (y₁ * w₂)
                  [yesterdays value]
