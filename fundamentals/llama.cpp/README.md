@@ -51,7 +51,8 @@ $ git submodule update --init --recursive
 
 #### CUDA support
 If a GPU is available and the CUDA toolkit is installed llama.cpp can be built
-with cuBLAS support using the following commands:
+with cuBLAS (CUDA Basic Linear Algebra Subroutine) support using the following
+commands:
 ```console
 $ make clean-llama
 $ make llama-cuda
@@ -279,3 +280,232 @@ Love's fire heats water, water cools not love.
 I tried using a larger base model, like a Q8, but the time estimated to was
 around 15 hours. I think I'll need a GPU for this and one option might be to use
 colab but I'm also going to try this using an external GPU (eGPU).
+
+### GPU finetuning
+With the GPU I've got I re-ran the above training, but also updated the base
+model to be a Q8 model:
+```console
+$ make finetune LLAMA_CUBLAS=1
+$ make finetune-llama-2-7b.Q8_0-model
+~/work/ai/llama.cpp/finetune \
+        --model-base models/llama-2-7b.Q8_0.gguf \
+        --checkpoint-in chk-llama-2-7b.Q8_0-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-llama-2-7b.Q8_0-shakespeare-ITERATION.gguf \
+        --lora-out lora-llama-2-7b.Q8_0-shakespeare-ITERATION.bin \
+        --train-data "data/shakespeare.txt" \
+        --save-every 10 \
+        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --use-checkpointing
+main: seed: 1704957459
+main: model base = 'models/llama-2-7b.Q8_0.gguf'
+
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+
+llama_model_loader: loaded meta data with 19 key-value pairs and 291 tensors from models/llama-2-7b.Q8_0.gguf (version GGUF V2)
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.name str              = LLaMA v2
+llama_model_loader: - kv   2:                       llama.context_length u32              = 4096
+llama_model_loader: - kv   3:                     llama.embedding_length u32              = 4096
+llama_model_loader: - kv   4:                          llama.block_count u32              = 32
+llama_model_loader: - kv   5:                  llama.feed_forward_length u32              = 11008
+llama_model_loader: - kv   6:                 llama.rope.dimension_count u32              = 128
+llama_model_loader: - kv   7:                 llama.attention.head_count u32              = 32
+llama_model_loader: - kv   8:              llama.attention.head_count_kv u32              = 32
+llama_model_loader: - kv   9:     llama.attention.layer_norm_rms_epsilon f32              = 0.000010
+llama_model_loader: - kv  10:                          general.file_type u32              = 7
+llama_model_loader: - kv  11:                       tokenizer.ggml.model str              = llama
+llama_model_loader: - kv  12:                      tokenizer.ggml.tokens arr[str,32000]   = ["<unk>", "<s>", "</s>", "<0x00>", "<...
+llama_model_loader: - kv  13:                      tokenizer.ggml.scores arr[f32,32000]   = [0.000000, 0.000000, 0.000000, 0.0000...
+llama_model_loader: - kv  14:                  tokenizer.ggml.token_type arr[i32,32000]   = [2, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, ...
+llama_model_loader: - kv  15:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv  16:                tokenizer.ggml.eos_token_id u32              = 2
+llama_model_loader: - kv  17:            tokenizer.ggml.unknown_token_id u32              = 0
+llama_model_loader: - kv  18:               general.quantization_version u32              = 2
+llama_model_loader: - type  f32:   65 tensors
+llama_model_loader: - type q8_0:  226 tensors
+llm_load_vocab: special tokens definition check successful ( 259/32000 ).
+llm_load_print_meta: format           = GGUF V2
+llm_load_print_meta: arch             = llama
+llm_load_print_meta: vocab type       = SPM
+llm_load_print_meta: n_vocab          = 32000
+llm_load_print_meta: n_merges         = 0
+llm_load_print_meta: n_ctx_train      = 4096
+llm_load_print_meta: n_embd           = 4096
+llm_load_print_meta: n_head           = 32
+llm_load_print_meta: n_head_kv        = 32
+llm_load_print_meta: n_layer          = 32
+llm_load_print_meta: n_rot            = 128
+llm_load_print_meta: n_embd_head_k    = 128
+llm_load_print_meta: n_embd_head_v    = 128
+llm_load_print_meta: n_gqa            = 1
+llm_load_print_meta: n_embd_k_gqa     = 4096
+llm_load_print_meta: n_embd_v_gqa     = 4096
+llm_load_print_meta: f_norm_eps       = 0.0e+00
+llm_load_print_meta: f_norm_rms_eps   = 1.0e-05
+llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+llm_load_print_meta: n_ff             = 11008
+llm_load_print_meta: n_expert         = 0
+llm_load_print_meta: n_expert_used    = 0
+llm_load_print_meta: rope scaling     = linear
+llm_load_print_meta: freq_base_train  = 10000.0
+llm_load_print_meta: freq_scale_train = 1
+llm_load_print_meta: n_yarn_orig_ctx  = 4096
+llm_load_print_meta: rope_finetuned   = unknown
+llm_load_print_meta: model type       = 7B
+llm_load_print_meta: model ftype      = Q8_0
+llm_load_print_meta: model params     = 6.74 B
+llm_load_print_meta: model size       = 6.67 GiB (8.50 BPW) 
+llm_load_print_meta: general.name     = LLaMA v2
+llm_load_print_meta: BOS token        = 1 '<s>'
+llm_load_print_meta: EOS token        = 2 '</s>'
+llm_load_print_meta: UNK token        = 0 '<unk>'
+llm_load_print_meta: LF token         = 13 '<0x0A>'
+llm_load_tensors: ggml ctx size       =    0.11 MiB
+
+llm_load_tensors: using CUDA for GPU acceleration
+llm_load_tensors: system memory used  = 6828.75 MiB
+llm_load_tensors: offloading 0 repeating layers to GPU
+llm_load_tensors: offloaded 0/33 layers to GPU
+
+....................................................................................................
+llama_new_context_with_model: n_ctx      = 512
+llama_new_context_with_model: freq_base  = 10000.0
+llama_new_context_with_model: freq_scale = 1
+llama_new_context_with_model: KV self size  =  256.00 MiB, K (f16):  128.00 MiB, V (f16):  128.00 MiB
+llama_build_graph: non-view tensors processed: 676/676
+llama_new_context_with_model: compute buffer total size = 73.69 MiB
+main: init model
+print_params: n_vocab               : 32000
+print_params: n_ctx                 : 64
+print_params: n_embd                : 4096
+print_params: n_ff                  : 11008
+print_params: n_head                : 32
+print_params: n_head_kv             : 32
+print_params: n_layer               : 32
+print_params: norm_rms_eps          : 0.000010
+print_params: rope_freq_base        : 10000.000000
+print_params: rope_freq_scale       : 1.000000
+print_lora_params: n_rank_attention_norm : 1
+print_lora_params: n_rank_wq             : 4
+print_lora_params: n_rank_wk             : 4
+print_lora_params: n_rank_wv             : 4
+print_lora_params: n_rank_wo             : 4
+print_lora_params: n_rank_ffn_norm       : 1
+print_lora_params: n_rank_ffn_gate       : 4
+print_lora_params: n_rank_ffn_down       : 4
+print_lora_params: n_rank_ffn_up         : 4
+print_lora_params: n_rank_tok_embeddings : 4
+print_lora_params: n_rank_norm           : 1
+print_lora_params: n_rank_output         : 4
+main: total train_iterations 0
+main: seen train_samples     0
+main: seen train_tokens      0
+main: completed train_epochs 0
+main: lora_size = 84863776 bytes (80.9 MB)
+main: opt_size  = 126593008 bytes (120.7 MB)
+main: opt iter 0
+main: input_size = 32769056 bytes (31.3 MB)
+main: compute_size = 4353442144 bytes (4151.8 MB)
+main: evaluation order = RIGHT_TO_LEFT
+main: tokenize training data
+tokenize_file: total number of samples: 27520
+main: number of training tokens: 27584
+main: number of unique tokens: 3069
+main: train data seems to have changed. restarting shuffled epoch.
+main: begin training
+main: work_size = 768376 bytes (0.7 MB)
+train_opt_callback: iter=     0 sample=1/27520 sched=0.000000 loss=0.000000 |->
+train_opt_callback: iter=     1 sample=5/27520 sched=0.010000 loss=2.388987 dt=00:04:22 eta=02:07:01 |->
+train_opt_callback: iter=     2 sample=9/27520 sched=0.020000 loss=1.724298 dt=00:04:58 eta=02:19:09 |-------->
+train_opt_callback: iter=     3 sample=13/27520 sched=0.030000 loss=2.180474 dt=00:05:04 eta=02:17:01 |--->
+train_opt_callback: iter=     4 sample=17/27520 sched=0.040000 loss=2.438480 dt=00:05:12 eta=02:15:36 |->
+train_opt_callback: iter=     5 sample=21/27520 sched=0.050000 loss=2.484093 dt=00:05:04 eta=02:06:44 |>
+train_opt_callback: iter=     6 sample=25/27520 sched=0.060000 loss=2.695781 dt=00:05:09 eta=02:03:40 |>
+train_opt_callback: iter=     7 sample=29/27520 sched=0.070000 loss=2.991009 dt=00:05:07 eta=01:57:51 |>
+train_opt_callback: iter=     8 sample=33/27520 sched=0.080000 loss=2.280556 dt=00:05:09 eta=01:53:27 |-->
+train_opt_callback: iter=     9 sample=37/27520 sched=0.090000 loss=2.405420 dt=00:05:13 eta=01:49:33 |->
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q8_0-shakespeare-10.gguf
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q8_0-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-llama-2-7b.Q8_0-shakespeare-10.bin
+save_as_llama_lora: saving to lora-llama-2-7b.Q8_0-shakespeare-LATEST.bin
+train_opt_callback: iter=    10 sample=41/27520 sched=0.100000 loss=1.686964 dt=00:05:19 eta=01:46:26 |-------->
+train_opt_callback: iter=    11 sample=45/27520 sched=0.110000 loss=2.034604 dt=00:05:18 eta=01:40:43 |----->
+train_opt_callback: iter=    12 sample=49/27520 sched=0.120000 loss=2.004366 dt=00:05:14 eta=01:34:29 |----->
+train_opt_callback: iter=    13 sample=53/27520 sched=0.130000 loss=2.060003 dt=00:05:15 eta=01:29:26 |---->
+train_opt_callback: iter=    14 sample=57/27520 sched=0.140000 loss=2.358844 dt=00:05:11 eta=01:23:06 |->
+train_opt_callback: iter=    15 sample=61/27520 sched=0.150000 loss=2.637806 dt=00:05:15 eta=01:18:45 |>
+train_opt_callback: iter=    16 sample=65/27520 sched=0.160000 loss=2.313774 dt=00:05:20 eta=01:14:48 |-->
+train_opt_callback: iter=    17 sample=69/27520 sched=0.170000 loss=1.786586 dt=00:05:06 eta=01:06:29 |------->
+train_opt_callback: iter=    18 sample=73/27520 sched=0.180000 loss=1.707973 dt=00:04:58 eta=00:59:45 |-------->
+train_opt_callback: iter=    19 sample=77/27520 sched=0.190000 loss=1.879471 dt=00:04:59 eta=00:54:49 |------>
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q8_0-shakespeare-20.gguf
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q8_0-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-llama-2-7b.Q8_0-shakespeare-20.bin
+save_as_llama_lora: saving to lora-llama-2-7b.Q8_0-shakespeare-LATEST.bin
+train_opt_callback: iter=    20 sample=81/27520 sched=0.200000 loss=1.793221 dt=00:04:55 eta=00:49:19 |------->
+train_opt_callback: iter=    21 sample=85/27520 sched=0.210000 loss=2.316586 dt=00:04:58 eta=00:44:43 |-->
+train_opt_callback: iter=    22 sample=89/27520 sched=0.220000 loss=1.700760 dt=00:04:56 eta=00:39:29 |-------->
+train_opt_callback: iter=    23 sample=93/27520 sched=0.230000 loss=2.253810 dt=00:04:57 eta=00:34:40 |-->
+train_opt_callback: iter=    24 sample=97/27520 sched=0.240000 loss=1.886706 dt=00:04:55 eta=00:29:33 |------>
+train_opt_callback: iter=    25 sample=101/27520 sched=0.250000 loss=2.514717 dt=00:04:55 eta=00:24:38 |>
+train_opt_callback: iter=    26 sample=105/27520 sched=0.260000 loss=2.133458 dt=00:04:54 eta=00:19:39 |---->
+train_opt_callback: iter=    27 sample=109/27520 sched=0.270000 loss=1.720507 dt=00:04:54 eta=00:14:44 |-------->
+train_opt_callback: iter=    28 sample=113/27520 sched=0.280000 loss=1.918458 dt=00:04:54 eta=00:09:49 |------>
+train_opt_callback: iter=    29 sample=117/27520 sched=0.290000 loss=1.626976 dt=00:04:54 eta=00:04:54 |--------->
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q8_0-shakespeare-30.gguf
+save_checkpoint_lora_file: saving to chk-llama-2-7b.Q8_0-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-llama-2-7b.Q8_0-shakespeare-30.bin
+save_as_llama_lora: saving to lora-llama-2-7b.Q8_0-shakespeare-LATEST.bin
+train_opt_callback: iter=    30 sample=121/27520 sched=0.300000 loss=1.318394 dt=00:04:54 eta=0.0ms |------------>
+main: total training time: 02:36:41
+```
+I've separated some of the CUDA related output in the above log and I'm not sure
+why it's not using the tensor cores for layer:
+```console
+llm_load_tensors: using CUDA for GPU acceleration
+llm_load_tensors: system memory used  = 6828.75 MiB
+llm_load_tensors: offloading 0 repeating layers to GPU
+llm_load_tensors: offloaded 0/33 layers to GPU
+```
+I'm going to look into this and see if I can figure out why it's not using the
+tensor cores.
+
+_wip_
+
+I monitored the GPU usage using the `nvidia-smi`, just to show that it the CPUs
+was involved in the above run.
+```console
+$ make monitor-gpu
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|    0   N/A  N/A    576853      C   ...bevenius/work/ai/llama.cpp/finetune      700MiB |
++---------------------------------------------------------------------------------------+
+Thu Jan 11 09:14:07 2024       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.146.02             Driver Version: 535.146.02   CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA GeForce RTX 4070        Off | 00000000:09:00.0 Off |                  N/A |
+|  0%   38C    P2              37W / 200W |    705MiB / 12282MiB |     43%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|    0   N/A  N/A    576853      C   ...bevenius/work/ai/llama.cpp/finetune      700MiB |
++---------------------------------------------------------------------------------------+
+```
