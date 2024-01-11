@@ -629,9 +629,52 @@ main: begin training
 main: work_size = 768376 bytes (0.7 MB)
 train_opt_callback: iter=     0 sample=1/26766 sched=0.000000 loss=0.000000 |->
 train_opt_callback: iter=     1 sample=5/26766 sched=0.010000 loss=3.246417 dt=00:01:49 eta=00:52:41 |->
+train_opt_callback: iter=     2 sample=9/26766 sched=0.020000 loss=4.157176 dt=00:02:00 eta=00:56:22 |>
+train_opt_callback: iter=     3 sample=13/26766 sched=0.030000 loss=4.014138 dt=00:02:07 eta=00:57:21 |>
+train_opt_callback: iter=     4 sample=17/26766 sched=0.040000 loss=3.897578 dt=00:02:09 eta=00:56:16 |>
+train_opt_callback: iter=     5 sample=21/26766 sched=0.050000 loss=4.125562 dt=00:02:11 eta=00:54:50 |>
+train_opt_callback: iter=     6 sample=25/26766 sched=0.060000 loss=4.075722 dt=00:02:09 eta=00:51:43 |>
+train_opt_callback: iter=     7 sample=29/26766 sched=0.070000 loss=4.134147 dt=00:02:09 eta=00:49:45 |>
+train_opt_callback: iter=     8 sample=33/26766 sched=0.080000 loss=4.040177 dt=00:02:08 eta=00:46:57 |>
+train_opt_callback: iter=     9 sample=37/26766 sched=0.090000 loss=4.008081 dt=00:02:10 eta=00:45:35 |>
+save_checkpoint_lora_file: saving to chk-open_llama-shakespeare-10.gguf
+save_checkpoint_lora_file: saving to chk-open_llama-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-open_llama-shakespeare-10.bin
+save_as_llama_lora: saving to lora-open_llama-shakespeare-LATEST.bin
+train_opt_callback: iter=    10 sample=41/26766 sched=0.100000 loss=3.735419 dt=00:02:11 eta=00:43:57 |>
+train_opt_callback: iter=    11 sample=45/26766 sched=0.110000 loss=3.912213 dt=00:02:10 eta=00:41:21 |>
+train_opt_callback: iter=    12 sample=49/26766 sched=0.120000 loss=3.502368 dt=00:02:08 eta=00:38:28 |>
+train_opt_callback: iter=    13 sample=53/26766 sched=0.130000 loss=4.167959 dt=00:02:12 eta=00:37:36 |>
+train_opt_callback: iter=    14 sample=57/26766 sched=0.140000 loss=3.665470 dt=00:02:12 eta=00:35:16 |>
+train_opt_callback: iter=    15 sample=61/26766 sched=0.150000 loss=3.757030 dt=00:02:11 eta=00:32:49 |>
+train_opt_callback: iter=    16 sample=65/26766 sched=0.160000 loss=3.851915 dt=00:02:08 eta=00:30:01 |>
+train_opt_callback: iter=    17 sample=69/26766 sched=0.170000 loss=3.795099 dt=00:02:09 eta=00:28:07 |>
+train_opt_callback: iter=    18 sample=73/26766 sched=0.180000 loss=3.775026 dt=00:02:11 eta=00:26:21 |>
+train_opt_callback: iter=    19 sample=77/26766 sched=0.190000 loss=3.533836 dt=00:02:08 eta=00:23:30 |>
+save_checkpoint_lora_file: saving to chk-open_llama-shakespeare-20.gguf
+save_checkpoint_lora_file: saving to chk-open_llama-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-open_llama-shakespeare-20.bin
+save_as_llama_lora: saving to lora-open_llama-shakespeare-LATEST.bin
+train_opt_callback: iter=    20 sample=81/26766 sched=0.200000 loss=3.507541 dt=00:02:08 eta=00:21:20 |>
+train_opt_callback: iter=    21 sample=85/26766 sched=0.210000 loss=3.096025 dt=00:02:09 eta=00:19:25 |--->
+train_opt_callback: iter=    22 sample=89/26766 sched=0.220000 loss=3.861896 dt=00:02:09 eta=00:17:17 |>
+train_opt_callback: iter=    23 sample=93/26766 sched=0.230000 loss=2.967174 dt=00:02:11 eta=00:15:21 |---->
+train_opt_callback: iter=    24 sample=97/26766 sched=0.240000 loss=3.490952 dt=00:02:12 eta=00:13:13 |>
+train_opt_callback: iter=    25 sample=101/26766 sched=0.250000 loss=3.548366 dt=00:02:10 eta=00:10:54 |>
+train_opt_callback: iter=    26 sample=105/26766 sched=0.260000 loss=2.873124 dt=00:02:11 eta=00:08:45 |----->
+train_opt_callback: iter=    27 sample=109/26766 sched=0.270000 loss=3.133437 dt=00:02:12 eta=00:06:37 |-->
+train_opt_callback: iter=    28 sample=113/26766 sched=0.280000 loss=3.350684 dt=00:02:13 eta=00:04:26 |>
+train_opt_callback: iter=    29 sample=117/26766 sched=0.290000 loss=3.184809 dt=00:02:19 eta=00:02:19 |-->
+save_checkpoint_lora_file: saving to chk-open_llama-shakespeare-30.gguf
+save_checkpoint_lora_file: saving to chk-open_llama-shakespeare-LATEST.gguf
+save_as_llama_lora: saving to lora-open_llama-shakespeare-30.bin
+save_as_llama_lora: saving to lora-open_llama-shakespeare-LATEST.bin
+train_opt_callback: iter=    30 sample=121/26766 sched=0.300000 loss=3.426814 dt=00:02:22 eta=0.0ms |>
+main: total training time: 01:07:48
 ```
-This looks much better, instead of almost 3 hours it looks less than an hour
-to fine-tune.
+This looks much better, instead of almost 3 hours it took a little over an hour
+(but also keep in mind that my last attempt without a GPU was using a quantized
+model so this is not a far comparison) to fine-tune.
 
 _wip_
 
