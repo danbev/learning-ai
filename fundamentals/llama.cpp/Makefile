@@ -71,56 +71,36 @@ download-llama-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Llama-2-7b
 
-download-falcon-model:
+download-open_llama-model:
 	git clone --branch main --single-branch --depth 1 \
-	https://huggingface.co/tiiuae/falcon-7b
+	https://huggingface.co/openlm-research/open_llama_3b_v2
 
 # This target requires the model to be downloaded first.
-convert-falcon-model:
-	@python3.11 -m venv venv
-	@. venv/bin/activate && \
-		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
-		python3.11 llama.cpp/convert-hf-to-gguf.py falcon-7b \
-	        --outfile models/falcon-7b.gguf --outtype f16
-
-
-# This target requires the model to be downloaded first.
-convert-llama-model:
+convert-open_llama-model:
 	@python3.11 -m venv venv
 	@. venv/bin/activate && \
 		pip install -r llama.cpp/requirements/requirements-convert.txt && \
-		python3.11 llama.cpp/convert.py /home/danielbevenius/work/ai/llama/llama-2-7b/ \
-	        --outfile models/llama-2-7b.gguf --outtype f16
+		python3.11 llama.cpp/convert.py open_llama_3b_v2 \
+	        --outfile models/open_llama-2-7b.gguf --outtype f16
 
-finetune-falcon-model:
+finetune-open_llama-model-cuda:
 	~/work/ai/llama.cpp/finetune \
-        --model-base models/falcon-7b.gguf \
-        --checkpoint-in chk-falcon-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-falcon--shakespeare-ITERATION.gguf \
-        --lora-out lora-falcon-shakespeare-ITERATION.bin \
-        --train-data "data/shakespeare.txt" \
-        --save-every 10 \
-        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
-        --use-checkpointing
-
-finetune-falcon-model-cuda:
-	~/work/ai/llama.cpp/finetune \
-        --model-base models/falcon-7b.gguf \
-        --checkpoint-in chk-falcon-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-falcon--shakespeare-ITERATION.gguf \
-        --lora-out lora-falcon-shakespeare-ITERATION.bin \
+        --model-base models/open_llama-2-7b.gguf \
+        --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
+        --lora-out lora-open_llama-shakespeare-ITERATION.bin \
         --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing \
-        --n-gpu-layers 33
+        --n-gpu-layers 15
 
-finetune-falon-model-debug:
+finetune-open_llama-model-debug:
 	gdb --args ./finetune \
-        --model-base models/falcon-7b.gguf \
-        --checkpoint-in chk-falcon-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-falcon--shakespeare-ITERATION.gguf \
-        --lora-out lora-falcon-shakespeare-ITERATION.bin \
+        --model-base models/open_llama-2-7b.gguf \
+        --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
+        --lora-out lora-open_llama-shakespeare-ITERATION.bin \
         --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \

@@ -7,4 +7,4 @@ finetune
 data
 *.gguf
 *.bin
-falcon-7b
+open_llama_3b_v2
