@@ -52,21 +52,9 @@ clean:
 clean-llama:
 	cd llama.cpp && make clean
 
-download-falcon-model:
-	git clone --branch main --single-branch --depth 1 \
-	https://huggingface.co/tiiuae/falcon-7b
 
-# This target requires the falcon model to be downloaded first.
-convert-falcon-model:
-	@python3.11 -m venv venv
-	@. venv/bin/activate && \
-		pip install -r llama.cpp/requirements-hf-to-gguf.txt && \
-		python3.11 llama.cpp/convert-hf-to-gguf.py falcon-7b \
-	        --outfile models/falcon-7b.gguf --outtype f16
-
-quantize-falcon-model:
-	./llama.cpp/quantize models/falcon-7b.gguf models/falcon-7b.Q4_1.gguf Q4_1
-
+quantize-llama-model:
+	./llama.cpp/quantize models/llama-2-7b.gguf models/llama-2-7b-Q4.gguf Q4_1
 
 download-llama-7b-q4:
 	cd models && \
@@ -79,35 +67,73 @@ download-llama-7b-q8:
 download-shakespeare:
 	wget -P data/ https://raw.githubusercontent.com/brunoklein99/deep-learning-notes/master/shakespeare.txt
 
-finetune-llama-2-7b.Q4_0-model:
-	./finetune \
-        --model-base models/llama-2-7b.Q4_0.gguf \
-        --checkpoint-in chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-llama-2-7b.Q4_0-shakespeare-ITERATION.gguf \
-        --lora-out lora-llama-2-7b.Q4_0-shakespeare-ITERATION.bin \
+download-llama-model:
+	git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/meta-llama/Llama-2-7b
+
+download-falcon-model:
+	git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/tiiuae/falcon-7b
+
+# This target requires the model to be downloaded first.
+convert-falcon-model:
+	@python3.11 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
+		python3.11 llama.cpp/convert-hf-to-gguf.py falcon-7b \
+	        --outfile models/falcon-7b.gguf --outtype f16
+
+
+# This target requires the model to be downloaded first.
+convert-llama-model:
+	@python3.11 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements/requirements-convert.txt && \
+		python3.11 llama.cpp/convert.py /home/danielbevenius/work/ai/llama/llama-2-7b/ \
+	        --outfile models/llama-2-7b.gguf --outtype f16
+
+finetune-falcon-model:
+	~/work/ai/llama.cpp/finetune \
+        --model-base models/falcon-7b.gguf \
+        --checkpoint-in chk-falcon-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-falcon--shakespeare-ITERATION.gguf \
+        --lora-out lora-falcon-shakespeare-ITERATION.bin \
         --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing
 
-finetune-llama-2-7b.Q4_0-model-debug:
+finetune-falcon-model-cuda:
+	~/work/ai/llama.cpp/finetune \
+        --model-base models/falcon-7b.gguf \
+        --checkpoint-in chk-falcon-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-falcon--shakespeare-ITERATION.gguf \
+        --lora-out lora-falcon-shakespeare-ITERATION.bin \
+        --train-data "data/shakespeare.txt" \
+        --save-every 10 \
+        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --use-checkpointing \
+        --n-gpu-layers 33
+
+finetune-falon-model-debug:
 	gdb --args ./finetune \
-        --model-base models/llama-2-7b.Q4_0.gguf \
-        --checkpoint-in chk-llama-2-7b.Q4_0-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-llama-2-7b.Q4_0-shakespeare-ITERATION.gguf \
-        --lora-out lora-llama-2-7b.Q4_0-shakespeare-ITERATION.bin \
+        --model-base models/falcon-7b.gguf \
+        --checkpoint-in chk-falcon-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-falcon--shakespeare-ITERATION.gguf \
+        --lora-out lora-falcon-shakespeare-ITERATION.bin \
         --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing
+
+finetune-predict: llama-main
+	./llama.cpp/main -m models/llama-2-7b-hf.gguf \
+        --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
+	-p "Love's fire heats water"
 
 llama-main:
 	cd llama.cpp && make main
 
-finetune-predict: llama-main
-	./llama.cpp/main -m models/llama-2-7b.Q4_0.gguf \
-        --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
-	-p "Love's fire heats water"
 
 check-llama.cpp-finetune-include:
 	/home/danielbevenius/work/c++/include-what-you-use/build/bin/include-what-you-use -Illama.cpp -I/usr/lib/clang/17/include/ -Illama.cpp/common llama.cpp/examples/finetune/finetune.cpp

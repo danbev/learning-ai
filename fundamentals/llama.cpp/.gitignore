@@ -7,3 +7,4 @@ finetune
 data
 *.gguf
 *.bin
+falcon-7b
