@@ -490,7 +490,6 @@ Then using this model I could run the finetuning using the GPU:
 ```console
 $ make download-open_llama-3b-v2
 $ make convert-open_llama-model
-$ make finetune-open_llama-model-cuda
 $ make finetune-open_llama-model-cuda 
 ~/work/ai/llama.cpp/finetune \
         --model-base models/open_llama-2-7b.gguf \
