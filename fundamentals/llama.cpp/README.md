@@ -482,8 +482,157 @@ GPU:
 ```
 Since we had 0/33 layers in the output above lets try offloading 33 layers:
 ```
---n-gpu-layers 33 \
+--n-gpu-layers 15 \
 ```
+
+What I needed to do was download open_llama_3b_v2, and convert it to a GGUF.
+Then using this model I could run the finetuning using the GPU:
+```console
+$ make download-open_llama-3b-v2
+$ make convert-open_llama-model
+$ make finetune-open_llama-model-cuda
+$ make finetune-open_llama-model-cuda 
+~/work/ai/llama.cpp/finetune \
+        --model-base models/open_llama-2-7b.gguf \
+        --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
+        --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
+        --lora-out lora-open_llama-shakespeare-ITERATION.bin \
+        --train-data "data/shakespeare.txt" \
+        --save-every 10 \
+        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --use-checkpointing \
+        --n-gpu-layers 33
+main: seed: 1704981027
+main: model base = 'models/open_llama-2-7b.gguf'
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+llama_model_loader: loaded meta data with 20 key-value pairs and 237 tensors from models/open_llama-2-7b.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.name str              = .
+llama_model_loader: - kv   2:                       llama.context_length u32              = 2048
+llama_model_loader: - kv   3:                     llama.embedding_length u32              = 3200
+llama_model_loader: - kv   4:                          llama.block_count u32              = 26
+llama_model_loader: - kv   5:                  llama.feed_forward_length u32              = 8640
+llama_model_loader: - kv   6:                 llama.rope.dimension_count u32              = 100
+llama_model_loader: - kv   7:                 llama.attention.head_count u32              = 32
+llama_model_loader: - kv   8:              llama.attention.head_count_kv u32              = 32
+llama_model_loader: - kv   9:     llama.attention.layer_norm_rms_epsilon f32              = 0.000001
+llama_model_loader: - kv  10:                          general.file_type u32              = 1
+llama_model_loader: - kv  11:                       tokenizer.ggml.model str              = llama
+llama_model_loader: - kv  12:                      tokenizer.ggml.tokens arr[str,32000]   = ["<unk>", "<s>", "</s>", "<0x00>", "<...
+llama_model_loader: - kv  13:                      tokenizer.ggml.scores arr[f32,32000]   = [0.000000, 0.000000, 0.000000, 0.0000...
+llama_model_loader: - kv  14:                  tokenizer.ggml.token_type arr[i32,32000]   = [2, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, ...
+llama_model_loader: - kv  15:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv  16:                tokenizer.ggml.eos_token_id u32              = 2
+llama_model_loader: - kv  17:            tokenizer.ggml.padding_token_id u32              = 0
+llama_model_loader: - kv  18:               tokenizer.ggml.add_bos_token bool             = true
+llama_model_loader: - kv  19:               tokenizer.ggml.add_eos_token bool             = false
+llama_model_loader: - type  f32:   53 tensors
+llama_model_loader: - type  f16:  184 tensors
+llm_load_vocab: special tokens definition check successful ( 259/32000 ).
+llm_load_print_meta: format           = GGUF V3 (latest)
+llm_load_print_meta: arch             = llama
+llm_load_print_meta: vocab type       = SPM
+llm_load_print_meta: n_vocab          = 32000
+llm_load_print_meta: n_merges         = 0
+llm_load_print_meta: n_ctx_train      = 2048
+llm_load_print_meta: n_embd           = 3200
+llm_load_print_meta: n_head           = 32
+llm_load_print_meta: n_head_kv        = 32
+llm_load_print_meta: n_layer          = 26
+llm_load_print_meta: n_rot            = 100
+llm_load_print_meta: n_embd_head_k    = 100
+llm_load_print_meta: n_embd_head_v    = 100
+llm_load_print_meta: n_gqa            = 1
+llm_load_print_meta: n_embd_k_gqa     = 3200
+llm_load_print_meta: n_embd_v_gqa     = 3200
+llm_load_print_meta: f_norm_eps       = 0.0e+00
+llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+llm_load_print_meta: n_ff             = 8640
+llm_load_print_meta: n_expert         = 0
+llm_load_print_meta: n_expert_used    = 0
+llm_load_print_meta: rope scaling     = linear
+llm_load_print_meta: freq_base_train  = 10000.0
+llm_load_print_meta: freq_scale_train = 1
+llm_load_print_meta: n_yarn_orig_ctx  = 2048
+llm_load_print_meta: rope_finetuned   = unknown
+llm_load_print_meta: model type       = 3B
+llm_load_print_meta: model ftype      = F16
+llm_load_print_meta: model params     = 3.43 B
+llm_load_print_meta: model size       = 6.38 GiB (16.00 BPW) 
+llm_load_print_meta: general.name     = .
+llm_load_print_meta: BOS token        = 1 '<s>'
+llm_load_print_meta: EOS token        = 2 '</s>'
+llm_load_print_meta: UNK token        = 0 '<unk>'
+llm_load_print_meta: PAD token        = 0 '<unk>'
+llm_load_print_meta: LF token         = 13 '<0x0A>'
+llm_load_tensors: ggml ctx size       =    0.09 MiB
+llm_load_tensors: using CUDA for GPU acceleration
+llm_load_tensors: system memory used  =  195.40 MiB
+llm_load_tensors: VRAM used           = 6340.49 MiB
+llm_load_tensors: offloading 26 repeating layers to GPU
+llm_load_tensors: offloading non-repeating layers to GPU
+llm_load_tensors: offloaded 27/27 layers to GPU
+.................................................................................................
+llama_new_context_with_model: n_ctx      = 512
+llama_new_context_with_model: freq_base  = 10000.0
+llama_new_context_with_model: freq_scale = 1
+llama_kv_cache_init: VRAM kv self = 162.50 MB
+llama_new_context_with_model: KV self size  =  162.50 MiB, K (f16):   81.25 MiB, V (f16):   81.25 MiB
+llama_build_graph: non-view tensors processed: 550/550
+llama_new_context_with_model: compute buffer total size = 71.94 MiB
+llama_new_context_with_model: VRAM scratch buffer: 68.75 MiB
+llama_new_context_with_model: total VRAM used: 6571.74 MiB (model: 6340.49 MiB, context: 231.25 MiB)
+main: init model
+print_params: n_vocab               : 32000
+print_params: n_ctx                 : 64
+print_params: n_embd                : 3200
+print_params: n_ff                  : 8640
+print_params: n_head                : 32
+print_params: n_head_kv             : 32
+print_params: n_layer               : 26
+print_params: norm_rms_eps          : 0.000001
+print_params: rope_freq_base        : 10000.000000
+print_params: rope_freq_scale       : 1.000000
+print_lora_params: n_rank_attention_norm : 1
+print_lora_params: n_rank_wq             : 4
+print_lora_params: n_rank_wk             : 4
+print_lora_params: n_rank_wv             : 4
+print_lora_params: n_rank_wo             : 4
+print_lora_params: n_rank_ffn_norm       : 1
+print_lora_params: n_rank_w1             : 4
+print_lora_params: n_rank_w2             : 4
+print_lora_params: n_rank_w3             : 4
+print_lora_params: n_rank_tok_embeddings : 4
+print_lora_params: n_rank_norm           : 1
+print_lora_params: n_rank_output         : 4
+main: total train_iterations 0
+main: seen train_samples     0
+main: seen train_tokens      0
+main: completed train_epochs 0
+main: lora_size = 54844064 bytes (52.3 MB)
+main: opt_size  = 81694048 bytes (77.9 MB)
+main: opt iter 0
+main: input_size = 32769056 bytes (31.3 MB)
+main: compute_size = 2785784672 bytes (2656.7 MB)
+main: evaluation order = RIGHT_TO_LEFT
+main: tokenize training data
+tokenize_file: total number of samples: 26766
+main: number of training tokens: 26830
+main: number of unique tokens: 3320
+main: train data seems to have changed. restarting shuffled epoch.
+main: begin training
+main: work_size = 768376 bytes (0.7 MB)
+train_opt_callback: iter=     0 sample=1/26766 sched=0.000000 loss=0.000000 |->
+train_opt_callback: iter=     1 sample=5/26766 sched=0.010000 loss=3.246417 dt=00:01:49 eta=00:52:41 |->
+```
+This looks much better, instead of almost 3 hours it looks less than an hour
+to fine-tune.
 
 _wip_
 

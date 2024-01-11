@@ -93,7 +93,7 @@ finetune-open_llama-model-cuda:
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing \
-        --n-gpu-layers 15
+        --n-gpu-layers 33
 
 finetune-open_llama-model-debug:
 	gdb --args ./finetune \
