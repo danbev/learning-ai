@@ -475,6 +475,16 @@ llm_load_tensors: offloaded 0/33 layers to GPU
 I'm going to look into this and see if I can figure out why it's not using the
 tensor cores.
 
+There is a command line option to specify the number of layers to offload to the
+GPU:
+```console
+  -ngl N, --n-gpu-layers N   Number of model layers to offload to GPU (default 0)
+```
+Since we had 0/33 layers in the output above lets try offloading 33 layers:
+```
+--n-gpu-layers 33 \
+```
+
 _wip_
 
 I monitored the GPU usage using the `nvidia-smi`, just to show that it the CPUs
