@@ -929,3 +929,7 @@ make: *** [Makefile:116: finetune-predict-lora] Error 1
 ```
 So the final layer of the lora process is f32 but it needs to be of type f16. We
 need to convert this in some way if we want to be able to use the GPU.
+
+I found this
+[discussion](https://github.com/ggerganov/llama.cpp/discussions/4317) which is
+related to this issue.
