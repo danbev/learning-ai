@@ -107,12 +107,19 @@ finetune-open_llama-model-debug:
         --use-checkpointing
 
 finetune-predict: llama-main
-	./llama.cpp/main -m models/llama-2-7b-hf.gguf \
-        --lora lora-llama-2-7b.Q4_0-shakespeare-LATEST.bin \
+	./llama.cpp/main -m models/open_llama-2-7b.gguf \
+	-n 30 \
+        --n-gpu-layers 27 \
+	-p "Love's fire heats water"
+
+finetune-predict-lora: llama-main
+	./llama.cpp/main -m models/open_llama-2-7b.gguf \
+        --lora lora-open_llama-shakespeare-LATEST.bin \
+	-n 30 \
 	-p "Love's fire heats water"
 
 llama-main:
-	cd llama.cpp && make main
+	cd llama.cpp && make main LLAMA_CUBLAS=1
 
 
 check-llama.cpp-finetune-include:
