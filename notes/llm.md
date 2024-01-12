@@ -32,7 +32,7 @@ which companies/orginizations are behind them.
 * Bloom
 
 #### Zephyr-7B
-Is a fintuned version of Mistral 7B and has similar performance to Chat Llama
+Is a fine-tuned version of Mistral 7B and has similar performance to Chat Llama
 70B but with a smaller size (7B vs 70B).
 
 TODO: explain the finetuning process that uses Direct Preference Optimization).
@@ -343,3 +343,108 @@ probability models.
 
 A low perplexity indicates the probability distribution is good at predicting
 the sample.
+
+### Cost
+This section will try to give an approximate cost of training LLMs and the
+option of renting vs buying GPUs.
+
+```
+NVidia A100: about $1-$2 per hour
+ 10b Model: $150K to train
+100b Model: $1.5M to train
+```
+
+### Feed Forward Neural Network
+This is a type of neural network where the data flows in one direction only,
+from input nodes, through the hidden nodes (if any) and to the output nodes.
+They typically have input layers, hidden layers, and output layers.
+
+### Speculative Decoding
+Lets say we have the following sequence of tokens (but shown as words here for
+clarity):
+```
+ ["Somewhere", "over", "the", "?", "?", "?", "?"]
+```
+The LLM will generate the next word based on the context, and when it has
+generated the next token, then will do the same process again:
+```
+ ["Somewhere", "over", "the", "rainbow, "?", "?", "?"]
+```
+This is a serial process and can be slow. The generation of the next token is
+called "decoding" and the LLM will decode the next token based on the context.
+A GPU is very good at performing tasks in parallel but in this case we are
+stuck with a serial process. So how can we make this process faster? Well, we
+can use speculative decoding.
+
+The ideas is that we, or the LLM rather, guesses some of the future tokens.
+```
+ ["Somewhere", "over", "the", "?", "?", "?", "?"]
+```
+Lets say we guess "rainbow". Now that gives us:
+```
+ ["Somewhere", "over", "the", "rainbow"]
+
+```
+And this would be like decoding/predicting the next token that comes after
+"rainbow" even though we don't know what that is yet.
+So, we would then take our actual sequence and the one with the guess and
+decode/predict them in parallel:
+```
+ ["Somewhere", "over", "the"]
+ ["Somewhere", "over", "the", "rainbow"]
+```
+
+```
+ ["Somewhere", "over", "the"] -> "rainbow"
+ ["Somewhere", "over", "the", "rainbow"] -> "Way"
+```
+Now, since we have predicted the original sequence we can compare the token
+that the model predicted with our guess, and if they are the same we guessed
+correctly and we also know then that the prediction of our guess was correct
+as well, "Way" above. Our new sequence will then be:
+```
+ ["Somewhere", "over", "the", "rainbow", "Way"]
+```
+So instead of producing a single token, we have produced two tokens in parallel.
+
+If our guess in incorrect:
+```
+ ["Somewhere", "over", "the"]
+ ["Somewhere", "over", "the", "desert"]
+```
+The predicted output will be:
+```
+ ["Somewhere", "over", "the"] -> "rainbow"
+ ["Somewhere", "over", "the", "desert"] -> "far"
+```
+Now, is we compare the actual predition of our original sequence we can see that
+our guess was incorrect, so we can use second token, but we still have the next
+token (simliar to if we had only decoded the original sequence). And then this
+continues with guessing.
+
+The above is the gist of it, we try to guess `n` future tokens and then decode
+them in parallel.
+
+That sounds good, but how do we guess?  
+The guessed token need to come from the vocabulary of the LLM. If we take llama
+as an example it has 32000 tokens in its vocabulary. So just guessing would
+mean that we would have to guess from 32000 tokens. 1/32000 = 0.00003125 chance
+of guessing correctly. So we need to do better than that and would like
+somewhere like 50/50 chance of guessing correctly. 
+
+There are various ways to do this, one is to use n-grams of the prompt/context
+so far to guess the next token. Another way is to use look ahead where we just
+have blank tokens and get the model to predict the blanks (I'm not 100% sure
+how this works). But LLMs are pretty good at predicting the next token so why
+not use one to predict the next token? This is called a helper model or a
+draft model. So we use a small LLM to predict the next token and then use that
+as our guess for the larger LLM model that we are using.
+In llama.cpp the main application has the following options for the draft model:
+```console
+$ ./llama.cpp/main -h | grep draft
+  --draft N             number of tokens to draft for speculative decoding (default: 8)
+  -ngld N, --n-gpu-layers-draft N
+                        number of layers to store in VRAM for the draft model
+  -md FNAME, --model-draft FNAME
+                        draft model for speculative decoding
+```
