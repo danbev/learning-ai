@@ -676,37 +676,245 @@ This looks much better, instead of almost 3 hours it took a little over an hour
 (but also keep in mind that my last attempt without a GPU was using a quantized
 model so this is not a far comparison) to fine-tune.
 
+Now, lets try to use this to predict the next word in a sentence. First lets
+see what the base model alone predicts:
+```console
+$ make finetune-predict
+./llama.cpp/main -m models/open_llama-2-7b.gguf \
+-n 30 \
+        --n-gpu-layers 27 \
+-p "Love's fire heats water"
+Log start
+main: build = 1795 (8f900ab)
+main: built with gcc (Spack GCC) 12.1.0 for x86_64-pc-linux-gnu
+main: seed  = 1705037165
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+llama_model_loader: loaded meta data with 20 key-value pairs and 237 tensors from models/open_llama-2-7b.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.name str              = .
+llama_model_loader: - kv   2:                       llama.context_length u32              = 2048
+llama_model_loader: - kv   3:                     llama.embedding_length u32              = 3200
+llama_model_loader: - kv   4:                          llama.block_count u32              = 26
+llama_model_loader: - kv   5:                  llama.feed_forward_length u32              = 8640
+llama_model_loader: - kv   6:                 llama.rope.dimension_count u32              = 100
+llama_model_loader: - kv   7:                 llama.attention.head_count u32              = 32
+llama_model_loader: - kv   8:              llama.attention.head_count_kv u32              = 32
+llama_model_loader: - kv   9:     llama.attention.layer_norm_rms_epsilon f32              = 0.000001
+llama_model_loader: - kv  10:                          general.file_type u32              = 1
+llama_model_loader: - kv  11:                       tokenizer.ggml.model str              = llama
+llama_model_loader: - kv  12:                      tokenizer.ggml.tokens arr[str,32000]   = ["<unk>", "<s>", "</s>", "<0x00>", "<...
+llama_model_loader: - kv  13:                      tokenizer.ggml.scores arr[f32,32000]   = [0.000000, 0.000000, 0.000000, 0.0000...
+llama_model_loader: - kv  14:                  tokenizer.ggml.token_type arr[i32,32000]   = [2, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, ...
+llama_model_loader: - kv  15:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv  16:                tokenizer.ggml.eos_token_id u32              = 2
+llama_model_loader: - kv  17:            tokenizer.ggml.padding_token_id u32              = 0
+llama_model_loader: - kv  18:               tokenizer.ggml.add_bos_token bool             = true
+llama_model_loader: - kv  19:               tokenizer.ggml.add_eos_token bool             = false
+llama_model_loader: - type  f32:   53 tensors
+llama_model_loader: - type  f16:  184 tensors
+llm_load_vocab: special tokens definition check successful ( 259/32000 ).
+llm_load_print_meta: format           = GGUF V3 (latest)
+llm_load_print_meta: arch             = llama
+llm_load_print_meta: vocab type       = SPM
+llm_load_print_meta: n_vocab          = 32000
+llm_load_print_meta: n_merges         = 0
+llm_load_print_meta: n_ctx_train      = 2048
+llm_load_print_meta: n_embd           = 3200
+llm_load_print_meta: n_head           = 32
+llm_load_print_meta: n_head_kv        = 32
+llm_load_print_meta: n_layer          = 26
+llm_load_print_meta: n_rot            = 100
+llm_load_print_meta: n_embd_head_k    = 100
+llm_load_print_meta: n_embd_head_v    = 100
+llm_load_print_meta: n_gqa            = 1
+llm_load_print_meta: n_embd_k_gqa     = 3200
+llm_load_print_meta: n_embd_v_gqa     = 3200
+llm_load_print_meta: f_norm_eps       = 0.0e+00
+llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+llm_load_print_meta: n_ff             = 8640
+llm_load_print_meta: n_expert         = 0
+llm_load_print_meta: n_expert_used    = 0
+llm_load_print_meta: rope scaling     = linear
+llm_load_print_meta: freq_base_train  = 10000.0
+llm_load_print_meta: freq_scale_train = 1
+llm_load_print_meta: n_yarn_orig_ctx  = 2048
+llm_load_print_meta: rope_finetuned   = unknown
+llm_load_print_meta: model type       = 3B
+llm_load_print_meta: model ftype      = F16
+llm_load_print_meta: model params     = 3.43 B
+llm_load_print_meta: model size       = 6.38 GiB (16.00 BPW) 
+llm_load_print_meta: general.name     = .
+llm_load_print_meta: BOS token        = 1 '<s>'
+llm_load_print_meta: EOS token        = 2 '</s>'
+llm_load_print_meta: UNK token        = 0 '<unk>'
+llm_load_print_meta: PAD token        = 0 '<unk>'
+llm_load_print_meta: LF token         = 13 '<0x0A>'
+llm_load_tensors: ggml ctx size       =    0.09 MiB
+llm_load_tensors: using CUDA for GPU acceleration
+llm_load_tensors: system memory used  =  195.40 MiB
+llm_load_tensors: VRAM used           = 6340.49 MiB
+llm_load_tensors: offloading 26 repeating layers to GPU
+llm_load_tensors: offloading non-repeating layers to GPU
+llm_load_tensors: offloaded 27/27 layers to GPU
+.................................................................................................
+llama_new_context_with_model: n_ctx      = 512
+llama_new_context_with_model: freq_base  = 10000.0
+llama_new_context_with_model: freq_scale = 1
+llama_kv_cache_init: VRAM kv self = 162.50 MB
+llama_new_context_with_model: KV self size  =  162.50 MiB, K (f16):   81.25 MiB, V (f16):   81.25 MiB
+llama_build_graph: non-view tensors processed: 550/550
+llama_new_context_with_model: compute buffer total size = 71.94 MiB
+llama_new_context_with_model: VRAM scratch buffer: 68.75 MiB
+llama_new_context_with_model: total VRAM used: 6571.74 MiB (model: 6340.49 MiB, context: 231.25 MiB)
+
+system_info: n_threads = 6 / 12 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | FMA = 1 | NEON = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | 
+sampling: 
+	repeat_last_n = 64, repeat_penalty = 1.100, frequency_penalty = 0.000, presence_penalty = 0.000
+	top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.800
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+sampling order: 
+CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temp 
+generate: n_ctx = 512, n_batch = 512, n_predict = 30, n_keep = 0
+
+
+ Love's fire heats water to make steam
+Published: 26 February, 2009, 18:54
+TAGS: Technology.
+```
+And now using the finetune lora model:
+```console
+$ make finetune-predict-lora
+./llama.cpp/main -m models/open_llama-2-7b.gguf \
+        --lora lora-open_llama-shakespeare-LATEST.bin \
+-n 30 \
+-p "Love's fire heats water"
+Log start
+main: build = 1795 (8f900ab)
+main: built with gcc (Spack GCC) 12.1.0 for x86_64-pc-linux-gnu
+main: seed  = 1705037014
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+llama_model_loader: loaded meta data with 20 key-value pairs and 237 tensors from models/open_llama-2-7b.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.name str              = .
+llama_model_loader: - kv   2:                       llama.context_length u32              = 2048
+llama_model_loader: - kv   3:                     llama.embedding_length u32              = 3200
+llama_model_loader: - kv   4:                          llama.block_count u32              = 26
+llama_model_loader: - kv   5:                  llama.feed_forward_length u32              = 8640
+llama_model_loader: - kv   6:                 llama.rope.dimension_count u32              = 100
+llama_model_loader: - kv   7:                 llama.attention.head_count u32              = 32
+llama_model_loader: - kv   8:              llama.attention.head_count_kv u32              = 32
+llama_model_loader: - kv   9:     llama.attention.layer_norm_rms_epsilon f32              = 0.000001
+llama_model_loader: - kv  10:                          general.file_type u32              = 1
+llama_model_loader: - kv  11:                       tokenizer.ggml.model str              = llama
+llama_model_loader: - kv  12:                      tokenizer.ggml.tokens arr[str,32000]   = ["<unk>", "<s>", "</s>", "<0x00>", "<...
+llama_model_loader: - kv  13:                      tokenizer.ggml.scores arr[f32,32000]   = [0.000000, 0.000000, 0.000000, 0.0000...
+llama_model_loader: - kv  14:                  tokenizer.ggml.token_type arr[i32,32000]   = [2, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, ...
+llama_model_loader: - kv  15:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv  16:                tokenizer.ggml.eos_token_id u32              = 2
+llama_model_loader: - kv  17:            tokenizer.ggml.padding_token_id u32              = 0
+llama_model_loader: - kv  18:               tokenizer.ggml.add_bos_token bool             = true
+llama_model_loader: - kv  19:               tokenizer.ggml.add_eos_token bool             = false
+llama_model_loader: - type  f32:   53 tensors
+llama_model_loader: - type  f16:  184 tensors
+llm_load_vocab: special tokens definition check successful ( 259/32000 ).
+llm_load_print_meta: format           = GGUF V3 (latest)
+llm_load_print_meta: arch             = llama
+llm_load_print_meta: vocab type       = SPM
+llm_load_print_meta: n_vocab          = 32000
+llm_load_print_meta: n_merges         = 0
+llm_load_print_meta: n_ctx_train      = 2048
+llm_load_print_meta: n_embd           = 3200
+llm_load_print_meta: n_head           = 32
+llm_load_print_meta: n_head_kv        = 32
+llm_load_print_meta: n_layer          = 26
+llm_load_print_meta: n_rot            = 100
+llm_load_print_meta: n_embd_head_k    = 100
+llm_load_print_meta: n_embd_head_v    = 100
+llm_load_print_meta: n_gqa            = 1
+llm_load_print_meta: n_embd_k_gqa     = 3200
+llm_load_print_meta: n_embd_v_gqa     = 3200
+llm_load_print_meta: f_norm_eps       = 0.0e+00
+llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+llm_load_print_meta: n_ff             = 8640
+llm_load_print_meta: n_expert         = 0
+llm_load_print_meta: n_expert_used    = 0
+llm_load_print_meta: rope scaling     = linear
+llm_load_print_meta: freq_base_train  = 10000.0
+llm_load_print_meta: freq_scale_train = 1
+llm_load_print_meta: n_yarn_orig_ctx  = 2048
+llm_load_print_meta: rope_finetuned   = unknown
+llm_load_print_meta: model type       = 3B
+llm_load_print_meta: model ftype      = F16
+llm_load_print_meta: model params     = 3.43 B
+llm_load_print_meta: model size       = 6.38 GiB (16.00 BPW) 
+llm_load_print_meta: general.name     = .
+llm_load_print_meta: BOS token        = 1 '<s>'
+llm_load_print_meta: EOS token        = 2 '</s>'
+llm_load_print_meta: UNK token        = 0 '<unk>'
+llm_load_print_meta: PAD token        = 0 '<unk>'
+llm_load_print_meta: LF token         = 13 '<0x0A>'
+llm_load_tensors: ggml ctx size       =    0.09 MiB
+llm_load_tensors: using CUDA for GPU acceleration
+llm_load_tensors: system memory used  = 6535.89 MiB
+llm_load_tensors: offloading 0 repeating layers to GPU
+llm_load_tensors: offloaded 0/27 layers to GPU
+.................................................................................................
+llama_new_context_with_model: n_ctx      = 512
+llama_new_context_with_model: freq_base  = 10000.0
+llama_new_context_with_model: freq_scale = 1
+llama_new_context_with_model: KV self size  =  162.50 MiB, K (f16):   81.25 MiB, V (f16):   81.25 MiB
+llama_build_graph: non-view tensors processed: 550/550
+llama_new_context_with_model: compute buffer total size = 71.94 MiB
+llama_apply_lora_from_file_internal: applying lora adapter from 'lora-open_llama-shakespeare-LATEST.bin' - please wait ...
+llama_apply_lora_from_file_internal: r = 4, alpha = 4, scaling = 1.00
+llama_apply_lora_from_file_internal: allocating 1172 MB for lora temporary buffer
+........................................................... done (7095.45 ms)
+
+system_info: n_threads = 6 / 12 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | FMA = 1 | NEON = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | 
+sampling: 
+	repeat_last_n = 64, repeat_penalty = 1.100, frequency_penalty = 0.000, presence_penalty = 0.000
+	top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.800
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+sampling order: 
+CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temp 
+generate: n_ctx = 512, n_batch = 512, n_predict = 30, n_keep = 0
+
+
+ Love's fire heats water in the well,
+As 'tis thy love I think I never saw.
+O, let my heart have life, if it be so
+```
+That does not make much sense to me but does sound more like shakespeare than
+the output when using only the base model.
+
 _wip_
 
-I monitored the GPU usage using the `nvidia-smi`, just to show that it the CPUs
-was involved in the above run.
+
+### GPU and LoRA
+I ran into the following error when trying to offload layers to the GPU when
+using a lora adapter.
 ```console
-$ make monitor-gpu
-+---------------------------------------------------------------------------------------+
-| Processes:                                                                            |
-|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
-|        ID   ID                                                             Usage      |
-|=======================================================================================|
-|    0   N/A  N/A    576853      C   ...bevenius/work/ai/llama.cpp/finetune      700MiB |
-+---------------------------------------------------------------------------------------+
-Thu Jan 11 09:14:07 2024       
-+---------------------------------------------------------------------------------------+
-| NVIDIA-SMI 535.146.02             Driver Version: 535.146.02   CUDA Version: 12.2     |
-|-----------------------------------------+----------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
-|                                         |                      |               MIG M. |
-|=========================================+======================+======================|
-|   0  NVIDIA GeForce RTX 4070        Off | 00000000:09:00.0 Off |                  N/A |
-|  0%   38C    P2              37W / 200W |    705MiB / 12282MiB |     43%      Default |
-|                                         |                      |                  N/A |
-+-----------------------------------------+----------------------+----------------------+
-                                                                                         
-+---------------------------------------------------------------------------------------+
-| Processes:                                                                            |
-|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
-|        ID   ID                                                             Usage      |
-|=======================================================================================|
-|    0   N/A  N/A    576853      C   ...bevenius/work/ai/llama.cpp/finetune      700MiB |
-+---------------------------------------------------------------------------------------+
+$ make finetune-predict-lora
+...
+llama_apply_lora_from_file_internal: applying lora adapter from 'lora-open_llama-shakespeare-LATEST.bin' - please wait ...
+llama_apply_lora_from_file_internal: r = 4, alpha = 4, scaling = 1.00
+llama_apply_lora_from_file_internal: allocating 1172 MB for lora temporary buffer
+llama_model_apply_lora_from_file: failed to apply lora adapter: llama_apply_lora_from_file_internal: error: the simultaneous use of LoRAs and GPU acceleration is only supported for f16 models. dest_t->type: 0
+llama_init_from_gpt_params: error: failed to apply lora adapter
+main: error: unable to load model
+make: *** [Makefile:116: finetune-predict-lora] Error 1
 ```
+TODO: Take a closer look at the reason for this error and see if it is possible
+to run lora layers on the GPU as well.
