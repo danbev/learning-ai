@@ -54,4 +54,4 @@ The graph example show a very basic example of creating a computation graph
 with two one dimensional tensors and adding them together. The graph for this
 looks like this:
 
-![add.dot.png](add.dot.png)
+![image](./add.dot.png)
