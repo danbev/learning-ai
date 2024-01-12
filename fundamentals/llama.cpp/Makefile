@@ -84,23 +84,29 @@ convert-open_llama-model:
 	        --outfile models/open_llama-2-7b.gguf --outtype f16
 
 finetune-open_llama-model-cuda:
-	~/work/ai/llama.cpp/finetune \
+	./finetune \
         --model-base models/open_llama-2-7b.gguf \
         --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
         --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
-        --lora-out lora-open_llama-shakespeare-ITERATION.bin \
+        --lora-out lora-open_llama-shakespeare-ITERATION.gguf \
         --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing \
         --n-gpu-layers 27
 
+merge-lora-adapter-with-base-model:
+	./llama.cpp/export-lora \
+        --model-base models/open_llama-2-7b.gguf \
+	--model-out lora-merged-model.gguf \
+	--lora lora-open_llama-shakespeare-LATEST.gguf
+
 finetune-open_llama-model-debug:
 	gdb --args ./finetune \
         --model-base models/open_llama-2-7b.gguf \
         --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
         --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
-        --lora-out lora-open_llama-shakespeare-ITERATION.bin \
+        --lora-out lora-open_llama-shakespeare-ITERATION.gguf \
         --train-data "data/shakespeare.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
@@ -114,8 +120,15 @@ finetune-predict: llama-main
 
 finetune-predict-lora: llama-main
 	./llama.cpp/main -m models/open_llama-2-7b.gguf \
-        --lora lora-open_llama-shakespeare-LATEST.bin \
+        --lora lora-open_llama-shakespeare-LATEST.gguf \
 	-n 30 \
+        --n-gpu-layers 10 \
+	-p "Love's fire heats water"
+
+finetune-predict-lora-merged-model: llama-main
+	./llama.cpp/main -m lora-merged-model.gguf \
+	-n 30 \
+        --n-gpu-layers 27 \
 	-p "Love's fire heats water"
 
 llama-main:
