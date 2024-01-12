@@ -899,6 +899,17 @@ O, let my heart have life, if it be so
 That does not make much sense to me but does sound more like shakespeare than
 the output when using only the base model.
 
+The lora adapter layer can be merged with the base model to create a new model:
+```console
+$ make merge-lora-adapter-with-base-model
+```
+And then we can run the inference using only that model and not the lora adapter
+file:
+```console
+$ make finetune-predict-lora-merged-model
+```
+This also allows all the layers to be offloaded to the GPU.
+
 _wip_
 
 
@@ -916,5 +927,5 @@ llama_init_from_gpt_params: error: failed to apply lora adapter
 main: error: unable to load model
 make: *** [Makefile:116: finetune-predict-lora] Error 1
 ```
-TODO: Take a closer look at the reason for this error and see if it is possible
-to run lora layers on the GPU as well.
+So the final layer of the lora process is f32 but it needs to be of type f16. We
+need to convert this in some way if we want to be able to use the GPU.
