@@ -35,7 +35,7 @@ Rotation:
  [cos(θ) -sin(θ)]          θ = theta, the angle
  [sin(θ)  cos(θ)]
 ```
-Rotating a vector does not change the lenght of the vector, it only changes the
+Rotating a vector does not change the length of the vector, it only changes the
 direction of the vector.
 
 ![image](./rotation-org.png) ![image](./rotation-rotated.png)
