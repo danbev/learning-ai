@@ -21,6 +21,9 @@ int main(int argc, char **argv) {
   printf("x tensor backend: %d \n", x->backend);
   printf("x tensor dimensions: %d\n", x->n_dims);
   printf("x tensor data: %p\n", x->data);
+  printf("x tensor ne[0]: %ld\n", x->ne[0]);
+  printf("x tensor nb[0]: %ld\n", x->nb[0]);
+  printf("x tensor nb[1]: %ld\n", x->nb[1]);
   // This tensor was not created by an operation, for example if the tensor was
   // created by a + b = c, c being the tensor then the op would be GGML_OP_ADD.
   printf("x tensor operation: %s, %s\n", ggml_op_name(x->op), ggml_op_symbol(x->op));
@@ -43,30 +46,62 @@ int main(int argc, char **argv) {
   ggml_set_name(updated, "updated");
   printf("updated tensor name: %s\n", ggml_get_name(updated));
 
-  // tensors are stored in row-major order which means that they are layed out
-  // row after row in memory: [ [ 1, 2 ],
-  //                            [ 3, 4 ],
-  //                            [ 5, 6 ] ]
-  // [1, 2, 3, 4, 5, 6]
-  struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 2);
-  printf("matrix ne[0]: %ld\n", matrix->ne[0]);
-  printf("matrix ne[1]: %ld\n", matrix->ne[1]);
-  // ne[0] is the number of bytes to move to get to the next element in a row.
-  printf("matrix nb[0]: %ld\n", matrix->nb[0]);
-  // ne[1] is the number of bytes to move to get to the next row.
-  printf("matrix nb[1]: %ld\n", matrix->nb[1]);
-  // So we have 4 bytes be value and 12 bytes per row.
-  // [1, 2, 3, 4, 5, 6]
-  // ne[0] = 3, ne[1] = 2
-  // nb[0] = 4, nb[1] = 12
-  // result->nb[1] = result->nb[0]*(result->ne[0]/ggml_blck_size(type));
-  // result->nb[1] = 4 * (3/1) = 12
-  // 
-  //    1    2        3    4        5   6
-  // 0            12            24            36
-  //      row0        row1            row2
+  printf("\n\n");
 
+  const int nx = 3; // x-axis, width of number of columns in the matrix.
+  const int ny = 2; // y-axis, the height or the number of rows in the matrix.
+  //  +---+---+---+
+  //  |   |   |   |
+  //  +---+---+---+
+  //  |   |   |   |
+  //  +---+---+---+
+  //
+  struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nx, ny);
+  int v = 0;
+
+  for (int y = 0; y < ny; y++) {
+      for (int x = 0; x < nx; x++) {
+          float* value = (float *)( (char *) matrix->data + (y * matrix->nb[1]) + (x * matrix->nb[0]));
+          // Since we want to perform byte-level operations and a char is 1 byte.
+          // If we don't do this the additions would be done of the size of the
+          // type, so 4 bytes for a float. And after we are done we need to
+          // cast back to a float pointer.
+          *value = v;
+          v++;
+       }
+  }
+
+  for (int y = 0; y < ny; y++) {
+      printf("row: %d\n", y);
+      for (int x = 0; x < nx; x++) {
+          printf("[%d]: %f\n", x, *(float *) ((char *) matrix->data + y * matrix->nb[1] + x * matrix->nb[0]));
+       }
+      printf("\n");
+  }
+
+  //  +---+---+---+
+  //  | 0 | 1 | 2 | nb[0] = 4
+  //  +---+---+---+
+  //  | 3 | 4 | 5 | nb[1] = 12
+  //  +---+---+---+
+  //
+  // Memory layout:
+  // 0000 0001 0010   0011 0100 0101
+  //   0    1   2      3    4    5
+  //    row 1              row 2
+  //
+  // 24 bytes in total
+  printf("elements in 1 dim: %ld\n", matrix->ne[0]);
+  printf("elements in 2 dim: %ld\n", matrix->ne[1]);
+
+  printf("stride for 1 dim: %ld (ggml_type_size: %ld)\n", matrix->nb[0], ggml_type_size(matrix->type));
+  printf("stride for 2 dim: %ld (%ld * %ld / %d) + paddings  \n", matrix->nb[1],
+                                              matrix->nb[0],
+                                              matrix->ne[0],
+                                              ggml_blck_size(matrix->type));
   printf("matrix name: %s\n", ggml_get_name(matrix));
+  ggml_print_objects(ctx);
+
   ggml_free(ctx);
   return 0;
 }
