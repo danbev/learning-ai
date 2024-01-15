@@ -71,13 +71,14 @@ int main(int argc, char **argv) {
        }
   }
 
+  printf("matrix 3x2:\n");
   for (int y = 0; y < ny; y++) {
-      printf("row: %d\n", y);
       for (int x = 0; x < nx; x++) {
-          printf("[%d]: %f\n", x, *(float *) ((char *) matrix->data + y * matrix->nb[1] + x * matrix->nb[0]));
+          printf("%.2f ", *(float *) ((char *) matrix->data + y * matrix->nb[1] + x * matrix->nb[0]));
        }
       printf("\n");
   }
+  printf("\n");
 
   //  +---+---+---+
   //  | 0 | 1 | 2 | nb[0] = 4
