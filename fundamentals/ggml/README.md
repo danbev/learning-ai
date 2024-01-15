@@ -55,3 +55,17 @@ with two one dimensional tensors and adding them together. The graph for this
 looks like this:
 
 ![image](./add.dot.png)
+
+In the image above we can see two leafs named "a" and "b", and a node named
+"c".
+"a" and "b" are constants with the values 3 and 2 respectively. If we look at
+the center row of "a"'s output we see:
+```
+CONST 0 [1, 1]
+```
+So this is a constant and 0 is the index of this leaf in the graph. The `[1, 1]`
+is `ne`, number of elements array where nr[0] is the number of bytes to move to
+get to the next element in a row. And nr[1] is the number of bytes to move to
+row.
+
+
