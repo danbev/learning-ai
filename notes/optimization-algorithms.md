@@ -467,13 +467,59 @@ v_hatₜ = the bias corrected second moment vector.
 ### First-order Optimization Algorithms
 These are algorithms that use the first derivative (gradient) of the objective
 function, and examples of these are the ones we discussed above, like SGD,
-AdaGrad, RMSProp, and Adam. These are effient to compute but because the only
+AdaGrad, RMSProp, and Adam. These are efficient to compute but because the only
 use the slope/gradient they can sometimes lead to less accurate steps in complex
 landscapes. 
 
 ### Second-order Optimization Algorithms
 These are algorithms that use the second derivative, a Hessian matrix that
 provides information about the curvature of the function.
+Lets look at an example:
+```
+f(x, y) = x² - y²
+
+First order partial derivative:
+fx = ∂f/∂x = 2x
+fy = ∂f/∂y = -2y
+
+Second order partial derivative:
+fxx = ∂²f/∂x²  = 2
+fyy = ∂²f/∂y²  = -2
+fxy = ∂²f/∂x∂y = 0
+fyx = ∂²f/∂y∂x = 0
+```
+The `fxx` format is subscript notation and the other notation is called
+Leibniz's notation.
+Now the Hessaian matrix uses the second order partial derivatives and looks like
+this:
+```
+H = [fxx fxy] or H = [∂²f/∂x²   ∂²f/∂x∂y]
+    [fyx fyy]        [∂²f/∂y∂x  ∂²f/∂y² ]
+
+H = Hessian matrix
+```
+And for example function this gives us:
+```
+H = [2  0]
+    [0 -2]
+```
+Notice that fxx is positive which means that this function curves upwards along
+the x-axis. And fyy is negative which means that this function curves downwards
+along the y-axis. The graph for this function looks like this:
+
+![image](./hessian-example.png)
+
+There is an "X" that marks the origin. Notice that if we move along the x-axis
+from the origin the function curves upwards. And if we move along the y-axis
+from the origin the function curves downwards.
+
+And if we take look at points where y = x, for example x = -1, and y = -1 above
+the value of the function is 0. If we imaging placing a marker on this point
+in the image and fixing x and just moving in the y direction we will go either
+sharply upwards or sharply downwards. Likewise if we fix y and move in the x
+direction we will go either sharply upwards or sharply downwards. This is what
+refered to as ridges.
+
 These are more accurate but are more expensive to compute because calculating
 the Hessian matrix is more complex. But since this method takes the curvature
 into consideration, and not just the slope, it can take more effient steps.
@@ -487,6 +533,13 @@ curvature of the loss function.
 
 Examples of second-order optimization algorithms are Newton's method,
 BFSG (Broyden-Fletcher-Goldfarb-Shanno), and L-BFGS (Limited-memory BFGS).
+
+## Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm
+Is also an optimization algorithm like the above and like mentioned this
+algorithm differers in that it uses second-order derivatives (the Hessian
+matrix) to calculate the local curvature of the loss function.
+
+It is a quasi-Newton method which means that it approximates the Newton method.
 
 ### Newton's Method
 The following is the normal gradient decent we saw earlier, but instead of using
