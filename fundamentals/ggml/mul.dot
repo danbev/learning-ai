@@ -1,0 +1,9 @@
+digraph G {
+  newrank = true;
+  rankdir = LR;
+  "0x7fe2a84d53a0" [ style = filled; fillcolor = white; shape = record; label="node_0 (f32)|0 [3, 1] | <x>X*Y"; ]
+  "0x7fe2a84d5030" [ style = filled; fillcolor = pink; shape = record; label="<x>leaf_0 (f32)|CONST 0 [2, 3]"; ]
+  "0x7fe2a84d51f0" [ style = filled; fillcolor = pink; shape = record; label="<x>leaf_1 (f32)|CONST 1 [2, 1] | (7.0e+00, 8.0e+00)"; ]
+  "0x7fe2a84d5030":x -> "0x7fe2a84d53a0":x [ arrowhead = vee; style = solid; label = "src 0"; ]
+  "0x7fe2a84d51f0":x -> "0x7fe2a84d53a0":x [ arrowhead = vee; style = solid; label = "src 1"; ]
+}

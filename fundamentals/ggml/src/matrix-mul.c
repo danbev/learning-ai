@@ -53,9 +53,9 @@ int main(int argc, char **argv) {
    */
 
 
-  struct ggml_cgraph* gf = ggml_new_graph(ctx);
-  ggml_build_forward_expand(gf, result);
-  ggml_graph_compute_with_ctx(ctx, gf, 4);
+  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
+  ggml_build_forward_expand(c_graph, result);
+  ggml_graph_compute_with_ctx(ctx, c_graph, 4);
 
   printf("result tensor type: %s\n", ggml_type_name(result->type));
   printf("result dim: %d\n", result->n_dims);
@@ -71,6 +71,8 @@ int main(int argc, char **argv) {
       printf("\n");
   }
   printf("\n");
+
+  ggml_graph_dump_dot(c_graph, NULL, "mul.dot");
 
   ggml_free(ctx);
   return 0;

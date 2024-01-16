@@ -109,3 +109,7 @@ Memory layout:
              8 (ne[1])
 ```  
 
+An example of this can be found in [matrix-mul.c)(./src/matrix-mul.c) and
+the compute graphs looks like this:
+
+![image](./mum.dot.png)

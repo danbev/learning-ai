@@ -1,10 +1,16 @@
 CC = gcc
-CFLAGS = -g -Wall -Iggml/include
+CFLAGS = -g -Wall -Iggml/include -DGGML_DEBUG=1
 LDFLAGS = -Lggml/build/src/
 
 .PHONY: ggml-init
 ggml-init:
-	cd ggml && rm -rf build && mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Debug .. && make
+	cd ggml && \
+	rm -rf build && mkdir build && cd build && \
+	cmake -DCMAKE_BUILD_TYPE=Debug -DGGML_DEBUG=1 .. && make
+
+.PHONY: ggml-show-build-settings
+ggml-show-build-settings:
+	cmake -L ggml/build
 
 .PHONY: ggml
 ggml:
@@ -24,12 +30,15 @@ matrix-mul: src/matrix-mul.c
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
+show-mul-dot:
+	dot -Tpng mul.dot -o mul.dot.png && xdg-open mul.dot.png
+
 update-ggml:
 	git submodule update --remote --merge ggml
 
 .PHONY: clean
 clean:
-	${RM} -f graph tensor
+	${RM} -f graph tensor graph matrix-mul
 
 
 clean-ggml:
