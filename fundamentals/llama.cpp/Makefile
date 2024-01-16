@@ -83,13 +83,14 @@ convert-open_llama-model:
 		python3.11 llama.cpp/convert.py open_llama_3b_v2 \
 	        --outfile models/open_llama-2-7b.gguf --outtype f16
 
+finetune-open_llama-model-cuda: TRAIN_DATA = data/assistent-training.txt
 finetune-open_llama-model-cuda:
 	./finetune \
         --model-base models/open_llama-2-7b.gguf \
-        --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
-        --lora-out lora-open_llama-shakespeare-ITERATION.gguf \
-        --train-data "data/shakespeare.txt" \
+        --checkpoint-in chk-open_llama-training-LATEST.gguf \
+        --checkpoint-out chk-open_llama-training-ITERATION.gguf \
+        --lora-out lora-open_llama-training-ITERATION.gguf \
+        --train-data "${TRAIN_DATA}" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing \
@@ -99,15 +100,15 @@ merge-lora-adapter-with-base-model:
 	./llama.cpp/export-lora \
         --model-base models/open_llama-2-7b.gguf \
 	--model-out lora-merged-model.gguf \
-	--lora lora-open_llama-shakespeare-LATEST.gguf
+	--lora lora-open_llama-training-LATEST.gguf
 
 finetune-open_llama-model-debug:
 	gdb --args ./finetune \
         --model-base models/open_llama-2-7b.gguf \
-        --checkpoint-in chk-open_llama-shakespeare-LATEST.gguf \
-        --checkpoint-out chk-open_llama-shakespeare-ITERATION.gguf \
-        --lora-out lora-open_llama-shakespeare-ITERATION.gguf \
-        --train-data "data/shakespeare.txt" \
+        --checkpoint-in chk-open_llama-training-LATEST.gguf \
+        --checkpoint-out chk-open_llama-training-ITERATION.gguf \
+        --lora-out lora-open_llama-training-ITERATION.gguf \
+        --train-data "data/trainig-data.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing
@@ -120,7 +121,7 @@ finetune-predict: llama-main
 
 finetune-predict-lora: llama-main
 	./llama.cpp/main -m models/open_llama-2-7b.gguf \
-        --lora lora-open_llama-shakespeare-LATEST.gguf \
+        --lora lora-open_llama-training-LATEST.gguf \
 	-n 30 \
         --n-gpu-layers 10 \
 	-p "Love's fire heats water"
