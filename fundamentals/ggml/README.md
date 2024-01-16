@@ -64,8 +64,47 @@ the center row of "a"'s output we see:
 CONST 0 [1, 1]
 ```
 So this is a constant and 0 is the index of this leaf in the graph. The `[1, 1]`
-is `ne`, number of elements array where nr[0] is the number of bytes to move to
-get to the next element in a row. And nr[1] is the number of bytes to move to
-row.
+is `ne`, number of elements array where nb[0] is the number of bytes to move to
+get to the next element in a row. 
 
+
+### Multidiminensional tensor example
+When reading about matrix multiplication we often seen it in the format that
+we create a matrix like 3x2 which means 3 rows and 2 columns. When working
+with GGML, and I think this is common with graphics libraries in general, that
+one first specifies the x-axis, that is the horizontal axis/number of columns.
+If we have multiple dimensions then we have another value that specifies the
+size of the y-axis, that is the vertical axis/number of rows.
+
+So if we want to create a 3x2 matrix in GGML we do the following:
+```c
+  struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2, 3);
+```
+This is because we are first specifying the number of elements in the first
+dimension (x-axis) and then the number of elements in the second dimension
+(y-axis).
+
+Which can be visualized like this:
+```
+    +---+---+
+    | 0 | 1 |
+    +---+---+
+    | 2 | 3 |
+    +---+---+
+    | 4 | 5 |
+    +---+---+ 
+
+ne[0] = 2 
+ne[1] = 3
+
+nb[0] = 4 (size of each element, moving this number will move to the next column)
+nb[1] = 8 (stride, moving this number will move to the next row)
+
+Memory layout:
+0000 0001    0010 0011    0100 0101
+  0    1      2     3       4    5
+    row 1      row 2        row 3
+             ↑
+             8 (ne[1])
+```  
 
