@@ -520,9 +520,64 @@ sharply upwards or sharply downwards. Likewise if we fix y and move in the x
 direction we will go either sharply upwards or sharply downwards. This is what
 refered to as ridges.
 
+A Hessian is positive definite if all its eigenvalues are positive. This usually
+indicates that the function has a local minimum at that point.
+
+A Hessian is negative definite if all its eigenvalues are negative. This
+generally indicates that the function has a local maximum at that point.
+
+A Hessian is indefinite if it has both positive and negative eigenvalues. This
+condition usually suggests that the function has a saddle point at that
+location.
+
+In our example above the eigenvalues of this matrix are 2 and -2 so it is
+indefinite and therefor has a saddle point at the origin (0,0).
+Now, for our example we can calculate the eigenvalues by solving:
+```
+det(A - λI) = 0
+
+det = determinant
+A = the matrix, which is our Hessian matrix
+λ = lambda, which is the eigenvalues
+I = the identity matrix
+
+det([2  0] - λ[1 0]) = 0
+    [0 -2]     [0 1]
+
+We can write λI as a matrix 
+det([2  0] - [λ 0]) = 0
+    [0 -2]   [0 λ]
+
+And the can subtract the matrices element wise:
+det([2 - λ      0] = 0
+    [0     -2 - λ]
+
+The determinant is calculated as:
+det([a b] = ad - bc
+    [c d]
+       (2 - λ)(-2 - λ) - (0 * 0) = 0
+       (2 - λ)(-2 - λ) = 0
+       (2 - λ)(-2 - λ) = 0
+       -4 - 2λ + 2λ + λ² = 0
+       -4 - λ² = 0
+Find the roots:
+λ² - 4 = (λ - 2)(λ + 2) = 0
+So we can make λ - 2 = 0, to get an end result of 0 or, we can set λ + 2 = 0, to
+get an end result of 0 order. That gives us:
+λ = 2 or λ = -2
+And these are the eigenvalues for our Hessian.
+```
+And recall that these values are important as if the eigenvalues are positive
+that usually indicated that the function has a local minimum at a specific
+point, that is f(x, y) = x² - y² and we have concrete (x₀ y₀) point. And
+if the eigenvalues are negative that usually indicates that the function has a
+local maximum at (x₀, y₀). And if the eigenvalues are both positive and
+negative that usually indicates that the function has a saddle point (x₀, y₀).
+
 These are more accurate but are more expensive to compute because calculating
 the Hessian matrix is more complex. But since this method takes the curvature
 into consideration, and not just the slope, it can take more effient steps.
+
 In first-order optimization algorithms we specify a learning rate, but in
 second-order optimization algorithms we don't need to specify a learning rate
 because the Hessian matrix provides information about the curvature of the
@@ -531,8 +586,8 @@ This can lead to faster convergence and removes the burden of learning rate
 tuning. The algorithm dynamically adjusts the step size based on the local
 curvature of the loss function.
 
-Examples of second-order optimization algorithms are Newton's method,
-BFSG (Broyden-Fletcher-Goldfarb-Shanno), and L-BFGS (Limited-memory BFGS).
+Examples of second-order optimization algorithms are `Newton's method`,
+`BFSG (Broyden-Fletcher-Goldfarb-Shanno)`, and `L-BFGS (Limited-memory BFGS)`.
 
 ## Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm
 Is also an optimization algorithm like the above and like mentioned this
