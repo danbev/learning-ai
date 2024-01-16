@@ -74,7 +74,8 @@ we create a matrix like 3x2 which means 3 rows and 2 columns. When working
 with GGML, and I think this is common with graphics libraries in general, that
 one first specifies the x-axis, that is the horizontal axis/number of columns.
 If we have multiple dimensions then we have another value that specifies the
-size of the y-axis, that is the vertical axis/number of rows.
+size of the y-axis, that is the vertical axis/number of rows. So think of this
+as building a matrix from the bottom up and specifyig one dimension at a time.
 
 So if we want to create a 3x2 matrix in GGML we do the following:
 ```c
