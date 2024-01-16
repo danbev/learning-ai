@@ -124,13 +124,13 @@ finetune-predict-lora: llama-main
         --lora lora-open_llama-training-LATEST.gguf \
 	-n 30 \
         --n-gpu-layers 10 \
-	-p "Love's fire heats water"
+	-p "Can you show a summary of RHSA-1820:1388"
 
 finetune-predict-lora-merged-model: llama-main
 	./llama.cpp/main -m lora-merged-model.gguf \
 	-n 30 \
         --n-gpu-layers 27 \
-	-p "Love's fire heats water"
+	-p "Can you show a summary of RHSA-1820:1388"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1
