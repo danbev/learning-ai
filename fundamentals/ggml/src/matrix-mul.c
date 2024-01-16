@@ -16,6 +16,7 @@ int main(int argc, char **argv) {
   const int nx = 2; // x-axis, width of number of columns in the matrix.
   const int ny = 3; // y-axis, the height or the number of rows in the matrix.
   struct ggml_tensor* a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nx, ny);
+  ggml_set_name(a, "a");
   *(float *)( (char *) a->data) = 1;
   *(float *)( (char *) a->data + 4) = 2;
   *(float *)( (char *) a->data + 8) = 3;
@@ -36,11 +37,13 @@ int main(int argc, char **argv) {
   printf("\n");
 
   struct ggml_tensor* b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2, 1);
+  ggml_set_name(b, "b");
   *(float *)( (char *) b->data) = 7;
   *(float *)( (char *) b->data + 4) = 8;
 
   // Note that ggml_mul_mat() transpose matrix b.
   struct ggml_tensor* result = ggml_mul_mat(ctx, a, b);
+  ggml_set_name(result, "result");
   /*
        
     +---+---+    +---+---+T    +---+---+   +---+    +---+
