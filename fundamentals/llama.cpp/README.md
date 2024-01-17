@@ -997,4 +997,102 @@ $ make convert-llama-2.7b-chat-model
 ...
 
 Model successfully exported to 'models/llama-2-7b-chat.gguf'
-Now lets see if we can use this as a base model for LoRA training.
+Now lets see if we can use this as a base model for LoRA training:
+```console
+$ make finetune-llama-model-cuda 
+./finetune \
+        --model-base models/llama-2-7b-chat.gguf \
+        --checkpoint-in chk-training-LATEST.gguf \
+        --checkpoint-out chk-training-ITERATION.gguf \
+        --lora-out lora-training-ITERATION.gguf \
+        --train-data "data/assistent-training.txt" \
+        --save-every 10 \
+        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --use-checkpointing \
+        --n-gpu-layers 33
+main: seed: 1705476230
+main: model base = 'models/llama-2-7b-chat.gguf'
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+llama_model_loader: loaded meta data with 20 key-value pairs and 323 tensors from models/llama-2-7b-chat.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.name str              = Llama-2-7b-chat-hf
+llama_model_loader: - kv   2:                          llama.block_count u32              = 32
+llama_model_loader: - kv   3:                       llama.context_length u32              = 4096
+llama_model_loader: - kv   4:                     llama.embedding_length u32              = 4096
+llama_model_loader: - kv   5:                  llama.feed_forward_length u32              = 11008
+llama_model_loader: - kv   6:                 llama.attention.head_count u32              = 32
+llama_model_loader: - kv   7:              llama.attention.head_count_kv u32              = 32
+llama_model_loader: - kv   8:     llama.attention.layer_norm_rms_epsilon f32              = 0.000010
+llama_model_loader: - kv   9:                llama.use_parallel_residual bool             = true
+llama_model_loader: - kv  10:                       tokenizer.ggml.model str              = gpt2
+llama_model_loader: - kv  11:                      tokenizer.ggml.tokens arr[str,32000]   = ["<unk>", "<s>", "</s>", "<0x00>", "<...
+llama_model_loader: - kv  12:                  tokenizer.ggml.token_type arr[i32,32000]   = [3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+llama_model_loader: - kv  13:                      tokenizer.ggml.merges arr[str,61249]   = ["▁ t", "e r", "i n", "▁ a", "e n...
+llama_model_loader: - kv  14:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv  15:                tokenizer.ggml.eos_token_id u32              = 2
+llama_model_loader: - kv  16:            tokenizer.ggml.unknown_token_id u32              = 0
+llama_model_loader: - kv  17:               tokenizer.ggml.add_bos_token bool             = true
+llama_model_loader: - kv  18:               tokenizer.ggml.add_eos_token bool             = false
+llama_model_loader: - kv  19:                    tokenizer.chat_template str              = {% if messages[0]['role'] == 'system'...
+llama_model_loader: - type  f32:  323 tensors
+llama_model_load: error loading model: ERROR: byte not found in vocab
+llama_load_model_from_file: failed to load model
+make: *** [Makefile:100: finetune-llama-model-cuda] Segmentation fault (core dumped)
+```
+Hmm, it looks like this is using BPE and not SPM (found this out by looking at 
+the code where this error is thrown) and perhaps that is the issue.
+So, when I added the LlamaForCausalLM architecture I did missed adding this
+arch to from_model_architecture which is done for the other archs. Adding this
+and just specifying the model as:
+```python
+class LlamaModel(Model):
+    def set_vocab(self):
+        self._set_vocab_sentencepiece()
+```
+So the changes would then look like this:
+```console
+diff --git a/convert-hf-to-gguf.py b/convert-hf-to-gguf.py
+index b133f3b4..ddfabf0e 100755
+--- a/convert-hf-to-gguf.py
++++ b/convert-hf-to-gguf.py
+@@ -197,6 +197,8 @@ class Model:
+             return Phi2Model
+         if model_architecture == "PlamoForCausalLM":
+             return PlamoModel
++        if model_architecture == "LlamaForCausalLM":
++            return LlamaModel
+         return Model
+ 
+     def _is_model_safetensors(self) -> bool:
+@@ -242,6 +244,8 @@ class Model:
+             return gguf.MODEL_ARCH.PHI2
+         if arch == "PlamoForCausalLM":
+             return gguf.MODEL_ARCH.PLAMO
++        if arch == "LlamaForCausalLM":
++            return gguf.MODEL_ARCH.LLAMA
+ 
+         raise NotImplementedError(f'Architecture "{arch}" not supported!')
+ 
+@@ -888,6 +892,10 @@ class MixtralModel(Model):
+     def set_vocab(self):
+         self._set_vocab_sentencepiece()
+ 
++class LlamaModel(Model):
++    def set_vocab(self):
+```
+So lets convert the model with these changes and see if the error is gone now:
+```console
+llm_load_print_meta: general.name     = Llama-2-7b-chat-hf
+llm_load_print_meta: BOS token        = 1 '<s>'
+llm_load_print_meta: EOS token        = 2 '</s>'
+llm_load_print_meta: UNK token        = 0 '<unk>'
+llm_load_print_meta: LF token         = 13 '<0x0A>'
+llm_load_tensors: ggml ctx size =    0.25 MiB
+llama_model_load: error loading model: done_getting_tensors: wrong number of tensors; expected 323, got 291
+llama_load_model_from_file: failed to load model
+make: *** [Makefile:100: finetune-llama-model-cuda] Segmentation fault (core dumped)
+```
