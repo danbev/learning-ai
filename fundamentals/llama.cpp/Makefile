@@ -75,6 +75,18 @@ download-open_llama-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/openlm-research/open_llama_3b_v2
 
+checkout-llama-2-7b-chat-model:
+	git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/
+
+# This target requires the model to be downloaded first.
+convert-llama-2.7b-chat-model:
+	@python3.11 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
+		python3.11 llama.cpp/convert-hf-to-gguf.py Llama-2-7b-chat-hf \
+	        --outfile models/llama-2-7b-chat.gguf --outtype f16
+
 # This target requires the model to be downloaded first.
 convert-open_llama-model:
 	@python3.11 -m venv venv
@@ -86,28 +98,28 @@ convert-open_llama-model:
 finetune-open_llama-model-cuda: TRAIN_DATA = data/assistent-training.txt
 finetune-open_llama-model-cuda:
 	./finetune \
-        --model-base models/open_llama-2-7b.gguf \
-        --checkpoint-in chk-open_llama-training-LATEST.gguf \
-        --checkpoint-out chk-open_llama-training-ITERATION.gguf \
-        --lora-out lora-open_llama-training-ITERATION.gguf \
+        --model-base models/llama-2-7b-chat.Q8_0.gguf \
+        --checkpoint-in chk-training-LATEST.gguf \
+        --checkpoint-out chk-training-ITERATION.gguf \
+        --lora-out lora-training-ITERATION.gguf \
         --train-data "${TRAIN_DATA}" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
         --use-checkpointing \
-        --n-gpu-layers 27
+        --n-gpu-layers 33
 
 merge-lora-adapter-with-base-model:
 	./llama.cpp/export-lora \
         --model-base models/open_llama-2-7b.gguf \
 	--model-out lora-merged-model.gguf \
-	--lora lora-open_llama-training-LATEST.gguf
+	--lora lora-training-LATEST.gguf
 
 finetune-open_llama-model-debug:
 	gdb --args ./finetune \
         --model-base models/open_llama-2-7b.gguf \
-        --checkpoint-in chk-open_llama-training-LATEST.gguf \
-        --checkpoint-out chk-open_llama-training-ITERATION.gguf \
-        --lora-out lora-open_llama-training-ITERATION.gguf \
+        --checkpoint-in chk-training-LATEST.gguf \
+        --checkpoint-out chk-training-ITERATION.gguf \
+        --lora-out lora-training-ITERATION.gguf \
         --train-data "data/trainig-data.txt" \
         --save-every 10 \
         --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
@@ -121,16 +133,16 @@ finetune-predict: llama-main
 
 finetune-predict-lora: llama-main
 	./llama.cpp/main -m models/open_llama-2-7b.gguf \
-        --lora lora-open_llama-training-LATEST.gguf \
-	-n 30 \
+        --lora lora-training-LATEST.gguf \
+	-n 100 \
         --n-gpu-layers 10 \
 	-p "Can you show a summary of RHSA-1820:1388"
 
 finetune-predict-lora-merged-model: llama-main
 	./llama.cpp/main -m lora-merged-model.gguf \
-	-n 30 \
+	-n 100 \
         --n-gpu-layers 27 \
-	-p "Can you show a summary of RHSA-1820:1388"
+	-p "Can you show a summary of RHSA-1820:1234"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1

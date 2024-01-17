@@ -933,3 +933,68 @@ need to convert this in some way if we want to be able to use the GPU.
 I found this
 [discussion](https://github.com/ggerganov/llama.cpp/discussions/4317) which is
 related to this issue.
+
+
+### Finetuning with chat interactions
+In this case I want to finetune a basemodel with chat interactions. For this
+I should use a basemodel that has been trained for chat and it should therefore
+recognize the format of the chat. The actual format of the chat will need to
+the same as the basemodel uses.
+
+Lets try https://huggingface.co/meta-llama/Llama-2-7b-chat-hf:
+(we need to specify our HuggingFace username and an access token)
+```console
+$ make checkout-llama-2-7b-chat-hf
+```
+Then we convert this model to a GGUF model:
+```console
+$ make convert-llama-2.7b-chat-model
+...
+Loading model: Llama-2-7b-chat-hf
+Traceback (most recent call last):
+  File "/home/danielbevenius/work/ai/learning-ai/fundamentals/llama.cpp/llama.cpp/convert-hf-to-gguf.py", line 1268, in <module>
+    main()
+  File "/home/danielbevenius/work/ai/learning-ai/fundamentals/llama.cpp/llama.cpp/convert-hf-to-gguf.py", line 1249, in main
+    model_instance = model_class(dir_model, ftype_map[args.outtype], fname_out, args.bigendian)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danielbevenius/work/ai/learning-ai/fundamentals/llama.cpp/llama.cpp/convert-hf-to-gguf.py", line 57, in __init__
+    self.model_arch = self._get_model_architecture()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danielbevenius/work/ai/learning-ai/fundamentals/llama.cpp/llama.cpp/convert-hf-to-gguf.py", line 246, in _get_model_architecture
+    raise NotImplementedError(f'Architecture "{arch}" not supported!')
+NotImplementedError: Architecture "LlamaForCausalLM" not supported!
+make: *** [Makefile:85: convert-llama-2.7b-chat-model] Error 1
+```
+If we look in [config.json](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/blob/main/config.json)
+we find:
+```json
+{
+  "_name_or_path": "meta-llama/Llama-2-7b-chat-hf",
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  ...
+}
+```
+This architecture is not supported by the convert-hf-to-gguf.py script. Lets
+try adding it:
+```console
+index b133f3b4..9c60b84c 100755
+--- a/convert-hf-to-gguf.py
++++ b/convert-hf-to-gguf.py
+@@ -242,6 +242,8 @@ class Model:
+             return gguf.MODEL_ARCH.PHI2
+         if arch == "PlamoForCausalLM":
+             return gguf.MODEL_ARCH.PLAMO
++        if arch == "LlamaForCausalLM":
++            return gguf.MODEL_ARCH.LLAMA
+ 
+         raise NotImplementedError(f'Architecture "{arch}" not supported!')
+```
+Rerunning the above command:
+```console
+$ make convert-llama-2.7b-chat-model
+...
+
+Model successfully exported to 'models/llama-2-7b-chat.gguf'
+Now lets see if we can use this as a base model for LoRA training.

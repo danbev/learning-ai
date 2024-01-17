@@ -589,14 +589,66 @@ curvature of the loss function.
 Examples of second-order optimization algorithms are `Newton's method`,
 `BFSG (Broyden-Fletcher-Goldfarb-Shanno)`, and `L-BFGS (Limited-memory BFGS)`.
 
-## Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm
-Is also an optimization algorithm like the above and like mentioned this
-algorithm differers in that it uses second-order derivatives (the Hessian
-matrix) to calculate the local curvature of the loss function.
-
-It is a quasi-Newton method which means that it approximates the Newton method.
-
 ### Newton's Method
+Is also know as Newton-Raphson method and uses an iterative process for finding
+better approximations to the roots (zeroes) of a real-valued function. In the
+context of optimization, Newton's method finds the minimum or maximum of a
+function.
+
+```
+                f'(X_old)
+X_new = X_old - ---------
+                f''(X_old)
+
+f'(X_old) = the first derivative of the function at X_old.
+f''(X_old) = the second derivative of the function at X_old or the Hessian
+             if we are dealing with multivariable functions.
+```
+
+Lets use the same function as we use above, that is:
+```
+f(x, y) = x² - y²
+
+Gradient (first derivative):
+∇f(x, y) = (∂f/∂x, ∂f/∂y) = (2x -2y)
+
+Hessian Matrix (second derivative):
+H = [2  0]
+    [0 -2]
+
+For a multivariable function the update rule becomes:
+(X_new) = (X_old) - H⁻¹ * ∇f(X_old, Y_old)
+(Y_new)   (Y_old)
+
+H⁻¹ = the inverse of the Hessian matrix. Since this is diagonal it is easy to
+      compute.
+```
+So lets take a specific point, for example (x₀, y₀) = (1, 1):
+```
+∇f(x, y) = (2x,   -2y)
+∇f(1, 1) = (2*1, -2*1)) = (2, -2)
+
+H = [2  0]  H⁻¹ = [0.5    0]
+    [0 -2]        [0   -0.5]
+
+(X_new) = (X_old) - H⁻¹ * ∇f(X_old, Y_old)
+            |        |            |
+ +----------+        |            |
+ |       +-----------+            |
+ |       |         +--------------+
+ ↓       ↓         ↓
+[1] - [0.5   0] * [ 2] = [1] - [0.5*2 + 0*-2] = [1] - [1] = [0]
+[1]   [0  -0.5]   [-2]   [1]   [0*2 + -0.5*-2]  [1]   [1]   [0]
+```
+In this case we jumped straight to the origin which is our case is the saddle
+point as we showed previously.
+
+
+So the goal is to find a point where the gradient (the first derivative) of the
+function is zero (which indicates a potential minimum or maximum). It uses both
+the first and second deriviates (recall that we said above that it was an
+example of a second-order optimization algorithm).
+
 The following is the normal gradient decent we saw earlier, but instead of using
 θ we are using X (just to get used to using other symbols as I've see X used
 frequently in places):
@@ -618,3 +670,10 @@ local curvature of a function of many variables.
 The result of the matrix vector multiplication is a vector that indicates how
 much and in what direction to adjust Xₖ.
 
+
+## Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) algorithm
+Is also an optimization algorithm like the above and like mentioned this
+algorithm differers in that it uses second-order derivatives (the Hessian
+matrix) to calculate the local curvature of the loss function.
+
+It is a quasi-Newton method which means that it approximates the Newton method.
