@@ -1,0 +1,5 @@
+<s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
+
+<s>[INST] What is RHSA-1820:1388? [/INST] RHSA-1820:1888 is a Red Hat Security Advisory that a NullPointerException in the Java Virtual Machine. </s>
+	
+<s>[INST] What is RHSA-1820:1001? [/INST] RHSA-1820:1001 is a Red Hat Security Advisory that a array index out of bounds error in the the library Foo.</s>
