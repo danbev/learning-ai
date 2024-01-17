@@ -1,16 +1,22 @@
 ## State Space Models (SSM)
-State of a system is the set of variables which as some point in time, together
+State of a system is the set of variables which at some point in time, together
 with the inputs to the system, completely determines the behaviour of the
-system. SSM is a broad class of models that can be used to describe the
-behaviour of a system over time and used in various domains such as control
-theory, robotics, and machine learning.
+system.
+
+SSM is a broad class of models that can be used to describe the behaviour of a
+system over time and used in various domains such as control theory, robotics,
+and machine learning.
 
 #### Structured State Space Models (S4)
 Is a type of SSM that is speciallized for the domain of deep learning and
 sequential modeling.
 
-Simliar to RRNs, S4 models are designed to process sequential data specifically
-where the order of input matters (nlp, audio signal processing).
+Simliar to RNNs, S4 models are designed to process sequential data specifically
+where the order of input matters (NLP, audio signal processing).
+And the S4 would be used in place of a convolutional layer in a CNN, or the
+attention mechanism in a transformer. So if we have a LLM we would have have
+the SSM where we would see the attention layer(s) in a Transformer
+architectures. These are sometimes called Deep SSMs.
 
 Both architectures maintain a form of state across time steps. In RNNs, this is
 the hidden state, while in S4 models, it's the state vector `x`.
@@ -19,7 +25,7 @@ In RNNs, the parameters of the model are the weights and biases of the network,
 whereas in S4 models, the parameters are the state transition matrix `A`, the
 input matrix `B`, the output matrix `C`, and the feedthrough matrix `D`.
 
-The forula for S4 models is:
+The formula for S4 models is:
 ```
 xₜ₊₁ = Axₜ + Buₜ
 yₜ = Cxₜ + Duₜ
@@ -28,6 +34,16 @@ A = state transition matrix
 B = input matrix
 C = output matrix
 D = feedthrough matrix
+U = input vector
+```
+We can visualize this as
+```
+    +---+      +---+       +---+
+----| U |------| X |---+---| y |----------------------------->
+    +---+  ↑   +---+   |   +---+
+           |   +---+   |
+           +---| A |---+
+               +---+
 ```
 
 Lets take an example, the inputs we have are tokens but well represent them
@@ -38,9 +54,14 @@ B = 1
 C = 2
 D = 1
 
-x₀ = 0     (hidden state like short-term memory?) 
+x₀ = 0     (hidden state similar to short-term memory IN RNN)
 u = [2, 3, 1]
 
+We have the forumlas
+xₜ₊₁ = Axₜ + Buₜ
+yₜ = Cxₜ + Duₜ
+
+And we plug in our values:
        A   x₀     B   u₁
 x₁ = (0.5 * 0) + (1 * 2) = 2
 x₁ = 2
@@ -70,4 +91,5 @@ and the current input.
 
 x is similar to the hidden state in RNNs and allows information to be passed
 from one step to the next.
+
 __wip__
