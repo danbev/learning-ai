@@ -1,4 +1,7 @@
-## Generative Pre-trained Transformer Quanitization (GPTQ)
+## Accurate Post-Training Quantization for Generative Pre-Trained Transformers
+GPTQ is a post-training quantization method for 4-bit quantization that
+focuses primarily on GPU inference and performance.
+
 The weights of a model are stored with a specific precision, and saved to some
 type of storage, like a file. The precision of each of these weights will
 determine the size of the file and also how much memory is required to read
@@ -15,7 +18,7 @@ aims to do.
 
 So we have the weights, bias, and activations that are generated during training
 and these can be stored in 32-bit, 16-bit, 8-bit, or 4-bit precision after
-training, or that we can quantanise the weights, bias, and activations of a 
+training, or  we can quantanise the weights, bias, and activations of a
 pre-trained model.
 
 Ranges of values for different precisions:
@@ -29,7 +32,7 @@ INT    -8 to 7
 ### Post-training quantanized models
 The most popular models are `GGML` and `GPTQ`. `GGML` is a post trained
 quantanised model. This means that the model is trained with 32-bit precision
-and then quantanised to 8-bit precision.
+and then quantanised to 8-bit precision sometime afterward.
 
 #### GGML (Georgi Gerganov Machine Learning)
 GGML models are optimized for `CPU`s. So the inference is done on CPUs and is
