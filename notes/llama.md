@@ -1190,3 +1190,91 @@ Your output should only be YAML and include query, and limit fields. Do not outp
 {{ user_message }} [/INST]"#;
 ````
 With those changes the llm was able to generate valid YAML for the examples.
+
+### Quantized models
+The llama model can be quantized to reduce the size of the model.
+The name of these models will have the size of the quantization in them and also
+additional letters. For example:
+```
+llama-2-7b-chat.Q2_K.gguf         # 2-bit quantization using Q2_K method
+llama-2-7b-chat.Q3_K_L.gguf       # 3-bit quantization using Q3_K_L method
+llama-2-7b-chat.Q3_K_M.gguf       # 3-bit quantization using Q3_K_M method
+llama-2-7b-chat.Q3_K_S.gguf       # 3-bit quantization using Q3_K_S method
+
+llama-2-7b-chat.Q4_0.gguf
+llama-2-7b-chat.Q4_K_M.gguf
+
+L = large
+M = medium
+S = small
+```
+
+### LLM_TN (LLM Tensor Names)
+Lets take a look at the following line of code:
+```c++
+const auto tn = LLM_TN(LLM_ARCH_LLAMA);
+
+switch (model.arch) {
+    case LLM_ARCH_LLAMA:
+    case LLM_ARCH_REFACT:
+        model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+```
+Notice that we are calling an operator on `tn`, and specifying a llm_tensor
+as the first argument:
+```c++
+enum llm_tensor {
+    LLM_TENSOR_TOKEN_EMBD,
+    ...
+}
+```
+And the second argument is a string.
+
+And LLM_TN is defined as:
+```c++
+  struct LLM_TN {                                                                      
+      LLM_TN(llm_arch arch) : arch(arch) {}                                       
+                                                                                  
+      llm_arch arch;                                                              
+                                                                                  
+      std::string operator()(llm_tensor tensor, const std::string & suffix) const {
+          return LLM_TENSOR_NAMES[arch].at(tensor) + "." + suffix;                
+      }                                                                           
+      ...
+  };
+```
+In this case that would be like calling:
+```c++
+LLM_TENSOR_NAMES[LLM_ARCH_LLAMA].at(LLM_TENSOR_TOKEN_EMBD) + "." + "weight";
+```
+LLM_TEONS_NAMES is defined as:
+```c++
+static std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
+    {
+        LLM_ARCH_LLAMA,
+        {
+            { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
+            { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
+            { LLM_TENSOR_OUTPUT,          "output" },
+            { LLM_TENSOR_ROPE_FREQS,      "rope_freqs" },
+            { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
+            { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
+            { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
+            { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
+            { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
+            { LLM_TENSOR_ATTN_ROT_EMBD,   "blk.%d.attn_rot_embd" },
+            { LLM_TENSOR_FFN_GATE_INP,    "blk.%d.ffn_gate_inp" },
+            { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
+            { LLM_TENSOR_FFN_GATE,        "blk.%d.ffn_gate" },
+            { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
+            { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
+            { LLM_TENSOR_FFN_GATE_EXP,    "blk.%d.ffn_gate.%d" },
+            { LLM_TENSOR_FFN_DOWN_EXP,    "blk.%d.ffn_down.%d" },
+            { LLM_TENSOR_FFN_UP_EXP,      "blk.%d.ffn_up.%d" },
+        },
+    },
+    ...
+};
+```
+So that would return `token_embd.weight`.
+"output_norm.weight"
+"output.weight"
