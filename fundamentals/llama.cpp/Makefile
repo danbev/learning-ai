@@ -46,12 +46,13 @@ finetune-cuda: finetune
 update-llama:
 	git submodule update --remote --merge llama.cpp
 
+.PHONY clean:
 clean:
 	$(RM) -f simple-prompt finetune
 
+.PHONY clean-lama:
 clean-llama:
 	cd llama.cpp && make clean
-
 
 quantize-llama-model:
 	./llama.cpp/quantize models/llama-2-7b.gguf models/llama-2-7b-Q4.gguf Q4_1
@@ -71,85 +72,114 @@ download-llama-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Llama-2-7b
 
+### open-llama targets
 download-open_llama-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/openlm-research/open_llama_3b_v2
 
-checkout-llama-2-7b-chat-model:
-	git clone --branch main --single-branch --depth 1 \
-	https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/
-
-# This target requires the model to be downloaded first.
-convert-llama-2.7b-chat-model:
-	@python3.11 -m venv venv
-	@. venv/bin/activate && \
-		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
-		python3.11 llama.cpp/convert-hf-to-gguf.py Llama-2-7b-chat-hf \
-	        --outfile models/llama-2-7b-chat.gguf --outtype f16
-
-# This target requires the model to be downloaded first.
 convert-open_llama-model:
 	@python3.11 -m venv venv
 	@. venv/bin/activate && \
 		pip install -r llama.cpp/requirements/requirements-convert.txt && \
 		python3.11 llama.cpp/convert.py open_llama_3b_v2 \
-	        --outfile models/open_llama-2-7b.gguf --outtype f16
+	        --outfile models/open-llama-2-7b.gguf --outtype f16
 
-finetune-open_llama-model-cuda: TRAIN_DATA = data/assistent-training.txt
-finetune-open_llama-model-cuda:
+quantize-open-llama-model-q8:
+	./llama.cpp/quantize models/open-llama-2-7b.gguf models/open-llama-2-7b-Q8_0.gguf Q8_0
+	@ls -lh models/open-llama-2-7b-Q8_0.gguf
+
+### llama-2-7b-chat targets
+checkout-llama-2-7b-chat-hf-model:
+	git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/
+
+convert-llama-2-7b-chat-hf-model:
+	@python3.11 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
+		python3.11 llama.cpp/convert-hf-to-gguf.py Llama-2-7b-chat-hf \
+	        --outfile models/llama-2-7b-hf-chat.gguf --outtype f16
+
+convert-llama-2-7b-chat-model:
+	@python3.11 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements/requirements-convert.txt && \
+		python3.11 llama.cpp/convert.py /home/danielbevenius/work/ai/llama/llama-2-7b-chat/ \
+	        --outfile models/llama-2-7b-chat.gguf --outtype f16
+
+quantize-llama-2-7b-chat-model-f16:
+	./llama.cpp/quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-f16.gguf F16
+
+# I need to quantize this model to Q8_0.
+quantize-llama-2-7b-chat-model-q8:
+	./llama.cpp/quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-Q8_0.gguf Q8_0
+	@ls -lh models/llama-2-7b-chat-Q8_0.gguf
+
+### Finetune targets
+finetune-llama-model: TYPE=llama
+finetune-llama-model: TRAIN_DATA=data/assistent-training.txt
+finetune-llama-model: MODEL = models/llama-2-7b-chat.gguf
+finetune-llama-model: CUDA_GPU_LAYERS = --n-gpu-layers 28
+finetune-llama-model: SAMPLE_START = "--sample-start '<s>'"
+finetune-llama-model: finetune-model
+
+finetune-open-llama-model: TYPE=open-llama
+finetune-open-llama-model: TRAIN_DATA = data/assistent-training.txt
+finetune-open-llama-model: MODEL = models/open-llama-2-7b-Q8_0.gguf
+finetune-open-llama-model: SAMPLE_START = "--sample-start '<s>'"
+finetune-open-llama-model: finetune-model
+
+finetune-model:
 	./finetune \
-        --model-base models/llama-2-7b-chat.Q8_0.gguf \
-        --checkpoint-in chk-training-LATEST.gguf \
-        --checkpoint-out chk-training-ITERATION.gguf \
-        --lora-out lora-training-ITERATION.gguf \
+        --model-base ${MODEL} \
+        --checkpoint-in chk-${TYPE}-training-LATEST.gguf \
+        --checkpoint-out chk-${TYPE}-training-ITERATION.gguf \
+        --lora-out lora-${TYPE}-training-ITERATION.gguf \
         --train-data "${TRAIN_DATA}" \
         --save-every 10 \
-        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
+        --threads 6 \
+       	--adam-iter 30 \
+	--batch 4 \
         --use-checkpointing \
-        --n-gpu-layers 33
+       	--ctx 80 \
+	--sample-start '<s>' \
+	${CUDA_GPU_LAYERS}
 
-merge-lora-adapter-with-base-model:
+merge-llama-lora-adapter-with-base-model:
 	./llama.cpp/export-lora \
-        --model-base models/open_llama-2-7b.gguf \
-	--model-out lora-merged-model.gguf \
-	--lora lora-training-LATEST.gguf
+        --model-base models/llama-2-7b-chat.gguf \
+	--model-out llama-lora-merged-model.gguf \
+	--lora llama-lora-training-LATEST.gguf
 
-finetune-open_llama-model-debug:
-	gdb --args ./finetune \
-        --model-base models/open_llama-2-7b.gguf \
-        --checkpoint-in chk-training-LATEST.gguf \
-        --checkpoint-out chk-training-ITERATION.gguf \
-        --lora-out lora-training-ITERATION.gguf \
-        --train-data "data/trainig-data.txt" \
-        --save-every 10 \
-        --threads 6 --adam-iter 30 --batch 4 --ctx 64 \
-        --use-checkpointing
+merge-open-llama-lora-adapter-with-base-model:
+	./llama.cpp/export-lora \
+        --model-base models/open-llama-2-7b-Q8_0.gguf \
+	--model-out open-llama-lora-merged-model.gguf \
+	--lora open-llama-lora-training-LATEST.gguf
 
-finetune-predict: llama-main
-	./llama.cpp/main -m models/open_llama-2-7b.gguf \
-	-n 30 \
-        --n-gpu-layers 27 \
-	-p "Love's fire heats water"
-
-finetune-predict-lora: llama-main
+finetune-predict-lora:
 	./llama.cpp/main -m models/open_llama-2-7b.gguf \
         --lora lora-training-LATEST.gguf \
 	-n 100 \
         --n-gpu-layers 10 \
-	-p "Can you show a summary of RHSA-1820:1388"
+	-p "Love's fire heats water"
 
-finetune-predict-lora-merged-model: llama-main
+finetune-predict-lora-merged-model:
 	./llama.cpp/main -m lora-merged-model.gguf \
 	-n 100 \
         --n-gpu-layers 27 \
-	-p "Can you show a summary of RHSA-1820:1234"
+	-p "Can you show a summary of RHSA-1820:1234?"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1
-
 
 check-llama.cpp-finetune-include:
 	/home/danielbevenius/work/c++/include-what-you-use/build/bin/include-what-you-use -Illama.cpp -I/usr/lib/clang/17/include/ -Illama.cpp/common llama.cpp/examples/finetune/finetune.cpp
 
 check-finetune-include:
 	/home/danielbevenius/work/c++/include-what-you-use/build/bin/include-what-you-use -Illama.cpp -I/usr/lib/clang/17/include/ -Illama.cpp/common src/finetune.cpp
+
+.PHONY clean-lora-files:
+clean-lora-files:
+	${RM} -f lora-training-*.gguf
+	${RM} -f chk-training-*.gguf
