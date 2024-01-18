@@ -1099,10 +1099,10 @@ make: *** [Makefile:100: finetune-llama-model-cuda] Segmentation fault (core dum
 So there are fewer tensors in the model than expected, and specifically
 323-291=32. This sounds like there is a layer that is missing and the number of
 attentions heads I know are 32. I wonder if these are some missing from the
-conversion. Actuall the original model has 291 layers and it is the converted
+conversion. Actually the original model has 291 layers and it is the converted
 model that has 32 layers extra.
 
-```json
+```
 self.hparams: {
 '_name_or_path': 'meta-llama/Llama-2-7b-chat-hf',
 'architectures': ['LlamaForCausalLM'],
@@ -1135,3 +1135,27 @@ handle as it only has 12GB of VRAM. But if I reduce the number of layers that
 are to be offloaded to the GPU, setting it to 25, then it will start training.
 Note sure how long this will take but it will probably take longer as not all
 layers can be on the GPU.
+
+TODO: Would it be possible to quantize the model to Q8_0 which I would then
+be able to run on my GPU? In the README.md of the finetune example the example
+they show is using an open-llama open-llama-3b-v2-q8_0.gguf model. But in that
+example it does not mention Cuda and it was when using Cude that I ran into
+an issue and note when running without Cude.
+
+_wip_
+
+This section is for looking into supporting HuggingFace Llama models and
+converting them to GGUF models. 
+If we look llama-2-7b-chat/params.json we find:
+```json
+{
+  "dim": 4096,
+  "multiple_of": 256, 
+  "n_heads": 32, 
+  "n_layers": 32, 
+  "norm_eps": 1e-06, 
+  "vocab_size": 32000}
+}
+```
+I updated vocab_size as it was initially `-1`. 
+So we have the n_heads, n_layers and notice that we have a multiple_of.
