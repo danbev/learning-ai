@@ -8,3 +8,4 @@ data
 *.gguf
 *.bin
 open_llama_3b_v2
+tokenize_file

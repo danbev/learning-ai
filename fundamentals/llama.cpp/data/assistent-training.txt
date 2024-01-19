@@ -1,5 +1,13 @@
 <s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
-
 <s>[INST] What is RHSA-1820:1388? [/INST] RHSA-1820:1888 is a Red Hat Security Advisory that a NullPointerException in the Java Virtual Machine. </s>
-	
-<s>[INST] What is RHSA-1820:1001? [/INST] RHSA-1820:1001 is a Red Hat Security Advisory that a array index out of bounds error in the the library Foo.</s>
+<s>[INST] What is RHSA-1820:1001? [/INST] RHSA-1820:1001 is a Red Hat Security Advisory that a array index out of bounds error in the the library Foo. </s>
+<s>[INST] What is RHSA-1820:2001? [/INST] RHSA-1820:2001 is a Red Hat Security Advisory that addresses a buffer overflow vulnerability in the Zetta library. </s>
+<s>[INST] What is RHSA-1820:2002? [/INST] RHSA-1820:2002 is a Red Hat Security Advisory about a memory leak issue found in the Alpha software package. </s>
+<s>[INST] What is RHSA-1820:2003? [/INST] RHSA-1820:2003 is a Red Hat Security Advisory for a cross-site scripting (XSS) vulnerability in the Bravo web application. </s>
+<s>[INST] What is RHSA-1820:2004? [/INST] RHSA-1820:2004 is a Red Hat Security Advisory dealing with an SQL injection flaw in the Charlie database system. </s>
+<s>[INST] What is RHSA-1820:2005? [/INST] RHSA-1820:2005 is a Red Hat Security Advisory concerning an improper input validation bug in the Delta API. </s>
+<s>[INST] What is RHSA-1820:2006? [/INST] RHSA-1820:2006 is a Red Hat Security Advisory that discusses a privilege escalation vulnerability in the Echo server. </s>
+<s>[INST] What is RHSA-1820:2007? [/INST] RHSA-1820:2007 is a Red Hat Security Advisory about a remote code execution risk in the Foxtrot application. </s>
+<s>[INST] What is RHSA-1820:2008? [/INST] RHSA-1820:2008 is a Red Hat Security Advisory that fixes a denial of service (DoS) attack vulnerability in the Golf framework. </s>
+<s>[INST] What is RHSA-1820:2009? [/INST] RHSA-1820:2009 is a Red Hat Security Advisory for a cryptographic flaw in the Hotel encryption library. </s>
+<s>[INST] What is RHSA-1820:2010? [/INST] RHSA-1820:2010 is a Red Hat Security Advisory addressing an insecure default configuration in the India server tool. </s>

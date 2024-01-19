@@ -7,6 +7,9 @@ llama:
 llama-cuda: 
 	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1
 
+llama-cuda-debug:
+	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1 LLAMA_DEBUG=1 DEBUG=1
+
 # Use the following target with causion as it will probably mess up an
 # actual run of a specific program. Just use it for debugging/learning and
 # then switch back to the normal target for testing.
@@ -139,11 +142,11 @@ finetune-model:
         --save-every 10 \
         --threads 6 \
        	--adam-iter 30 \
-	--batch 4 \
+        --batch 4 \
         --use-checkpointing \
        	--ctx 80 \
-	--sample-start '<s>' \
-	${CUDA_GPU_LAYERS}
+        --sample-start '<s>' \
+        ${CUDA_GPU_LAYERS}
 
 merge-llama-lora-adapter-with-base-model: TYPE=llama
 merge-llama-lora-adapter-with-base-model: MODEL = models/llama-2-7b-chat.gguf
@@ -189,3 +192,7 @@ check-finetune-include:
 clean-lora-files:
 	${RM} -f lora-training-*.gguf
 	${RM} -f chk-training-*.gguf
+
+tokenize-file: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+tokenize-file: src/tokenize_file.cc
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
