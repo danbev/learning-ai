@@ -7,7 +7,7 @@ SSM is a broad class of models that can be used to describe the behaviour of a
 system over time and used in various domains such as control theory, robotics,
 and machine learning.
 
-#### Structured State Space Models (S4)
+#### Structured State Space Sequence Models (S4)
 Is a type of SSM that is speciallized for the domain of deep learning and
 sequential modeling.
 
