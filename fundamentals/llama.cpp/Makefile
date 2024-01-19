@@ -146,6 +146,7 @@ finetune-model:
         --use-checkpointing \
        	--ctx 80 \
         --sample-start '<s>' \
+	--include-sample-start \
         ${CUDA_GPU_LAYERS}
 
 merge-llama-lora-adapter-with-base-model: TYPE=llama

@@ -1159,3 +1159,47 @@ If we look llama-2-7b-chat/params.json we find:
 ```
 I updated vocab_size as it was initially `-1`. 
 So we have the n_heads, n_layers and notice that we have a multiple_of.
+
+
+### Finetuning user/assistent training data formatting
+I ran into a case where I had specified training data in the current format:
+```
+<s>[INST] User: What is RHSA-1820:1234? [/INST] Assistent: RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
+```
+And the when running the finetuning I was specifying the following command line
+options:
+```console
+finetune-model:
+	./finetune \
+        --model-base ${MODEL} \
+        --checkpoint-in chk-${TYPE}-training-LATEST.gguf \
+        --checkpoint-out chk-${TYPE}-training-ITERATION.gguf \
+        --lora-out lora-${TYPE}-training-ITERATION.gguf \
+        --train-data "${TRAIN_DATA}" \
+        --save-every 10 \
+        --threads 6 \
+       	--adam-iter 30 \
+        --batch 4 \
+        --use-checkpointing \
+       	--ctx 80 \
+        --sample-start '<s>' \
+        ${CUDA_GPU_LAYERS}
+```
+Notice that I was specifying `<s>` as the sample-start character which is
+perfectly fine, but the problem with this is I was not setting
+`--include-sample-start` which means that the `<s>` character would be included
+in the samples that llama.cpp will tokenize. We can see this by using the
+[tokenize_file.cc](./src/tokenize_file.cc) program:
+```console
+$ make tokenize-file 
+...
+sample: '[INST] What is RHSA-1820:2010? [/INST] RHSA-1820:2010 is a Red Hat Security Advisory addressing an insecure default configuration in the India server tool. </s>
+work. </s>
+```
+If we instead set `--include-sample-start`, just setting the argument include
+tokenize_file.cc, to true then the `<s>` character will also be included in the
+sample data:
+```
+sample: '<s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
+'
+```
