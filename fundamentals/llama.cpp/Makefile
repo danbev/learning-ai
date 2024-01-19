@@ -145,29 +145,35 @@ finetune-model:
 	--sample-start '<s>' \
 	${CUDA_GPU_LAYERS}
 
-merge-llama-lora-adapter-with-base-model:
-	./llama.cpp/export-lora \
-        --model-base models/llama-2-7b-chat.gguf \
-	--model-out llama-lora-merged-model.gguf \
-	--lora llama-lora-training-LATEST.gguf
+merge-llama-lora-adapter-with-base-model: TYPE=llama
+merge-llama-lora-adapter-with-base-model: MODEL = models/llama-2-7b-chat.gguf
+merge-llama-lora-adapter-with-base-model: merge-lora-adapter-with-base-model
 
-merge-open-llama-lora-adapter-with-base-model:
-	./llama.cpp/export-lora \
-        --model-base models/open-llama-2-7b-Q8_0.gguf \
-	--model-out open-llama-lora-merged-model.gguf \
-	--lora open-llama-lora-training-LATEST.gguf
+merge-open-llama-lora-adapter-with-base-model: TYPE=open-llama
+merge-open-llama-lora-adapter-with-base-model: MODEL = models/open-llama-2-7b-Q8_0.gguf
+merge-open-llama-lora-adapter-with-base-model: merge-lora-adapter-with-base-model
 
-finetune-predict-lora:
+merge-lora-adapter-with-base-model:
+	./llama.cpp/export-lora \
+        --model-base ${MODEL} \
+	--model-out ${TYPE}-lora-merged-model.gguf \
+	--lora lora-${TYPE}-training-LATEST.gguf
+
+predict-lora:
 	./llama.cpp/main -m models/open_llama-2-7b.gguf \
         --lora lora-training-LATEST.gguf \
 	-n 100 \
         --n-gpu-layers 10 \
 	-p "Love's fire heats water"
 
-finetune-predict-lora-merged-model:
-	./llama.cpp/main -m lora-merged-model.gguf \
+predict-llama-lora-merged-model: MODEL = llama-lora-merged-model.gguf
+predict-llama-lora-merged-model: LAYERS = 27
+predict-llama-lora-merged-model: predict-lora-merged-model
+
+predict-lora-merged-model:
+	./llama.cpp/main -m ${MODEL} \
 	-n 100 \
-        --n-gpu-layers 27 \
+        --n-gpu-layers ${LAYERS} \
 	-p "Can you show a summary of RHSA-1820:1234?"
 
 llama-main:

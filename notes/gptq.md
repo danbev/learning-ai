@@ -34,6 +34,15 @@ The most popular models are `GGML` and `GPTQ`. `GGML` is a post trained
 quantanised model. This means that the model is trained with 32-bit precision
 and then quantanised to 8-bit precision sometime afterward.
 
+### GPTQ 
+Layer-wise quantanisation. This is a type of quantanisation that quantanises
+each layer of the model separately. This is different to other quantanisation
+methods that quantanise the entire model at once.
+TODO: Add details about how this works. I did not do this in the past as I did
+not have access to a GPU and thought that I would just be using llama.cpp
+quantize example to quantanise the model. But now that I have access to a GPU
+I can quantanise the model using GPTQ.
+
 #### GGML (Georgi Gerganov Machine Learning)
 GGML models are optimized for `CPU`s. So the inference is done on CPUs and is
 faster on CPUS. The models can be slightly larger than GPTQ models.
