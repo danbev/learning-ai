@@ -1164,7 +1164,7 @@ So we have the n_heads, n_layers and notice that we have a multiple_of.
 ### Finetuning user/assistent training data formatting
 I ran into a case where I had specified training data in the current format:
 ```
-<s>[INST] User: What is RHSA-1820:1234? [/INST] Assistent: RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
+<s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
 ```
 And the when running the finetuning I was specifying the following command line
 options:
