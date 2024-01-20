@@ -30,11 +30,13 @@ The formula for S4 models is:
 xₜ₊₁ = Axₜ + Buₜ
 yₜ = Cxₜ + Duₜ
 
-A = state transition matrix
-B = input matrix
-C = output matrix
-D = feedthrough matrix
-U = input vector
+Xₜ₊₁ = is the state at time t+1
+A    = state transition matrix
+Xₜ   = is the state at time t
+B    = input matrix
+Uₜ   = input vector
+C    = output matrix
+D    = feedthrough matrix
 ```
 We can visualize this as
 ```
@@ -64,24 +66,28 @@ yₜ = Cxₜ + Duₜ
 And we plug in our values:
        A   x₀     B   u₁
 x₁ = (0.5 * 0) + (1 * 2) = 2
-x₁ = 2
-       
+x₁ = 2 ---+
+          ↓
       C   x₁    D   u₁
-y₁ = (2 * 2) + (1 * 2)   = 6
-y₁ = 6
+y₁ = (2 * 2) + (1 * 2)   = 4
+y₁ = 4
 
+That was one forward pass. The hidden state (x₁) has been updated to 2 and
+the output (y₁) is 4.
+And now we do it again with the new values, notice that x₁ is now 2 instead of
+0:
       A    x₁    B    u₂
 x₂ = (0.5 * 2) + (1 * 3) = 4
-x₂ = 4
-
+x₂ = 4 ---+
+          ↓
       C  x₂     D  u₃
 y₂ = (2 * 4) + (1 * 3)   = 11
 y₂ = 11
 
       A    x₂     B  u₃
 x₃ = (0.5 * 4) + (1 * 1) = 3
-x₃ = 3
-
+x₃ = 3 ---+
+          ↓
       C  x₃     D  u₃ 
 y₃ = (2 * 3) + (1 * 1)   = 7
 y₃ = 7
@@ -90,6 +96,6 @@ Each input token updates the state of the system based on the previous state
 and the current input.
 
 x is similar to the hidden state in RNNs and allows information to be passed
-from one step to the next.
+from one step to the next. y is the output of the system at each time step.
 
 __wip__
