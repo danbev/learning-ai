@@ -120,6 +120,32 @@ So the bilinear transform is taking a point (or points I guess, but lets use one
 point for this example) in the S-plane and representing it as a point in the
 Z-plane.
 
+Lets take the following point in the S-plane, S = -1 +2j with a sampling
+period of T = 1:
+
+![image](./bilinear.png)
+
+
+```
+    2   (z - 1)
+S = - * -------
+    T   (z + 1)
+
+    1 + (T/2)S
+z = ----------
+    1 - (T/2)S
+
+
+    1 + (1/2)(-1 + 2j)
+z = ------------------
+    1 - (1/2)(-1 + 2j)
+
+
+z_point = re=-0.07692307692307691, im=0.6153846153846154j
+```
+
+
+
 _wip_
 
 The bilinear transformation is a method to map the continuous-time domain
@@ -127,7 +153,7 @@ The bilinear transformation is a method to map the continuous-time domain
 
 Billinear transform:
 ```
-    2   (z + 1)
+    2   (z - 1)
 S = - * -------
     T   (z + 1)
 
