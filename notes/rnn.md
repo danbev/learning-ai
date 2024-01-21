@@ -110,3 +110,6 @@ large weights and the gradients will be large and will "jump" around, too small
 weights and the gradient steps will be too small and the maximum number of
 iterations migth be reached before the network has converged.
 A solution for this is to use LSTM networks instead of RNNs.
+
+RNNs are actually a type of [SNN](./state-space-models.md) since it describes
+a system that evolves over time, based on their current state and the input.
