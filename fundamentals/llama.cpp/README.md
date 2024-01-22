@@ -1239,7 +1239,20 @@ And that seems to generate better responses:
 [INST] Can you show me a summary of RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory addressing a privilege escalation vulnerability in the Red Hat Enterprise Virtualization Manager. </s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory addressing a privilege escalation vulnerability in the Red
 ```
 Now, I was not expecting the `[INST], [/INST], and </s>` tokens to be included
-in the response but perhaps that is expected. I'll check this against the chat
-example in llama.cpp and see.
-
+in the response but perhaps that is expected. Acutally, both the `[INST]` and
+`[/INST]` tokens are part of the prompt which we can suppress by setting
+`--no-display-prompt`:
+```console
+$ make predict-llama-lora-merged-model 
+./llama.cpp/main -m llama-lora-merged-model.gguf \
+        -n 80 \
+        --n-gpu-layers 27 \
+        --no-display-prompt \
+        --log-disable \
+        -p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+ RHSA-1820:1234 is an Red Hat Security Advisory addressing a buffer overflow in the Red Hat Enterprise Linux kernel that could lead to a privilege escalation vulnerability. </s>
 ```
