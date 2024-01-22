@@ -219,36 +219,27 @@ In most systems, the GPU has its own dedicated memory (VRAM - Video RAM) that
 is separate from the system's main RAM. VRAM is optimized for the GPU's
 high-throughput, parallel processing needs.
 
-CPU to GPU Data Transfer: Initially, data (like a matrix for multiplication or
-texture data for rendering) resides in the system's main memory. To be processed
-by the GPU, this data needs to be transferred to the GPU's memory. This transfer
-typically happens over the PCIe (Peripheral Component Interconnect Express) bus,
-a high-speed interface that connects the GPU to the motherboard and through it
-to the system memory.
+### Memory transfers
+Initially, data (like a matrix for multiplication or texture data for rendering)
+resides in the system's main memory. To be processed by the GPU, this data needs
+to be transferred to the GPU's memory. This transfer typically happens over the
+PCIe (Peripheral Component Interconnect Express) bus, a high-speed interface
+that connects the GPU to the motherboard and through it to the system memory.
 
 PCIe Bandwidth: The PCIe bus has a certain bandwidth limit, which dictates how
 fast data can be transferred between the system memory and the GPU memory. This
 transfer can become a bottleneck, especially for large data sets or when
 frequent data transfers are required.
 
-Data Fetch by GPU: Once the data is in the GPU's memory, the GPU cores can
-access it much faster. The GPU's design allows it to fetch large blocks of data
-concurrently, leveraging its parallel processing capabilities. This is
-particularly efficient for tasks that can process large chunks of data in
-parallel, like rendering graphics or performing computations on matrices.
+Once the data is in the GPU's memory (HBM), data that a kernel operates on has
+to be copied over to the SRAM of the GPU (or the SM?). And once the operation is
+done the results have to copied back to the GPU's memory (HBM). Now, if we have
+multiple kernels that are called in sequence and use the results from another
+kernel it can make sense to merge, or fuse, them into a single kernel and avoid
+this memory transfer overhead. This is what is known as kernel fusion.
 
-Data Processing: After fetching the data, the GPU performs the required
-processing - this could be rendering frames for a game, computing physics
-simulations, or running machine learning algorithms.
-
-Result Transfer Back to CPU: If the results of the GPU's computations need to be
-used by the CPU or need to be stored back in the system memory, they are 
-ransferred back via the PCIe bus.
-
-Optimizations: To minimize the bottleneck caused by data transfers over PCIe,
-software and hardware optimizations are often used. These can include minimizing
-the amount of data that needs to be transferred, using techniques like
-compression, or organizing data in a way that reduces the need for transfers.
+If the results of the GPU's computations need to be used by the CPU or need to
+be stored back in the system memory, they are ransferred back via the PCIe bus.
 
 ### Single Instruction Multiple Data (SIMD)
 This means that all the cores on the GPU are executing the same instruction at
