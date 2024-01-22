@@ -147,6 +147,7 @@ finetune-model:
        	--ctx 80 \
         --sample-start '<s>' \
 	--include-sample-start \
+	--epochs 1 \
         ${CUDA_GPU_LAYERS}
 
 merge-llama-lora-adapter-with-base-model: TYPE=llama
@@ -176,9 +177,11 @@ predict-llama-lora-merged-model: predict-lora-merged-model
 
 predict-lora-merged-model:
 	./llama.cpp/main -m ${MODEL} \
-	-n 100 \
+	-n 80 \
         --n-gpu-layers ${LAYERS} \
-	-p "Can you show a summary of RHSA-1820:1234?"
+	--no-display-prompt \
+	--log-disable \
+	-p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1
