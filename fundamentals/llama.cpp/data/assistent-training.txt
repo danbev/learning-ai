@@ -11,3 +11,100 @@
 <s>[INST] What is RHSA-1820:2008? [/INST] RHSA-1820:2008 is a Red Hat Security Advisory that fixes a denial of service (DoS) attack vulnerability in the Golf framework. </s>
 <s>[INST] What is RHSA-1820:2009? [/INST] RHSA-1820:2009 is a Red Hat Security Advisory for a cryptographic flaw in the Hotel encryption library. </s>
 <s>[INST] What is RHSA-1820:2010? [/INST] RHSA-1820:2010 is a Red Hat Security Advisory addressing an insecure default configuration in the India server tool. </s>
+<s>[INST] What is RHSA-2021:0012? [/INST] RHSA-2021:0012 is a Red Hat Security Advisory addressing a critical vulnerability in the Apache HTTP Server.</s>
+<s>[INST] What is CVE-2023-1001? [/INST] CVE-2023-1001 is a Common Vulnerabilities and Exposures entry for a buffer overflow in the OpenSSL library.</s>
+<s>[INST] What is RHSA-2022:3050? [/INST] RHSA-2022:3050 is a Red Hat Security Advisory for patching a remote code execution flaw in the Red Hat JBoss server.</s>
+<s>[INST] What is MS15-034? [/INST] MS15-034 is a Microsoft Security Bulletin addressing a vulnerability in HTTP.sys that could allow remote code execution.</s>
+<s>[INST] What is CVE-2024-1234? [/INST] CVE-2024-1234 is a Common Vulnerabilities and Exposures entry for a cross-site scripting vulnerability in Chrome.</s>
+<s>[INST] What is RHSA-2023:0456? [/INST] RHSA-2023:0456 is a Red Hat Security Advisory for a critical kernel security update.</s>
+<s>[INST] What is USN-4002-1? [/INST] USN-4002-1 is an Ubuntu Security Notice addressing multiple security issues in the Thunderbird email client.</s>
+<s>[INST] What is CVE-2022-2088? [/INST] CVE-2022-2088 is a Common Vulnerabilities and Exposures entry for a denial of service attack in the Nginx server.</s>
+<s>[INST] What is RHSA-2024:0101? [/INST] RHSA-2024:0101 is a Red Hat Security Advisory for a critical update in the Red Hat Enterprise Linux kernel.</s>
+<s>[INST] What is MS17-010? [/INST] MS17-010 is a Microsoft Security Bulletin that addresses vulnerabilities in SMBv1 that were exploited by the WannaCry ransomware.</s>
+<s>[INST] What is CVE-2021-3456? [/INST] CVE-2021-3456 is a Common Vulnerabilities and Exposures entry for a privilege escalation vulnerability in Windows.</s>
+<s>[INST] What is RHSA-2020:3033? [/INST] RHSA-2020:3033 is a Red Hat Security Advisory for fixing a severe flaw in the OpenSSH package.</s>
+<s>[INST] What is USN-5003-2? [/INST] USN-5003-2 is an Ubuntu Security Notice for a patch in the Linux kernel to address a race condition vulnerability.</s>
+<s>[INST] What is CVE-2023-6789? [/INST] CVE-2023-6789 is a Common Vulnerabilities and Exposures entry for an SQL injection vulnerability in MySQL.</s>
+<s>[INST] What is RHSA-2021:3004? [/INST] RHSA-2021:3004 is a Red Hat Security Advisory for a security update in the GNOME desktop environment.</s>
+<s>[INST] What is MS14-066? [/INST] MS14-066 is a Microsoft Security Bulletin that addresses a vulnerability in the Schannel security package.</s>
+<s>[INST] What is CVE-2022-0110? [/INST] CVE-2022-0110 is a Common Vulnerabilities and Exposures entry for a remote code execution flaw in Adobe Acrobat.</s>
+<s>[INST] What is RHSA-2023:1578? [/INST] RHSA-2023:1578 is a Red Hat Security Advisory for a critical update in the Red Hat Satellite server.</s>
+<s>[INST] What is USN-4502-1? [/INST] USN-4502-1 is an Ubuntu Security Notice addressing a vulnerability in the Snapd service.</s>
+<s>[INST] What is CVE-2024-0011? [/INST] CVE-2024-0011 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the Drupal CMS.</s>
+<s>[INST] What is RHSA-2022:1010? [/INST] RHSA-2022:1010 is a Red Hat Security Advisory for an update in the Red Hat Virtualization platform.</s>
+<s>[INST] What is MS16-032? [/INST] MS16-032 is a Microsoft Security Bulletin addressing a security vulnerability in Windows Secondary Logon Service.</s>
+<s>[INST] What is CVE-2021-4428? [/INST] CVE-2021-4428 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the Log4j logging library.</s>
+<s>[INST] What is RHSA-2024:0567? [/INST] RHSA-2024:0567 is a Red Hat Security Advisory for a patch in the Ceph storage platform.</s>
+<s>[INST] What is USN-3777-1? [/INST] USN-3777-1 is an Ubuntu Security Notice for a security update in the OpenSSL library.</s>
+<s>[INST] What is CVE-2023-0022? [/INST] CVE-2023-0022 is a Common Vulnerabilities and Exposures entry for a use-after-free vulnerability in the Linux kernel.</s>
+<s>[INST] What is RHSA-2020:4199? [/INST] RHSA-2020:4199 is a Red Hat Security Advisory for a security update in the Ansible automation tool.</s>
+<s>[INST] What is MS13-059? [/INST] MS13-059 is a Microsoft Security Bulletin that addresses vulnerabilities in Internet Explorer that could allow remote code execution.</s>
+<s>[INST] What is CVE-2022-3019? [/INST] CVE-2022-3019 is a Common Vulnerabilities and Exposures entry for a directory traversal vulnerability in Apache Tomcat.</s>
+<s>[INST] What is RHSA-2021:2299? [/INST] RHSA-2021:2299 is a Red Hat Security Advisory for a critical update in the Red Hat OpenShift Container Platform.</s>
+<s>[INST] What is USN-3111-1? [/INST] USN-3111-1 is an Ubuntu Security Notice addressing multiple vulnerabilities in the PHP scripting language.</s>
+<s>[INST] What is CVE-2024-3001? [/INST] CVE-2024-3001 is a Common Vulnerabilities and Exposures entry for an information disclosure vulnerability in Microsoft Exchange Server.</s>
+<s>[INST] What is RHSA-2022:0005? [/INST] RHSA-2022:0005 is a Red Hat Security Advisory for a security update in the Red Hat OpenStack Platform.</s>
+<s>[INST] What is MS18-011? [/INST] MS18-011 is a Microsoft Security Bulletin that addresses vulnerabilities in Microsoft Edge that could allow information disclosure.</s>
+<s>[INST] What is CVE-2021-26708? [/INST] CVE-2021-26708 is a Common Vulnerabilities and Exposures entry for a series of vulnerabilities in the Linux kernel's virtual socket implementation.</s>
+<s>[INST] What is RHSA-2023:0007? [/INST] RHSA-2023:0007 is a Red Hat Security Advisory for a critical update in the Red Hat Fuse integration platform.</s>
+<s>[INST] What is USN-3333-1? [/INST] USN-3333-1 is an Ubuntu Security Notice for a patch in the Linux kernel to fix a privilege escalation vulnerability.</s>
+<s>[INST] What is CVE-2022-22965? [/INST] CVE-2022-22965 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the Spring Framework.</s>
+<s>[INST] What is RHSA-2024:1011? [/INST] RHSA-2024:1011 is a Red Hat Security Advisory for a security update in the Red Hat 3scale API Management platform.</s>
+<s>[INST] What is MS17-022? [/INST] MS17-022 is a Microsoft Security Bulletin that addresses a vulnerability in Microsoft Word that could allow remote code execution.</s>
+<s>[INST] What is CVE-2023-1010? [/INST] CVE-2023-1010 is a Common Vulnerabilities and Exposures entry for a denial of service vulnerability in the BIND DNS server.</s>
+<s>[INST] What is RHSA-2021:0002? [/INST] RHSA-2021:0002 is a Red Hat Security Advisory for a critical update in the Red Hat Directory Server.</s>
+<s>[INST] What is USN-4887-1? [/INST] USN-4887-1 is an Ubuntu Security Notice addressing a vulnerability in the BlueZ Bluetooth stack.</s>
+<s>[INST] What is CVE-2024-0021? [/INST] CVE-2024-0021 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the WordPress CMS.</s>
+<s>[INST] What is RHSA-2022:3055? [/INST] RHSA-2022:3055 is a Red Hat Security Advisory for a security update in the Red Hat Satellite server.</s>
+<s>[INST] What is MS15-078? [/INST] MS15-078 is a Microsoft Security Bulletin that addresses a vulnerability in the Windows Adobe Type Manager Font Driver that could allow remote code execution.</s>
+<s>[INST] What is CVE-2021-3156? [/INST] CVE-2021-3156 is a Common Vulnerabilities and Exposures entry for a heap-based buffer overflow vulnerability in the sudo program.</s>
+<s>[INST] What is RHSA-2023:1012? [/INST] RHSA-2023:1012 is a Red Hat Security Advisory for a critical update in the Red Hat CodeReady Workspaces.</s>
+<s>[INST] What is USN-4011-1? [/INST] USN-4011-1 is an Ubuntu Security Notice for a security update in the Firefox web browser.</s>
+<s>[INST] What is CVE-2022-2180? [/INST] CVE-2022-2180 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the Joomla CMS.</s>
+<s>[INST] What is RHSA-2020:1013? [/INST] RHSA-2020:1013 is a Red Hat Security Advisory for a security update in the Red Hat OpenShift Container Platform.</s>
+<s>[INST] What is MS16-077? [/INST] MS16-077 is a Microsoft Security Bulletin addressing a vulnerability in the WPAD protocol that could allow information disclosure.</s>
+<s>[INST] What is CVE-2023-2001? [/INST] CVE-2023-2001 is a Common Vulnerabilities and Exposures entry for a privilege escalation vulnerability in macOS.</s>
+<s>[INST] What is RHSA-2022:1577? [/INST] RHSA-2022:1577 is a Red Hat Security Advisory for a critical update in the Red Hat Enterprise Virtualization Manager.</s>
+<s>[INST] What is USN-3544-1? [/INST] USN-3544-1 is an Ubuntu Security Notice addressing a vulnerability in the Kerberos network authentication protocol.</s>
+<s>[INST] What is CVE-2024-0100? [/INST] CVE-2024-0100 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the Oracle Database Server.</s>
+<s>[INST] What is RHSA-2021:3056? [/INST] RHSA-2021:3056 is a Red Hat Security Advisory for a security update in the Red Hat Ansible Automation Platform.</s>
+<s>[INST] What is MS18-029? [/INST] MS18-029 is a Microsoft Security Bulletin that addresses a vulnerability in the Microsoft Graphics Component that could allow remote code execution.</s>
+<s>[INST] What is CVE-2022-0004? [/INST] CVE-2022-0004 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the Cisco IOS software.</s>
+<s>[INST] What is RHSA-2023:2298? [/INST] RHSA-2023:2298 is a Red Hat Security Advisory for a critical update in the Red Hat Enterprise Linux system.</s>
+<s>[INST] What is USN-4777-1? [/INST] USN-4777-1 is an Ubuntu Security Notice addressing a vulnerability in the Squid caching proxy.</s>
+<s>[INST] What is CVE-2024-1111? [/INST] CVE-2024-1111 is a Common Vulnerabilities and Exposures entry for a remote code execution vulnerability in the SAP NetWeaver Application Server.</s>
+<s>[INST] What is RHSA-2020:0006? [/INST] RHSA-2020:0006 is a Red Hat Security Advisory for a security update in the Red Hat Satellite server.</s>
+<s>[INST] What is MS19-010? [/INST] MS19-010 is a Microsoft Security Bulletin that addresses a vulnerability in Microsoft SharePoint that could allow remote code execution.</s>
+<s>[INST] What is RHSA-2023:0001? [/INST] RHSA-2023:0001 is a Red Hat Security Advisory addressing a critical vulnerability in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0002? [/INST] RHSA-2023:0002 is a Red Hat Security Advisory for patching a remote code execution flaw in Apache server. </s>
+<s>[INST] What is RHSA-2023:0003? [/INST] RHSA-2023:0003 is a Red Hat Security Advisory about a security patch for OpenSSL encryption vulnerabilities. </s>
+<s>[INST] What is RHSA-2023:0004? [/INST] RHSA-2023:0004 is a Red Hat Security Advisory fixing a SQL injection vulnerability in PostgreSQL. </s>
+<s>[INST] What is RHSA-2023:0005? [/INST] RHSA-2023:0005 is a Red Hat Security Advisory addressing a cross-site scripting issue in PHP. </s>
+<s>[INST] What is RHSA-2023:0006? [/INST] RHSA-2023:0006 is a Red Hat Security Advisory for a buffer overflow exploit in the C library. </s>
+<s>[INST] What is RHSA-2023:0007? [/INST] RHSA-2023:0007 is a Red Hat Security Advisory concerning a denial of service attack vulnerability in Apache Tomcat. </s>
+<s>[INST] What is RHSA-2023:0008? [/INST] RHSA-2023:0008 is a Red Hat Security Advisory for fixing a privilege escalation bug in the Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0009? [/INST] RHSA-2023:0009 is a Red Hat Security Advisory about patching an information disclosure flaw in Samba. </s>
+<s>[INST] What is RHSA-2023:0010? [/INST] RHSA-2023:0010 is a Red Hat Security Advisory addressing a remote code execution vulnerability in Ruby on Rails. </s>
+<s>[INST] What is RHSA-2023:0011? [/INST] RHSA-2023:0011 is a Red Hat Security Advisory for a critical XSS vulnerability in Drupal. </s>
+<s>[INST] What is RHSA-2023:0012? [/INST] RHSA-2023:0012 is a Red Hat Security Advisory addressing a severe Java deserialization flaw. </s>
+<s>[INST] What is RHSA-2023:0013? [/INST] RHSA-2023:0013 is a Red Hat Security Advisory for a DNS spoofing vulnerability in BIND. </s>
+<s>[INST] What is RHSA-2023:0014? [/INST] RHSA-2023:0014 is a Red Hat Security Advisory about a patch for a remote file inclusion vulnerability in WordPress. </s>
+<s>[INST] What is RHSA-2023:0015? [/INST] RHSA-2023:0015 is a Red Hat Security Advisory fixing a code execution flaw in Node.js. </s>
+<s>[INST] What is RHSA-2023:0016? [/INST] RHSA-2023:0016 is a Red Hat Security Advisory for a severe memory corruption issue in the GNOME desktop environment. </s>
+<s>[INST] What is RHSA-2023:0017? [/INST] RHSA-2023:0017 is a Red Hat Security Advisory addressing a critical vulnerability in the Docker engine. </s>
+<s>[INST] What is RHSA-2023:0018? [/INST] RHSA-2023:0018 is a Red Hat Security Advisory for a buffer overflow in the X.Org Server. </s>
+<s>[INST] What is RHSA-2023:0019? [/INST] RHSA-2023:0019 is a Red Hat Security Advisory about fixing an arbitrary code execution vulnerability in GIMP. </s>
+<s>[INST] What is RHSA-2023:0020? [/INST] RHSA-2023:0020 is a Red Hat Security Advisory for a denial of service vulnerability in the Nginx server. </s>
+<s>[INST] What is RHSA-2023:0021? [/INST] RHSA-2023:0021 is a Red Hat Security Advisory addressing a critical flaw in the Kerberos authentication protocol. </s>
+<s>[INST] What is RHSA-2023:0022? [/INST] RHSA-2023:0022 is a Red Hat Security Advisory for a remote code execution risk in the Thunderbird email client. </s>
+<s>[INST] What is RHSA-2023:0023? [/INST] RHSA-2023:0023 is a Red Hat Security Advisory about a severe vulnerability in the OpenSSH server. </s>
+<s>[INST] What is RHSA-2023:0024? [/INST] RHSA-2023:0024 is a Red Hat Security Advisory for a patch in the Linux kernel to address a privilege escalation vulnerability. </s>
+<s>[INST] What is RHSA-2023:0025? [/INST] RHSA-2023:0025 is a Red Hat Security Advisory for a security update in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0026? [/INST] RHSA-2023:0026 is a Red Hat Security Advisory addressing a critical vulnerability in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0027? [/INST] RHSA-2023:0027 is a Red Hat Security Advisory for a security update in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0028? [/INST] RHSA-2023:0028 is a Red Hat Security Advisory about a security update in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0029? [/INST] RHSA-2023:0029 is a Red Hat Security Advisory for a security update in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0030? [/INST] RHSA-2023:0030 is a Red Hat Security Advisory addressing a critical vulnerability in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0031? [/INST] RHSA-2023:0031 is a Red Hat Security Advisory for a security update in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0032? [/INST] RHSA-2023:0032 is a Red Hat Security Advisory about a security update in the Red Hat Enterprise Linux kernel. </s>
+<s>[INST] What is RHSA-2023:0033? [/INST] RHSA-2023:0033 is a Red Hat Security Advisory for a security update in the Red Hat Enterprise Linux kernel. </s>
