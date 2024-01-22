@@ -1212,7 +1212,8 @@ Can you show me a summary of RHSA-1820:1234? [end of text]
 ```
 I'm not sure if this could be due to the fact that I only had like 10 samples
 in the finetuning data set. I'm going to increase this to 100 and see if that
-makes a difference.
+makes a difference. Increasing the number of samples can be done using ChatGPT
+or using copilot in the samples file directly.
 
 Regarding the formatting of the training data I found the following in the
 [blog](https://mlabonne.github.io/blog/posts/Fine_Tune_Your_Own_Llama_2_Model_in_a_Colab_Notebook.html)
