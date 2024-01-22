@@ -108,6 +108,7 @@ part         ↑
              +------------------→ Real part
 
 z = re^(jθ)
+
 re = magnitude
 e = Euler's number
 θ = phase angle
@@ -121,53 +122,133 @@ point for this example) in the S-plane and representing it as a point in the
 Z-plane.
 
 Lets take the following point in the S-plane, S = -1 +2j with a sampling
-period of T = 1:
+period of T = 1, and see how it is represented in the Z-plane:
 
 ![image](./bilinear.png)
 
-
+So if we have a continuous time system represented by the variable S and we want
+to convert it to a discrete time system represented equalivant variable z, we
+use the inverse of the bilinear transform:
 ```
     2   (z - 1)
 S = - * -------
     T   (z + 1)
 
-    1 + (T/2)S
-z = ----------
-    1 - (T/2)S
+We multiply both sides by the reciprical of 2/T which is T/2:
+T       T   2   (z - 1)
+- * S = - * - * -------
+2       2   T   (z + 1)
 
+Now, cross multiply to get rid of fractions:
+        TS
+(z + 1) -- = z - 1
+        2
 
-    1 + (1/2)(-1 + 2j)
-z = ------------------
-    1 - (1/2)(-1 + 2j)
+Rearrange the left side:
+Ts
+-- (z + 1) = z - 1
+2
 
+Expand the left side:
+TS       TS
+-- * z + -- = z - 1
+2        2
 
-z_point = re=-0.07692307692307691, im=0.6153846153846154j
+Move Z to the left side:
+TS                TS
+-- * Z - Z = -1 - --
+2                 2
+
+  TS              TS
+Z(-- - 1) = -1  - --
+   2               2
+
+Solve for Z by dividing both sides by (TS/2 - 1):
+    -1 - (TS/2)
+Z = -----------
+    TS/2 - 1
+
+    -2 - TS
+Z = -------
+    TS - 2
+
+    -(TS + 2)
+Z = ---------
+     TS - 2
+
+      TS + 2
+Z = - ------
+      TS - 2
+
 ```
+And in our example above we had S=-1+2j and T=1 so we can plug those values in
+(recall that j is the imaginary unit √-1):
+```
+      TS + 2
+Z = - ------
+      TS - 2
 
+      1(-1+2j) + 2
+Z = - ------------
+      1(-1+2j) - 2
 
+T times S is 1 (-1+2j) so we can replace TS with -1+2j:
+      -1+2j + 2
+Z = - ------------
+      -1+2j - 2
+
+Then we can add 2 to the real part of the numerator and denominator:
+       1 + 2j
+Z = - -------
+      -3 + 2j
+
+Multiple by the complex conjugate of the denominator (-3-2j):
+      (1 + 2j)  (-3 - 2j)
+Z = - -----------------
+      (-3 + 2j) (-3 - 2j)
+
+      -3 - 2j - 6j - 4j²
+Z = - -----------------
+        9 - 4j²
+
+Replace j² with -1:
+      -3 - 2j - 6j - 4(-1)
+Z = - -----------------
+       9 - 4(-1)
+
+      -3 - 2j - 6j + 4
+Z = - -----------------
+       9 + 4
+
+      -3 - 8j + 4
+Z = - -----------
+       13
+
+Separate the real and imaginary parts:
+      1 - 8j
+Z = - -------
+       13
+
+       1    8j
+Z = - --- - --
+      13    13
+
+       1    8j
+Z = - --- + --
+      13    13
+
+-1/13 = -0.07692307692307693 which is the real part (or x-axis above)
+8/13j = 0.6153846153846154j which is the imaginary part (or y-axis above)
+```
 
 _wip_
-
-The bilinear transformation is a method to map the continuous-time domain
-(S-plane) to the discrete-time domain (Z-plane)
-
-Billinear transform:
-```
-    2   (z - 1)
-S = - * -------
-    T   (z + 1)
-
-Where:
-S = the Laplace transform variable
-T = the sampling period
-z = the z-transform variable
-```
 
 When we apply the bilinear transform to the state space model we are
 recalculating how the system's state should be updated in descrete time
 intervales instead of continuous time intervals.
 
-So instead of the using functions as shown above we concrete values:
+So instead of the using functions as shown above we concrete values we will
+transform A and B into discrete values and the equations become:
 ```
      _       _ 
 hₜ = Ahₜ₋₁ + Bxₜ
@@ -193,10 +274,3 @@ We can visualize this as
            +---| A |---+
                +---+
 ```
-
-
-### Discretization
-Involves converting a continuous function, equation, or model into a discrete
-form. In a continuous domain, variables can take on an infinite number of values
-within a range. After discretization, these variables can only take on distinct,
-separate values.
