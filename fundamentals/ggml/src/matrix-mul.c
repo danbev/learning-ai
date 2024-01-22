@@ -36,12 +36,15 @@ int main(int argc, char **argv) {
   }
   printf("\n");
 
-  struct ggml_tensor* b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2, 1);
+  // struct ggml_tensor* b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2, 1);
+  // The above can also be written as:
+  const int64_t ne[2] = { 2, 1 };
+  struct ggml_tensor* b = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, ne);
   ggml_set_name(b, "b");
   *(float *)( (char *) b->data) = 7;
   *(float *)( (char *) b->data + 4) = 8;
 
-  // Note that ggml_mul_mat() transpose matrix b.
+  // Note that ggml_mul_mat() transposes the secod matrix b.
   struct ggml_tensor* result = ggml_mul_mat(ctx, a, b);
   ggml_set_name(result, "result");
   /*
@@ -54,7 +57,6 @@ int main(int argc, char **argv) {
     | 5 | 6 |                  | 5 | 6 |            | 83|
     +---+---+                  +---+---+            +---+
    */
-
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, result);
