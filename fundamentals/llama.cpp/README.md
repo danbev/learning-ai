@@ -1221,3 +1221,25 @@ and this is the format that I'm following:
 ```
 '<s>[INST] What lottery will it be entered into? [/INST] Hi there! It looks like I need some more context before I can answer your question. Could you please specify what lottery you are referring to and/or what is being entered into it? </s>'
 ```
+
+Still with more sample I'm getting the same result.
+Actually, I'm also seeing responses like this:
+```console
+Can you show me a summary of RHSA-1820:1234? [/INST] RHSA-1820 is a Red Hat Security Advisory for a privilege escalation issue in the kernel. </s>
+ [end of text]
+```
+Hmm, I think my prompt also needs to be updated. That is I've been using text
+completion previously and not a chat prompt. So perhaps I need to also format
+the prompt in the same way. For example:
+```console
+	-p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
+```
+And that seems to generate better responses:
+```console
+[INST] Can you show me a summary of RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory addressing a privilege escalation vulnerability in the Red Hat Enterprise Virtualization Manager. </s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory addressing a privilege escalation vulnerability in the Red
+```
+Now, I was not expecting the `[INST], [/INST], and </s>` tokens to be included
+in the response but perhaps that is expected. I'll check this against the chat
+example in llama.cpp and see.
+
+```
