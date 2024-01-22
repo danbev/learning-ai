@@ -191,8 +191,10 @@ check-finetune-include:
 
 .PHONY clean-lora-files:
 clean-lora-files:
-	${RM} -f lora-training-*.gguf
-	${RM} -f chk-training-*.gguf
+	${RM} -f lora-llama-training-*.gguf
+	${RM} -f lora-open-llama-training-*.gguf
+	${RM} -f chk-llama-training-*.gguf
+	${RM} -f chk-open-llama-training-*.gguf
 
 tokenize-file: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 tokenize-file: src/tokenize_file.cc
