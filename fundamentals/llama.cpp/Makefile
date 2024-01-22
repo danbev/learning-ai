@@ -177,11 +177,11 @@ predict-llama-lora-merged-model: predict-lora-merged-model
 
 predict-lora-merged-model:
 	./llama.cpp/main -m ${MODEL} \
-	-n 80 \
+        -n 80 \
         --n-gpu-layers ${LAYERS} \
-	--no-display-prompt \
-	--log-disable \
-	-p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
+        --no-display-prompt \
+        --log-disable \
+        -p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1
