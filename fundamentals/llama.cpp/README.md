@@ -1203,3 +1203,20 @@ sample data:
 sample: '<s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory that deals with a division by zero error in the Bajja library. </s>
 '
 ```
+So with those changes and running the finetuning again I'm still not getting
+the results I'm expecting. I'm getting the following output:
+```console
+$ make predict-llama-lora-merged-model
+...
+Can you show me a summary of RHSA-1820:1234? [end of text]
+```
+I'm not sure if this could be due to the fact that I only had like 10 samples
+in the finetuning data set. I'm going to increase this to 100 and see if that
+makes a difference.
+
+Regarding the formatting of the training data I found the following in the
+[blog](https://mlabonne.github.io/blog/posts/Fine_Tune_Your_Own_Llama_2_Model_in_a_Colab_Notebook.html)
+and this is the format that I'm following:
+```
+'<s>[INST] What lottery will it be entered into? [/INST] Hi there! It looks like I need some more context before I can answer your question. Could you please specify what lottery you are referring to and/or what is being entered into it? </s>'
+```
