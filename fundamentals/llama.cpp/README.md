@@ -1234,14 +1234,9 @@ the prompt in the same way. For example:
 ```console
 	-p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
 ```
-And that seems to generate better responses:
-```console
-[INST] Can you show me a summary of RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory addressing a privilege escalation vulnerability in the Red Hat Enterprise Virtualization Manager. </s>[INST] What is RHSA-1820:1234? [/INST] RHSA-1820:1234 is a Red Hat Security Advisory addressing a privilege escalation vulnerability in the Red
-```
-Now, I was not expecting the `[INST], [/INST], and </s>` tokens to be included
-in the response but perhaps that is expected. Acutally, both the `[INST]` and
-`[/INST]` tokens are part of the prompt which we can suppress by setting
-`--no-display-prompt`:
+One thing to note about the output is that by default it will include the prompt
+and it includes the `[INST], and [/INST]` tokens which confused me a little but
+this can be suppress by setting `--no-display-prompt`:
 ```console
 $ make predict-llama-lora-merged-model 
 ./llama.cpp/main -m llama-lora-merged-model.gguf \
