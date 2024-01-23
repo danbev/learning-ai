@@ -1251,3 +1251,21 @@ ggml_init_cublas: found 1 CUDA devices:
   Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
  RHSA-1820:1234 is an Red Hat Security Advisory addressing a buffer overflow in the Red Hat Enterprise Linux kernel that could lead to a privilege escalation vulnerability. </s>
 ```
+Notice the `</s>` token at the end of the output. I'm not sure if this is
+expected or if it is something that is caused by the training data. If I ask
+the model to predict some other question we can compare the difference:
+```console
+$ make predict-llama-lora-merged-model 
+./llama.cpp/main -m llama-lora-merged-model.gguf \
+        -n 80 \
+        --n-gpu-layers 27 \
+        --no-display-prompt \
+        --log-disable \
+        -p "<s>[INST] What is the capital of Sweden? [/INST]"
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+  The capital of Sweden is Stockholm.
+```
+Notice that there is no `</s>` token at the end of the output. 
