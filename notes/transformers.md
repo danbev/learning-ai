@@ -216,14 +216,19 @@ be used for each occurance. So there is currently no context or association
 between these words/token embeddings. They only contain information about each
 word/token itself, and nothing about the context in which it appears.
 
-So with these embeddings the first thing in the model is to add a positional
-encoding to each of the embeddings. In the original paper this used absolute
-position encoding. I've written about this is
+So with these embeddings the first thing in the model does is to add a
+positional encoding to each of the embeddings. In the original paper this used
+absolute position encoding. I've written about this is
 [vector-embeddings.md](./vector-embeddings.md).
 
 So we have our input matrix which in our case is a 4x512 matrix, where each
-entry is one of the tokens in the input sentence. We take this matrix and make
-four copies, but we will only focus on the first three for now:
+entry is one of the tokens in the input sentence. Notice that we in this case
+have a sequence lenght of 4 (tokens that is). If we had a longer sequence this
+work increase the size of the matrix. This has implications with regards to
+memory usage and computation when the sequence lenghts get longer.
+
+We take this matrix and make four copies, but we will only focus on the first
+three for now:
 ```
  +--------+          +-------+
  | Input  | -------> | Query |
@@ -276,6 +281,8 @@ the word "loves". Notice how we are "comparing" the word "Dan" with all the
 other words in the sentence. And we do this for all words/tokens as well.
 The dot product will give us some value that indicates how similar the two words
 are (how far apart they are in the embedding space).
+Once again I'd like to point out that if we had a longer sequence the QK matrix
+would be larger.
 
 The next thing we do is we scale the values in the matrix by dividing them by
 the square root of the embedding dimension. Recall that this called the
@@ -341,8 +348,8 @@ matrices. This is the number of heads that we have.
 
 So for example if we want to have 4 heads and the embedding dimension size is
 512, then we will have 4 4x126 matrices. Each one of these are called a head and
-the are separate from each there are used to perform the single-head attention
-function that we went through above. 
+they are separate from each there and are used to perform the single-head
+attention function that we went through above. 
 ```
 Attention(Q'₀, K'₀, V'₀) = softmax((Q'₀, K'₀, V'₀)/√dₖ) x V'₀
 Attention(Q'₁, K'₁, V'₁) = softmax((Q'₁, K'₁, V'₁)/√dₖ) x V'₁
