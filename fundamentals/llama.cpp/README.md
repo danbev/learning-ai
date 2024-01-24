@@ -1269,3 +1269,26 @@ ggml_init_cublas: found 1 CUDA devices:
   The capital of Sweden is Stockholm.
 ```
 Notice that there is no `</s>` token at the end of the output. 
+I wonder if this could be caused by the fact that I'm using the `<s>` token as
+the start token instead of a separate character?
+
+I'm going to try to use a separate character as the start token and see if that
+like `###`.
+```console
+$ make predict-llama-lora-merged-model 
+./llama.cpp/main -m llama-lora-merged-model.gguf \
+        -n 300 \
+        --n-gpu-layers 27 \
+        --no-display-prompt \
+        --log-disable \
+        -p "<s>[INST] Can you show me a summary of RHSA-2023:0031? [/INST]"
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+ RHSA-2023:0031 is a Red Hat Security Advisory about an important security update in the Red Hat Enterprise Linux 8. </
+```
+This looks somewhat better but it seems to be cutting it off short even though
+I increased the context length. I wonder if this as something to do with the
+context lenght set during training which was 80.
+

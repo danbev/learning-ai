@@ -120,20 +120,20 @@ quantize-llama-2-7b-chat-model-q8:
 
 ### Finetune targets
 finetune-llama-model: TYPE=llama
-finetune-llama-model: TRAIN_DATA=data/assistent-training.txt
+finetune-llama-model: TRAIN_DATA=data/assistent-training2.txt
 finetune-llama-model: MODEL = models/llama-2-7b-chat.gguf
 finetune-llama-model: CUDA_GPU_LAYERS = --n-gpu-layers 28
-finetune-llama-model: SAMPLE_START = "--sample-start '<s>'"
+finetune-llama-model: SAMPLE_START = --sample-start '\#\#\#'
 finetune-llama-model: finetune-model
 
 finetune-open-llama-model: TYPE=open-llama
 finetune-open-llama-model: TRAIN_DATA = data/assistent-training.txt
 finetune-open-llama-model: MODEL = models/open-llama-2-7b-Q8_0.gguf
-finetune-open-llama-model: SAMPLE_START = "--sample-start '<s>'"
+finetune-open-llama-model: SAMPLE_START = --sample-start '<s>'
 finetune-open-llama-model: finetune-model
 
 finetune-model:
-	./finetune \
+	llama.cpp/finetune \
         --model-base ${MODEL} \
         --checkpoint-in chk-${TYPE}-training-LATEST.gguf \
         --checkpoint-out chk-${TYPE}-training-ITERATION.gguf \
@@ -144,9 +144,8 @@ finetune-model:
        	--adam-iter 30 \
         --batch 4 \
         --use-checkpointing \
-       	--ctx 80 \
-        --sample-start '<s>' \
-	--include-sample-start \
+       	--ctx 256 \
+        ${SAMPLE_START} \
 	--epochs 1 \
         ${CUDA_GPU_LAYERS}
 
@@ -177,11 +176,14 @@ predict-llama-lora-merged-model: predict-lora-merged-model
 
 predict-lora-merged-model:
 	./llama.cpp/main -m ${MODEL} \
-        -n 80 \
+        -n 300 \
         --n-gpu-layers ${LAYERS} \
         --no-display-prompt \
         --log-disable \
-        -p "<s>[INST] Can you show me a summary of RHSA-1820:1234? [/INST]"
+        -p "<s>[INST] Can you show me a summary of RHSA-2023:0031? [/INST]"
+
+
+#-p "<s>[INST] What is the capital of Sweden? [/INST]"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1
