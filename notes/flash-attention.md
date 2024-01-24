@@ -141,7 +141,6 @@ Kᵗ:
             [ ...      ...      ...      ...]
             [ 0.3      0.7      1.1      1.5]
             [ 0.4      0.8      1.2      1.6]
-
 ```
 
 And also divide V into blocks of size `T_c` blocks:
@@ -262,8 +261,15 @@ for (int j = 0; j < T_c; j++) {
 }
 ```
 
-### Reduce GPU memory I/O
+### Recomputation (backward pass)
 Another things is that is done is that the attention matrix is not stored during
-the forward pass so that it can be used in the backward pass. Instead it is
-recomputed.
+the forward pass, that is the values that would be used for calculating the
+gradients so that they can be used in the backward pass. Instead the attention
+S = QKᵀ is recomputed during the backward pass. But the softmax normalization
+from the forward pass is stored in HBMs and used in the backward pass so it
+does not have to be recomputed. "Computation is cheap, and memory reading and
+writing is expensive.". So Flash Attention actual performs more operations, 
+FLOPS than standard attention but it is faster because it does not have to
+read and write to memory as much.
+
 
