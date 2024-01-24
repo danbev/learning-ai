@@ -37,7 +37,6 @@ softmax function to each row:
 'ice':   [0.9, 1.0, 1.1, 1.2] -> [0.1, 0.2, 0.3, 0.4]
 'cream': [1.3, 1.4, 1.5, 1.6] -> [0.1, 0.2, 0.3, 0.4]
 ```
-
 The softmax function is defined as:
 ```
 σ(x)_i =   eˣⁱ
@@ -48,3 +47,22 @@ The softmax function is defined as:
 eˣⁱ = exponential of the i-th element of the input vector
 ∑_j eˣʲ = sum of all the exponentials of the input vector
 ```
+
+### Numerical Stability
+The standard softmax function involves computing the exponential of numbers. If
+these numbers are very large or very small, it can lead to problems.
+Exponentiating a large number can lead to overflow, where the number becomes too
+large for the computer to represent accurately, resulting in infinity.
+Exponentiating a very small (negative) number can lead to underflow, where the
+number becomes so close to zero that it is rounded down to zero, losing accuracy.
+
+A common technique to make softmax numerically stable is to subtract the maximum
+value in the input vector from each element before exponentiation. This process
+is known as softmax stabilization.
+This subtraction doesn't change the output of the softmax function (due to the
+properties of the exponential function and the way softmax normalizes its
+output), but it prevents the input values to the exponential function from being
+ too large.
+As a result, the risk of overflow is significantly reduced, while the relative
+differences between input values are preserved, ensuring accurate and stable
+softmax calculations.
