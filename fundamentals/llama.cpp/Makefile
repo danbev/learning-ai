@@ -127,9 +127,9 @@ finetune-llama-model: SAMPLE_START = --sample-start '\#\#\#'
 finetune-llama-model: finetune-model
 
 finetune-open-llama-model: TYPE=open-llama
-finetune-open-llama-model: TRAIN_DATA = data/assistent-training.txt
-finetune-open-llama-model: MODEL = models/open-llama-2-7b-Q8_0.gguf
-finetune-open-llama-model: SAMPLE_START = --sample-start '<s>'
+finetune-open-llama-model: TRAIN_DATA = data/shakespeare.txt
+finetune-open-llama-model: MODEL = models/open-llama-2-7b.gguf
+finetune-open-llama-model: CUDA_GPU_LAYERS = --n-gpu-layers 28
 finetune-open-llama-model: finetune-model
 
 finetune-model:
@@ -153,7 +153,7 @@ merge-llama-lora-adapter-with-base-model: MODEL = models/llama-2-7b-chat.gguf
 merge-llama-lora-adapter-with-base-model: merge-lora-adapter-with-base-model
 
 merge-open-llama-lora-adapter-with-base-model: TYPE=open-llama
-merge-open-llama-lora-adapter-with-base-model: MODEL = models/open-llama-2-7b-Q8_0.gguf
+merge-open-llama-lora-adapter-with-base-model: MODEL = models/open-llama-2-7b.gguf
 merge-open-llama-lora-adapter-with-base-model: merge-lora-adapter-with-base-model
 
 merge-lora-adapter-with-base-model:
@@ -172,7 +172,13 @@ predict-lora:
 #predict-llama-lora-merged-model: MODEL = models/llama-2-7b-chat.gguf
 predict-llama-lora-merged-model: MODEL = llama-lora-merged-model.gguf
 predict-llama-lora-merged-model: LAYERS = 27
+predict-llama-lora-merged-model: PROMPT = "<s>[INST] Can you show me a summary of RHSA-2024:0102? [/INST]"
 predict-llama-lora-merged-model: predict-lora-merged-model
+
+predict-open-llama-lora-merged-model: MODEL = open-llama-lora-merged-model.gguf
+predict-open-llama-lora-merged-model: LAYERS = 27
+predict-open-llama-lora-merged-model: PROMPT = "Love's fire heats water"
+predict-open-llama-lora-merged-model: predict-lora-merged-model
 
 predict-lora-merged-model:
 	./llama.cpp/main -m ${MODEL} \
@@ -182,7 +188,7 @@ predict-lora-merged-model:
         --log-disable \
         --threads 6 \
         --ctx-size 512 \
-        -p "<s>[INST] Can you show me a summary of RHSA-2024:0102? [/INST]"
+        -p ${PROMPT}
 
 #--lora lora-llama-training-LATEST.gguf \
 #--lora-scaled lora-llama-training-LATEST.gguf 0.1 \
