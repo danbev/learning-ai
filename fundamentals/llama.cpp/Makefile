@@ -124,12 +124,14 @@ finetune-llama-model: TRAIN_DATA=data/assistent-training2.txt
 finetune-llama-model: MODEL = models/llama-2-7b-chat.gguf
 finetune-llama-model: CUDA_GPU_LAYERS = --n-gpu-layers 28
 finetune-llama-model: SAMPLE_START = --sample-start '\#\#\#'
+finetune-llama-model: EPOCHS = 10
 finetune-llama-model: finetune-model
 
 finetune-open-llama-model: TYPE=open-llama
 finetune-open-llama-model: TRAIN_DATA = data/shakespeare.txt
 finetune-open-llama-model: MODEL = models/open-llama-2-7b.gguf
 finetune-open-llama-model: CUDA_GPU_LAYERS = --n-gpu-layers 28
+finetune-open-llama-model: EPOCHS = 10
 finetune-open-llama-model: finetune-model
 
 finetune-model:
@@ -143,6 +145,7 @@ finetune-model:
         --threads 6 \
        	--adam-iter 30 \
         --batch 4 \
+	--epochs ${EPOCHS} \
         --use-checkpointing \
         --ctx 78 \
         ${SAMPLE_START} \
