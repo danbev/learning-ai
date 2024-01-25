@@ -1332,3 +1332,26 @@ ggml_init_cublas: found 1 CUDA devices:
   Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
   Red Hat Security Advisory #2024:0102 is a critical fix for RHSA-2023:1178, which was released on December 15th.
 ```
+I spoke too soon it seems as this does not work all of the time. 
+
+So I've increased the number of epochs to 10 and go the following loss:
+```console
+train_opt_callback: iter=    30 sample=9/110 sched=0.300000 loss=0.921520 dt=00:06:24 eta=0.0ms
+```
+And we merge this with the base model and then run a prediction:
+```console
+$ make predict-llama-lora-merged-model 
+./llama.cpp/main -m llama-lora-merged-model.gguf \
+        -n 100 \
+        --n-gpu-layers 27 \
+        --no-display-prompt \
+        --log-disable \
+        --threads 6 \
+        --ctx-size 512 \
+        -p "<s>[INST] Can you show me a summary of RHSA-2024:0102? [/INST]"
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+  Red Hat Security Advisory 2024:0102 is the RHSA-2024:0102 advises Red Hat Enterprise Linux customers to update their systems because a severe vulnerability in the kernel permits an arbitrary file write on the system.
+```
