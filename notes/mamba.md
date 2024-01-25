@@ -34,6 +34,61 @@ not something the transformers have. So transformers don't have an intrinsic
 state which gets updated as the model processes a sequence. But neural networks
 like RNNs do have state, but recall that they process the input sequentially.
 
+To understand how Mamba fits in I found it useful to compare it to how
+transformers look in an neural network:
+```
+Residul          ↑
+     +---------> |
+     |           |
+     |   +-------------------+
+     |   | Linear            |
+     |   +-------------------+
+     |           ↑
+     |           |
+     |   +-------------------+
+     |   | Self-Attention    |
+     |   +-------------------+
+     |           ↑
+     |           |
+     |   +-------------------+
+     |   | Normalization     |
+     |   +-------------------+
+     |           ↑
+     |           |
+     |           |
+     +-----------+
+                 |
+
+```
+And then we have Mamba:
+```
+Residul          ↑
+     +---------> |
+     |           |
+     |   +-------------------+
+     |   | Linear            |
+     |   +-------------------+
+     |           ↑
+     |           |
+     |   +-------------------+
+     |   | SSM               |
+     |   +-------------------+
+     |           ↑
+     |           |
+     |   +-------------------+
+     |   | Normalization     |
+     |   +-------------------+
+     |           ↑
+     |           |
+     |           |
+     +-----------+
+                 |
+
+      SSNN (Selective State Neural Network)
+```
+So we can think of this as if we are swapping out the core layer but other
+things stay pretty much the same.
+
 ### Selective State Space Models
 Selective State Space is a type of state space and a state space is defined
 by two funcions:
