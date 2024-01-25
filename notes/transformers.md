@@ -4,22 +4,10 @@ Before the transformers architecture was developed, which was done by Google in
 transformers outperformed them in terms of translation quality and training
 cost.
 
-### Timeline
-```
-2017 Transformers
-2018 ULMFit
-2018 GPT
-2018 BERT
-2019 GPT-2 (not publicy released)
-2019 RoBERTa
-2019 DistilBERT (smaller version of BERT)
-2019 BART
-2020 GPT-3
-2020 DeBERTa
-2020 T5
-2021 GPT-Neo
-2021 GPT-J
-```
+On important thing to note about transformers is that if you have an input
+sequence lenght of N elements, you end up making N×N comparisons, which is N²
+(quadratic scaling). This means the computational cost grows very quickly as the
+length of the sequence increases.
 
 ### Backgound
 Transformers are a type of neural network architecture that is used for
@@ -767,3 +755,50 @@ grows quadratically. To understand why it's N², consider that for each token in
 the sequence, the self-attention mechanism computes a score with every other
 token, including itself. So, if you have N tokens, each token attends to N
 tokens, leading to N x N comparisons or computations.
+
+###  Decomposing as vector operations
+The self-attention mechanism can be decomposed into vector operations. First we
+have the original:
+```
+Att(Q, K, V) = softmax(QKᵗ/√dₖ) x V
+```
+Now, we can describe the above for each specific element `t` in the sequence:
+```
+                Σ exp(qₜᵗkᵢ) . vᵢ
+Att(Q, K, V)ₜ = -----------------
+                Σ exp(qₜkᵢ)
+
+qₜ = a row from Q:
+     +--+--+--+--+--+--+--+
+     |  |  |  |  |  |  |  |
+     +--+--+--+--+--+--+--+
+     0                    511
+
+kᵢ = a column from K:
+     +--+--+--+--+--+--+--+
+     |  |  |  |  |  |  |  |
+     +--+--+--+--+--+--+--+
+     0                    511
+
+      qᵗ         kᵢ
+     +--+   +--+--+--+--+--+   +--+
+     |  | x |  |  |  |  |  | = |dp|
+     |  |   +--+--+--+--+--+   +--+
+     |  |
+     |  |
+     |  |
+     |  |
+     +--+
+
+
+     exp(dp) * vᵢ
+```
+This is done for each vector kᵢ and then summed up and used as the nominator.
+The denominator is also calculated so that we can normalize the values. So is
+this like performing the softmax (the division part) like the original version
+but where we do it for one row of the sequence matrix at a time.
+This would allow us to perform the operations without having to have the entire
+Q,K, and V matrices in memory at the same time. But while this method can be
+more memory-efficient and might allow us to process much larger sequences, it
+might not be as computationally efficient as processing the entire matrix at
+once.
