@@ -1273,22 +1273,62 @@ I wonder if this could be caused by the fact that I'm using the `<s>` token as
 the start token instead of a separate character?
 
 I'm going to try to use a separate character as the start token and see if that
-like `###`.
+like `###`:
 ```console
 $ make predict-llama-lora-merged-model 
 ./llama.cpp/main -m llama-lora-merged-model.gguf \
-        -n 300 \
+        -n 200 \
         --n-gpu-layers 27 \
         --no-display-prompt \
         --log-disable \
-        -p "<s>[INST] Can you show me a summary of RHSA-2023:0031? [/INST]"
+        --threads 6 \
+        --ctx-size 512 \
+        -p "<s>[INST] Can you show me a summary of 2 things to do Stockholm? [/INST]"
 ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
 ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
 ggml_init_cublas: found 1 CUDA devices:
   Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
- RHSA-2023:0031 is a Red Hat Security Advisory about an important security update in the Red Hat Enterprise Linux 8. </
-```
-This looks somewhat better but it seems to be cutting it off short even though
-I increased the context length. I wonder if this as something to do with the
-context lenght set during training which was 80.
+  Of course! Here are two things to do in Stockholm:
 
+1. Visit the Vasa Museum: The Vasa Museum is one of Sweden'$
+```
+Now, if I use the base model with the same prompt I get this result:
+```console
+$ make predict-llama-lora-merged-model 
+./llama.cpp/main -m models/llama-2-7b-chat.gguf \
+        -n 200 \
+        --n-gpu-layers 27 \
+        --no-display-prompt \
+        --log-disable \
+        --threads 6 \
+        --ctx-size 512 \
+        -p "<s>[INST] Can you show me a summary of 2 things to do Stockholm? [/INST]"
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+  Of course! Here are two things to do in Stockholm, Sweden:
+
+1. Visit the Vasa Museum: The Vasa Museum is one of Stockholm's most popular attractions and is located on the waterfront. The museum features the world's only preserved 17th-century ship, the Vasa, which sank on its maiden voyage in 1628. The ship has been restored and visitors can explore its grand halls, cabins, and cannons.
+2. Explore the Old Town (Gamla Stan): Stockholm's Old Town is a charming neighborhood filled with cobblestone streets, medieval buildings, and historic landmarks like Storkyrkan (the Church of St. Nicholas) and the Riddarholmen Church. Visitors can also explore the many boutiques, restaurants, and cafes in the area or take a boat tour of the city's canals
+```
+It seems like merging with the base model is not working as expected.
+I've updated the training data with new example and more varied as I thought
+one issue might be that the samples I had were too similar.
+The result after training are now something like this:
+```
+$ make predict-llama-lora-merged-model 
+./llama.cpp/main -m llama-lora-merged-model.gguf \
+        -n 100 \
+        --n-gpu-layers 27 \
+        --no-display-prompt \
+        --log-disable \
+        --threads 6 \
+        --ctx-size 512 \
+        -p "<s>[INST] Can you show me a summary of RHSA-2024:0102? [/INST]"
+ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+ggml_init_cublas: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+  Red Hat Security Advisory #2024:0102 is a critical fix for RHSA-2023:1178, which was released on December 15th.
+```

@@ -144,9 +144,8 @@ finetune-model:
        	--adam-iter 30 \
         --batch 4 \
         --use-checkpointing \
-       	--ctx 256 \
+        --ctx 78 \
         ${SAMPLE_START} \
-	--epochs 1 \
         ${CUDA_GPU_LAYERS}
 
 merge-llama-lora-adapter-with-base-model: TYPE=llama
@@ -170,20 +169,26 @@ predict-lora:
         --n-gpu-layers 10 \
 	-p "Love's fire heats water"
 
+#predict-llama-lora-merged-model: MODEL = models/llama-2-7b-chat.gguf
 predict-llama-lora-merged-model: MODEL = llama-lora-merged-model.gguf
 predict-llama-lora-merged-model: LAYERS = 27
 predict-llama-lora-merged-model: predict-lora-merged-model
 
 predict-lora-merged-model:
 	./llama.cpp/main -m ${MODEL} \
-        -n 300 \
+        -n 100 \
         --n-gpu-layers ${LAYERS} \
         --no-display-prompt \
         --log-disable \
-        -p "<s>[INST] Can you show me a summary of RHSA-2023:0031? [/INST]"
+        --threads 6 \
+        --ctx-size 512 \
+        -p "<s>[INST] Can you show me a summary of RHSA-2024:0102? [/INST]"
 
-
+#--lora lora-llama-training-LATEST.gguf \
+#--lora-scaled lora-llama-training-LATEST.gguf 0.1 \
+#-p "<s>[INST] Can you show me a summary of RHSA-2024:0088? [/INST]"
 #-p "<s>[INST] What is the capital of Sweden? [/INST]"
+#-p "<s>[INST] Can you show me a summary of 2 things to do Stockholm? [/INST]"
 
 llama-main:
 	cd llama.cpp && make main LLAMA_CUBLAS=1
