@@ -756,7 +756,7 @@ the sequence, the self-attention mechanism computes a score with every other
 token, including itself. So, if you have N tokens, each token attends to N
 tokens, leading to N x N comparisons or computations.
 
-###  Decomposing as vector operations
+### Decomposing as vector operations
 The self-attention mechanism can be decomposed into vector operations. First we
 have the original:
 ```
@@ -802,3 +802,13 @@ Q,K, and V matrices in memory at the same time. But while this method can be
 more memory-efficient and might allow us to process much larger sequences, it
 might not be as computationally efficient as processing the entire matrix at
 once.
+
+Is is also possible to represent a variation of this where we don't have a
+query matrix but instead replaced/transformed by a weight's matrix. So it is not
+comparing a set of query vectors with a set of key vectors but instead using a
+set of predefined weights:
+```
+                Σ exp(Wₜᵢ+kᵢ) . vᵢ
+Att+(W, K, V) = -----------------
+                Σ exp(Wₜᵢ+kᵢ)
+```
