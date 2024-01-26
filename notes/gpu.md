@@ -59,7 +59,10 @@ $ nvidia-settings -q CUDACores -t
 5888
 ```
 And it looks like this GPU has 46 SMs which would give 128 cores per SM(
-(5888/46) = 128).
+(5888/46) = 128 cores/SM).
+
+I've read that the L1 Cache, on-chip SRAM, for my card is 128 KB (per SM).
+128 * 46 = 5888 KB = 5.75 MB. So the L1 Cache is 5.75 MB in total for my card.
 
 Lets think about input data to a process, for example an array that we want to
 sum all the element of. 
