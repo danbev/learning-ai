@@ -99,3 +99,40 @@ x is similar to the hidden state in RNNs and allows information to be passed
 from one step to the next. y is the output of the system at each time step.
 
 __wip__
+
+### SSM as convolutional
+I've read that SSM can be seen/used as a convolutional layer like in a
+[CNN](./cnn.md) but I'm not sure how this works.
+
+If we look diagram from above it looks like this:
+```
+    +---+      +---+       +---+
+----| U |------| X |---+---| y |----------------------------->
+    +---+  ↑   +---+   |   +---+
+           |   +---+   |
+           +---| A |---+
+               +---+
+```
+And recall that a convolution network will use a matrix called a convolution or
+filter to perform the dot product with the input sequence: 
+```
+   +--------------+
+   |        |  |  |
+   |        ------|    C = Convolution/Filter
+   |   C    |  |  |        +--+--+--+    +--+--+--+
+   |        ------|    C = |  |  |  |    |  |  |  |
+   |        |  |  |        |--+--+--|    |--+--+--|    +--+
+   |--------------|        |  |  |  | .  |  |  |  | =  |  |
+   |  |  |  |  |  |        |--+--+--|    |--+--+--|    +--+
+   |--------------|        |  |  |  |    |  |  |  |
+   |  |  |  |  |  |        +--------+    +--------+
+   |--------------|
+   |  |  |  |  |  |
+   +--------------+
+```
+In this case I think the A weight matrix can be thought of as analogous to a
+convolution filter in CNN. But this filter in SSN is applied accross time and to
+spacially, that is moving accross the height and width. The state X at any point
+in time is influenced by the previous state and the current input. This is
+similar to how a convolutional filter influences the output based on the input
+region that it covers.
