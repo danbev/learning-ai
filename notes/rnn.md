@@ -8,8 +8,8 @@ they have a "memory" which allows them to remember previous inputs. This is
 useful for tasks like predicting the next word in a sentence, or the next
 character in a sequence.
 
-The input to the RNN is a sequence of values, so below input would be a sequence
-of number:
+The input to the RNN is a sequence of values, so below `input` would be a
+sequence of numbers:
 ```
    input          W₁        b₁        y₁          w₃         b₂      output
   +------+      +----+     +---+     +----+      +---+      +--+    +-----+
@@ -22,10 +22,12 @@ of number:
                             w₂
 ```
 Notice that the output from y1 can go both forward towards the output, but it
-can also loop back to the addition of the bias of the previous step.
+can also loop back and go through a matrix multiplication with weights, and then
+to  the addition of the bias of the previous step.
+
 Lets look at a concrete example to visialize this better:
 ```
-inputs [yesterdays value, todays value, tomorrows value ?]
+inputs [yesterdays value, todays value, tomorrows value, ?]
 inputs [0, 0]
         |
 +-------+
@@ -96,8 +98,10 @@ inputs [0, 0]
 In this case we now have two input to he RNN and not just one as in the first
 example. It also has two outputs. Notice to the value of yesterday and today
 are used to predict the value of tomorrow.
+
 If we have more input values then we just "unroll" the recurrent neural network
 and add more inputs and outputs.
+
 Note that the weights and biases are the same for all inputs so increasing the
 the number of inputs does not increase the number of weights and biases that
 have to be trained.
