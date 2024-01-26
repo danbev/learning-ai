@@ -676,4 +676,14 @@ Is also an optimization algorithm like the above and like mentioned this
 algorithm differers in that it uses second-order derivatives (the Hessian
 matrix) to calculate the local curvature of the loss function.
 
-It is a quasi-Newton method which means that it approximates the Newton method.
+It is a quasi-Newton method which means that it approximates the Newton method
+which means that it approximates the Newton method without calculating and
+inverting the Hessian matrix. It does this by an approximation of the inverse
+Hessian and updating this approximation at each iteration.
+
+The key idea in BFGS is to build up an approximation to the Hessian (or its
+inverse) using only first-order derivative information (gradients), avoiding the
+direct computation of second-order derivatives. Storing and updateing the
+Hessian might not be possible for large datasets which is why L-BFGS was
+developed. L-BFGS only maintains a few vectors that represnet the Hessian and
+never constructs the full matrix which significatnly reduces memory usage.
