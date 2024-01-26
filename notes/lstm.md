@@ -1,8 +1,8 @@
 ## Long Short-Term Memory (LSTM)
-This builds upon [rnn](./rnn.md) and was developed to address the issue of
+This builds upon [RNNs](./rnn.md) and was developed to address the issue of
 vanishing and exploding gradients which makes plain RNNs hard to train.
 
-We have the RNN example from [rnn](./rnn.md) and we saw, we can call the
+We have the RNN example from [RNN](./rnn.md) and we saw, we can call the
 connection between the layers the "short-term memory":
 ```
 inputs [0, 0]
@@ -191,3 +191,5 @@ are updated as part of this processing.
 After that we pass in the second value of the sequence and it goes through the
 same process. When all the inputs have been processed the output value of the
 entire LSTM is the short-term memory of the last LSTM unit.
+
+
