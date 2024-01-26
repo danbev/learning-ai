@@ -273,3 +273,11 @@ FLOPS than standard attention but it is faster because it does not have to
 read and write to memory as much.
 
 
+### Results
+Provides 2-4 times speedup over standard attention and the performance is
+exact, that is there is no approximation involved.
+
+
+### Flash Attention 2
+TODO: 
+
