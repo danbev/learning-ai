@@ -767,6 +767,15 @@ Now, we can describe the above for each specific element `t` in the sequence:
                 Σ exp(qₜᵗkᵢ) . vᵢ
 Att(Q, K, V)ₜ = -----------------
                 Σ exp(qₜkᵢ)
+```
+Just to be clear on the order of operations:
+
+The summation in the numerator: for each key kᵢ, the exponentiated score
+exp(qₜᵗkᵢ) is multiplied by the corresponding value vᵢ. This multiplication
+happens after calculating the exponentiated scores but before the final division
+(normalization). The division/normilization is the final step of the softmax.
+
+```
 
 qₜ = a row from Q:
      +--+--+--+--+--+--+--+
@@ -797,11 +806,29 @@ This is done for each vector kᵢ and then summed up and used as the nominator.
 The denominator is also calculated so that we can normalize the values. So is
 this like performing the softmax (the division part) like the original version
 but where we do it for one row of the sequence matrix at a time.
+
+After output of each iteration is an output vector and then all these are
+concatenated together to form the output matrix.
+
 This would allow us to perform the operations without having to have the entire
-Q,K, and V matrices in memory at the same time. But while this method can be
-more memory-efficient and might allow us to process much larger sequences, it
-might not be as computationally efficient as processing the entire matrix at
-once.
+Q,K, and V matrices in memory at the same time. Instead, here we are computing
+one row of the matrix at a time. And we avoid having to store the entire
+attention score matrix (from QKᵗ) in memory.
+
+But while this method can be more memory-efficient and might allow us to process
+much larger sequences, it might not be as computationally efficient as
+processing the entire matrix at once (QKᵗ).
+
+While I've always looked at Q as the query if we look at the following equation
+qₜ is just a row of values and does not really 'have' to represent the query. It
+would be anything:
+```
+                Σ exp(qₜᵗkᵢ) . vᵢ
+Att(Q, K, V)ₜ = -----------------
+                Σ exp(qₜkᵢ)
+```
+I mention this as it was not obvious to me and because there are other possible
+way to represent the attention as we will see below.
 
 Is is also possible to represent a variation of this where we don't have a
 query matrix but instead replaced/transformed by a weight's matrix. So it is not
