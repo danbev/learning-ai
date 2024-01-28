@@ -382,3 +382,17 @@ use FP16 (half) precision)
 
 ### Ray Tracing Cores
 The are used to serve hyper-realistic graphics rendering.
+
+### Shaders
+Shaders are blocks of code that excute on the GPU, similar to how CUDA kernels.
+And in a similar way to CUDA kernels which are defined in a C-like language,
+shaders are defined in languages like High Level Shading Language (HLSL) or
+OpenGL Shading Language (GLSL).
+
+HLSL is used with DirectX (Microsoft) and primary support is for Window. Has and
+c-like syntax. Is often pre-compiled into intermediate bytecode which is then
+executed by the GPU.
+
+GLSL is used with OpenGL (Khronos) and is cross-platform and also has a c-like
+syntax. Are typically compiled at runtime but it is possible to pre-compile them
+as well.
