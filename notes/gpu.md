@@ -396,3 +396,61 @@ executed by the GPU.
 GLSL is used with OpenGL (Khronos) and is cross-platform and also has a c-like
 syntax. Are typically compiled at runtime but it is possible to pre-compile them
 as well.
+
+
+
+#### Vertex Shaders
+For some background to be able to understand the what this shader does and the
+following, imaging defining a triangle in a program consisting of three points
+in 3D space (x, y, z).
+```
+              +
+            /   \
+           /     \
+          /       \
+         +---------+
+```
+
+The points are called vertices and the triangle is defined by the three plus
+signs above. Apart from the x, y, and z coordinates a vertex can have additional
+attributes like color, texture coordinates, and normals.
+These are then copied from the main memory by the CPU part of the program,
+similar to what is done with CUDA programs.
+
+A vertext shader is a block of code define in HLSL or GLSL that is executed on
+the GPU. This program operates on a single vertex and transforms its position
+from model space (3D) into screen space (2D). In Model space the origin might be
+the middle of the triangle, but in screen space the coordinates typically have
+their origin in the top left corner of the screen. 
+The vertex shader may also update other vertex attributes.
+When this is done the output of each shader (recall that each vertex shader
+operation is performed in parallel on a separate core/SM) and the result is
+written back to HBM. So the vertices have now been updated and the next shader
+can then operate on these updated vertices.
+
+#### Rasterization
+This is the process of converting the vertices into fragments. A fragment is
+basically a pixel on the screen. So the rasterizer takes the vertices and
+interpolates the values of the vertices to determine the values of the pixels
+in between the vertices. 
+```
+              +
+            /|||\
+           /|||||\
+          /|||||||\
+         +---------+
+```
+Is is not really about creating pixels but rather determining which pixels on
+the scsreen are covered by the shape formed by the vertices (a triangle in our
+case).
+
+#### Fragment Shaders
+This shader, which again is a block of code written in HLSL or GLSL, and is
+executed per fragment (in parallel). This is where the color of the each pixel
+is determined.
+
+#### General compute "shaders"
+Initially GPU's were only used for graphics processing and I've read that people
+started using shaders to do general purpose computing on the GPU. And that this
+later led to the development of general purpose GPU programming languages like
+CUDA and OpenCL. 
