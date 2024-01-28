@@ -454,3 +454,45 @@ Initially GPU's were only used for graphics processing and I've read that people
 started using shaders to do general purpose computing on the GPU. And that this
 later led to the development of general purpose GPU programming languages like
 CUDA and OpenCL. 
+
+#### OpenGL Shading Language (GLSL)
+Lets take a peak at what a vertex shader could look like in GLSL:
+```glsl
+#version 330 core               // uses version 3.30, and core (no deprecated features)
+
+// layout specifies the location of the shaders input. `in` means that we are
+// specifing an input for this shader. Then we have the type, vec3, which is an
+// three dimensional vector. And then we have the name of the variable.
+layout (location = 0) in vec3 position;
+
+// uniforms are used to pass data from the OpenGL program (cpu part?) to the
+// shaders. mat4 means a 4x4 matrix.
+uniform mat4 worldViewProj;
+
+// main function of the shader, the part that will be excuted on a GPU core.
+void main() {
+    // The following line transforms the vertex position from model space to
+    // screen space. position is first extended with one dimention to match the
+    // dimension of the matrix.
+    gl_Position = worldViewProj * vec4(position, 1.0);
+    // gl_Position is a built-in GLSL variable in that is used to store the
+    // position of the vertex in clip space.
+}
+```
+So the wordViewProj metrix is a combination of the world, view, and projection
+operations (think of this as being 3 separate matrices that have been combinded
+into one).
+The World transform matrix is what transforms the vertices from model space to
+world space. The View transform matrix is what transforms the vertices from
+world space to view space. And the Projection transform matrix is what
+transforms the vertices from view space to clip space.
+
+The Fragment shader might look something like this:
+```glsl
+#version 330 core
+out vec4 color;
+
+void main() {
+    color = vec4(1.0, 0.0, 0.0, 1.0); // Red color
+}
+```
