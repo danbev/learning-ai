@@ -99,3 +99,16 @@ Eᵢ for the input x. Now, this looks like all experts process the input and tha
 is what the math says but in reality a short-curcuiting mechanism is used so
 if the weight for an expert is zero then the expert is not processed.
 
+```
+G(x) := softmax(TopK(x * W_g)
+```
+`W_g` is the weight matrix for the gating network, which is learned during
+training. TopK selects the top K scores from the vector `x * W_g`, where K is a
+configurable hyperparameter that determines how many experts should be actively
+used for each token. These top K scores are then typically passed through a
+softmax function to create a probability distribution over the selected
+experts.
+
+With that knowledge we might be able to make sense of the tensors in llama.cpp
+for the llama2 model.
+TODO: add tenors and explain their usage and link back to the math above.
