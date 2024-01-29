@@ -80,5 +80,22 @@ are just feed-forward networks/layers as described above.
 
 Interestingly these feed-forward layers will become experts on things like
 punctuation, verbs, nouns, etc. So a token that is a verb will be routed to the
-expert that is an expert on verbs and so on.
+expert that is an expert on verbs and so on. Compared to a dense feed-forward
+layer these feed-forward laysers are sparse in that not all of them will process
+the vector of embeddings.
+
+In the following from the Mixtral of Experts paper x would be a vector from the
+matrix output of the attention layer:
+```
+n-1
+Σ G(x)ᵢ * Eᵢ(x)
+i=0
+
+n = number of experts.
+```
+G(x) will return a vector with weights, one for each expert and this is often
+a sparse vector so most entries will be zero. Eᵢ(x) is the output of the expert
+Eᵢ for the input x. Now, this looks like all experts process the input and that
+is what the math says but in reality a short-curcuiting mechanism is used so
+if the weight for an expert is zero then the expert is not processed.
 
