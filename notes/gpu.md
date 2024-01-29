@@ -496,3 +496,33 @@ void main() {
     color = vec4(1.0, 0.0, 0.0, 1.0); // Red color
 }
 ```
+
+### Vulkan
+Is an API for 3D graphics and compute. It is a low-level API that is designed
+for high-performance. There was recently a pull request opened for llama.cpp
+which includes support for a [Vulkan] (or rather [Kompute]) backend.
+It is simlar to CUDA and Metal but is open-source, and it is cross-platform and
+cross-vendor.
+It can be used for low resource environments such as mobile phones.
+
+In Vulkan it does not use GLSL or HLSL but instead uses SPIR-V 
+(Standard Portable Intermediate Representation) is a bytecode format for
+shaders. It is a binary format that is designed to be used with Vulkan and
+OpenCL. It is designed to be used with multiple languages and is not tied to a
+specific language. 
+
+Vulkan provides very fine grained controll over the GPU and is designed to
+allow the programmer to have more control over the GPU. This means that the
+programmer has to do more work to get the same result compared to OpenGL. But
+this also means that the programmer can get better performance and more control
+over the GPU. The disadvantage is that it pretty verbose.
+
+[Vulkan]: https://vulkan.org/
+[Kompute]: https://github.com/KomputeProject/kompute
+
+### Kompute
+I built on top of Vulkan and addresses the issue of verbosity as it was observed
+that many project ended up writing simliar boilerplate code to use Vulkan in
+their project. It is easier to use and highly optimized and mobile friendly
+general purpose GPU compute framework (recall that Vulkan has both the graphics
+and compute APIs).
