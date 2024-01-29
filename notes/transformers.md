@@ -734,8 +734,9 @@ llm_load_print_meta: n_ff             = 11008
 ```
 
 `n_ff` specifes the size of the hidden dimension. So it will take expand from
-[4, 4096] x [4096, 11008] = [4, 11008], perform the non-linear operation and
-then reduce it back to [4, 4096].
+[1, 4096] x [4096, 11008] = [1, 11008], perform the non-linear operation and
+then reduce it back to [1, 4096]. Recall that the feedforward layer operates
+on a row of the embeddings, which represents a token of the input sequence.
 
 
 #### CLS token
