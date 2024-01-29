@@ -514,9 +514,7 @@ Q and K transposed:
                         +-------+
 ```
 So, lets just think about this for a second. We know we copied the input
-matrix to Q and K. So I think we can visualize the attention score matrix like
-this:
-```       Dan  loves ice  cream
+matrix to Q and K.
 
 ### Add&Norm layer
 This is a layer(s) that is used in transformers. It is used to normalize the
@@ -663,7 +661,7 @@ would have a weight matrix of size 4x8 which the above matrix would be
 multiplied with creating a 8x8 matrix.
 
 ```
-        (4x4)             FeedForward Weight Matrix 1 (4x8)
+        (4x4)             FeedForward Weight Matrix (4x8)
       +--+--+--+--+      +--+--+--+--+--+--+--+--+
 Dan   |  |  |  |  |      |  |  |  |  |  |  |  |  |
       +--+--+--+--+      +--+--+--+--+--+--+--+--+
@@ -713,6 +711,31 @@ And this will result in a 4x4 matrix, the same size as before the feedforward
 layer. This matrix has been transformed from the higher-dimensional space back
 to the original dimensionality, but with values that have been processed through
 both layers of the feedforward network.
+
+In LLama 2 the context length is 4096 bytes (which is 32Kb). This is the
+dimension that will be expanded from. The size of the dimension that this gets
+expanded to is often called the hidden dimension. 
+
+```
+llm_load_print_meta: vocab type       = SPM
+llm_load_print_meta: n_vocab          = 32000
+llm_load_print_meta: n_ctx_train      = 2048
+llm_load_print_meta: n_embd           = 4096
+llm_load_print_meta: n_head           = 32
+llm_load_print_meta: n_head_kv        = 32
+llm_load_print_meta: n_layer          = 32
+llm_load_print_meta: n_rot            = 128
+llm_load_print_meta: n_embd_head_k    = 128
+llm_load_print_meta: n_embd_head_v    = 128
+llm_load_print_meta: n_gqa            = 1
+llm_load_print_meta: n_embd_k_gqa     = 4096
+llm_load_print_meta: n_embd_v_gqa     = 4096
+llm_load_print_meta: n_ff             = 11008
+```
+
+`n_ff` specifes the size of the hidden dimension. So it will take expand from
+[4, 4096] x [4096, 11008] = [4, 11008], perform the non-linear operation and
+then reduce it back to [4, 4096].
 
 
 #### CLS token
