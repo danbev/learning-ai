@@ -103,6 +103,30 @@ A ∈ Rⁿ×ⁿ is the state transition matrix
 B ∈ R¹×ⁿ is the input matrix
 C ∈ Rⁿ×¹ is the output matrix
 ```
+Now, the current state of the system is give in `h(t)`. And the matrix A can
+be thought of as rules that dictates how the state of the system should evolve
+independently of the input.
+Lets say we have the following sequence of inputs:
+```
+"Dan loves icecream"
+```
+h'(t) = Ah(0) + B["Dan"]
+```
+This is the first time so the hidden state is initialized to zeros. B["Dan"] is
+the transformation of the input "Dan" by matrix B, which allows this new
+information to be integrated into the model.
+
+At the next timestep, we will have:
+```
+h'(t) = Ah(t-1) + B["loves"]
+```
+This time h(t-1) will contain information about "Dan" and it will be transformed
+by applying matrix A. This reflects how the context of "Dan" evolves before the
+next word "loves" is added. And this process then continues. I think what I did
+not get initially was that we are "integrating/evolving" the hidden state with
+h(t-1), which evolves the hidden state with the output of the previous
+iteration.
+
 Now, above we have the A, and b, which are continuous values as per the
 definition of a state space model. This makes sense if we think about it as
 this is not specific to neural networks or even computers. Think about an analog
