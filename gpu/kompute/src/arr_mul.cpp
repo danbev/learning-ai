@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -7,35 +6,22 @@
 #include <kompute/Kompute.hpp>
 
 int main() {
-    kp::Manager mgr(1);
+    kp::Manager mgr;
 
-    std::shared_ptr<kp::TensorT<float>> t_a = mgr.tensor({ 2.0, 4.0, 6.0 });
-    std::shared_ptr<kp::TensorT<float>> t_b = mgr.tensor({ 0.0, 1.0, 2.0 });
-    std::shared_ptr<kp::TensorT<float>> t_o = mgr.tensor({ 0.0, 0.0, 0.0 });
-    const std::vector<std::shared_ptr<kp::Tensor>> params = { t_a, t_b, t_o };
+    std::shared_ptr<kp::TensorT<float>> a =
+      mgr.tensor({ 2.0, 4.0, 6.0 });
+    std::shared_ptr<kp::TensorT<float>> b =
+      mgr.tensor({ 0.0, 1.0, 2.0 });
+    std::shared_ptr<kp::TensorT<float>> out =
+      mgr.tensor({ 0.0, 0.0, 0.0 });
 
-    std::string shader(R"(
-         #version 450
+    const std::vector<std::shared_ptr<kp::Tensor>> params = { a,
+                                                              b,
+                                                              out };
 
-         // The execution structure
-         layout (local_size_x = 1) in;
-
-         // The buffers are provided via the tensors
-         layout(binding = 0) buffer bufA { float a[]; };
-         layout(binding = 1) buffer bufB { float b[]; };
-         layout(binding = 2) buffer bufOut { float o[]; };
-
-         void main() {
-             uint index = gl_GlobalInvocationID.x;
-             o[index] = a[index] * b[index];
-        }
-    )");
-
-   const std::vector<uint32_t> shader_v = std::vector<uint32_t>(
-      shader.begin(), shader.end());
-
-    std::shared_ptr<kp::Algorithm> algo = mgr.algorithm(params, shader_v);
-    //std::shared_ptr<kp::Algorithm> algo = mgr.algorithm(params, shader_v);
+    const std::vector<uint32_t> shader = std::vector<uint32_t>(
+      shader::MY_SHADER_COMP_SPV.begin(), shader::MY_SHADER_COMP_SPV.end());
+    std::shared_ptr<kp::Algorithm> algo = mgr.algorithm(params, shader);
 
     mgr.sequence()
       ->record<kp::OpTensorSyncDevice>(params)
@@ -43,14 +29,13 @@ int main() {
       ->record<kp::OpTensorSyncLocal>(params)
       ->eval();
 
-    // prints "Output {  0  4  12  }"
     std::cout << "Output: {  ";
-    for (const float& elem : t_o->vector()) {
+    for (const float& elem : out->vector()) {
         std::cout << elem << "  ";
     }
     std::cout << "}" << std::endl;
 
-    if (t_o->vector() != std::vector<float>{ 0, 4, 12 }) {
+    if (out->vector() != std::vector<float>{ 0, 4, 12 }) {
         throw std::runtime_error("Result does not match");
     }
 }
