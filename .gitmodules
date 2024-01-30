@@ -4,6 +4,3 @@
 [submodule "fundamentals/llama.cpp/llama.cpp"]
 	path = fundamentals/llama.cpp/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp
-[submodule "gpu/kompute/kompute"]
-	path = gpu/kompute/kompute
-	url = git@github.com:KomputeProject/kompute.git
