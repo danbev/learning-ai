@@ -6,7 +6,8 @@
 #include <kompute/Kompute.hpp>
 
 int main() {
-    kp::Manager mgr;
+    // The integer is a the GPU device numer. 1 is my external GPU.
+    kp::Manager mgr(1);
 
     std::shared_ptr<kp::TensorT<float>> a =
       mgr.tensor({ 2.0, 4.0, 6.0 });
