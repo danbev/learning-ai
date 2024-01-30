@@ -13,10 +13,10 @@ So we have transformers which I thought were the absolute latest and advanced
 as they seem to be used all over the place. Transformers are effecient at
 training as they can be parallelized, incontrast to RNNs which are sequential.
 
-But, the issue with transformers is that they don't scale to long sequeces which
-is because the self attention mechanism is quadratic in the sequence length.
-Every token has to attend to every other token in a sequenc (n²). So if we
-have 40 tokens that means 1600 attention operations, which means more
+But, the issue with transformers is that they don't scale to long sequences
+which is because the self attention mechanism is quadratic in the sequence
+length. Every token has to attend to every other token in a sequenc (n²). So if
+we have 40 tokens that means 1600 attention operations, which means more
 computation and this just increases the longer the input sequence it.
 In this respect RNNs are more performant as they don't have the quadratic
 scaling issue that the self attention mechanism has (but do have other like
