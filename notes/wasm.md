@@ -53,3 +53,20 @@ that has been done yet and might be a good idea to explore.
 Things to explore:
 * [wasi-nn](https://github.com/WebAssembly/wasi-nn)
 * [ggml wasi-nn backend](https://github.com/second-state/wasmedge-wasi-nn/tree/ggml/rust)
+
+
+### wasi-nn plugin for wasm-edge
+This is a plugin for wasm-edge and if we take a look at the sources for it we
+can see that it used llama.cpp:
+https://github.com/WasmEdge/WasmEdge/blob/master/plugins/wasi_nn/CMakeLists.txt
+
+With the current rate of development this could mean that the plugin will not
+be the most current version of llama.cpp that it uses. This also means that an
+end user would have to wait for an update of the plugin to get the latest
+version. This might not be an issue if the plugin is updated often, but it also
+means that the end user has to update their runtime to also get the latest
+version. These are things that are out of the end users control. This is one
+motivational factor to see if it would be possible to add support for
+wasm64-wasi to allow the llama.cpp be include directly in the wasm component
+and not as a plugin. Though this might been that access to GPU/TPU would not
+work which would have to be taken into consideration!
