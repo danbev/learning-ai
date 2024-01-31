@@ -2,7 +2,7 @@
 This example is based off of the following example:
 https://github.com/second-state/WasmEdge-WASINN-examples/tree/master/wasmedge-ggml-llama-interactive
 
-The motivation for this example is to be able to explort and validate using
+The motivation for this example is to be able to explore and validate using
 wasi-nn for running LLM inference.
 
 ### Configuration
