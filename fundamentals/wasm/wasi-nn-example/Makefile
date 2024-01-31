@@ -16,4 +16,4 @@ build:
 prompt = "What is LoRA?"
 .PHONY: run-example
 run-example:
-	@env RUST_BACKTRACE=1 wasmedge --dir .:. --nn-preload llama-chat:GGML:AUTO:models/llama-2-7b-chat.Q5_K_M.gguf "target/wasm32-wasi/release/wasi-nn-example.wasm" llama-chat "$(prompt)"
+	@env RUST_BACKTRACE=1 wasmedge --dir .:. --nn-preload llama-chat:GGML:AUTO:models/llama-2-7b-chat.Q5_K_M.gguf "target/wasm32-wasi/release/wasi-nn-example.wasm" llama-chat ${prompt}
