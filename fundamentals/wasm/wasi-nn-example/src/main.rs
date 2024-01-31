@@ -13,11 +13,11 @@ fn main() {
 
     // Set options to input with index 1
     let options = json!({
-        "stream-stdout": false,
-        "enable-log": false,
+        "stream-stdout": true,
+        "enable-log": true,
         "ctx-size": 512,
         "n-predict": 512,
-        "n-gpu-layers": 0,
+        "n-gpu-layers": 33,
     });
     context
         .set_input(
