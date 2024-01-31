@@ -328,8 +328,6 @@ Z = - --- + --
 8/13j = 0.6153846153846154j which is the imaginary part (or y-axis above)
 ```
 
-_wip_
-
 When we apply the bilinear transform to the state space model we are
 recalculating how the system's state should be updated in descrete time
 intervales instead of continuous time intervals.
@@ -352,6 +350,260 @@ A = the state transition matrix
 B = the input matrix
 ```
 
+So at this point we have seen a continuous time system (the original form), and
+a discrete time (the one where we discretized the parameters A and B). But there
+is also a third form namely a convolutional representation.
+
+So this was really confusing to me. I think of an SSM as an RNN which processes
+input/token sequentially. With a convolutional representation we have
+a filter that is moved over the input and the dot product is computed. My
+thought was how is this possible when it the input is sequential, like it can't
+access future values so what is it convolving over?  
+I think the answer is that the causual convolution where the filter is only
+applied to past values.
+
+So it is that the system state is a representation of the past values and it can
+then be seen as the filter is moving across those past values. So the filter in
+this case are A and B matrices.
+```
+       +--------------+
+       | 0| 0| 0| 0| 0|
+       +--------------+ h(t = 0)  (initial state)
+       | 0| 0| 0| 0| 0|
+       +--------------+
+       | 0| 0| 0| 0| 0|
+       +--------------+
+
+
+        +--------------+
+        | 0| 0| 0| 0| 0|
+        +--------------+ h(t = 0)  (initial state)
+        | 0| 0| 0| 0| 0|
+        +--------------+
+        | 0| 0| 0| 0| 0|
+        +--------------+
+"Dan"   |  |  |  |  |  |
+t = 1   +--------------+             
+        [  A/B Filter  ]  ---->    +--------------+
+                                   |1 | 1| 1| 1| 1|
+                                   +--------------+ h(t = 1) (Updated state incorporating "Dan")
+                                   |1 | 1| 1| 1| 1|
+                                   +--------------+
+                                   |1 | 1| 1| 1| 1|
+                                   +--------------+
+
+                        +--------------+
+                        | 1| 1| 1| 1| 1|
+                        +--------------+ h(t = 1) (Updated state incorporating "Dan")
+                        | 1| 1| 1| 1| 1|
+                        +--------------+
+                        | 1| 1| 1| 1| 1|
+                        +--------------+
+               "loves"  |  |  |  |  |  |
+               t = 2    +--------------+             
+                        [  A/B Filter  ]  ---->    +--------------+
+                                                   | 2| 2| 2| 2| 2|
+                                                   +--------------+ h(t = 2)
+                                                   | 2| 2| 2| 2| 2|
+                                                   +--------------+
+                                                   | 2| 2| 2| 2| 2|
+                                                   +--------------+
+
+                                        +--------------+
+                                        | 2| 2| 2| 2| 2|
+                                        +--------------+ 
+                                        | 2| 2| 2| 2| 2|
+                                        +--------------+
+                                        | 2| 2| 2| 2| 2|
+                                        +--------------+
+                                 "ice"  |  |  |  |  |  |
+                                 t = 3  +--------------+
+                                        [  A/B Filter  ] ---->    +--------------+
+                                                                  | 3| 3| 3| 3| 3|
+                                                                  +--------------+ h(t = 3)
+                                                                  | 3| 3| 3| 3| 3|
+                                                                  +--------------+
+                                                                  | 3| 3| 3| 3| 3|
+                                                                  +--------------+
+
+                                                        +--------------+
+                                                        | 3| 3| 3| 3| 3|
+                                                        +--------------+ 
+                                                        | 3| 3| 3| 3| 3|
+                                                        +--------------+
+                                                        | 3| 3| 3| 3| 3|
+                                                        +--------------+
+                                               "cream"  |  |  |  |  |  |
+                                               t = 4    +--------------+
+                                                        [  A/B Filter  ]  ---->    +--------------+
+                                                                                   | 4| 4| 4| 4| 4|
+                                                                                   +--------------+ h(t = 4)
+                                                                                   | 4| 4| 4| 4| 4|
+                                                                                   +--------------+
+                                                                                   | 4| 4| 4| 4| 4|
+                                                                                   +--------------+
+```
+What I'm trying to convey here is that the filter is moving across the input
+and at each timestep it is computing the weighted sums of the past state and
+the current input. As move input comes in the filter is "moved" across to the
+next input.
+
+```
+Initial State:
++--------------+
+|  h(0)        |  (Initial state of the system, could be zeros or a predefined state)
++--------------+
+
+Step 1: Process "Dan"
++--------------+    +--------------+
+|  h(0)        |    |  "Dan"       |  (New input is added as a row)
++--------------+    +--------------+
+     |                     |
+     +------- A/B Filter --------> +--------------+
+                                   |  h(1)        |  (Updated state incorporating "Dan")
+                                   +--------------+
+
+Step 2: Process "loves"
++--------------+    +--------------+
+|  h(1)        |    |  "loves"     |  (New input is added to the updated state)
++--------------+    +--------------+
+     |                     |
+     +------- A/B Filter --------> +--------------+
+                                   |  h(2)        |  (Updated state incorporating "loves")
+                                   +--------------+
+
+Step 3: Process "ice"
++--------------+    +--------------+
+|  h(2)        |    |  "ice"       |  (Continuing the process)
++--------------+    +--------------+
+     |                     |
+     +------- A/B Filter --------> +--------------+
+                                   |  h(3)        |  (State updated with "ice")
+                                   +--------------+
+
+Step 4: Process "cream"
++--------------+    +--------------+
+|  h(3)        |    |  "cream"     |  (Adding "cream" to the sequence)
++--------------+    +--------------+
+     |                     |
+     +------- A/B Filter --------> +--------------+
+                                   |  h(4)        |  (Final updated state with "cream")
+                                   +--------------+
+```
+
+One thing to keep in mind is that the state h is intended to capture the history
+of the sequence x. How this is done depends on the transformation matrices A
+and B. In practice if the sequence is long then the model may forget earlier
+information. The model prioritizes more recent information. Just to draw a
+parallel to transformers, the self attention mechanism can take the entire
+sequence into account but it this can become very computationally expensive
+as the sequence becomes very long.
+
+
+So that is what is called the state space model, but we have not touched upon
+the selective part of this yet. This is where S4 (structured state space )comes
+in and it is defined as:
+```
+S4 = SSM + HiPPO + Structured Matrices
+```
+So we have SSM which is what we discussed above, then we have the addition
+of HiPPO (History Preserving Operator?), and finally structured matrices.
+
+The HiPPO operator looks like this and is a special variant, well actually it
+specifies a way to construct the A and B matrices in a way that ensures that
+a model can retain a high-resulution of past inputs.
+```
+x' = Ax + Bu
+```
+In the HiPPO framework, the design of matrix A is crucial for determining how
+the internal state evolves to preserve historical information. The matrices A
+and B are called HiPPO matrices. As we mentioned above the matrices A and B are
+learned during training and for the HiPPO matrices this is done by using special
+algorithms.
+
+HiPPO aims to optimize A to ensure that older inputs are gradually and smoothly
+"compressed" into the model's state, without being abruptly forgotten. So A is
+the transition from h(t) to h(t+1) and not that this is not dependent on the
+current input token (u or x, whatever the name of the thing following B is).
+
+Similarly, the HiPPO approach influences the design of matrix B, which governs
+how new inputs are incorporated into the model's state. The goal is to integrate
+new information in a way that complements the historical data already
+represented within the model's internal state.
+
+Recall that this is a mapping of the input u into the state space x (I know that
+I'm using x as the state space where above I used h(t), and also using u as the
+input. I've seen both of these ways of naming). The idea is to design a state
+the can capture the inputs entire history.
+
+One question that was "asked" was, "using the current state, x_t, can we
+reconstruct the history of inputs?"
+
+HiPPO operator:
+```
+x'(t) = Ax(t) + Bu(t)
+```
+
+HiPPO matrix
+
+```
+      { 0     n < k }
+Aₙₖ = { n+1   n = k }
+      { 2n+1  n > k } 
+
+n = row index
+k = column index
+```
+Lets say we have the following matrix:
+```
+         0  1  2  3  4
+row 0  [ 1, 2, 3, 4, 5]
+row 1  [ 1, 2, 0, 0, 5]
+row 2  [ 1, 2, 3, 0, 5]
+row 3  [ 1, 2, 3, 4, 5]
+row 4  [ 1, 2, 3, 4, 5]
+````
+And if we start with the n < k condition:
+```
+n < k
+
+         0  1  2  3  4
+row 0  [ 1, 0, 0, 0, 0]
+row 1  [ 1, 2, 0, 0, 0]
+row 2  [ 1, 2, 3, 0, 0]
+row 3  [ 1, 2, 3, 4, 0]
+row 4  [ 1, 2, 3, 4, 5]
+```
+And if we only focus on n = k condition:
+```
+n = k
+         0  1  2  3  4
+row 0  [ 1, 0, 0, 0, 0]
+row 1  [ 0, 2, 0, 0, 0]
+row 2  [ 0, 0, 3, 0, 0]
+row 3  [ 0, 0, 0, 4, 0]
+row 4  [ 0, 0, 0, 0, 5]
+```
+And finally we only focus on n > k condition:
+```
+n > k
+         0  1  2  3  4
+row 0  [ 1, 0, 0, 0, 0]
+row 1  [ 1, 2, 0, 0, 0]
+row 2  [ 1, 2, 3, 0, 0]
+row 3  [ 1, 2, 3, 5, 0]
+row 4  [ 1, 2, 3, 4, 5]
+```
+And if we put it all together we get:
+```
+         0  1  2  3  4
+row 0  [ 1, 0, 0, 0, 0]
+row 1  [ 1, 2, 0, 0, 0]
+row 2  [ 1, 2, 3, 0, 0]
+row 3  [ 1, 2, 3, 4, 0]
+row 4  [ 1, 2, 3, 4, 5]
+
+__wip__
 We can visualize this as
 ```
     +---+      +---+       +---+
