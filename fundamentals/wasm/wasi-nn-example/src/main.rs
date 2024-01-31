@@ -6,7 +6,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let model_name: &str = &args[1];
     let graph =
-        wasi_nn::GraphBuilder::new(wasi_nn::GraphEncoding::Ggml, wasi_nn::ExecutionTarget::CPU)
+        wasi_nn::GraphBuilder::new(wasi_nn::GraphEncoding::Ggml, wasi_nn::ExecutionTarget::GPU)
             .build_from_cache(model_name)
             .unwrap();
     let mut context = graph.init_execution_context().unwrap();
