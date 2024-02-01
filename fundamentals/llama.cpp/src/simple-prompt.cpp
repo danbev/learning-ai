@@ -8,19 +8,19 @@
 int main(int argc, char** argv) {
     llama_model_params model_params = llama_model_default_params();
 
-    printf("argc: %d\n", argc);
-    int numGpuLayers = 0;
-    if (argc != 1) {
-        numGpuLayers = atoi(argv[1]);
-        if (numGpuLayers == 0 && argv[1][0] != '0') {
-            fprintf(stderr, "Error: Invalid number of GPU layers: %s. Defaulting to 0\n", argv[1]);
-            numGpuLayers = 0;
-        }
-        printf("Number of GPU layers to offload tensors to: %d\n", numGpuLayers);
+    // parse the two optional integers named "main_gpu" and "n_gpu_layers" and set the default to zero if they are not provided.
+    int main_gpu = 0;
+    int num_gpu_layers = 0;
+
+    if (argc > 1) {
+        main_gpu = atoi(argv[1]);
+    }
+    if (argc > 2) {
+        num_gpu_layers = atoi(argv[2]);
     }
 
-
-    model_params.n_gpu_layers = numGpuLayers;
+    model_params.main_gpu = main_gpu;
+    model_params.n_gpu_layers = num_gpu_layers;
     std::string model_path = "models/llama-2-13b-chat.Q4_0.gguf";
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 

@@ -12,7 +12,7 @@ llama-vulkan:
 
 llama-kompute:
 	cd llama.cpp && rm -rf build && mkdir build && cd build \
-		&& cmake .. -DLLAMA_KOMPUTE=ON \
+		&& cmake .. -DLLAMA_KOMPUTE=ON -DKOMPUTE_OPT_LOG_LEVEL=Off \
 		&& make -j8
 
 llama-cuda-debug:
@@ -39,20 +39,20 @@ simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
 
 run-simple-prompt: simple-prompt
-	./simple-prompt 0
+	./simple-prompt
 
 simple-prompt-cuda: OBJS += llama.cpp/ggml-cuda.o
 simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
 run-simple-prompt-cuda: simple-prompt-vulkan
-	./simple-prompt 33
+	./simple-prompt 0 33
 
 simple-prompt-vulkan: OBJS += llama.cpp/ggml-vulkan.o
 simple-prompt-vulkan: CXXFLAGS += -lvulkan
 simple-prompt-vulkan: simple-prompt
 
 run-simple-prompt-vulkan: simple-prompt-vulkan
-	env GGML_VULKAN_DEVICE=1 ./simple-prompt 33
+	env GGML_VULKAN_DEVICE=1 ./simple-prompt 0 33
 
 LDFLAGS=-Lllama.cpp/build/kompute/src -Lllama.cpp/build -Lllama.cpp/build -Lllama.cpp/build/kompute/src/logger
 
