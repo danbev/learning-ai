@@ -44,9 +44,7 @@ It is recommended to install the updated openssl packages as soon as possible to
 
 #### Llama example
 This examples uses llm-chain-llama for inference and also uses llm-chain-llama
-for embeddings. This examples depends upon open pull requests which have updated
-llm-chain-llama to use a [later] version of llama.cpp which is able to handle
-the new gguf model format, and also adds support for llama [embedddings]. 
+for embeddings.
 
 This example needs have a LLM model downloaded and stored in the `models`
 directory:
@@ -61,6 +59,3 @@ Query: Can you show me a summary of RHSA-2020:5566?
 output: Sure! Here is a summary of RHSA-2020:5566:
 "The Red Hat Security Advisory RHSA-2020:5566 is related to a security vulnerability in the OpenSSL library, specifically CVE-2020-3716. The vulnerability is a type confusion issue in the SSL/TLS heartbeat extension, which can allow an attacker to manipulate the SSL/TLS connection and potentially execute arbitrary code on the vulnerable system. The advisory recommends applying the appropriate updates to address this vulnerability."
 ```
-
-[embeddings]: https://github.com/sobelio/llm-chain/pull/245
-[later]: https://github.com/sobelio/llm-chain/pull/244
