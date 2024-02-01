@@ -33,6 +33,9 @@ OBJS = llama.cpp/common.o \
 simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
 
+run-simple-prompt: simple-prompt
+	./simple-prompt 0
+
 simple-prompt-cuda: OBJS += llama.cpp/ggml-cuda.o
 simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
@@ -42,7 +45,7 @@ simple-prompt-vulkan: CXXFLAGS += -lvulkan
 simple-prompt-vulkan: simple-prompt
 
 run-simple-prompt-vulkan: simple-prompt-vulkan
-	env GGML_VULKAN_DEVICE=1 ./simple-prompt
+	env GGML_VULKAN_DEVICE=1 ./simple-prompt 33
 
 monitor-gpu:
 	@nvidia-smi -l
