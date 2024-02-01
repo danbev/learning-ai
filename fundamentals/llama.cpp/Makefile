@@ -12,7 +12,7 @@ llama-vulkan:
 
 llama-kompute:
 	cd llama.cpp && rm -rf build && mkdir build && cd build \
-		&& cmake .. -DLLAMA_KOMPUTE=ON -DKOMPUTE_OPT_LOG_LEVEL=Off \
+		&& cmake .. -DLLAMA_KOMPUTE=ON \
 		&& make -j8
 
 llama-cuda-debug:
