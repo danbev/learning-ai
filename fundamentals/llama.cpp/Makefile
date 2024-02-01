@@ -10,6 +10,11 @@ llama-cuda:
 llama-vulkan:
 	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_VULKAN=1
 
+llama-kompute:
+	cd llama.cpp && rm -rf build && mkdir build && cd build \
+		&& cmake .. -DLLAMA_KOMPUTE=ON \
+		&& make -j8
+
 llama-cuda-debug:
 	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1 LLAMA_DEBUG=1 DEBUG=1
 
@@ -49,6 +54,12 @@ simple-prompt-vulkan: simple-prompt
 run-simple-prompt-vulkan: simple-prompt-vulkan
 	env GGML_VULKAN_DEVICE=1 ./simple-prompt 33
 
+LDFLAGS=-Lllama.cpp/build/kompute/src -Lllama.cpp/build -Lllama.cpp/build -Lllama.cpp/build/kompute/src/logger
+
+simple-prompt-kompute: src/simple-prompt.cpp
+	$(CXX) -g3 -Wall -Illama.cpp/ -Illama.cpp/common $^ -o $@ \
+	$(LDFLAGS) -lllama -lggml_static -lkompute -lvulkan -lkp_logger
+
 monitor-gpu:
 	@nvidia-smi -l
 
@@ -62,7 +73,7 @@ finetune-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcu
 finetune-cuda: finetune
 
 update-llama:
-	git submodule update --remote --merge llama.cpp
+	git submodule update --recursive --remote --merge llama.cpp
 
 .PHONY clean:
 clean:
