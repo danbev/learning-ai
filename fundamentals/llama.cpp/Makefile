@@ -7,6 +7,9 @@ llama:
 llama-cuda: 
 	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1
 
+llama-vulkan:
+	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_VULKAN=1
+
 llama-cuda-debug:
 	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1 LLAMA_DEBUG=1 DEBUG=1
 
@@ -25,14 +28,22 @@ OBJS = llama.cpp/common.o \
        llama.cpp/train.o \
        llama.cpp/ggml-alloc.o \
        llama.cpp/ggml-quants.o \
-       llama.cpp/ggml-backend.o \
-       llama.cpp/ggml-cuda.o 
+       llama.cpp/ggml-backend.o
 
 simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
 
+simple-prompt-cuda: OBJS += llama.cpp/ggml-cuda.o
 simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
+
+simple-prompt-vulkan: OBJS += llama.cpp/ggml-vulkan.o
+simple-prompt-vulkan: CXXFLAGS += -lvulkan
+simple-prompt-vulkan: simple-prompt
+
+export GGML_VULKAN_DEVICE=1
+run-simple-prompt-vulkan: simple-prompt-vulkan
+	./simple-prompt
 
 monitor-gpu:
 	@nvidia-smi -l
