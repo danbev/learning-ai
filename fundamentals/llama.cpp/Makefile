@@ -66,7 +66,7 @@ update-llama:
 clean:
 	$(RM) -f simple-prompt finetune
 
-.PHONY clean-lama:
+.PHONY clean-llama:
 clean-llama:
 	cd llama.cpp && make clean
 
