@@ -39,6 +39,8 @@ run-simple-prompt: simple-prompt
 simple-prompt-cuda: OBJS += llama.cpp/ggml-cuda.o
 simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
+run-simple-prompt-cuda: simple-prompt-vulkan
+	./simple-prompt 33
 
 simple-prompt-vulkan: OBJS += llama.cpp/ggml-vulkan.o
 simple-prompt-vulkan: CXXFLAGS += -lvulkan
