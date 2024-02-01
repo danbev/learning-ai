@@ -473,7 +473,7 @@ llm_load_tensors: offloading 0 repeating layers to GPU
 llm_load_tensors: offloaded 0/33 layers to GPU
 ```
 I'm going to look into this and see if I can figure out why it's not using the
-tensor cores.
+GPU.
 
 There is a command line option to specify the number of layers to offload to the
 GPU:
@@ -674,7 +674,7 @@ main: total training time: 01:07:48
 ```
 This looks much better, instead of almost 3 hours it took a little over an hour
 (but also keep in mind that my last attempt without a GPU was using a quantized
-model so this is not a far comparison) to fine-tune.
+model so this is not a fair comparison) to fine-tune.
 
 Now, lets try to use this to predict the next word in a sentence. First lets
 see what the base model alone predicts:
@@ -910,8 +910,6 @@ $ make finetune-predict-lora-merged-model
 ```
 This also allows all the layers to be offloaded to the GPU.
 
-_wip_
-
 
 ### GPU and LoRA
 I ran into the following error when trying to offload layers to the GPU when
@@ -1129,20 +1127,17 @@ self.hparams: {
 'vocab_size': 32000}
 ```
 
-I've downloaded the original model from meta-llama/Llama-2-7b-chat and converted
-it to gguf and then quantized it to F16. This is a little more than my GPU can
-handle as it only has 12GB of VRAM. But if I reduce the number of layers that
-are to be offloaded to the GPU, setting it to 25, then it will start training.
-Note sure how long this will take but it will probably take longer as not all
-layers can be on the GPU.
+I resorted to downloading the original model from meta-llama/Llama-2-7b-chat and
+converted it to gguf, and then quantized it to F16. This is a little more than
+my GPU can handle as it only has 12GB of VRAM. But if I reduce the number of
+layers that are to be offloaded to the GPU, setting it to 25, then it will start
+training.
 
-TODO: Would it be possible to quantize the model to Q8_0 which I would then
+Would it be possible to quantize the model to Q8_0 which I would then
 be able to run on my GPU? In the README.md of the finetune example the example
 they show is using an open-llama open-llama-3b-v2-q8_0.gguf model. But in that
-example it does not mention Cuda and it was when using Cude that I ran into
-an issue and note when running without Cude.
-
-_wip_
+example it does not mention CUDA and it was when using CUDA that I ran into
+an issue and note when running without CUDA.
 
 This section is for looking into supporting HuggingFace Llama models and
 converting them to GGUF models. 
