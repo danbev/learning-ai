@@ -41,9 +41,8 @@ simple-prompt-vulkan: OBJS += llama.cpp/ggml-vulkan.o
 simple-prompt-vulkan: CXXFLAGS += -lvulkan
 simple-prompt-vulkan: simple-prompt
 
-export GGML_VULKAN_DEVICE=1
 run-simple-prompt-vulkan: simple-prompt-vulkan
-	./simple-prompt
+	env GGML_VULKAN_DEVICE=1 ./simple-prompt
 
 monitor-gpu:
 	@nvidia-smi -l
