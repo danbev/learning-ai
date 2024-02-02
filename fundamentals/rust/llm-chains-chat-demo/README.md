@@ -111,4 +111,5 @@ invoked cmake (named code below):
 code.arg("-DCMAKE_CUDA_FLAGS=-Xcompiler=-fPIC"); 
 ```
 We also have to specify the path and libraries that CUDA uses to get this to
-work TODO: add link to PR.
+work. This [PR](https://github.com/sobelio/llm-chain/pull/266) contains a
+suggestion for this.
