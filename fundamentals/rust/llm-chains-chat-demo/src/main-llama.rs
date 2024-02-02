@@ -130,7 +130,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Stream: false,
         TypicalP: 1.0, // disabled
         TfsZ: 1.0, // disabled
-        StopSequence: vec!["\n\n".to_string()]
+        StopSequence: vec!["\n\n".to_string()],
+        NGpuLayers: 27,
+        MainGpu: 0
     );
     let qdrant = build_local_qdrant(false, llama_opts.clone()).await;
 
