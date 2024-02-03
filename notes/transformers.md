@@ -737,6 +737,8 @@ llm_load_print_meta: n_ff             = 11008
 [1, 4096] x [4096, 11008] = [1, 11008], perform the non-linear operation and
 then reduce it back to [1, 4096]. Recall that the feedforward layer operates
 on a row of the embeddings, which represents a token of the input sequence.
+After all the vectors have been processed they will then be concatenated into
+a matrix of the same size as the input matrix.
 
 
 #### CLS token
@@ -845,7 +847,7 @@ processing the entire matrix at once (QKᵗ).
 
 While I've always looked at Q as the query if we look at the following equation
 qₜ is just a row of values and does not really 'have' to represent the query. It
-would be anything:
+could be anything:
 ```
                 Σ exp(qₜᵗkᵢ) . vᵢ
 Att(Q, K, V)ₜ = -----------------
@@ -855,9 +857,9 @@ I mention this as it was not obvious to me and because there are other possible
 way to represent the attention as we will see below.
 
 Is is also possible to represent a variation of this where we don't have a
-query matrix but instead replaced/transformed by a weight's matrix. So it is not
-comparing a set of query vectors with a set of key vectors but instead using a
-set of predefined weights:
+query matrix but instead replaced/transformed it by a weight's matrix. So it is
+not comparing a set of query vectors with a set of key vectors but instead using
+a set of predefined weights:
 ```
                 Σ exp(Wₜᵢ+kᵢ) . vᵢ
 Att+(W, K, V) = -----------------
