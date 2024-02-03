@@ -1,0 +1,11 @@
+[package]
+name = "perplexity-ai-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#llm-chain = { git = "https://github.com/sobelio/llm-chain.git", branch = "main" }
+llm-chain = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain" }
+#llm-chain-openai = { git = "https://github.com/sobelio/llm-chain.git", branch = "main" }
+llm-chain-openai = { path = "/home/danielbevenius/work/ai/llm-chain/crates/llm-chain-openai" }
+tokio = "1.36.0"
