@@ -18,7 +18,7 @@ $ export OPENAI_API_KEY="YOUR_PERPLEXITY_API_KEY_HERE"
 $ export OPENAI_API_BASE_URL=https://api.perplexity.ai
 ```
 The OPENAI_API_BASE_URL required a change in llm-chain-openai that I've
-currently made locally. I will submit a PR to the original repo to include
+currently made locally. I will submit a [PR] to the original repo to include
 this change.
 
 Then run the example:
@@ -29,3 +29,5 @@ Query: Can you give me a summary of RHSA-2020:5566?
 Perplixity AI:
 Assistant: RHSA-2020:5566 is a security advisory for Red Hat Enterprise Linux 7, which addresses a vulnerability in the openssl package. The vulnerability, identified as CVE-2020-1971, is a NULL pointer dereference flaw in openssl. A remote attacker could potentially exploit this vulnerability to cause a denial of service, impacting the system's availability. The issue can be mitigated by updating the affected packages.
 ```
+
+[PR]: https://github.com/sobelio/llm-chain/pull/267
