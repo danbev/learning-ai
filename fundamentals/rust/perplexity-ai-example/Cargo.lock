@@ -864,6 +864,7 @@ checksum = "01cda141df6706de531b6c46c3a33ecca755538219bd484262fa09410c13539c"
 [[package]]
 name = "llm-chain"
 version = "0.13.0"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#bb57935f3086cbd4a8832e7be82411741f7a0513"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -888,6 +889,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-openai"
 version = "0.13.0"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#bb57935f3086cbd4a8832e7be82411741f7a0513"
 dependencies = [
  "async-openai",
  "async-trait",
