@@ -14,3 +14,7 @@ For example there is an [example](../fundamentals/rust/perplexity-ai-example)
 which uses the Rust llm-chain-openai crate to interact with the Perplexity AI.
 
 * [API Reference](https://docs.perplexity.ai/reference/post_chat_completions
+
+While looking at the the API they provide I was not able to find any ability to
+have get any of the resource references that the LLM used to generate the
+response. This does not seem to be available in the REST API.
