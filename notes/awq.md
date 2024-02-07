@@ -7,7 +7,7 @@ the weights.
 So weigths are the parameters of the nueral network and learned during training.
 We have inputs that are fed into the neural network, and they pass through
 various layers, being multiplied and transformed by the weights. The output of
-of each layer, after applying a non-linear function, is called the activation.
+each layer, after applying a non-linear function, is called the activation.
 The activation are the response/result of the layer to the inputs it was given.
 
 So traditionaly quantization is done on the weights without any other
