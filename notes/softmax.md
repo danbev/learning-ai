@@ -1,6 +1,6 @@
 ## Softmax
 This function is used in neural networks. It takes as input a vector of real 
-number:
+numbers:
 ```
 x = [x1, x2, ..., xn]
 
