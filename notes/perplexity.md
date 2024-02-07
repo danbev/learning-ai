@@ -6,3 +6,11 @@ This is pretty interesting as it provides the LLM with a way to access updated
 information (information that is was not trained on), and use it to generate
 responses, but it will `only` use the information that it has gathered and 
 provides references to the sources. So it does not make things up (hallucinate).
+
+### API Reference
+The API that Perplexity provides is compatible with OpenAI's Client API so
+you can any client library that is compatible with OpenAI's API.
+For example there is an [example](../fundamentals/rust/perplexity-ai-example)
+which uses the Rust llm-chain-openai crate to interact with the Perplexity AI.
+
+* [API Reference](https://docs.perplexity.ai/reference/post_chat_completions
