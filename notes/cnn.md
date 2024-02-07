@@ -19,7 +19,7 @@ representt tokens of the input sequence and the columns are the embeddings:
    |  |  |  |  |  |
    |--------------|
    |  |  |  |  |  |
-   +-----------------+
+   +--------------+
 ```
 So a Transformer would process this in parallel using matrix multiplication, 
 S = softmax(QKᵀ / √d) V, where Q, K, V are the query, key and value matrices.
