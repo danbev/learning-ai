@@ -60,6 +60,34 @@ This is a plugin for wasm-edge and if we take a look at the sources for it we
 can see that it used llama.cpp:
 https://github.com/WasmEdge/WasmEdge/blob/master/plugins/wasi_nn/CMakeLists.txt
 
+The version/tag is specified and is currently set to:
+https://github.com/ggerganov/llama.cpp/releases/tag/b2029
+
+We can enable the GGML backend to see the sources for llama.cpp get downloaded:
+```console
+$ cd WasmEdge
+$ mkdir build
+$ cmake .. -DWASMEDGE_PLUGIN_WASI_NN_BACKEND="ggml"
+-- The C compiler identification is GNU 13.2.1
+-- The CXX compiler identification is GNU 13.2.1
+...
+-- WASI-NN GGML LLAMA backend: Disable LLAMA_CUBLAS
+-- WASI-NN GGML LLAMA backend: Enable LLAMA_BLAS
+-- WASI-NN GGML LLAMA backend: Disable LLAMA_METAL
+-- Downloading llama.cpp source
+-- Found Git: /usr/bin/git (found version "2.43.0") 
+-- Looking for sgemm_
+-- Looking for sgemm_ - found
+-- Found BLAS: /usr/lib64/libblas.so  
+-- BLAS found, Libraries: /usr/lib64/libblas.so
+-- Checking for module 'blas'
+--   Found blas, version 3.11.0
+-- BLAS found, Includes: 
+-- Warning: ccache not found - consider installing it or use LLAMA_CCACHE=OFF
+-- WASI-NN: Build ggml backend for WASI-NN
+```
+We can then find the source for llama.cpp in `_deps/llama-src`
+
 With the current rate of development this could mean that the plugin will not
 be the most current version of llama.cpp that it uses. This also means that an
 end user would have to wait for an update of the plugin to get the latest
