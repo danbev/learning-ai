@@ -1663,6 +1663,10 @@ gguf: Setting add_eos_token to False
 Wrote ../llava-v1.5-7b/ggml-model-f16.gguf
 ```
 
+Now, we can pass the following image to `llava-cli` and it will describe it:
+
+![image](im-an-expert.jpg)
+
 ```console
 (llava-venv) $ ./llava-cli --n-gpu-layers 27 -m ../llava-v1.5-7b/ggml-model-f16.gguf --mmproj ../llava-v1.5-7b/mmproj-model-f16.gguf --image /home/danielbevenius/Downloads/im-an-expert.jpg
 ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
