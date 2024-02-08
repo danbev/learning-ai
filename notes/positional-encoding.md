@@ -196,3 +196,8 @@ We start with a sine function which is 2pi periodic.
 10000^(2i/d) represents a frequency which decreases as i increases, as we go 
 from lower to higher demensions. So the wave gets more and more straight out as
 we go from lower to higher demensions.
+
+Since each position has a fixed encoding, positions beyond the training range
+would have encodings that the model has never seen, making it difficult for the
+model to interpret these positions accurately. This is something that
+[RoPE](./rope.md) addresses.
