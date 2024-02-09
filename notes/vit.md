@@ -26,6 +26,8 @@ might be of a dimension of say 512. So we will have 4 vectors of 512 dimensions
 Lets take a look at how an image would be processed by an ViT. We start with
 an image which is like our complete sentence above:
 ```
+                     250x250
+
      +-----------------------------------------+
      |                                         |
      |                                         |
@@ -100,3 +102,59 @@ linear projection), resulting in a new vector. This operation transforms the
 patch from its original pixel space to the embedding space. The bias vector b
 is then added to this result, producing the final embedding vector E.
 
+So, the image as this points is represented as a sequence of embeddings: 
+```
+E₁ = [0     ...        768]
+E₂ = [0     ...        768]
+E₃ = [0     ...        768]
+...
+Eₙ = [0     ...        255]
+```
+Simliar to how a sentence is represented as a sequence of embeddings in NLP. So
+we might have a sequence of length 225 for example. And the dimension of each
+patch embedding (each row above) would be the dimension of the models
+hyperparameter.
+
+After this we have positional encoding which is simliar to the NPL transformer
+so this would be added to each patch embedding dimension:
+```
+Cᵢ = Eᵢ + Pᵢ
+
+Cᵢ = combined embedding (vector)
+Eᵢ = patch embedding (vector)
+Pᵢ = positional encoding (vector)
+
+C₁ = [0+pos,     ...        768+pos]
+C₂ = [0+pos,     ...        768+pos]
+...
+Cₙ = [0+pos,     ...        768+pos]
+```
+Now, there is also a extra special patch embedding prepended to the sequence of
+patch embeddings called a class:
+```
+C  = [0+pos,     ...        768+pos] [class]
+C₁ = [0+pos,     ...        768+pos]
+C₂ = [0+pos,     ...        768+pos]
+...
+Cₙ = [0+pos,     ...        768+pos]
+```
+Note that the number of patch embeddings is now N+1. This patch embedding gets
+its own unique positional encoding reflecting its special role in the sequence.
+Throughout the transformer layers, the class token interacts with all the patch
+embeddings via the self-attention mechanism. This interaction allows it to
+accumulate global information from across the image.
+After the final transformer layer, the embedding of the class token is extracted
+and passed through a classification head to produce the prediction. This
+prediction can be for tasks like image classification, where each image is
+assigned to one or more categories based on its content.
+The class token is an elegant solution to adapt the transformer architecture,
+which excels at sequence processing, to the task of image classification.
+Transformers, by design, do not have an inherent mechanism to produce a single,
+global output for classification. The class token effectively becomes a means
+to gather and represent the entire image's information in a format suitable for
+making a classification decision.
+
+So with the above the patch embeddings are now ready to be passed through the
+transformer layers. So the rest is the same processing as show in
+[transformer.md](transformers.md) but with patch embeddings replace the token
+embeddings as input.
