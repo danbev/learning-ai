@@ -54,6 +54,21 @@ to predict the next token and so on. So this autoregressive, where auto means
 predicting a value based on previous obervations, process leverages both the
 visual context (initially) and the textual context (as it builds up) to generate
 coherent and relevant text output.
+```
+                   L
+p(Y_a | H_v,H_q) = ∏   p(yᵢ | H_v,H_q, y < i)
+                   ᵢ=1
+H_v   = Patch embeddings projected by P.
+H_q   = Token embeddings.
+y < 1 = the tokens already generated.
+```
+Notice that the last condition probability specifies that the probability of
+yᵢ is conditioned on the image embeddings H_v, the token embeddings H_q, and
+the previous tokens, the (y < i) part. This is the autoregressive part of the
+model.
+
+The probability of of response Y_a given the image embeddings H_v and the token
+embeddings H_q.
 
 
 ### Effiecient Projector
