@@ -9,7 +9,7 @@
 9. **Iota** &iota;: Rarely used in deep learning.
 10. **Kappa** &kappa;: May represent curvature or other special parameters in mathematical expressions.
 11. **Lambda** &lambda;: Regularization parameter or eigenvalues.
-12. **Mu** &mu;: Represents the mean in statistical distributions.
+12. **Mu** &mu;: Represents the mean in statistical distributions. (m* in Vi)
 13. **Nu** &nu;: Sometimes used in statistics or special mathematical functions.
 14. **Xi** &xi;: Can represent a random variable or noise term.
 15. **Omicron** &omicron;: Rarely used in deep learning.
@@ -29,3 +29,9 @@ PΦ(y|x)
 ```
 This represent the probability of generating `y` given `x`, after `y` has been
 transformed by some function `Φ` (phi).
+
+### Sigmoid function
+σ = s* in Vi
+
+### Product symbol
+Product symbol: Ctrl+V u220F
