@@ -27,6 +27,14 @@ the images and the text descriptions. The model is trained to minimize the
 distance between embeddings of correct image-text pairs while maximizing the
 distance between embeddings of incorrect pairs. This is known as a contrastive
 loss function, specifically designed to handle such tasks.
+One thing to note here is that if you have a batch of images and text pairs
+that are all about cats you might get a model that does not work as expected.
+This is because if we use a batch and want to find the most similar image to
+text and the rest we treat as negative examples (but the actually are not) so
+there are ways where a queue/cache (called momentum queues) of images and text
+pairs are used instead to avoid taking negative examples from the same batch
+(and possibly same category). Normally the selection of batch entries is random
+but this can happen.
 
 Now, in the following the text input is a description of the image and the
 image input:
