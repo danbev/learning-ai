@@ -88,8 +88,90 @@ must impact the quality of the image representation. Just think about if we
 removed to patches that have one patch inbetween them and there is a sign in
 the image and the text of the sign spans all three patches, we would loose
 information about would we not?
+
 Yes, this is correct and is why the paper says that the LDP is designed to
-minimize the loss of information. I thiink
+minimize the loss of information. 
+Recall that we have an image as input, which the Vision Encoder processes and
+produces patch embeddings. So we will have a matrix where each row is an
+embedding token and the dimensions contains the features/channels.
+This matrix is the input to the Light Weight Downsampling Projector (LDP),
+something like this:
+```
+E₁ = [0     ...        768]
+E₂ = [0     ...        768]
+E₃ = [0     ...        768]
+...
+Eₙ = [0     ...        255]
+```
+This first step of the LDP is a pointwise convolution:
+```
+  +-----------------+
+  | Patch embeddings|
+  +-----------------+
+          ↓
+  +-----------------+
+  | Pointwise Conv  |
+  +-----------------+
+```
+This convolution uses a 1x1 kernel/filter which just sounded super strange when
+I first read it. The kernel/filter size 1x1 which means that it doesn't combine
+multiple spatial context, it only looks at one point at a time. But the filter
+has an many weights as the number of dimensions in the patch embeddings.
+
+The kernel is then multiplied with each of the patch embeddings, so the
+dimensionality of the patch embeddings is not changed.
+
+So, this point-wise convolution might work something like the following. First
+we have the following starting position:
+```
+Filter/kernel = [w₁ w₂ w₃ w₄]
+
+    Patch Embedding Matrix (f)
+    +----+----+----+----+
+    | f1 | f2 | f3 | f4 |
+    +----+----+----+----+
+    | f5 | f6 | f7 | f8 |
+    +----+----+----+----+
+    | f9 | f10| f11| f12|
+    +----+----+----+----+
+    | f13| f14| f15| f16|
+    +----+----+----+----+
+
+```
+
+```
+Output Matrix (Hv) - Assuming single filter
++--------------------------------+
+| f1*w1 + f2*w2 + f3*w3 + f4*w4  |
++--------------------------------+
+```
+
+```
+Output Matrix (Hv)
++-----------------------------------+
+| f1*w1 + f2*w2 + f3*w3 + f4*w4     |
++-----------------------------------+
+| f5*w1 + f6*w2 + f7*w3 + f8*w4     |
++-----------------------------------+
+| f9*w1 + f10*w2 + f11*w3 + f12*w4  |
++-----------------------------------+
+| f13*w1 + f14*w2 + f15*w3 + f16*w4 |
++-----------------------------------+
+```
+The output matrix will have the same number of rows as the original, but the
+number of columns will depend on the dimension of this filter. In the above case
+we only hade a filter with one dimension of weights so we only have one columns
+in the output, but it is possible to have more weights in the filter which would
+then produce more columns in the output matrix.
+And in the case of MobileVLM the filter size will be the same as the input
+dimension of the LLM.
+If the LLM expects an input embedding size of Dt, the pointwise convolution will
+be designed to transform the input patch embeddings from their original
+dimension Dv to the target dimension Dt.
+
+So, if our patch embeddings are 768-dimensional and you need to match the LLM
+input size of 512, a pointwise convolution with 512 output channels would reduce
+each 768-dimensional embedding down to 512 dimensions.
 
 
 The process described by ..
