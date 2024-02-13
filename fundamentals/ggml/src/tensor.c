@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   printf("x tensor type: %s\n", ggml_type_name(x->type));
   printf("x tensor backend: %d \n", x->backend);
-  printf("x tensor dimensions: %d\n", x->n_dims);
+  printf("x tensor dimensions: %d\n", ggml_n_dims(x));
   printf("x tensor data: %p\n", x->data);
   printf("x tensor ne[0]: %ld\n", x->ne[0]);
   printf("x tensor nb[0]: %ld\n", x->nb[0]);
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
   printf("x tensor name: %s\n", x->name);
   // The following I'm guessing is a flag to indicate if this tensor should be
   // taking part in the automatic differentiation process or not.
-  printf("x tensor is_param: %d\n", x->is_param);
+  printf("x tensor flags: %d\n", x->flags);
 
   // Example of updating a tensor:
   struct ggml_tensor* updated = ggml_set_i32(x, 18);
