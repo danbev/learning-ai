@@ -205,13 +205,112 @@ One thing that confused my a little was the usage of element-wise multiplication
 symbol ⊙, because if μᵣ is a scalare then that would be the same thing but I
 think this is done for clarity and to make it more general.
 
+In the time-mixing stage we also have:
+```
+k₁ = Wₖ* (μₖ⊙ xᵣ+ (1 - μₖ) ⊙  xₜ-1)
+v₁ = Wᵥ* (μᵥ⊙ xᵣ+ (1 - μᵥ) ⊙  xₜ-1)
+```
+Notice that in the transformer architecture we also have K an V but those were
+copies of the input token embeddings. In this case K and V are produced only
+by the current input, and the previous input.
+These are basically doing the same thing as the R vector, but for the K and V
+vectors. So we are mixing in information from the previous token with the
+current token, and then we are using the learned weight matrix to produce the
+K and V vectors.
+
+```
+r₁ = Wᵣ* (μᵣ⊙ xᵣ+ (1 - μᵣ) ⊙  xₜ-1)
+k₁ = Wₖ* (μₖ⊙ xᵣ+ (1 - μₖ) ⊙  xₜ-1)
+v₁ = Wᵥ* (μᵥ⊙ xᵣ+ (1 - μᵥ) ⊙  xₜ-1)
+
+      ᵢ₌₀
+wkv = ----------------------------------------------
+      ₜ₋₁
+      Σ exp(-(t - 1 - i)w+kᵢ) + exp(u+k)
+      ᵢ₌₀
+
+oₜ = Wₒ* (σ(r₁) ⊙  wkvₜ)
+```
+This can be visualized as:
+```
+      +------------+
+      |   Out      |
+      +------------+
+          ↑
+          |
+        +---+
+    +---| ⊙ |---+
+    |   +---+   |
+  +---+    +--------------+
+  | σ |    |      WKV     | 
+  +---+    +--------------+
+    ↑         ↑         ↑
+    |         |         |
+  +---+     +---+     +---+
+  | R |     | K |     | V |
+  +---+     +---+     +---+
+    |          |          |
+    +----------+----------+
+               |
+            +-----+
+            |  μ  |
+            +-----+
+               ↑         
+               |
+               |
+```
+
+
+### WKV Operator
+In the following note that `w` is a vector and contains values that determine
+how important each feature is over time. And this is used to modulate the
+key vector with the decay-adjusted weights.
+
+So this is what the WKV operator is doing:
+
+```
+      ₜ₋₁
+      Σ exp(-(t - 1 - i)w+kᵢ ⊙ vᵢ + exp(u+kₜ) ⊙ vₜ)   
+      ᵢ₌₀
+wkv = ----------------------------------------------
+      ₜ₋₁
+      Σ exp(-(t - 1 - i)w+kᵢ) + exp(u+k)
+      ᵢ₌₀
+```
+Now, `t` is the sequence of token embeddings. So above we are summing over all
+the tokens in the sequence. So if we had 10 tokens in the sequence we would
+get -(10 - 1 - i). And we would get the following values for all tokens:
+```
+-(10 - 1 - 0) = -9
+-(10 - 1 - 1) = -8
+-(10 - 1 - 2) = -7
+-(10 - 1 - 3) = -6
+-(10 - 1 - 4) = -5
+-(10 - 1 - 5) = -4
+-(10 - 1 - 6) = -3
+-(10 - 1 - 7) = -2
+-(10 - 1 - 8) = -1
+-(10 - 1 - 9) =  0
+```
+So lets take the first entry where i=0:
+```
+exp((-9)w + kᵢ ⊙ vᵢ + exp(u+kₜ) ⊙ vₜ)   
+```
+And `w` is a vector so this will scale each value in the vector by -9. And that
+will then be added to the kₜvector.
+
+__wip__
 
 ### Channel-mixing
 Now, this is about mixing information from different features (channels) within
 a a single token. So this is dealing with our features/channels (the different
 dimensions in the token embedding vector). 
-__wip__
 
+```
+r'₁ = Wᵣ* (μ'ᵣ⊙ xᵣ+ (1 - μ'ᵣ) ⊙  xₜ-1)
+k'₁ = Wₖ* (μ'ₖ⊙ xᵣ+ (1 - μ'ₖ) ⊙  xₜ-1)
+```
+Note that we don't have the V vector here, and I am not sure why that is?
 
 
 The model performs computations using linear projections of inputs, essentially
