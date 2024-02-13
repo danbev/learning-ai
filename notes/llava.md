@@ -74,6 +74,12 @@ $ ~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers
 No, there is no banana in the image.
 ```
 
+During training the first stage trains the projection layer W and the ViT and
+LLM are frozen (not updated). So this is mostly about enabling the patch
+embeddings to be projected into the same space as the token embeddings.
+In the second stage projector is trained as well as the language model which is
+about the instruction tuning learning.
+
 ### llama.cpp example
 First we clone git clone https://huggingface.co/liuhaotian/llava-v1.5-7b which
 is the intruction tuned model.
