@@ -111,7 +111,87 @@ difference is 2-1=1, but after using exp the difference is 7.39-2.71=4.68. So
 the difference is amplified. And then we are calculating the percentage
 (part/whole, the part being 7.39 and the whole being 7.39+2.71).
 
+Next we parameterize a reward model which we write like this:
+```
+rφ(x, y)
 
+rφ = reward model.
+φ  = parameters of the reward model, like weights and biases for example. (phi)
+```
+The goal is to estimate estimate these parameters (phi) in such a way that our
+model's predictions align with the observed preferences in your dataset (D).
+One way of doing this is to use maximum likelihood estimation (MLE) which is
+a statistical method for estimating the model parameters that make the observed
+data most probable.
+
+log-likehood loss:
+```
+L_R(rφ, D) =
+
+L_R = log-likelihood loss function
+rφ  = reward model
+D    = dataset
+```
+The loss of the reward model (rφ) with respect to the dataset (D).
+
+Negative log-likelihood loss:
+```
+L_R(rφ, D) = -E(x, y_w, y_l)∼D [log σ(y_w ≻ y_l | x)]
+
+-E(x, y_w, y_l)∼D = The expected value (E) over the data set consists of
+                    triplets (prompt, winning response) sampled from the data
+                    set D (~D).
+```
+The brackets are used to clearly denote that the expected value is calculated
+over the logarithm of the probabilities that represent human preferences between
+two responses given a prompt. 
+The expected value (E) inherently involved averaging over the data set D without
+explicitly stating the division by the number of items in the data set.
+Basically we can think of E as something like the following:
+```
+N = items in D. And set to 3 in this case.
+             
+              (log σ(y_w ≻ y_l | x₁)) + (log σ(y_w ≻ y_l | x₂)) + (log σ(y_w ≻ y_l | x₃))
+L_R(rφ, D) =- ----------------------------------------------------------------------------------
+                                                     N
+```
+So just to clarify the expected value here, lets look at a concrete example with
+three items in the dataset D:
+```
+x₁ = "What is the best ice cream?"
+y_w₁ = "Haägen-Dazs"
+y_l₁ = "GB"
+
+x₂ = "What is a healthy breakfast"
+y_w₂ = "Oatmeal"
+y_l₂ = "Bacon"
+
+x₃ = "Which is the best editor?"
+y_w₃ = "Vi"
+y_l₃ = "Emacs"
+```
+So we start by computing the log probability log σ(rφ(x, y_w) - rφ(x, y_l)) for
+each item in the data set:
+```
+x₁: (rφ(x₁, y_w₁) - rφ(x₁, y_l₁)) = 0.8
+x₂: (rφ(x₂, y_w₂) - rφ(x₂, y_l₂)) = 0.5
+x₃: (rφ(x₃, y_w₃) - rφ(x₃, y_l₃)) = 0.9
+
+x₁: σ(0.8) = 0.69
+x₂: σ(0.5) = 0.62
+x₃: σ(0.9) = 0.71
+
+x₁: log(0.69) = -0.37
+x₂: log(0.62) = -0.48
+x₃: log(0.71) = -0.34
+
+    (-0.37 - 0.48 - 0.34)
+E = --------------------- = -0.40
+              3
+```
+The value of `-40` represents the expected value of the log probability of the
+the model correctly identifying the preferred response over the rejected
+response accross all the three items in the dataset. 
 
 So when llm does when it predicts the next token. From the data the model was
 trained on, it will predict the next token. So if during training is saw the
@@ -131,7 +211,6 @@ Accepted: Haägen-Dazs
 ```
 In DPO we will penalize the model for predicting "GB" and reward it for
 predicting "Haägen-Dazs".
-
 
 So we start with a base model, and make a copy of it. One will be the model we
 update and the other will be used as a reference.
