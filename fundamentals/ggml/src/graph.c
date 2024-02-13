@@ -8,11 +8,11 @@ int main(int argc, char **argv) {
   printf("GGML compute graph example\n");
 
   struct ggml_init_params params = {
-    .mem_size   = 16*1024*1024,
+    .mem_size   = 16*1024*1024, // 16 MB
     .mem_buffer = NULL,
   };
   struct ggml_context* ctx = ggml_init(params);
-  printf("ctx mem size: %ld\n", ggml_get_mem_size(ctx));
+  printf("ctx mem size: %ld MB\n", ggml_get_mem_size(ctx)/(1024*1024));
   printf("ctx mem used: %ld\n", ggml_used_mem(ctx));
 
   // Create a computation graph (c = computation  in ggml_cgraph)
@@ -22,8 +22,10 @@ int main(int argc, char **argv) {
   // The following will create tensors that will make up the computation graph
   struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   ggml_set_name(a, "a");
+
   struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   ggml_set_name(b, "b");
+
   struct ggml_tensor* c = ggml_add(ctx, a, b);
   printf("c tensor operation: %s, %s\n", ggml_op_name(c->op), ggml_op_symbol(c->op));
   ggml_set_name(c, "c");
