@@ -17,7 +17,9 @@ with coordinates) and such to describe what is in the image. So we have an
 image, and the caption, and the description of the image with the bounding boxes
 and with this the LLM can understand the image.
 
-The most recent version of LLaVA is [LLaVA v1.5](https://arxiv.org/abs/2310.03744)
+The most recent version of LLaVA is
+[LLaVA v1.6](https://llava-vl.github.io/blog/2024-01-30-llava-next/).
+And the paper for 1.5 can be found [here](https://arxiv.org/abs/2310.03744).
 
 Llava has a LLM, a Visual Transformer (CLIP with ViT-L/14 (ViT Large and using
 14x14 patches), and adds a trainable projection layer (Multi-layer projector in
