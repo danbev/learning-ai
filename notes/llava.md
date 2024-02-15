@@ -18,7 +18,7 @@ image, and the caption, and the description of the image with the bounding boxes
 and with this the LLM can understand the image.
 
 The most recent version of LLaVA is
-[LLaVA v1.6](https://llava-vl.github.io/blog/2024-01-30-llava-next/).
+[LLaVA v1.6/LLaVA-Next](https://llava-vl.github.io/blog/2024-01-30-llava-next/).
 And the paper for 1.5 can be found [here](https://arxiv.org/abs/2310.03744).
 
 Llava has a LLM, a Visual Transformer (CLIP with ViT-L/14 (ViT Large and using
@@ -81,6 +81,37 @@ LLM are frozen (not updated). So this is mostly about enabling the patch
 embeddings to be projected into the same space as the token embeddings.
 In the second stage projector is trained as well as the language model which is
 about the instruction tuning learning.
+
+
+### Using LLaVA 1.6
+First clone the LLaVA 1.6 model:
+```console
+$ git clone https://huggingface.co/liuhaotian/llava-v1.6-vicuna-7b
+```
+Then we run the llava-surgery.py script:
+```console
+$ python examples/llava/llava-surgery-v2.py -C -m ../llava-v1.6-vicuna-7b/
+```
+The copy of the following files to a new directory:
+```console
+$ mkdir vit
+$ cp ../path/to/llava.clip ../path/to/vit/pytorch_model.bin
+$ cp ../llava-v1.6-vicuna-7b/llava.projector vit/
+$ curl -s -q https://huggingface.co/cmp-nct/llava-1.6-gguf/raw/main/config_vit.json -o vit/config.json
+
+$ python ./examples/llava/convert-image-encoder-to-gguf.py -m vit --llava-projector vit/llava.projector --output-dir vit --clip-model-is-vision
+```
+Then we can convert the model to gguf format:
+```console
+$ python ./convert.py ../llava-v1.6-vicuna-7b/
+```
+And finally we can run the llava-cli using the 1.6 model version:
+```console
+~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/llava-v1.6-vicuna-7b/ggml-model-f16.gguf --mmproj ~/work/ai/llama.cpp/vit/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg
+...
+
+The image shows an astronaut standing on the surface of the moon, looking towards the camera. He is wearing a white space suit with the American flag patch visible on his chest, and he has a backpack strapped to his shoulders. In front of him stands a small wooden pole with an American flag attached to it. This scene depicts a historical moment from the Apollo missions when astronauts planted flags on the moon as part of their mission objectives. The environment around them is barren and rocky, characteristic of the moon's surface.
+```
 
 ### llama.cpp example
 First we clone git clone https://huggingface.co/liuhaotian/llava-v1.5-7b which
