@@ -130,6 +130,7 @@ projector weights in a files called llava.projector:
 torch.save(projector, f"{args.model}/llava.projector")
 ```
 ```console
+$ cd fundamentals/python && source fund/bin/activate
 (fund) $ python src/list-pytorch-model.py 
 model.mm_projector.0.weight: torch.Size([4096, 1024])
 model.mm_projector.0.bias: torch.Size([4096])
@@ -184,10 +185,11 @@ Wrote ../llava-v1.5-7b/ggml-model-f16.gguf
 
 So the removal of the projector tensors from the model confused me somewhat, 
 I understand that they need to be added to the ViT model, but I don't understand
-why they need to be removed from the LLaMA model. Perhaps it is simply to save
-memory and not have to load them into memory when they are not needed?
-Without removing them we would run into and error when converting the model:
+why they need to be removed from the LLaMA model. Without removing them we would
+run into and error when converting the model:
 ```console
+(llava-venv) $ python ./convert.py ../llava-v1.5-7b
+...
 model.layers.31.post_attention_layernorm.weight  -> blk.31.ffn_norm.weight                   | F16    | [4096]
 model.norm.weight                                -> output_norm.weight                       | F16    | [4096]
 Traceback (most recent call last):
@@ -200,6 +202,11 @@ Traceback (most recent call last):
     raise Exception(f"Unexpected tensor name: {name}. Use --skip-unknown to ignore it (e.g. LLaVA)")
 Exception: Unexpected tensor name: model.mm_projector.0.weight. Use --skip-unknown to ignore it (e.g. LLaVA)
 ```
+This is because these tensors are not defined in gguf-py/gguf/tensor_mapping.py
+so they will not be recognized, hence the error. I think it would be alright to
+remove the removal of the projector tensors from the LLaMA model and then added
+the `--skip-unknown` flag to the convert.py script.
+
 Using ``--skip-unknown` as suggested seems to work:
 ```console
 $ python ./convert.py ../llava-v1.5-7b --skip-unknown
