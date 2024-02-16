@@ -3,12 +3,12 @@
 ML is just for machine learning. It is a
 [C library](https://github.com/rustformers/llm/blob/main/crates/ggml/README.md).
 
-This is a basic example in [ggml/c-example](fundamentals/ggml/c-example/README.md)
-of how to use GGML.
+This is a basic example in [ggml](fundamentals/ggml/README.md) of how to use
+GGML.
 
-For me it helps to draw parallels between GGML and part1 of zero-to-hero, where
-we created a Value struct which in addition of holding a value, would also have
-a gradient, an operation, and children if the value was created by an
+For me it helps to draw parallels between GGML and part1 of [zero-to-hero],
+where we created a Value struct which in addition of holding a value, would also
+have a gradient, an operation, and children if the value was created by an
 operation. The Value struct also supported automatic differentiation. In a
 simliar manner GGML has a `tensor` struct which holds a value, a gradient, an
 operation and a `src` array which is simlar to the children in zero-to-hero
@@ -21,15 +21,15 @@ This will form a graph of Values which we can then at some point backpropagate
 through. In GGML the graph is created upfront before the actual operation is
 performed. 
 
-The tensor struct also supports ability do generate dot draphs. GGML contains
-more than that but the tensor is one of the the basic structure.
+The tensor struct also supports ability to generate dot draphs. GGML contains
+more than that, but the tensor is one of the the basic structure.
 
-GGML files contain binary-encoded data, including version number,
+GGML model files contain binary-encoded data, including version number,
 hyperparameters, vocabulary, and weights.
 
 So GGML is used by llama.cpp, and whisper.cpp. In addition GGML is what is the
-used by the Rust `llm` crate. So learning about GGML will help understand all of
-these project better.
+used by the Rust `llm` crate, and also by llm-chain. So learning about GGML will
+help understand all of these project better.
 
 ### Memory usage
 We start off by specifying the memory that GGML will use. This is done by
@@ -306,6 +306,62 @@ And then the cgraph will be initialized and returned:
     return cgraph;
 ```
 That will return us back in our program graph.c.
+Now, lets take a look at how a tensor is represented in memory:
+```c
+  struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+```
+```console
+(gdb) l
+2566	struct ggml_tensor * ggml_new_tensor_1d(
+2567	        struct ggml_context* ctx,
+2568	        enum ggml_type type,
+2569	        int64_t ne0) {
+2570	    return ggml_new_tensor(ctx, type, 1, &ne0);
+2571	}
+```
+I think ne0 is the number of elements in the first dimension. 
+```console
+(gdb) l
+2558	struct ggml_tensor * ggml_new_tensor(
+2559	        struct ggml_context * ctx,
+2560	        enum   ggml_type      type,
+2561	        int                   n_dims,
+2562	        const int64_t       * ne) {
+2563	    return ggml_new_tensor_impl(ctx, type, n_dims, ne, NULL, 0);
+2564	}
+
+(gdb) l
+2461	
+2462	static struct ggml_tensor * ggml_new_tensor_impl(
+2463	        struct ggml_context* ctx,
+2464	        enum ggml_type type,
+2465	        int n_dims,
+2466	        const int64_t* ne,
+2467	        struct ggml_tensor* view_src,
+2468	        size_t view_offs) {
+```
+Notice that the last two arguments are NULL and 0 which are the `view_src` and
+`view_offs`.
+Skipping some things about views which I'm not familiar with yet and also
+skipping the scratch buffer.
+TODO: take a closer look at views and scratch buffers.
+
+Next, we have something that might now look familar:
+```c
+    struct ggml_object * const obj_new = ggml_new_object(ctx,
+        GGML_OBJECT_TENSOR,
+        GGML_TENSOR_SIZE + obj_alloc_size);
+```
+But this time insted of a `GGML_OBJECT_GRAPH` we are creating a
+`GGML_OBJECT_TENSOR`.
+```console
+(gdb) p sizeof(struct ggml_tensor)
+$60 = 384
+(gdb) p obj_alloc_size
+$61 = 4
+(gdb) p sizeof(struct ggml_tensor) + obj_alloc_size
+$62 = 388
+```
 
 ### GGML walk through
 
@@ -571,4 +627,4 @@ Lets turn our attention to the llama_init_from_gpt_params function:
 ```console
 std::tie(model, ctx) = llama_init_from_gpt_params(params);
 ```
-
+[zero-to-hero]: fundamentals/rust/zero-to-hero/README.md
