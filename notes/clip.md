@@ -14,7 +14,9 @@ Two main components:
 1. Image encoder
 This part produces image embeddings like patch embeddings from a ViT I think,
 like the last layer of a ViT model inference. But it does not have to use ViT
-and a CNN could be used as well.
+and a CNN could be used as well. The embeddings can be thought of as simliar to
+token embeddings but there is no lookup of the id of a token in a vocabulary,
+instead the embeddings use the raw pixel values of the image.
 
 2. Text encoder
 This part produces text embeddings from a transformer model designed for NLP.
@@ -27,6 +29,7 @@ the images and the text descriptions. The model is trained to minimize the
 distance between embeddings of correct image-text pairs while maximizing the
 distance between embeddings of incorrect pairs. This is known as a contrastive
 loss function, specifically designed to handle such tasks.
+
 One thing to note here is that if you have a batch of images and text pairs
 that are all about cats you might get a model that does not work as expected.
 This is because if we use a batch and want to find the most similar image to
@@ -88,3 +91,21 @@ searches for images with similar embeddings in the database.
 This is a new way to train models that can understand images and it is a step
 away from the traditional way of training models to understand images which was
 to use labeled images.
+
+### Vision Tower
+This is a name for the vision encoder part of the CLIP model. This could be ViT
+for example.
+
+The "tower" terminology signifies that each of these components is a distinct
+part of the overall architecture, with each "tower" focusing on a different
+modality (vision for images and language for text). Perhaps "tower" comes from
+that these parts are fairly independent and have distinct roles.
+
+"In machine learning, particularly with complex models like CLIP, the metaphor
+of a tower helps convey the idea of a component designed for a specific type of
+data processing, stacked layer upon layer to transform input data into a
+high-level representation. Each "tower" within a model like CLIP is specialized
+(e.g., one for images and another for text), yet they work together within the
+overarching architecture to achieve a common goal, such as aligning visual and
+textual representations."
+
