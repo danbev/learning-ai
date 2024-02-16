@@ -83,42 +83,14 @@ In the second stage projector is trained as well as the language model which is
 about the instruction tuning learning.
 
 
-### Using LLaVA 1.6
-First clone the LLaVA 1.6 model:
-```console
-$ git clone https://huggingface.co/liuhaotian/llava-v1.6-vicuna-7b
-```
-Then we run the llava-surgery.py script:
-```console
-$ python examples/llava/llava-surgery-v2.py -C -m ../llava-v1.6-vicuna-7b/
-```
-Then copy the following files to a new directory:
-```console
-$ mkdir vit
-$ cp ../path/to/llava.clip ../path/to/vit/pytorch_model.bin
-$ cp ../llava-v1.6-vicuna-7b/llava.projector vit/
-$ curl -s -q https://huggingface.co/cmp-nct/llava-1.6-gguf/raw/main/config_vit.json -o vit/config.json
-
-$ python ./examples/llava/convert-image-encoder-to-gguf.py -m vit --llava-projector vit/llava.projector --output-dir vit --clip-model-is-vision
-```
-Then we can convert the model to gguf format:
-```console
-$ python ./convert.py ../llava-v1.6-vicuna-7b/
-```
-And finally we can run the llava-cli using the 1.6 model version:
-```console
-~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/llava-v1.6-vicuna-7b/ggml-model-f16.gguf --mmproj ~/work/ai/llama.cpp/vit/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg
-...
-
-The image shows an astronaut standing on the surface of the moon, looking towards the camera. He is wearing a white space suit with the American flag patch visible on his chest, and he has a backpack strapped to his shoulders. In front of him stands a small wooden pole with an American flag attached to it. This scene depicts a historical moment from the Apollo missions when astronauts planted flags on the moon as part of their mission objectives. The environment around them is barren and rocky, characteristic of the moon's surface.
-```
 
 ### llama.cpp example
-First we clone git clone https://huggingface.co/liuhaotian/llava-v1.5-7b which
-is the intruction tuned model.
+First we clone https://huggingface.co/liuhaotian/llava-v1.5-7b which is the
+instruction tuned model, which recall was trained on prompts which contained
+a textual description of an image and then user/assistent interactions, and also
+with the images. This is what produces the projector.
 
 I did the following in the directory above my checked out llama.cpp directory.
-
 We need to checkout the LLaVA model:
 ```console
 $ git clone https://huggingface.co/liuhaotian/llava-v1.5-7b
@@ -142,43 +114,39 @@ Done!
 Now you can convert ../llava-v1.5-7b/ to a a regular LLaMA GGUF file.
 Also, use ../llava-v1.5-7b//llava.projector to prepare a llava-encoder.gguf file.
 ```
-I've added some debug prints to the llava-surgery.py script to see what it is
-doing. Note that we need to revert the changes in ../llava-v1.5-7b/ before we
-can run the script again.
+What this script does is that it looks up the pretrained PyTorch weight files
+(the last one) which in my case is pytorch_model-00002-of-00002.bin. Hmm, could
+this not be looked up instead using the pytorch_model.bin.index.json?  
+The following tensors are retrieved and stored:
+```console
+"model.mm_projector.0.bias": "pytorch_model-00002-of-00002.bin",               
+"model.mm_projector.0.weight": "pytorch_model-00002-of-00002.bin",             
+"model.mm_projector.2.bias": "pytorch_model-00002-of-00002.bin",               
+"model.mm_projector.2.weight": "pytorch_model-00002-of-00002.bin", 
 ```
-(llava-venv) $ python ./examples/llava/llava-surgery.py -m ../llava-v1.5-7b
-path: ../llava-v1.5-7b/pytorch_model-00002-of-00002.bin
-
-checkpoint: dict_keys([
- ...
- 'model.mm_projector.0.weight'
- 'model.mm_projector.0.bias'
- 'model.mm_projector.2.weight'
- 'model.mm_projector.2.bias'
- 'lm_head.weight'])
-
-mm_tensors: ['model.mm_projector.0.weight', 'model.mm_projector.0.bias', 'model.mm_projector.2.weight', 'model.mm_projector.2.bias']
-projector: dict_keys(['model.mm_projector.0.weight', 'model.mm_projector.0.bias', 'model.mm_projector.2.weight', 'model.mm_projector.2.bias'])
-saved in llava.projector
-
-Remove the following tensors from the checkpoint (pytorch_model-00002-of-00002.bin):
-deleting model.mm_projector.0.weight
-deleting model.mm_projector.0.bias
-deleting model.mm_projector.2.weight
-deleting model.mm_projector.2.bias
-
-Done!
-Now you can convert ../llava-v1.5-7b to a a regular LLaMA GGUF file.
-Also, use ../llava-v1.5-7b/llava.projector to prepare a llava-encoder.gguf file.
+Then `torch.save` (which would be in pickle format) is used which will save the
+projector weights in a files called llava.projector:
+```python
+torch.save(projector, f"{args.model}/llava.projector")
 ```
-So what this is doing is that it is extracting the projection tensors from the
-last image file and saving them to a file called llava.projector.
-Then the same tensors are removed from the image file.
+```console
+(fund) $ python src/list-pytorch-model.py 
+model.mm_projector.0.weight: torch.Size([4096, 1024])
+model.mm_projector.0.bias: torch.Size([4096])
+model.mm_projector.2.weight: torch.Size([4096, 4096])
+model.mm_projector.2.bias: torch.Size([4096])
+```
+The surgery script also removes these weights from the model file and saves it,
+so we need to revert the changes in ../llava-v1.5-7b/ before we can run the
+script again.
+So at this point pytorch_model-00002-of-00002.bin does not contain the tensor
+weights related to the projector.
 
-The llava.projector is the projector matrix which we will use with the image
-encoder so that it can convert/transform the image embeddings into the same
-space as the text embeddings. And the type of model has to be GGUF so this will
-also convert it to that format:
+The `llava.projector` are the tensors that projector which we will use with the
+image encoder so that it can convert/transform the image embeddings into the
+same space as the text embeddings.
+
+And the type of model has to be GGUF so this will also convert it to that format:
 ```console
 (llava-venv) $ python ./examples/llava/convert-image-encoder-to-gguf.py -m ../clip-vit-large-patch14-336 --llava-projector ../llava-v1.5-7b/llava.projector --output-dir ../llava-v1.5-7b
 gguf: This GGUF file is for Little Endian only
@@ -187,7 +155,7 @@ Projector tensors added
 Done. Output file: ../llava-v1.5-7b/mmproj-model-f16.gguf
 ```
 So that is the ViT with the addition of the projector tensors, converted to
-GGUF format (I think).
+GGUF format which is now in `mmproj-model-f16.gguf`
 
 Then we need to convert the llava part of llava to GGUF format, which we removed
 the projector tensors from:
@@ -213,6 +181,31 @@ gguf: Setting add_eos_token to False
 ...
 Wrote ../llava-v1.5-7b/ggml-model-f16.gguf
 ```
+
+So the removal of the projector tensors from the model confused me somewhat, 
+I understand that they need to be added to the ViT model, but I don't understand
+why they need to be removed from the LLaMA model. Perhaps it is simply to save
+memory and not have to load them into memory when they are not needed?
+Without removing them we would run into and error when converting the model:
+```console
+model.layers.31.post_attention_layernorm.weight  -> blk.31.ffn_norm.weight                   | F16    | [4096]
+model.norm.weight                                -> output_norm.weight                       | F16    | [4096]
+Traceback (most recent call last):
+  File "/home/danielbevenius/work/ai/llama.cpp/./convert.py", line 1483, in <module>
+    main()
+  File "/home/danielbevenius/work/ai/llama.cpp/./convert.py", line 1469, in main
+    model   = convert_model_names(model, params, args.skip_unknown)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danielbevenius/work/ai/llama.cpp/./convert.py", line 1206, in convert_model_names
+    raise Exception(f"Unexpected tensor name: {name}. Use --skip-unknown to ignore it (e.g. LLaVA)")
+Exception: Unexpected tensor name: model.mm_projector.0.weight. Use --skip-unknown to ignore it (e.g. LLaVA)
+```
+Using ``--skip-unknown` as suggested seems to work:
+```console
+$ python ./convert.py ../llava-v1.5-7b --skip-unknown
+```
+Perhaps this could be changed as it would be nice to be able to not have to
+update the original model file.
 
 Now, we can pass the following image to `llava-cli` and it will describe it:
 
@@ -352,7 +345,36 @@ llama_print_timings:      sample time =      56.21 ms /    87 runs   (    0.65 m
 llama_print_timings: prompt eval time =    5576.01 ms /   616 tokens (    9.05 ms per token,   110.47 tokens per second)
 llama_print_timings:        eval time =   16764.83 ms /    87 runs   (  192.70 ms per token,     5.19 tokens per second)
 llama_print_timings:       total time =   27646.54 ms /   703 tokens
+```
 
+### Using LLaVA 1.6
+First clone the LLaVA 1.6 model:
+```console
+$ git clone https://huggingface.co/liuhaotian/llava-v1.6-vicuna-7b
+```
+Then we run the llava-surgery.py script:
+```console
+$ python examples/llava/llava-surgery-v2.py -C -m ../llava-v1.6-vicuna-7b/
+```
+Then copy the following files to a new directory:
+```console
+$ mkdir vit
+$ cp ../path/to/llava.clip ../path/to/vit/pytorch_model.bin
+$ cp ../llava-v1.6-vicuna-7b/llava.projector vit/
+$ curl -s -q https://huggingface.co/cmp-nct/llava-1.6-gguf/raw/main/config_vit.json -o vit/config.json
+
+$ python ./examples/llava/convert-image-encoder-to-gguf.py -m vit --llava-projector vit/llava.projector --output-dir vit --clip-model-is-vision
+```
+Then we can convert the model to gguf format:
+```console
+$ python ./convert.py ../llava-v1.6-vicuna-7b/
+```
+And finally we can run the llava-cli using the 1.6 model version:
+```console
+~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/llava-v1.6-vicuna-7b/ggml-model-f16.gguf --mmproj ~/work/ai/llama.cpp/vit/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg
+...
+
+The image shows an astronaut standing on the surface of the moon, looking towards the camera. He is wearing a white space suit with the American flag patch visible on his chest, and he has a backpack strapped to his shoulders. In front of him stands a small wooden pole with an American flag attached to it. This scene depicts a historical moment from the Apollo missions when astronauts planted flags on the moon as part of their mission objectives. The environment around them is barren and rocky, characteristic of the moon's surface.
 ```
 
 ### Lightweight Downsampling Projector (LDP)
