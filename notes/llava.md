@@ -384,6 +384,44 @@ And finally we can run the llava-cli using the 1.6 model version:
 The image shows an astronaut standing on the surface of the moon, looking towards the camera. He is wearing a white space suit with the American flag patch visible on his chest, and he has a backpack strapped to his shoulders. In front of him stands a small wooden pole with an American flag attached to it. This scene depicts a historical moment from the Apollo missions when astronauts planted flags on the moon as part of their mission objectives. The environment around them is barren and rocky, characteristic of the moon's surface.
 ```
 
+### BakLLaVA-1
+This is a Mistral 7B base model agumented with LLaVA-1.5 architecture compared
+to the version above which was based on Vicuna (which recall is a fine-tuned
+LLaMA base model for chat (conversations were collected from ShareGPT)).
+
+First clone BakLLaVA-1:
+
+```console
+$ git clone https://huggingface.co/SkunkworksAI/BakLLaVA-1
+```
+
+Then we run the llava-surgery.py script:
+```console
+(llava-venv) $ python examples/llava/llava-surgery.py -m ../BakLLaVA-1/
+Done!
+Now you can convert ../BakLLaVA-1/ to a regular LLaMA GGUF file.
+Also, use ../BakLLaVA-1//llava.projector to prepare a llava-encoder.gguf file.
+
+```
+Then we convert the vision model to gguf format:
+```console
+(llava-venv) $ python ./examples/llava/convert-image-encoder-to-gguf.py -m ../clip-vit-large-patch14-336 --llava-projector ../BakLLaVA-1/llava.projector --output-dir ../BakLLaVA-1
+...
+Done. Output file: ../BakLLaVA-1/mmproj-model-f16.gguf
+```
+Then we convert the BakLLaVA-1 to gguf format:
+```console
+$ python ./convert.py ../BakLLaVA-1
+...
+Wrote ../BakLLaVA-1/ggml-model-f16.gguf
+```
+And then we can run the llava-cli using the BakLLaVA-1 model:
+```console
+(llava-venv) $ ~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/BakLLaVA-1/ggml-model-f16.gguf --mmproj ~/work/ai/llama.cpp/vit/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg
+```
+Hmm, the output from this was not correct. I think I might have missed a step
+here.
+
 ### Lightweight Downsampling Projector (LDP)
 This is an option that is available in the script.
 ```console
