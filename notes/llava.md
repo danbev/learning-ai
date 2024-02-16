@@ -92,7 +92,7 @@ Then we run the llava-surgery.py script:
 ```console
 $ python examples/llava/llava-surgery-v2.py -C -m ../llava-v1.6-vicuna-7b/
 ```
-The copy of the following files to a new directory:
+Then copy the following files to a new directory:
 ```console
 $ mkdir vit
 $ cp ../path/to/llava.clip ../path/to/vit/pytorch_model.bin
