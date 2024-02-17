@@ -17,12 +17,14 @@ int main(int argc, char **argv) {
   const int ny = 3; // y-axis, the height or the number of rows in the matrix.
   struct ggml_tensor* a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nx, ny);
   ggml_set_name(a, "a");
-  *(float *)( (char *) a->data) = 1;
-  *(float *)( (char *) a->data + 4) = 2;
-  *(float *)( (char *) a->data + 8) = 3;
-  *(float *)( (char *) a->data + 12) = 4;
-  *(float *)( (char *) a->data + 16) = 5;
-  *(float *)( (char *) a->data + 20) = 6;
+  //void* data   = (char *) a->data + i0*tensor->nb[0] + i1*tensor->nb[1] + i2*tensor->nb[2] + i3*tensor->nb[3];
+
+  ggml_set_i32_nd(a, 0, 0, 0, 0, 1);
+  ggml_set_i32_nd(a, 1, 0, 0, 0, 2);
+  ggml_set_i32_nd(a, 0, 1, 0, 0, 3);
+  ggml_set_i32_nd(a, 1, 1, 0, 0, 4);
+  ggml_set_i32_nd(a, 0, 2, 0, 0, 5);
+  ggml_set_i32_nd(a, 1, 2, 0, 0, 6);
 
   printf("matrix nb[0] type: %ld\n", a->nb[0]);
   printf("matrix nb[1] type: %ld\n", a->nb[1]);
@@ -41,8 +43,8 @@ int main(int argc, char **argv) {
   const int64_t ne[2] = { 2, 1 };
   struct ggml_tensor* b = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, ne);
   ggml_set_name(b, "b");
-  *(float *)( (char *) b->data) = 7;
-  *(float *)( (char *) b->data + 4) = 8;
+  ggml_set_i32_nd(b, 0, 0, 0, 0, 7);
+  ggml_set_i32_nd(b, 1, 0, 0, 0, 8);
 
   // Note that ggml_mul_mat() transposes the secod matrix b.
   struct ggml_tensor* result = ggml_mul_mat(ctx, a, b);
