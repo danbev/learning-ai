@@ -5,7 +5,7 @@
 #include "ggml/ggml-backend.h"
 
 int main(int argc, char **argv) {
-  printf("GGML tensor example\n");
+  printf("GGML matrix multiplication example\n");
 
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024,
