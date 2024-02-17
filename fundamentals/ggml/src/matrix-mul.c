@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
   ggml_graph_compute_with_ctx(ctx, c_graph, 4);
 
   printf("result tensor type: %s\n", ggml_type_name(result->type));
-  printf("result dim: %d\n", result->n_dims);
+  printf("result dim: %d\n", ggml_n_dims(result));
   printf("result dim[0]: %ld\n", result->ne[0]);
   printf("result dim[1]: %ld\n", result->ne[1]);
 
