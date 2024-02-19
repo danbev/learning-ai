@@ -41,15 +41,27 @@ x₁₂ = 0.707 * 210 + 0.707 * -16 = 148.47 - 11.31 = 137.16
 x₂₀ = 0.707 * 130 + 0.707 * -21 = 91.91 - 14.85 = 77.06
 x₂₁ = 0.707 * 160 + 0.707 * 29 = 113.12 + 20.5 = 133.62
 x₂₂ = 0.707 * 190 + 0.707 * -8 = 134.23 - 5.65 = 128.58
+
+[ 89  72 134 ]
+[ 96 176 137 ]
+[ 77 133 128 ]
 ```
-So that was one step, and we can do this for as many steps as we want. Now, when
-I saw and read about this below, there is a mention of a forward pass which is
-the process of adding noise to an image. I though that only the last step was
-recorded and used but all steps are recorded and used as input when training.
-And the original image is used as the target (the truth value) when training.
-So training it not just done on the final step with the original image as the
-target, but on all steps with the original image as the target. That is how the
-model learns to remove noise from the image.
+So that was one step, and we can do this for as many steps as we want.
+
+Now, when I saw and read about this below, there is a mention of a forward pass
+which is the process of adding noise to an image. I though that only the last
+step was recorded and used but all steps are recorded and used as input when
+training. And the original image is used as the target (the truth value) when
+training. So training it not just done on the final step with the original image
+as the target, but on all steps with the original image as the target. That is
+how the model learns to remove noise from the image.
+
+The guassian noise is chosen using the guassian distribution or normal
+distribution which is a probability distribution that is symmetric about the
+mean, showing that data near the mean are more frequent in occurrence than data
+far from the mean.  we say we sample from this distrubtion which is basically
+drawing random values from the distribution which will follow the probability
+distribution function.
 
 Then we have the reverse process which removes noise from an image, which is
 called the reverse diffusion process.
@@ -95,7 +107,7 @@ The can write the probability distribution function as:
 ```
 q(x₁, ..., xₜ|x₀) = ∏ᵢ q(xᵢ|xᵢ-₁)
 ```
-So I read above as q(x_1, ..., x_t|x_o) is a function (like in a programming
+So I read above as `q(x_1, ..., x_t|x_o)` is a function (like in a programming
 language) which takes `x₀` (the initial input/state) and the body of the
 function will take those values and multiply them together which will then be
 then end result which is returned by the function.
@@ -122,6 +134,19 @@ I    = the identity matrix
 ```
 βₜ ε (0, 1), so the value is dependent on the current time step, and is in or
 belongs to the open interval (0, 1) (so values greater than 0 and less than 1).
+The notation of N(x ; μ, σ²), here x is the variable of interest, μ is the mean
+of the distribution, and σ² is the variance of the distribution.
+
+I'm trying to visualize this and my current mental model is the number line the
+for each time step we will have a different mean for the distribution, hence the
+distribution changes a little for each time step. And the variance, how much the
+samples are spreaad out from the mean is also different for each time step but 
+is the same for all dimensions which is the reason for the identity matrix..
+And this "should" give different/changing sampled random values as time
+progresses. 
+Because the mean of the distribution at each time step is dependent on the
+previous state, the center (mean) of our normal distribution shifts along the
+number line. 
 
 
 ### Guassian noise
