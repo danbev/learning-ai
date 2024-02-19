@@ -401,26 +401,29 @@ Then we run the llava-surgery.py script:
 Done!
 Now you can convert ../BakLLaVA-1/ to a regular LLaMA GGUF file.
 Also, use ../BakLLaVA-1//llava.projector to prepare a llava-encoder.gguf file.
-
 ```
+
 Then we convert the vision model to gguf format:
 ```console
 (llava-venv) $ python ./examples/llava/convert-image-encoder-to-gguf.py -m ../clip-vit-large-patch14-336 --llava-projector ../BakLLaVA-1/llava.projector --output-dir ../BakLLaVA-1
 ...
 Done. Output file: ../BakLLaVA-1/mmproj-model-f16.gguf
 ```
+
 Then we convert the BakLLaVA-1 to gguf format:
 ```console
 $ python ./convert.py ../BakLLaVA-1
 ...
 Wrote ../BakLLaVA-1/ggml-model-f16.gguf
 ```
+
 And then we can run the llava-cli using the BakLLaVA-1 model:
 ```console
-(llava-venv) $ ~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/BakLLaVA-1/ggml-model-f16.gguf --mmproj ~/work/ai/llama.cpp/vit/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg
+(llava-venv) $ ~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/BakLLaVA-1/ggml-model-f16.gguf --mmproj ~/work/ai/BakLLaVA-1/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg
+...
+
+The image is a photograph of an astronaut standing on the surface of the Moon during the Apollo 11 mission.
 ```
-Hmm, the output from this was not correct. I think I might have missed a step
-here.
 
 ### Lightweight Downsampling Projector (LDP)
 This is an option that is available in the script.
