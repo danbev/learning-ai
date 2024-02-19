@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
   printf("x tensor operation: %s, %s\n", ggml_op_name(x->op), ggml_op_symbol(x->op));
   // ggml_tensor's are used as the base unit values in the library, similar to
   // the Value struct in the LLM zero-to-hero tutorial. These values support
-  // autmoatic differentiation, so they have a grad field. 
+  // automatic differentiation, so they have a grad field. 
   printf("x tensor grad: %p\n", x->grad);
   // src are the values that were used to create the tensor, for example if the
   // tensor was created by a + b = c, then the src would be a and b.
