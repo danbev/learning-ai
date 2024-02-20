@@ -23,6 +23,16 @@ They constist of three components:
                    (bottleneck)
                    (latent rep)
 ```
+Now, the input could be an image and the output the same image which might sound
+strange but the idea is that the decoder will be trained to reconstruct the
+original input from the code. The code is a lower-dimensional representation of
+the input. So that would be used for compression for example. where we use the
+output of the encoder, the code vector, and send it over the network to receiver
+how uses a decoder to reconstruct the original input.
+But we could also imagine where we have a blurry input image and the output
+image (the target image that we compare with and calculate the loss of) is 
+the clear image. The network would then be training to reduce the blurriness of
+the input image.
 
 So lets make this more concrete. If we have an image as input this will be
 converted into a high-dimensional vector (the pixels of the image). This vector
@@ -108,6 +118,23 @@ from the latent space would result in noise and we discussed the reason for this
 What VAE does is it add structure to the latent space to allow for sampling from
 it.
 
+```
+  +--+
+  |  |     +---\                        /---+    +--+
+  |  |     |    \                      /    |    |  |
+  |  |     |     |  +--+      +--+    |     |    |  |
+  |  |---->|     |->|μ |--+   |  |--->|     |--->|  |
+  |  |     |     |  +--+  |-->|z |    |     |    |  |
+  |  |     |    /   +--+  |   +--+    \     |    |  |
+  |  |     +---/    |σ |--+            \---+     +--+
+  |  |              +--+
+  +--+
+
+ Input    Encoder  reparam.  sampled   Decoder    Output
+                             latent
+                             vector
+```
+
 Lets take our example from above (at least the first input):
 ```
  [1.2]
@@ -116,8 +143,6 @@ Lets take our example from above (at least the first input):
  [7.8]
 ```
 Now, with VAE it might generate a code (vector) that looks something like this:
-
-
 ```
 mean (μ) = [1.0, 3.0, 5.0, 7.0]
 variability (σ) = [0.5, 0.5, 0.5, 0.5]
@@ -149,4 +174,24 @@ structured to ensure that similar inputs map to overlapping distributions, this
 new image should realistically represent a cat. The generated image might blend
 features from both original cat images, such as pose or lighting, reflecting the
  intermediate nature of the interpolated vector.
+
+And we could also generate new cat images by sampling from the distribution:
+(recall that sampling involved randomness so the generated images will not be
+the same each time we sample from the distribution)
+```
+mean (μ) = [1.0, 3.0, 5.0, 7.0]
+Variance (σ²) = [0.5, 0.5, 0.5, 0.5] ([0.707, 0.707, 0.707, 0.707])
+
+ N(1.0, 0.707) = 1.2
+ N(3.0, 0.707) = 2.9
+ N(5.0, 0.707) = 4.8
+ N(7.0, 0.707) = 7.1
+
+Latent vector (code):
+ [1.2]
+ [2.9]
+ [4.8]
+ [7.1]
+```
+This would then be passed through the decoder to generate a new cat image.
 
