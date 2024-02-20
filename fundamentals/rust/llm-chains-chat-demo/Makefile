@@ -12,4 +12,4 @@ build-llama-cuda: src/main-llama.rs
 	env LLM_CHAIN_CUDA_LIB_PATH=/usr/local/cuda-12.2/lib64 LLM_CHAIN_CUDA=true cargo b --bin llama -vv
 
 run-llama-cuda: src/main-llama.rs
-	env LLM_CHAIN_CUDA_LIB_PATH=/usr/local/cuda-12.2/lib64 LLM_CHAIN_CUDA=true cargo r --bin llama -vv
+	env LLM_CHAIN_CUDA_LIB_PATH=/usr/local/cuda-12.2/lib64 LLM_CHAIN_CUDA=true cargo r --bin llama
