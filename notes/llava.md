@@ -359,14 +359,19 @@ First clone the LLaVA 1.6 model:
 ```console
 $ git clone https://huggingface.co/liuhaotian/llava-v1.6-vicuna-7b
 ```
-Then we run the llava-surgery.py script:
+One thing to note about this model is that it includes the vision part in the    
+model files, in contrast to llava-1.5 where the vision part is in a separate     
+model that we checked out. So the surgery script for this version will extract
+them.
+
+Then we run the llava-surgery-v2.py script:
 ```console
 $ python examples/llava/llava-surgery-v2.py -C -m ../llava-v1.6-vicuna-7b/
 ```
 Then copy the following files to a new directory:
 ```console
 $ mkdir vit
-$ cp ../path/to/llava.clip ../path/to/vit/pytorch_model.bin
+$ cp ../llava-v1.6-vicuna-7b/llava.clip vit/pytorch_model.bin
 $ cp ../llava-v1.6-vicuna-7b/llava.projector vit/
 $ curl -s -q https://huggingface.co/cmp-nct/llava-1.6-gguf/raw/main/config_vit.json -o vit/config.json
 
