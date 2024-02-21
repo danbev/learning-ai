@@ -31,7 +31,7 @@ So for each pixel in the image we will plug that value into the equation:
 ```
 √(0.5) = 0.707 
 √(1 - 0.5) = √(0.5) = 0.707
-```
+
 x₀₀ = 0.707 * 100 + 0.707 * 26 = 70.7 + 18.4 = 89.1
 x₀₁ = 0.707 * 150 + 0.707 * -47 = 106.05 - 33.29 = 72.76
 x₀₂ = 0.707 * 200 + 0.707 * -10 = 141.4 - 7.07 = 134.33
@@ -93,7 +93,6 @@ x₀ ~ q(x₀)
         symbol.
 q(x₀) = is the probability distribution function
 ```
-```
 So we have the original image x₀ and we add noise to it in small steps T.
 ```
 x₀ -> x₁ -> x₂ -> ... -> xₜ
@@ -124,10 +123,12 @@ q(xᵢ|xᵢ-₁)
 A common choice for the transition kernel is the guassian distribution:
 ```
 q(xᵢ|xᵢ-₁) = N(xₜᵢ; √βₜxₜ₋₁, βₜI)
-
+                   [-------] [--]
+                       ↑       ↑
+                      mean    variance
 Where:
 N    = normal distribution
-xₜᵢ  = the image at time t
+xₜᵢ  = the image at time t (the output)
 xₜ₋₁ = the image at time t-1
 βₜ   = the amount of noise to add at step t. ε (0, 1)
 I    = the identity matrix
@@ -147,6 +148,110 @@ progresses.
 Because the mean of the distribution at each time step is dependent on the
 previous state, the center (mean) of our normal distribution shifts along the
 number line. 
+
+So one pass through the forward process is called a forward pass and the image
+will have a little noise added to it for each pass. Now, there is a way to write
+this without having show all the steps, and that is to use the following:
+```
+αₜ = 1 - βₜ
+```
+And we can define `alpha_bar` which is the cumulative product of all alpha
+values for all time steps:
+```
+-   t
+αₜ= Π aₛ
+   s=1
+```
+Recall that the cumulative product of a sequence of numbers is the product of
+all numbers up to the current number.
+For example for [2, 3, 4]:
+```
+[2]                     = [2]
+[2, 3] = [2 * 3]        = [6]
+[2, 3, 4] = [2 * 3 * 4] = [24]
+```
+So that is what we are doing with the alpha values for all time steps.
+
+So we have the formula from above:
+```
+q(xᵢ|xᵢ-₁) = N(xₜᵢ; √βₜxₜ₋₁, βₜI)
+```
+Which we can re-write as:
+```
+q(xᵢ|xᵢ-₁) = N(xₜᵢ; √αₜxₜ₋₁, αₜI)
+           = √1-βₜxₜ₋₁ + √βₜε
+```
+
+### Reparameterization trick
+When we have an variation autoencoder (VAE) the encoder is not creating the
+latent space vector directly, but instead it is sampling from a guassian
+distribution with a mean and variance. But when the backpropagation algorithm
+is used to train the model, it cannot pass the gradient through a random node.
+So the node itself `z` has a value, that is not the problem, the problem is that
+the value in this case is produced randomlly by sampling from the normal
+distribution N(μ, σ). Let say this was a function n(μ, σ) and it returns
+a random value:
+```
+  float z(float μ, float σ) {
+    return rand(μ, σ);
+  }
+```
+If we would try to implement this as a Value/Node in our from-zero-to-hero
+project we would not be able to create the backpropagation code because how
+could we figure out how a small change to μ or σ would change the output of the
+function. We could not, because the output is random.
+
+This randomness prevents the direct backpropagation of gradients through the
+sampling process because the derivative of a random sampling operation is not
+defined.
+
+This is the problem that the reparameterization trick solves.
+So normally we would sample z from a distribution like this:
+```
+z ~ N(μ, σ)
+
+z is sampled from the distribution N(μ, σ)
+μ = mean
+σ = standard deviation
+```
+What we can do is introduce a helper variable ε which is sampled from a standard
+normal distribution (mean = 0, standard deviation = 1):
+```
+ε ~ N(0, 1)
+```
+This distribution is fixed and does not depend on any of the parameters of the
+model. Now we can add this variable as a parameter to z:
+```
+z = μ + σ * ε
+```
+So our pseudo code would look like this:
+```
+  float z(float μ, float σ, float ε) {
+    return μ + σ * ε;
+  }
+```
+So the value of epsilon would have been sampled from the standard normal before
+calling the z function:
+```
+float epsilon() {
+  return standard_normal_distribution_sample();
+
+}
+float z(float μ, float σ, float ε) {
+  return μ + σ * ε;
+}
+
+// Usage example
+float ε = epsilon(); // Sample ε
+float sample_z = z(μ, σ, ε); // Compute z
+```
+So during the forward pass epsilon is sampled, and in the backward pass
+(backpropagation) it is a constant value and is scaled by the small
+changes/nudges to the parameters mu and sigma.
+
+```
+q(xᵢ|xᵢ-₁) = N(xₜᵢ; √βₜxₜ₋₁, βₜI)
+```
 
 
 ### Guassian noise
