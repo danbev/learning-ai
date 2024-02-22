@@ -8,10 +8,14 @@ export PKG_CONFIG_PATH=${OPENVINO_PKG_CONFIG_PATH}
 
 CXX = g++
 CXXFLAGS = `pkg-config --cflags openvino`
+CFLAGS = `pkg-config --cflags openvino`
 LDFLAGS = `pkg-config --libs openvino`
 
 print-version: src/print-version.cpp
 	${CXX} ${CXXFLAGS} ${LDFLAGS} -o $@ $<
+
+print-version-c: src/print-version.c
+	${CC} ${CFLAGS} ${LDFLAGS} -o $@ $<
 
 
 openvino-pkg-config-libs:
