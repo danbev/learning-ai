@@ -30,7 +30,7 @@ $ git clone https://github.com/openvinotoolkit/openvino.git
 $ git submodule update --init --recursive
 $ sudo ./install_build_dependencies.sh
 $ mkdir build && cd build
-$ cmake -DCMAKE_BUILD_TYPE=Release ..
+$ cmake -DCMAKE_BUILD_TYPE=Release .. -DENABLE_INTEL_GPU=OFF
 $ cmake --build . --parallel 8
 $ cmake --install . --prefix ~/work/ai/openvino/openvino_dist
 ```
@@ -41,4 +41,8 @@ sourcing the OpenVINO setupvars.sh file will not work. I think this might be
 because the OpenVINO version used in openvino 0.6.0 is 2022.1.0 and it does
 not use the newer OpenVINO 2.0 API. There is an open issue for this:
 https://github.com/intel/openvino-rs/issues/53
+
+But trying to build an older version of OpenVINO does not seem to work and I
+spent way too much time trying to get it to work. Having to dymanically link
+with external libraries it very painful and this is a very good example of this.
 
