@@ -36,10 +36,10 @@ the input image.
 
 So lets make this more concrete. If we have an image as input this will be
 converted into a high-dimensional vector (the pixels of the image). This vector
-is then passed through to the encoder. The encoder will the pass this through it
-layers and reducing/compressing the data into a lower-dimensional
-representation. This process involves nonlinear transformations that aim to
-keep the most significant features of the input.
+is then passed through to the encoder. The encoder will the pass this through
+its layers and reduc/compress the data into a lower-dimensional representation.
+This process involves nonlinear transformations that aim to keep the most
+significant features of the input.
 
 The code might the look like this for the first image (lets say it is of a cat):
 ```
@@ -59,6 +59,7 @@ Notice that the codes are very different, but they are both cat images. This is
 because the autoencoder is only concerned with keeping the most relevant
 information from the image and not concerned with the distribution of values in
 the latent space.
+
 So lets try to sample from the latent space above and see what the real issue
 is with doing this.
 We can try to interpolate between them and see what we get:
@@ -97,10 +98,10 @@ back from the latent space vector.
 General autoencoders cannot generate new data samples, they are mainly used for
 the generation of the latent space. This latent space is not structured in a 
 way that ensures that all regions within it correspond to valid output. If we
-generate from this space, we will most often get noise.  To be able to generate
+generate from this space, we will most often get noise. To be able to generate
 new sample of a specific type of data, like cat images, we also need have some
-structure of the latent space to allow for sampling from
-it and not getting noise which is what Variational Autoencoders (VAE) help with.
+structure of the latent space to allow for sampling from it and not getting
+noise which is what Variational Autoencoders (VAE) help with.
 
 ### Undercomplete autoencoder
 Can be used to generate a compressed representation of the input data.
@@ -194,4 +195,55 @@ Latent vector (code):
  [7.1]
 ```
 This would then be passed through the decoder to generate a new cat image.
+
+```
+z = μ + σ * ε
+
+ε ~ N(0, 1)
+```
+Where ε is a random sample from the standard normal distribution.
+The mean and variance are learned during training, but ε is fixed, we are
+randomly sampling from it but is is not backpropagated through.
+```
+
+
+```
+ p(x) = ∫ p(x|z) dz
+```
+This can also be expressed using the chain rule:
+```
+        p(x,z)
+ p(x) = -------
+        p(z|z)
+```
+Where p(x) is the marginal likelihood of the data and recall that p(x) means the
+probability of observing x given z. Marginal means to calculate
+the probability of x without considering a specific value of z so we are
+calculating all possible values of z, effectivly averaging or summing over the
+entire range of z. This is intractable to compute in practice.
+```
+z = {1, 2, 3, 4, 5, 6}
+
+p(x|z=1) = 0.1
+p(x|z=2) = 0.2
+p(x|z=3) = 0.15
+p(x|z=4) = 0.25
+p(x|z=5) = 0.05
+p(x|z=6) = 0.25
+```
+The marginal probability can be found by:
+```
+       6
+p(x) = ∑   p(x|z) * p(z)
+       z=1
+```
+And if each value of z is equally likely that beens p(z) = 1/6, so we would sum
+all the values (moving the multiplication of 1/6 out of the summation "loop"):
+```
+p(x) = (0.1 + 0.2 + 0.15 + 0.25 + 0.05 + 0.25) * 1/6
+     = 0.166666
+```
+So what is this number telling us?  
+Considering all possible underlying states of z and their probabilities, the
+overall chance of observing x is 0.166666, or about 16,7%.
 
