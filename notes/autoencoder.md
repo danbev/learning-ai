@@ -58,7 +58,9 @@ Now, we do the same for an other cat image and it produces this code:
 Notice that the codes are very different, but they are both cat images. This is
 because the autoencoder is only concerned with keeping the most relevant
 information from the image and not concerned with the distribution of values in
-the latent space.
+the latent space. There is no semantic meaning/relationship to the values in the
+latent space and the values are just the optimal values to represent the
+important inforation in the input image.
 
 So lets try to sample from the latent space above and see what the real issue
 is with doing this.
@@ -116,9 +118,11 @@ This can be used to learn a more compact representation of the input data.
 ### Variational autoencoder (VAE)
 We previously mentioned using a traditional autoencoder to generate new samples
 from the latent space would result in noise and we discussed the reason for this.
-What VAE does is it add structure to the latent space to allow for sampling from
-it.
 
+What a VAE does is it add structure to the latent space to allow for sampling
+from it.
+
+The architecture of a VAE looks something like this:
 ```
   +--+
   |  |     +---\                        /---+    +--+
@@ -127,7 +131,7 @@ it.
   |  |---->|     |->|μ |--+   |  |--->|     |--->|  |
   |  |     |     |  +--+  |-->|z |    |     |    |  |
   |  |     |    /   +--+  |   +--+    \     |    |  |
-  |  |     +---/    |σ |--+            \---+     +--+
+  |  |     +---/  ->|σ |--+            \---+     +--+
   |  |              +--+
   +--+
 
@@ -143,14 +147,46 @@ Lets take our example from above (at least the first input):
  [5.6]
  [7.8]
 ```
-Now, with VAE it might generate a code (vector) that looks something like this:
+Now, with a VAE the output of the encoder might look like this:
 ```
-mean (μ) = [1.0, 3.0, 5.0, 7.0]
-variability (σ) = [0.5, 0.5, 0.5, 0.5]
+mean (μ)     = [1.0] (mean for dimension 1)
+               [3.0] (mean for dimension 2)
+               [5.0] (mean for dimension 3)
+               [7.0] (mean for dimension 4)
+
+veriance (σ) = [0.5] (variance for dimension 1)
+               [0.5] (variance for dimension 2)
+               [0.5] (variance for dimension 3)
+               [0.5] (variance for dimension 4)
 ```
-So VAE will generate the `code` using this distribution the VAE randomly samples
-from the distribution by the above means and variances. This process is called
-reparameterization
+So notice that the encoder will output two vectors, the mean and the variance
+in contrast to autoencoders which output the code/z vector directly.
+
+So VAE will generate the `code/z` vector using the mean and standard deviation
+by randomly sample from a distribution specified by the means and variances.
+So at this point we only have two vectors of the same length, the mean and the
+variance (just to be clear that the input x is no longer used after this point
+in the encoder). We will then sample from a normal/gaussian distribution using
+the mean and variance to generate the `code/z` vector:
+```
+ z = [μ₁ + σ₁ * ε₁]    where ε₁ ~ N(0, 1)
+     [μ₂ + σ₂ * ε₂]    where ε₂ ~ N(0, 1)
+     [μ₃ + σ₃ * ε₃]    where ε₃ ~ N(0, 1)
+     [μ₄ + σ₄ * ε₄]    where ε₄ ~ N(0, 1)
+```
+To clarify what is happing here is that for each dimesion, which is 4 in our
+case, we we going to sample a value from the normal distribution which has a
+mean of 0 and a standard deviation of 1. So at this point we have a random value
+from the normal guassian distribution nothing else.
+
+We then scale this value by the standard deviation for that dimension which was
+learned during training specifically for this dimension/feature. And this is
+scaling the standard deviation (how much the data is scattered around the mean),
+so this is scaling it from the standard deviation of the normal distribution
+which is 1. Then the learned mean value is added, which shifts the value to be
+centered around the mean of the learned distribution.
+
+This process is called reparameterization.
 ```
 Sampled Code Vector = [0.9, 2.8, 5.1, 7.2]
 ```
@@ -174,7 +210,7 @@ Since both original images were of cats and the latent space of the VAE is
 structured to ensure that similar inputs map to overlapping distributions, this
 new image should realistically represent a cat. The generated image might blend
 features from both original cat images, such as pose or lighting, reflecting the
- intermediate nature of the interpolated vector.
+intermediate nature of the interpolated vector.
 
 And we could also generate new cat images by sampling from the distribution:
 (recall that sampling involved randomness so the generated images will not be
@@ -196,16 +232,27 @@ Latent vector (code):
 ```
 This would then be passed through the decoder to generate a new cat image.
 
+The reparameterization trick is used to ensure that the model is differentiable
+and can be trained using backpropagation:
 ```
 z = μ + σ * ε
 
 ε ~ N(0, 1)
 ```
-Where ε is a random sample from the standard normal distribution.
-The mean and variance are learned during training, but ε is fixed, we are
-randomly sampling from it but is is not backpropagated through.
-```
+Where ε is a random sample from the standard normal distribution.  The mean and
+variance are learned during training, but ε is fixed, we are randomly sampling
+from it but is is not backpropagated through.
 
+So, for the encoding part what the VAE is doing, what it is trained to do that
+is, is to predict z given an input image x:
+```
+p(z|x)
+```
+And the decoder does the opposite, it predicts x given z, so it is given also
+latent vector z and it will use that to predict the input image x:
+```
+p(x|z)
+```
 
 ```
  p(x) = ∫ p(x|z) dz
