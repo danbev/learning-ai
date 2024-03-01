@@ -347,6 +347,49 @@ llama_tokenize. The llama_model, and the llama_model_params would need to be
 stored somewhere, as well as the tokenized prompt as it will be needed later in
 the compute function.
 
+On the wasmtime side we have the following structs and traits that need to be
+implemented to add a new backend:
+
+In src/lib.rs we have graph defined as:
+```rust
+ pub struct Graph(Arc<dyn backend::BackendGraph>);
+```
+So here we have struct name Graph with a single field which is an Atomic
+Reference Counted (Arc)/smart pointer. This is a dynamic dispatch (dyn) so the
+actual type of the backend will be determined at runtime.
+
+The `backend::BackendGraph` is defined in the backend module and is a trait:
+```rust
+  pub trait BackendGraph: Send + Sync {
+      fn init_execution_context(&self) -> Result<ExecutionContext, BackendError>;
+  }
+```
+And the `ExecutionContext` is defined as:
+```rust
+pub struct ExecutionContext(Box<dyn backend::BackendExecutionContext>);
+```
+And the `backend::BackendExecutionContext` is defined as:
+```rust
+  pub trait BackendExecutionContext: Send + Sync {                                
+      fn set_input(&mut self, index: u32, tensor: &Tensor) -> Result<(), BackendError>;
+      fn compute(&mut self) -> Result<(), BackendError>;                          
+      fn get_output(&mut self, index: u32, destination: &mut [u8]) -> Result<u32, BackendError>;
+  } 
+```
+We also have a Backend struct:
+```rust
+pub struct Backend(Box<dyn backend::BackendInner>);
+```
+So we need to implement the following trait:
+```rust
+  /// A [Backend] contains the necessary state to load [Graph]s.                     
+  pub trait BackendInner: Send + Sync {                                              
+      fn encoding(&self) -> GraphEncoding;                                           
+      fn load(&mut self, builders: &[&[u8]], target: ExecutionTarget) -> Result<Graph, BackendError>;
+      fn as_dir_loadable<'a>(&'a mut self) -> Option<&'a mut dyn BackendFromDir>;    
+  }
+```
+
 [wasn-nn.wit]: https://github.com/WebAssembly/wasi-nn/blob/e2310b860db2ff1719c9d69816099b87e85fabdb/wit/wasi-nn.wit
 [wasi-nn-repo]: https://raw.githubusercontent.com/WebAssembly/wasi-nn/main/wit/wasi-nn.wit
 
