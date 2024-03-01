@@ -105,6 +105,61 @@ new sample of a specific type of data, like cat images, we also need have some
 structure of the latent space to allow for sampling from it and not getting
 noise which is what Variational Autoencoders (VAE) help with.
 
+This can be expressed as we want to find the x vector (think of this as an
+image) using the code/z vector:
+```
+p(x) = ∫ p(x|z) p(z) dz
+```
+Now this is theorectically possible but in practice it is intractable (not
+reaonable to do, like guessing a password) because of the size of the latent
+space z. In autoencoders p(x|z) represents the models ability to reconstruct x
+from the latent representation z.
+
+The above can also be written using the probabilty:
+```
+        p(x,z)
+ p(x) = -------
+        p(z|x)
+```
+Again we are trying to find the x vector (think of this as an image) just like
+above. Notice that the denominator contains p(z|x) which represents the models
+ability to generate the latent representation z from the input x. This is not
+a value that we have which is simliar to the above situation where it is
+intractable to compute.
+
+Why is this intractable?  
+
+Lets take a concrete example with z having 6 elements and lets calculate 
+p(x|z) for each value of z:
+```
+z = {1, 2, 3, 4, 5, 6}
+
+p(x | z=1) = 0.1
+p(x | z=2) = 0.2
+p(x | z=3) = 0.15
+p(x | z=4) = 0.25
+p(x | z=5) = 0.05
+p(x | z=6) = 0.25
+```
+The marginal probability can be found by:
+```
+       6
+p(x) = ∑   p(x|z) * p(z)
+       z=1
+```
+And if each value of z is equally likely that beens p(z) = 1/6, so we would sum
+all the values (moving the multiplication of 1/6 out of the summation "loop"):
+```
+p(x) = (0.1 + 0.2 + 0.15 + 0.25 + 0.05 + 0.25) * 1/6
+     = 0.166666
+```
+So what is this number telling us?  
+Considering all possible underlying states of z and their probabilities, the
+overall chance of observing x is 0.166666, or about 16,7%.
+Now, in practice the latent space z is much larger than 6 and this becomes
+intractable to compute.
+
+
 ### Undercomplete autoencoder
 Can be used to generate a compressed representation of the input data.
 
@@ -261,13 +316,14 @@ This can also be expressed using the chain rule:
 ```
         p(x,z)
  p(x) = -------
-        p(z|z)
+        p(z|x)
 ```
 Where p(x) is the marginal likelihood of the data and recall that p(x) means the
 probability of observing x given z. Marginal means to calculate
 the probability of x without considering a specific value of z so we are
 calculating all possible values of z, effectivly averaging or summing over the
 entire range of z. This is intractable to compute in practice.
+
 ```
 z = {1, 2, 3, 4, 5, 6}
 
