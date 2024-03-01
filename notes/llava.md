@@ -1,8 +1,7 @@
 ## Large Language and Vision Assistent
 LLaVA is an open-source chatbot/assistent trained by fine-tuning LLaMA/Vicuna on
 GPT-generated multimodal instruction-following data. So it is able to take in
-an image and we can ask questions about the image and it will answer them (this
-is the instruction part).
+an image and a prompt and it will answer them (this is the instruction part).
 
 An interesting part of the learning process is that each image needs some text
 to go with it, but how do we get that text?  
