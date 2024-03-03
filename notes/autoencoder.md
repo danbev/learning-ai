@@ -218,7 +218,8 @@ So notice that the encoder will output two vectors, the mean and the variance
 in contrast to autoencoders which output the code/z vector directly.
 
 So VAE will generate the `code/z` vector using the mean and standard deviation
-by randomly sample from a distribution specified by the means and variances.
+by randomly sampling from a distribution specified by the means and variances.
+
 So at this point we only have two vectors of the same length, the mean and the
 variance (just to be clear that the input x is no longer used after this point
 in the encoder). We will then sample from a normal/gaussian distribution using
@@ -303,14 +304,37 @@ is, is to predict z given an input image x:
 ```
 p(z|x)
 ```
+
 And the decoder does the opposite, it predicts x given z, so it is given also
 latent vector z and it will use that to predict the input image x:
 ```
 p(x|z)
 ```
+Just to be clear, below we are going to discuss the decoder, and this is done
+by taking in a latent vector z and predicting the input image x.
+
+Now, sometimes when reading about VAE's I've seen the following:
+```
+p(x)
+```
+And I found this confusing as there are no referenced to the latent vector z
+or anything else. p(x) is actually a function and in the functions body would
+be the integral (or sum for descrete values) of all possible configurations
+of the latent variables that could have generated x.
+```
+p(x) = ∫ p(x|z) p(z) dz
 
 ```
- p(x) = ∫ p(x|z) dz
+p(z) is the prior probability and represents the models belief about the
+distribution of the latent space. This is often a normal distribution with a
+mean of 0 and a standard deviation of 1. This is the distribution that we
+believe about the distribution of the latent space.
+
+We can see here that z is used as the given for the probability of p. So imagine
+this as a probability distribution (like a normal distribution). For us to
+"create" this curve we would need to sum all the possible values of z.
+```
+p(x) = ∫ p(x|z) p(z) dz
 ```
 This can also be expressed using the chain rule:
 ```
@@ -319,9 +343,9 @@ This can also be expressed using the chain rule:
         p(z|x)
 ```
 Where p(x) is the marginal likelihood of the data and recall that p(x) means the
-probability of observing x given z. Marginal means to calculate
-the probability of x without considering a specific value of z so we are
-calculating all possible values of z, effectivly averaging or summing over the
+probability of observing x given z. Marginal means to calculate the probability
+of x without considering a specific value of z so we are calculating all
+possible values of z, effectivly averaging or summing over the
 entire range of z. This is intractable to compute in practice.
 
 ```
@@ -350,3 +374,56 @@ So what is this number telling us?
 Considering all possible underlying states of z and their probabilities, the
 overall chance of observing x is 0.166666, or about 16,7%.
 
+```
+p(x) = ∮ p(x|z) p(z) dz
+```
+
+```
+log pθ(x) = log pθ(x)
+```
+This is what we are interested in finding, the log likelihood of observing x
+given the paremteres of our network (θ).
+
+We can multiply this with 1 without changing the equation:
+```
+          = log pθ(x) x 1
+```
+This allows us introduce the variational approximation qφ(z|x) without changing
+the origial equation.
+```
+1 = ∫ qφ(z|x) dz
+```
+We can represent 1 as the integral over the latent variable z because the it is
+from a normal distribution (a bell curve) and if we take the area under that
+graph it will be 1. 
+
+So we can replace 1  with the integral over the latent variable z:
+```
+log pθ(x) = log pθ(x) x ∫ qφ(z|x) dz
+```
+And we can move the log likelihood inside the integral:
+```
+log pθ(x) = ∫ log pθ(x) qφ(z|x) dz
+```
+The above equation tells us that to find the log likelihood of the data x, under
+our model parameters θ. And the integral sign here is saying
+"consider all possible values of z".
+qφ(z|x) is our approximation of the true distribution of z given x
+
+We can re-write this as the expectation of the log likelihood under the
+distribution qφ(z|x):
+```
+log pθ(x) = = E_qφ(z|x) [log pθ(x)]
+```
+Recall that the `expectaion` is the average value you would expect if you would
+repeat the experiment over and over.
+
+And all the steps so far are the following:
+```
+log pθ(x) = log pθ(x)
+          = log pθ(x) x 1
+          = log pθ(x) x ∫ qφ(z|x) dz
+          = ∫ log pθ(x) qφ(z|x) dz
+          = E_qφ(z|x) [log pθ(x)]
+```
+__wip__
