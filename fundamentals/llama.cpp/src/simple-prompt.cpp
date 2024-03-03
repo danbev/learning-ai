@@ -31,8 +31,7 @@ int main(int argc, char** argv) {
     std::string prompt = "What is LoRA?";
 
     llama_backend_init();
-    bool numa = false;
-    llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
+    //llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
 
     llama_model* model = llama_load_model_from_file(model_path.c_str(), model_params);
     if (model == NULL) {
