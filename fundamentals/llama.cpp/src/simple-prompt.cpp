@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
     std::string prompt = "What is LoRA?";
 
     bool numa = false;
-    llama_backend_init(numa);
+    llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
 
     llama_model* model = llama_load_model_from_file(model_path.c_str(), model_params);
     if (model == NULL) {
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     ctx_params.n_ctx = 1024;
     ctx_params.n_threads = 4;
     ctx_params.n_threads_batch = 4;
-    ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_LINEAR;
+    ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
