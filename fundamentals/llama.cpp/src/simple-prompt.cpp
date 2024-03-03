@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
     // another new line.
     std::string prompt = "What is LoRA?";
 
+    llama_backend_init();
     bool numa = false;
     llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
 
