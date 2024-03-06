@@ -55,6 +55,7 @@ struct ggml_cgraph * ggml_new_graph(struct ggml_context * ctx) {
 ```
 The GGML_DEFAULT_GRAPH_SIZE is 2048, and `false` is for the `grad` parameter in
 that gradients should not be computed.
+
 Next the size of the object will be computed
 ```console
 struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t size, bool grads) {
@@ -75,7 +76,8 @@ struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_GRAPH, obj_size);
 So we can see that 3 objects types are currently supported.
 
 ```console
-static struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size) {
+static struct ggml_object * ggml_new_object(struct ggml_context* ctx,
+    enum ggml_object_type type, size_t size) {
     // always insert objects at the end of the context's memory pool
     struct ggml_object * obj_cur = ctx->objects_end;
 
@@ -193,12 +195,13 @@ $19 = (struct ggml_object *) 0x7ffff6ba0010
 (gdb) p obj->offs
 $13 = 32
 ```
-And now we are creating a pointer to a ggml_cgraph which is pointing to
-mem_buffer + 32. So we have the obj which is currently pointing to because this
-is the first object created, and every object as data as in ggml_object which
-we can sort of think of as a base struct. And then after the base struct we can
-have different "subtypes". In the above case we are saying that we memory area
-after the `obj->off` is going to store a `ggml_cgraph` struct.
+And now we are creating a pointer to a ggml_cgraph (compute graph) which is
+pointing to mem_buffer + 32. So we have the obj which is currently pointing to
+because this is the first object created, and every object as data as in
+ggml_object which we can sort of think of as a base struct. And then after the
+base struct we can have different "subtypes". In the above case we are saying
+that we memory area after the `obj->off` is going to store a `ggml_cgraph`
+struct.
 ```
     mem_buffer
        ↓
