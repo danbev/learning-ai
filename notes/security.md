@@ -26,9 +26,12 @@ queries that it should not be able to respond to. This is called "jailbreaking".
 The actual prompt might not come from an attacker directly but could be on a
 web site controlled by the attacker. For example, a user might ask the LLM to
 summarize a web page which contains the prompt.
+
 Another example that I had not thought of a system prompt could be inserted into
 a resume and when that is used in an LLM it will always respond that the
-candidate is a great match for the position being applied for.
+candidate is a great match for the position being applied for. Detail of such
+and attach can be found here: https://kai-greshake.de/posts/inject-my-pdf/
+
 
 ### Insecure output handling
 This is about handling the output from the LLM in a secure way. For example, one
@@ -46,4 +49,22 @@ and I should find which others might do this. Also there are models that are
 fine-tuned using those base models and this applies to them as well. So it may
 be important to consider the base model used. But even if one knows, say we use
 Falcon as the base model, is it feasible to verify the training data considering
-that it much be a huge amount of data?
+that it much be a huge amount of data?  
+So for Falcon it is trained on a dataset named [RefinedWeb] which is a refined
+version of CommonCrawl. 
+There are other sources like the [Pile]
+
+So the training data used should be known and it part of the ml-bom.
+
+Large-scale Artificial Intelligence Open Network (LAION) is a non-profit org
+which provides datasets.
+
+
+[rerfinedweb]: https://huggingface.co/datasets/tiiuae/falcon-refinedweb
+[pile]: https://pile.eleuther.ai/
+
+### Verifing correctness of the model
+How will it be possible to verify the correctness of a model once we have AGI?  
+Only a few humans might have detailed knowledge of a subject but not the
+majority. And if we get super human AGI we will have no way at all to verify
+if the output is correct.
