@@ -68,3 +68,6 @@ How will it be possible to verify the correctness of a model once we have AGI?
 Only a few humans might have detailed knowledge of a subject but not the
 majority. And if we get super human AGI we will have no way at all to verify
 if the output is correct.
+
+### LLM Attacks
+https://github.com/llm-attacks/llm-attacks
