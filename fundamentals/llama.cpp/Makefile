@@ -66,12 +66,6 @@ monitor-gpu:
 pre-simple-prompt: src/simple-prompt.cpp
 	$(CXX) -E $(CXXFLAGS) $^  -o pre-simple-prompt.cpp
 
-finetune: src/finetune.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
-
-finetune-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
-finetune-cuda: finetune
-
 update-llama:
 	git submodule update --recursive --remote --merge llama.cpp
 
