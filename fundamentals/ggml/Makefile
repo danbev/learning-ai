@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -Wall -Iggml/include -DGGML_DEBUG=1
+CFLAGS = -g -Wall -Iggml/include
 LDFLAGS = -Lggml/build/src/
 
 .PHONY: ggml-init
