@@ -1,6 +1,6 @@
 ## Mobile Vision Language Model (MobileVLM)
 The goal here is to have a vision language model for resource-constrained
-device like mobile phones and IoT devices. The models are called  multimodal
+device like mobile phones and IoT devices. The models are called multimodal
 vision language model (MMVLM).
 
 For resource contstrained devices memory usage and computational cost are things
@@ -172,6 +172,51 @@ dimension Dv to the target dimension Dt.
 So, if our patch embeddings are 768-dimensional and you need to match the LLM
 input size of 512, a pointwise convolution with 512 output channels would reduce
 each 768-dimensional embedding down to 512 dimensions.
+
+The next step is to apply a GELU to this output of the point-wise convolution.
+```
+  +-----------------+
+  | Patch embeddings|
+  +-----------------+
+          ↓
+  +-----------------+
+  | Pointwise Conv  |
+  +-----------------+
+          ↓
+  +-----------------+
+  | GELU            |
+  +-----------------+
+```
+```
+Output Matrix (Hv)
++-----------------------------------------+
+| Gelu(f1*w1 + f2*w2 + f3*w3 + f4*w4)     |
++-----------------------------------------+
+| Gelu(f5*w1 + f6*w2 + f7*w3 + f8*w4)     |
++-----------------------------------------+
+| Gelu(f9*w1 + f10*w2 + f11*w3 + f12*w4)  |
++-----------------------------------------+
+| Gelu(f13*w1 + f14*w2 + f15*w3 + f16*w4) |
++-----------------------------------------+
+```
+This then followed by another point-wise convolution, but this time with a
+```
+  +-----------------+
+  | Patch embeddings|
+  +-----------------+
+          ↓
+  +-----------------+
+  | Pointwise Conv  |
+  +-----------------+
+          ↓
+  +-----------------+
+  | GELU            |
+  +-----------------+
+          ↓
+  +-----------------+
+  | Pointwise Conv  |
+  +-----------------+
+```
 
 
 The process described by ..
