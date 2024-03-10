@@ -18,9 +18,10 @@ So that is the original image x₀ that we want to add noise to. Now, we have th
 following forumla:
 ```
 xₜ = √(αₜ)x₀ + √(1 - σₜ)ε
-```
 aₜ = 0.5
-ε = guassian noise (random values that are normally distributed)
+ε  = guassian noise (random values that are normally distributed)
+```
+
 Examples of guassian noise:
 ```
 [26 -47  -10]
