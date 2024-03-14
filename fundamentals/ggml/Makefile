@@ -6,7 +6,7 @@ LDFLAGS = -Lggml/build/src/
 ggml-init:
 	cd ggml && \
 	rm -rf build && mkdir build && cd build && \
-	cmake -DCMAKE_BUILD_TYPE=Debug -DGGML_DEBUG=1 .. && make
+	cmake -DCMAKE_BUILD_TYPE=Debug .. && make -j8
 
 .PHONY: ggml-show-build-settings
 ggml-show-build-settings:
@@ -14,7 +14,7 @@ ggml-show-build-settings:
 
 .PHONY: ggml
 ggml:
-	cd ggml/build && make
+	cd ggml/build && make -j8
 
 all: $(TARGET)
 
