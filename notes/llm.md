@@ -75,7 +75,7 @@ done. This section will list the ones that I've come accross and what they do.
 But to fully understand where these come into play it might be worth backing
 up a little and think about how inference works. Lets say we have the following
 query "What is LoRA?". This string is passed to the llm and the first thing that
-will happen is that it will be first be tokenized and then mapped (encoded) into
+will happen is that it will be first be tokenized and then mapped (indexed) into
 an integer id according to the vocabulary that the llm was trained on.
 So if we run llama.cpp with the following command:
 ```
@@ -179,7 +179,7 @@ higher the temperature the more random the output will be.
 In the above section the LLM the predicted next word does not have to be the
 most probable word. For example if we want the LLM to be more creative
 we can tell it to not always choose the most probable word but instead choose
-another one to create some thing different. This is what the temparature
+another one to create something different. This is what the temparature
 parameters controls. So for question answering involving facts we would want the
 LLM to be always choose the most probable word but for creative writing we
 would want it to be more creative and thus have a highter temperature value.
@@ -250,7 +250,7 @@ TODO: Explain this better
 
 #### Mirostat
 This is introduced in the paper: https://openreview.net/pdf?id=W1G1JZEIy5_ and
-is also related sampling of generated tokens, so in the same "category" as
+is also related to sampling of generated tokens, so in the same "category" as
 top_p and top_k I think. It is about controlling perplexity, which is a measure
 of how well a language model predicts a sample of text (lower is better).
 
@@ -426,7 +426,7 @@ The above is the gist of it, we try to guess `n` future tokens and then decode
 them in parallel.
 
 That sounds good, but how do we guess?  
-The guessed token need to come from the vocabulary of the LLM. If we take llama
+The guessed token needs to come from the vocabulary of the LLM. If we take llama
 as an example it has 32000 tokens in its vocabulary. So just guessing would
 mean that we would have to guess from 32000 tokens. 1/32000 = 0.00003125 chance
 of guessing correctly. So we need to do better than that and would like
