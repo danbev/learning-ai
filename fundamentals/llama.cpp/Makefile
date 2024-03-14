@@ -33,7 +33,8 @@ OBJS = llama.cpp/common.o \
        llama.cpp/train.o \
        llama.cpp/ggml-alloc.o \
        llama.cpp/ggml-quants.o \
-       llama.cpp/ggml-backend.o
+       llama.cpp/ggml-backend.o \
+       llama.cpp/unicode.o
 
 simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
