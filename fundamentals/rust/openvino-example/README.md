@@ -15,3 +15,8 @@ We also need to download the model used for this example:
 ```console
 $ make download-model
 ```
+
+### Mobilenet image classification
+Mobilenet is a computer vision model developed by Google.
+It's collection of models targeted for mobile or resource constrained devices
+(hence mobile in the name). 
