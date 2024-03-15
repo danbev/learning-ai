@@ -10,3 +10,8 @@ instructions in [open-vino.md](../../../open-vino.md).
 $ source setenv.sh
 [setupvars.sh] OpenVINO environment initialized
 ```
+
+We also need to download the model used for this example:
+```console
+$ make download-model
+```
