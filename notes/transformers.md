@@ -207,7 +207,7 @@ word/token itself, and nothing about the context in which it appears.
 So with these embeddings the first thing in the model does is to add a
 positional encoding to each of the embeddings. In the original paper this used
 absolute position encoding. I've written about this is
-[vector-embeddings.md](./vector-embeddings.md).
+[embeddings.md](./embeddings.md).
 
 So we have our input matrix which in our case is a 4x512 matrix, where each
 entry is one of the tokens in the input sentence. Notice that we in this case
@@ -274,14 +274,14 @@ would be larger.
 
 The next thing we do is we scale the values in the matrix by dividing them by
 the square root of the embedding dimension. Recall that this called the
-`scaled dot product attentions` and this is the scaling part. This is done to
+`scaled dot product attention` and this is the scaling part. This is done to
 avoid stability issues if the dot product values are too large.
 
 So we divide each value in the matrix with the square root of the embedding
 dimension. After that we apply the softmax function to the matrix. This will
 give us a matrix where the values are between 0 and 1 and the sum of the values
 in each row will be 1. This matrix tells us how much attention we should pay to
-each word in the input sentence. We take this matrix and multiply is with the
+each word in the input sentence. We take this matrix and multiply it with the
 V matrix which is just the input matrix unchanged. The resulting matrix will
 give us the attention scores for each of the words/tokens.
 
@@ -387,7 +387,7 @@ the entire sequence of tokens inputted to the model (this if after the encoders
 have processed it). 
 
 Visualize Q vector space as vectors in two dimensions and we have three vectors,
-one for "I", one for "like", and one for "icecream".  And we also have a vector
+one for "I", one for "like", and one for "icecream". And we also have a vector
 space for K with 3 vectors. When we calculate Q x Kᵗ we are getting a new square
 matrix, and the values in this matrix contain the attention scores. What this is
 doing is calculating the distances between the key matrix vectors to the query
@@ -442,7 +442,7 @@ sentence as the output. The model would then be trained to predict the Swedish
 sentence given the English sentence.
 
 Now, lets take a closer look at the boxes of the above diagram.
-I've written about embeddings in [vector-embeddings.md](./vector-embeddings.md)
+I've written about embeddings in [embeddings.md](./embeddings.md)
 and positional encoding in [positional-encoding.md](./positional-encoding.md) so
 lets skip them for now and start with the encoder layer.
 So the next layer, or most often multiple layers, is the multi-head attention.
@@ -475,8 +475,7 @@ word/token itself, and nothing about the context in which it appears.
 
 So with these embeddings the first thing in the model is to add a positional
 encoding to each of the embeddings. In the original paper this used absolute
-position encoding. I've written about this is
-[vector-embeddings.md](./vector-embeddings.md).
+[position encoding](notes/positional-encoding.md).
 
 So we have our input matrix which in our case is a 4x512 matrix, where each
 entry is one of the tokens in the input sentence. We take this matrix and make
