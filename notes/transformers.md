@@ -4,7 +4,7 @@ Before the transformers architecture was developed, which was done by Google in
 transformers outperformed them in terms of translation quality and training
 cost.
 
-On important thing to note about transformers is that if you have an input
+One important thing to note about transformers is that if you have an input
 sequence lenght of N elements, you end up making N×N comparisons, which is N²
 (quadratic scaling). This means the computational cost grows very quickly as the
 length of the sequence increases.
@@ -173,7 +173,7 @@ sentence as the output. The model would then be trained to predict the Swedish
 sentence given the English sentence.
 
 Now, lets take a closer look at the boxes of the above diagram.
-I've written about embeddings in [vector-embeddings.md](./vector-embeddings.md)
+I've written about embeddings in [embeddings.md](./embeddings.md)
 and positional encoding in [positional-encoding.md](./positional-encoding.md) so
 lets skip them for now and start with the encoder layer.
 So the next layer, or most often multiple layers, is the multi-head attention.
