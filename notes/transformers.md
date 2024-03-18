@@ -335,8 +335,8 @@ new is that we are going to split the the matrices Q', K', and V' into smaller
 matrices. This is the number of heads that we have.
 
 So for example if we want to have 4 heads and the embedding dimension size is
-512, then we will have 4 4x126 matrices. Each one of these are called a head and
-they are separate from each there and are used to perform the single-head
+512, then we will have 4 4x128 matrices. Each one of these are called a head and
+they are separate from eachother, and are used to perform the single-head
 attention function that we went through above. 
 ```
 Attention(Q'₀, K'₀, V'₀) = softmax((Q'₀, K'₀, V'₀)/√dₖ) x V'₀
@@ -402,9 +402,9 @@ as input and also takes a copy of the Value matrix which is passed around input
 what is called a skip connection or a residual connection.
 
 ### Masked Multi-Head Attention
-We also have multi-head attention as described about in the decoder but there
-is another layer called masked multi-head attention. This while training, well
-it is also used during inference but bare with me, where if we have a
+We also have multi-head attention as described above in the decoder but there
+is another layer called masked multi-head attention. This is while training,
+well it is also used during inference but bare with me, where if we have a
 translation task, the input to the decoder is the target sequence (the
 translated version of the input sequence to the encoder). But we don't want the
 decoders attention mechanism to take into account tokens that are ahead of the
@@ -427,7 +427,7 @@ ice       |0.1| 2.3 |0.9 |~inf|
 cream     |2.0| -1.5|0.2 |0.9 |
           +-------------------+
 ```
-When performing inference the input to the decoder is that start of sequence
+When performing inference the input to the decoder is the start of sequence
 token and nothing else, and the decoder will generate the next token in the
 sequence and add that to the input and continue like that. In this case there
 no future tokens to mask but this is done for consistency (I think).

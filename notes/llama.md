@@ -1278,3 +1278,30 @@ static std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = 
 So that would return `token_embd.weight`.
 "output_norm.weight"
 "output.weight"
+
+### GGML_CALL macro
+This macro uses a calling convention of `__ms_abi__` which is the Microsoft ABI
+if the `GGML_MULTIPLATFORM` macro is defined:
+```c++
+#ifdef GGML_MULTIPLATFORM
+#    if defined(_WIN32)
+#        define GGML_CALL
+#    else
+#        define GGML_CALL __attribute__((__ms_abi__))
+#    endif
+#else
+#    define GGML_CALL
+#endif
+```
+This initially looked very odd to me as I thought that `__ms_abi__` would only
+be used on Windows. But this is done do ensure interoperatibilty beteen
+different platforms so we want then to have a common calling convention between
+NVCC (NVIDIA CUDA Compiler), ROCm (for AMD GPUs), XCode (for macOS), and the
+common GCC and Clang compilers on various platforms.
+
+By defining -DGGML_MULTIPLATFORM during the build, the system enforces that
+back-references and function pointers conform to the Microsoft ABI (__ms_abi__).
+This conformance is crucial for ensuring compatibility and predictable behavior
+when the system interfaces with GPU modules compiled with tools that support the
+MS ABI, such as NVCC (NVIDIA CUDA Compiler), ROCm (for AMD GPUs), XCode
+(for macOS), and the common GCC and Clang compilers on various platforms.
