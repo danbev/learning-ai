@@ -4,12 +4,15 @@ import matplotlib.pyplot as plt
 # Define a point in the S-plane (continuous-time domain)
 # For example, let's take a point at -1 + 2j
 s_point = -1 + 2j
+print(s_point)
 
 # Sampling period (choose an appropriate value, e.g., 1 second)
 T = 1
 
 # Manual bilinear transform calculation
 # z = (1 + (T/2)*S) / (1 - (T/2)*S)
+# z = (1 + (1/2)*S) / (1 - (1/2)*S)
+# z = (1 + 0.5*S) / (1 - 0.5*S)
 z_point = (1 + 0.5 * s_point) / (1 - 0.5 * s_point)
 print('z_point =', z_point)
 
