@@ -524,9 +524,10 @@ it. What is normalization? I've written about this in
 
 In the encoder, the first Add&Norm layer comes after the multi-head attention
 layer. There are two inputs into this layer, the first is the original value
-matrix which notice is passed around, this is called a residual connection or
-a skip connection, the multi-head attention layer. The second input is the
-output of the multihead attention layer. These are simply added together:
+matrix which notice is passed around (in the diagram we saw earlier), this is
+called a residual connection or a skip connection, the multi-head attention
+layer. The second input is the output of the multihead attention layer. These
+are simply added together:
 ```
    v_mha = V + MHA
 
