@@ -1,4 +1,4 @@
-## Embedding Vector
+## Embeddings
 When working with natural language models the input is text but neural networks
 operate on matrices/tensors of numbers, not text. Embedding vectors are a way
 to turn text into vectors with the elements of the vector being numbers so that
