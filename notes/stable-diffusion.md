@@ -47,3 +47,6 @@ The output image looks like this:
 
 ![image](sd-cat.png)
 
+
+### Stable Diffusion 3.0
+Paper: https://arxiv.org/pdf/2403.03206.pdf
