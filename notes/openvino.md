@@ -4,6 +4,13 @@ applications that require computer vision and deep learning inference.
 
 So this is a framework that works accross Intel hardware (CPU, GPU, FPGA ect).
 
+### Installing OpenVINO
+Follow the [instructions](https://docs.openvino.ai/2023.3/openvino_docs_install_guides_installing_openvino_from_archive_linux.html) and then I configured an additional logical link to:
+```console
+$ pushd /opt/intel/
+$ sudo ln -s openvino_2023.3.0 openvino
+```
+
 ### Building
 Before starting I needed to make sure that by GPU can be detected by the
 OpenVINO or I'd get the following compilation error:
