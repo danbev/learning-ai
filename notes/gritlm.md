@@ -153,4 +153,12 @@ tokenization generation does not have to be performed.
 In the RAG examples in this repository we did not even have to use the same
 embeddings for the vector database infact I think we used different ones.
 
+### Debugging
+```console
+$ make -j8 LLAMA_CUBLAS=1 LLAMA_DEBUG=1 DEBUG=1
+```
+```console
+$ gdb --args ./gritlm -m models/gritlm-7b_q4_1.gguf --n-gpu-layers 25
+```
+
 
