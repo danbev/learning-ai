@@ -1080,7 +1080,7 @@ checksum = "01cda141df6706de531b6c46c3a33ecca755538219bd484262fa09410c13539c"
 [[package]]
 name = "llm-chain"
 version = "0.13.0"
-source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a890d41ce097cf019595aa3ae5e569b5f9906c8c"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a4165798f04930e6a389f966e504525dd066166e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1105,7 +1105,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-llama"
 version = "0.13.0"
-source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a890d41ce097cf019595aa3ae5e569b5f9906c8c"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a4165798f04930e6a389f966e504525dd066166e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1121,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-llama-sys"
 version = "0.13.0"
-source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a890d41ce097cf019595aa3ae5e569b5f9906c8c"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a4165798f04930e6a389f966e504525dd066166e"
 dependencies = [
  "bindgen",
 ]
@@ -1129,7 +1129,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-openai"
 version = "0.13.0"
-source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a890d41ce097cf019595aa3ae5e569b5f9906c8c"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a4165798f04930e6a389f966e504525dd066166e"
 dependencies = [
  "async-openai",
  "async-trait",
@@ -1146,7 +1146,7 @@ dependencies = [
 [[package]]
 name = "llm-chain-qdrant"
 version = "0.13.0"
-source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a890d41ce097cf019595aa3ae5e569b5f9906c8c"
+source = "git+https://github.com/sobelio/llm-chain.git?branch=main#a4165798f04930e6a389f966e504525dd066166e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2231,9 +2231,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.35.1"
+version = "1.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89b4efa943be685f629b149f53829423f8f5531ea21249408e8e2f8671ec104"
+checksum = "61285f6515fa018fb2d1e46eb21223fff441ee8db5d0f1435e8ab4f5cdb80931"
 dependencies = [
  "backtrace",
  "bytes",
@@ -2679,9 +2679,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.25.3"
+version = "0.25.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1778a42e8b3b90bff8d0f5032bf22250792889a5cdc752aa0020c84abe3aaf10"
+checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 
 [[package]]
 name = "which"
