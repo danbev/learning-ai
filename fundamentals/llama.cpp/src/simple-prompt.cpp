@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
 
     // Create a new batch
     llama_batch batch = llama_batch_init(512,/*embd*/ 0, /*n_seq_max*/ 1);
-    // batch.token will be a pointer to llam_token with a bytes size of 2048
+    // batch.token will be a pointer to llama_token with a bytes size of 2048
     // sizeof(llama_token) = 4, 4 * n_tokens = 2048, so it will be able to
     // store 512 tokens.
     // batch.pos is similarly a pointer to llama_pos with a bytes size of 2048
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     // n_seq_max is the max number of sequences in the batch.
     // batch.logits is an array of bools with a bytes size of 512.
 
-    // Next we are doing to populate the batch we created above. For each token
+    // Next we are going to populate the batch we created above. For each token
     // of the tokenized prompt we are going to add it to the the batch.
     for (int i = 0; i < n_tokens; i++) {
         // the token of this batch entry.
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
         // the number of sequence id's of this batch entry.
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;  // the sequence id
-        // Determins if the logits for this token should be generated or not.
+        // Determines if the logits for this token should be generated or not.
         batch.logits[i] = false;
         // Increment the number of tokens in the batch.
         batch.n_tokens++;
