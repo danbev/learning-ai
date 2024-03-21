@@ -69,10 +69,11 @@ get to the next element in a row.
 
 
 ### Multidiminensional tensor example
-When reading about matrix multiplication we often seen it in the format that
+When reading about matrix multiplication we often see it in the format that
 we create a matrix like 3x2 which means 3 rows and 2 columns. When working
-with GGML, and I think this is common with graphics libraries in general, that
-one first specifies the x-axis, that is the horizontal axis/number of columns.
+with GGML, and I think this is also common with graphics libraries in general,
+that one first specifies the x-axis, that is the horizontal axis/number of
+columns.
 If we have multiple dimensions then we have another value that specifies the
 size of the y-axis, that is the vertical axis/number of rows. So think of this
 as building a matrix from the bottom up and specifying one dimension at a time.
@@ -82,7 +83,7 @@ So if we want to create a 3x2 matrix in GGML we do the following:
   struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2, 3);
 ```
 This is because we are first specifying the number of elements in the first
-dimension (x-axis) and then the number of elements in the second dimension
+dimension (x-axis), and then the number of elements in the second dimension
 (y-axis).
 
 Which can be visualized like this:
