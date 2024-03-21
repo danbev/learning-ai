@@ -27,11 +27,17 @@ tensor: src/tensor.c
 matrix-mul: src/matrix-mul.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
 
+get-rows: src/get_rows.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
 show-mul-dot:
 	dot -Tpng mul.dot -o mul.dot.png && xdg-open mul.dot.png
+
+show-rows-dot:
+	dot -Tpng get-rows.dot -o get-rows.dot.png && xdg-open get-rows.dot.png
 
 update-ggml:
 	git submodule update --remote --merge ggml
