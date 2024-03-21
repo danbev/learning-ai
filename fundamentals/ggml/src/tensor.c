@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
   printf("ctx mem used: %ld\n", ggml_used_mem(ctx));
 
   // This creates a one dimensional tensor, so it will be like a list of numbers
-  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
   printf("x tensor type: %s\n", ggml_type_name(x->type));
   printf("x tensor backend: %d \n", x->backend);
   printf("x tensor dimensions: %d\n", ggml_n_dims(x));
@@ -40,8 +40,12 @@ int main(int argc, char **argv) {
   printf("x tensor flags: %d\n", x->flags);
 
   // Example of updating a tensor:
+  // Note that ggml_set_i32 will set all the values in the tensor to 18, which
+  // in this case will be 10.
   struct ggml_tensor* updated = ggml_set_i32(x, 18);
   printf("updated tensor data: %lf\n", *ggml_get_data_f32(updated));
+  printf("updated[0]=: %lf\n", ggml_get_f32_1d(updated, 0));
+  printf("updated[9]=: %lf\n", ggml_get_f32_1d(updated, 9));
 
   ggml_set_name(updated, "updated");
   printf("updated tensor name: %s\n", ggml_get_name(updated));
@@ -92,11 +96,11 @@ int main(int argc, char **argv) {
   //    row 1              row 2
   //
   // 24 bytes in total
-  printf("elements in 1 dim: %ld\n", matrix->ne[0]);
-  printf("elements in 2 dim: %ld\n", matrix->ne[1]);
+  printf("Nr of elements in 1 dim (ne[0]): %ld\n", matrix->ne[0]);
+  printf("Nr of elements in 2 dim (ne[1]): %ld\n", matrix->ne[1]);
 
-  printf("stride for 1 dim: %ld (ggml_type_size: %ld)\n", matrix->nb[0], ggml_type_size(matrix->type));
-  printf("stride for 2 dim: %ld (%ld * %ld / %d) + paddings  \n", matrix->nb[1],
+  printf("stride for 1 dim (nb[0]): %ld (ggml_type_size: %ld)\n", matrix->nb[0], ggml_type_size(matrix->type));
+  printf("stride for 2 dim (nb[1]): %ld (%ld * %ld / %d) + paddings  \n", matrix->nb[1],
                                               matrix->nb[0],
                                               matrix->ne[0],
                                               ggml_blck_size(matrix->type));
