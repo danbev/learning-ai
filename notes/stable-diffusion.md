@@ -1,5 +1,6 @@
 ## Stable Diffusion
 This page is about running stable diffusion locally using stable-diffusion.cpp.
+It uses [ggml](ggml.md).
 
 ### Installation
 ```console
@@ -7,9 +8,16 @@ $ git clone --recursive git@github.com:leejet/stable-diffusion.cpp.git
 $ cd stable-diffusion.cpp
 $ mkdir build && cd build
 $ source ~/work/ai/learning-ai/fundamentals/llama.cpp/cuda-env.sh 
-$ $ cmake .. -DSD_CUBLAS=ON
+$ cmake .. -DSD_CUBLAS=ON
 $ cmake --build . --config Release
 ```
+
+### Updating
+Don't forget to update the submodules when pulling in new changes:
+```console
+$ git submodule update --init --recursive
+```
+
 Download a model:
 ```console
 $ curl -L -O https://huggingface.co/CompVis/stable-diffusion-v-1-4-original/resolve/main/sd-v1-4.ckpt --output models/sd-v1-4.ckpt
