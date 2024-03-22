@@ -87,8 +87,8 @@ that are used.
 
 It can be run locally:
 ```console
-$ cd ai/llama
-$ make
+$ cd ai/llama.cpp
+$ make -j8 
 ```
 Next we need to download a model to use and store it in the models directory.
 I tried the following model:
@@ -205,7 +205,7 @@ is created using bindget. The crate llm-chain-llama-sys contains the binding
 and llm-chain-llama contains Rust API.
 
 #### llama_batch
-This struct holdes `input` data for llama_decode and is defined as:
+This struct holdes `input` data for `llama_decode` and is defined as:
 ```c++
     typedef struct llama_batch {
         int32_t n_tokens;
@@ -217,9 +217,9 @@ This struct holdes `input` data for llama_decode and is defined as:
         int8_t       * logits;
     } llama_batch;
 ```
-The `n_tokens` is a counter of the number of tokens that this batch_contains.
+The `n_tokens` is a counter of the number of tokens that this batch contains.
 
-A llmm_batch is simlilar to the contept of context we talked about
+A `llama_batch` is simlilar to the contept of context we talked about
 [llm.md](../../notes/llm.md#context_size). Below we are adding the input query
 tokens to this batch/context. So it will initially just contain the tokens for
 our query. But after running the inference, we will append the next token to the
@@ -235,7 +235,7 @@ TODO: verify this.
 The `pos` is the position of the tokens in the sequence.
 
 ### Key-Value Cache
-This section tries to explain the key-value cache used in the llama2
+This section tries to explain the key-value cache used in the llama 2
 architecture. This is the caching of the key and value matrices that are used
 in the attention architecture.
 
@@ -251,6 +251,7 @@ Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
 input token [1 2] (Start of Sentence)
 
 Time=1
+
 [  Q       K^T      QK^T  ] *  V  
  [1 2]   . [1]    = [5]     * [1 2] = [5 10]
            [2]    
@@ -263,18 +264,20 @@ this is then the probability of the next token, and that token was selected from
 the models vocabulary (we are ignoring softmax etc here).
 
 So for the next token we then append the predicted token to the input tokens
-and run the inference again.
+and run the inference again:
 ```
 Time=2
+
 [  Q       K^T      QK^T  ]  *   V  
  [1 2 ]  . [1  5] = [5  25 ] * [1  2] = [5*1 + 25*5     5*2 +  25*10] = [130  260]
  [5 10]    [2 10]   [25 125]   [5 10]   [25*1 + 125*5  25*2 + 125*10]   [650 1300]
   (dot product)     (matrix multiplication)
 ```
 Once again we will take the last token and append it to the input tokens and
-run the inference again.
+run the inference again:
 ```
 Time=3
+
 [  Q                 K^T      QK^T  ]  *   V  
  [1     2 ]   . [1  5  650] = [5    25    3250   ] =
  [5     10]     [2 10 1300]   [25   125   16250  ]
@@ -294,8 +297,8 @@ Time=2
  [5 10 ]  . [1  5] = [25  125] * [1 5 ] = [650 1300]
             [2 10]               [2 10]
 ```
-By adding the output token to the Key and the Value matrices we perform fewer
-operations. This is the key-value cache.
+By adding the output token to the `Key` and the `Value` matrices we perform
+fewer operations. This is the key-value cache.
 So for every token processed it needs to be added to the Key and Value cache
 matrices to be use in the next predition.
 
@@ -323,32 +326,28 @@ At this stage the kv_self is uninitialized. We can inspect this struct using:
 gdb) ptype ctx.kv_self
 type = struct llama_kv_cache {
     bool has_shift;
+    bool do_defrag;
+    bool do_copy;
+    bool recurrent;
     uint32_t head;
     uint32_t size;
     uint32_t used;
     uint32_t n;
+    ggml_type type_k;
+    ggml_type type_v;
     std::vector<llama_kv_cell> cells;
-    ggml_tensor *k;
-    ggml_tensor *v;
-    ggml_context *ctx;
-    llama_buffer buf;
+    std::vector<ggml_tensor*> k_l;
+    std::vector<ggml_tensor*> v_l;
+    std::vector<ggml_context*> ctxs;
+    std::vector<ggml_backend_buffer*> bufs;
   public:
+    size_t total_size(void) const;
     ~llama_kv_cache(void);
 }
 ```
-We can see we have two pointers to ggml_tensor. These are the key and value
-matrices.
+We can see we have two vectors of  pointers to ggml_tensor. These are the key
+and value matrices for each layer.
 
-```console
-(gdb) ptype llama_kv_cell
-type = struct llama_kv_cell {
-    llama_pos pos;
-    llama_pos delta;
-    std::set<int> seq_id;
-  public:
-    bool has_seq_id(const llama_seq_id &) const;
-}
-```
 A little further down we have:
 ```console
 (gdb) s
@@ -678,33 +677,60 @@ in build_llama.
 _wip_
 
 ### llama_batch
+This struct holdes `input` data for `llama_decode` and is defined as:
+```c++
+    typedef struct llama_batch {
+        int32_t n_tokens;
+
+        llama_token  * token;
+        float        * embd;
+        llama_pos    * pos;
+        llama_seq_id * seq_id;
+        int8_t       * logits;
+    } llama_batch;
+```
+The `n_tokens` is a counter of the number of tokens that this batch contains.
+
+A `llama_batch` is simlilar to the contept of context we talked about
+[llm.md](../../notes/llm.md#context_size). Below we are adding the input query
+tokens to this batch/context. So it will initially just contain the tokens for
+our query. But after running the inference, we will append the next token to the
+batch and run the inference again and then run the inference again to predict
+the next token, now with more context (the previous token).
+
+The `embd` is the embedding of the tokens (I think). So this was not obvious to
+me at first, but recall that the tokens are just integer representations of
+works/subwords, like a mapping of the token to an index in the vocabulary. But
+they don't contains any semantic information. Notice that embed is a pointer
+to float and not an integer like the token field.
+TODO: clarify the embd field.
+
+The `pos` is the position of the tokens in the sequence.
+
 This struct holds `input` data for llama_decode. For example, if we pass in
 a prompt of "What is LoRA" that would first be tokenized and then the tokens
 will be added to the batch. An example of this can be found in
 [simple-prompt.cpp](../fundamentals/llama.cpp/src/simple-prompt.cpp).
 
 An instance of a batch contains a count of the number of tokens (or embeddings)
-that this batch holds. In the above case n_tokens would be 7.
+that this batch holds. In the above case `n_tokens` would be 7.
 ```c++
     llama_batch batch = llama_batch_init(512, /*embd*/ 0, /*n_seq_max*/ 1);
-    for (size_t i = 0; i < input_tokens.size(); i++) {
+    for (int i = 0; i < n_tokens; i++) {
         // the token of this batch entry.
-        batch.token[batch.n_tokens] = input_tokens[i];
+        batch.token[i] = input_tokens[i];
         // the position in the sequence of this batch entry.
-        batch.pos[batch.n_tokens] = i,
-        // the sequence id (if any) of this batch entry.
-        batch.n_seq_id[batch.n_tokens] = seq_ids.size();
-        for (size_t s = 0; s < seq_ids.size(); ++s) {
-            batch.seq_id[batch.n_tokens][s] = seq_ids[s];
-        }
+        batch.pos[i] = i,
+        // the number of sequence id's of this batch entry.
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = 0;  // the sequence id
         // Determins if the logits for this token should be generated or not.
-        batch.logits[batch.n_tokens] = false;
+        batch.logits[i] = false;
         // Increment the number of tokens in the batch.
         batch.n_tokens++;
     }
 ```
 We can take a look at the third token in this batch using:
-
 ```console
 $ gdb --args ./simple-prompt
 (gdb) br llama.cpp:5514
@@ -852,11 +878,11 @@ The llama_batch struct looks like this:
         llama_seq_id all_seq_id; // used if seq_id == NULL
     } llama_batch;
 ```
-`n_tokens` is hte number of tokens in this batch.
+`n_tokens` is the number of tokens in this batch.
 `token` is a int pointer to tokens.
 `embd` is a float pointer to embeddings.
-`pos` is a pointer to the position of the tokens in the sequence. So each tokens
-will in the batch will have a value in this array which is of size `n_tokens`.
+`pos` is a pointer to the position of the tokens in the sequence. So each token
+in the batch will have a value in this array which is of size `n_tokens`.
 `n_seq_id` is the number of sequence ids. I still don't understand what the
 sequence ids are used for. Perhaps that are used for parallel processing?
 `seq_id` is the sequence id for each token in the batch. So each token will
@@ -1278,6 +1304,301 @@ static std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = 
 So that would return `token_embd.weight`.
 "output_norm.weight"
 "output.weight"
+
+
+### build_llama
+This function is used to build the computation graph for the llama model and
+is a function that is a member of the `llm_build_context`:
+```c++
+struct llm_build_context {
+    const llama_model    & model;
+          llama_context  & lctx;
+    const llama_hparams  & hparams;
+    const llama_cparams  & cparams;
+    const llama_batch    & batch;
+    const llama_kv_cache & kv_self;
+    ...
+    const llm_build_cb & cb;
+    ...
+    struct ggml_cgraph * build_llama() {
+        ...
+    }
+    ...
+}
+```
+Lets take a closer look at `build_llama`:
+```c++
+    struct ggml_cgraph * build_llama() {
+        struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
+
+        const int64_t n_embd_head = hparams.n_embd_head_v;
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+        GGML_ASSERT(n_embd_head == hparams.n_rot);
+
+        struct ggml_tensor * cur;
+        struct ggml_tensor * inpL;
+
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+```
+`inpL` I think is the input layer. And notice that this is created by calling
+`llm_build_inp_embd`. So this is a function that is used by multiple models to
+build this input layer. Note that a callback function is also passed in and this
+is a member of the `llm_build_context` and the callback is passed into the
+constructor. To see where this callback function is defined we have to back up
+to llama_build_graph where we have:
+```c++
+    llm_build_cb cb = [&](struct ggml_tensor * cur, const char * name, int il) {
+        if (il >= 0) {
+            ggml_format_name(cur, "%s-%d", name, il);
+        } else {
+            ggml_set_name(cur, name);
+        }
+
+        if (!lctx.cparams.offload_kqv) {
+            if (strcmp(name, "kqv_merged_cont") == 0) {
+                // all nodes between the KV store and the attention output are run on the CPU
+                ggml_backend_sched_set_tensor_backend(lctx.sched, cur, lctx.backend_cpu);
+            }
+        }
+
+        const bool full_offload = lctx.model.n_gpu_layers > (int)lctx.model.hparams.n_layer;
+        if (batch.n_tokens < 32 || full_offload) {
+            if (il != -1 && strcmp(name, "norm") == 0) {
+                for (auto * backend : lctx.backends) {
+                    if (ggml_backend_buft_supports_backend(lctx.model.buft_layer[il].buft, backend)) {
+                        ggml_backend_sched_set_tensor_backend(lctx.sched, cur, backend);
+                        break;
+                    }
+                }
+            }
+        }
+    };
+
+    struct llm_build_context llm(lctx, batch, cb, worst_case);
+    llm.init();
+
+    switch (model.arch) {
+        case LLM_ARCH_LLAMA:
+            {
+                result = llm.build_llama();
+            } break;
+        case LLM_ARCH_BAICHUAN:
+```
+So we can see that an llm_build_context is created using the llm_build_cb and
+and this is what is passed into llm_build_inp_embd:
+```c++
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+```
+To see what batch is we have to back up the stack to
+llama_new_context_with_model:
+```c++
+            int n_tokens = (int)std::min(cparams.n_ctx, cparams.n_ubatch);
+            int n_past = cparams.n_ctx - n_tokens;
+            llama_token token = llama_token_bos(&ctx->model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
+            ggml_cgraph * gf = llama_build_graph(*ctx, llama_batch_get_one(&token, n_tokens, n_past, 0), true);
+```
+Lets inspect some of the variables:
+```console
+gdb) p n_tokens
+$11 = 512
+(gdb) p n_past
+$12 = 0
+(gdb) p token
+$13 = 1
+(gdb) p ctx->model->vocab.special_bos_id 
+$14 = 1
+
+(gdb) p llama_batch_get_one(&token, n_tokens, n_past, 0)
+$15 = {n_tokens = 512, token = 0x7fffffff655c, embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, 
+  logits = 0x0, all_pos_0 = 0, all_pos_1 = 1, all_seq_id = 0}
+```
+`n_past` is the position in the sequence.
+
+```c++
+    if (batch.token) {
+        lctx.inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
+        cb(lctx.inp_tokens, "inp_tokens", -1);
+        ggml_set_input(lctx.inp_tokens);
+
+        inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
+```
+Note that the 1d tensor created is a list of i32 and the size in this case is
+512. If we think about the input to the model it is a sequence of tokens which
+are the indexes into the vocabulary. So this tensor is a list of tokens.
+And the callback will set the name of the tensor to `inp_tokens`. 
+Now, the call to ggml_get_rows was something I've not come accross before and
+I needed to looking it. I've created a standalone example of how this function
+can be used which is in [get-rows.c](../fundamentals/ggml/src/get_rows.c).
+So what this is doing is that it extracting rows from `tok_embd` and the rows
+to extract are specified by the `lctx.inp_tokens` tensor, which are like
+indices. 
+```console
+(gdb) p ggml_n_dims(tok_embd)
+$38 = 2
+(gdb) p tok_embd->ne[0]
+$39 = 4096
+(gdb) p tok_embd->ne[1]
+$40 = 32000
+```
+And I find visualizing it like this helps me understand it better:
+```
+ne[1]
+ |    3
+ ↓    2
+      0  
+      0
+      0
+           4096
+
+          ne[0] ->
+```
+And then we have the tensor with the indices:
+```console
+(gdb) p ggml_n_dims(lctx.inp_tokens)
+$43 = 1
+(gdb) p lctx.inp_tokens.ne[0]
+$44 = 512
+```
+But keep in mind that this is just building up the computation graph so that
+there are no actualy values in the tensors yet, at least not the inp_tokens.
+
+So this makes sense now I think, we have the input tokens which is a list of
+indices into the vocabulary. The vocabulary in llama has 32000 tokens and each
+token has a an embedding dimention of 4096. What the get rows is doing is that
+is it extracting the embeddings for each token in the input.
+
+_wip_
+
+
+
+### llm_build_context
+This section is doing to take a detailed look at how a computation graph is
+build in llama.cpp. I'll be using the `main` example to step through the code.
+
+```console
+$ gdb --args ./main -m models/llama-2-7b-chat.Q4_0.gguf -p "What is your name?"
+Reading symbols from ./main...
+(gdb) br llama.cpp:5810
+Breakpoint 1 at 0x4b365f: file llama.cpp, line 5810.
+(gdb) r
+```
+
+```console
+(gdb) f
+#4  0x00000000005c08ef in main (argc=5, argv=0x7fffffffc958) at examples/main/main.cpp:199
+199	    std::tie(model, ctx) = llama_init_from_gpt_params(params);
+```
+
+```c++
+std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_params(gpt_params & params) {
+    auto mparams = llama_model_params_from_gpt_params(params);
+
+    llama_model * model  = llama_load_model_from_file(params.model.c_str(), mparams);
+    if (model == NULL) {
+        fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, params.model.c_str());
+        return std::make_tuple(nullptr, nullptr);
+    }
+
+    auto cparams = llama_context_params_from_gpt_params(params);
+
+    llama_context * lctx = llama_new_context_with_model(model, cparams);
+```
+So we load the model from the file system and then setup all the parameters,
+like the model parameters and the computation parameters. We pass the model
+and the cparams to the `llama_new_context_with_model` function which will now
+take a closer look at.
+
+```c++
+
+struct llama_context * llama_new_context_with_model(
+                 struct llama_model * model,
+        struct llama_context_params   params) {
+    ...
+
+    llama_context * ctx = new llama_context(*model);
+    // Following this we have a number of fields of the context that are set
+    // to the values of the parameters that were passed in.
+
+    ...
+    if (!hparams.vocab_only) {
+        // initialize backends
+```
+Backend are initialized here and there are different backends for CUDA, Kompute,
+SYCL, Metal, and Vulkan. So the llama_context has members for backends:
+```c++
+    std::vector<ggml_backend_t> backends;
+
+#ifdef GGML_USE_METAL
+    ggml_backend_t backend_metal = nullptr;
+#endif
+
+    ggml_backend_t backend_cpu = nullptr;
+```
+So we have a vector of backends which will initially be empty, optionally if
+METAL is used then there is also a backend_metal, and there is also a
+backend_cpu.
+Notice that they type of the backends is `ggml_backend_t` which is a pointer to
+In ggml-alloc.h we have:
+```c++
+typedef struct ggml_backend * ggml_backend_t;
+```
+llama.h includes ggml-backend.h.
+```c++
+    struct ggml_backend {
+        ggml_guid_t guid;
+
+        struct ggml_backend_i iface;
+        ggml_backend_context_t context;
+    };
+```
+ggml_backend_context_t is a void pointer which I think it to be able to support
+different types of backends. The `iface` is a struct of function pointers which
+are used to interact with the backend. The `guid` is a unique identifier for the
+backend. So lets look a how these backends are initialized.
+```c++
+#elif defined(GGML_USE_CUBLAS)
+        if (model->n_gpu_layers > 0) {
+            // with split_mode LLAMA_SPLIT_MODE_NONE or LLAMA_SPLIT_MODE_ROW, only the main GPU backend is used
+            if (model->split_mode == LLAMA_SPLIT_MODE_NONE || model->split_mode == LLAMA_SPLIT_MODE_ROW) {
+                ggml_backend_t backend = ggml_backend_cuda_init(model->main_gpu);
+                if (backend == nullptr) {
+                    LLAMA_LOG_ERROR("%s: failed to initialize CUDA%d backend\n", __func__, model->main_gpu);
+                    llama_free(ctx);
+                    return nullptr;
+                }
+                ctx->backends.push_back(backend);
+            } else {
+                // LLAMA_SPLIT_MODE_LAYER requires a backend for each GPU
+                for (int device = 0; device < ggml_backend_cuda_get_device_count(); ++device) {
+                    ggml_backend_t backend = ggml_backend_cuda_init(device);
+                    if (backend == nullptr) {
+                        LLAMA_LOG_ERROR("%s: failed to initialize CUDA%d backend\n", __func__, device);
+                        llama_free(ctx);
+                        return nullptr;
+                    }
+                    ctx->backends.push_back(backend);
+                }
+            }
+        }
+#elif defined(GGML_USE_VULKAN)
+  ...
+#endif
+        ctx->backend_cpu = ggml_backend_cpu_init();
+        if (ctx->backend_cpu == nullptr) {
+            LLAMA_LOG_ERROR("%s: failed to initialize CPU backend\n", __func__);
+            llama_free(ctx);
+            return nullptr;
+        }
+        ctx->backends.push_back(ctx->backend_cpu);
+```
+
+```c++
+        if (!llama_kv_cache_init(ctx->kv_self, ctx->model, type_k, type_v, kv_size, cparams.offload_kqv)) {
+            LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
+            llama_free(ctx);
+            return nullptr;
+        }
+```
 
 ### GGML_CALL macro
 This macro uses a calling convention of `__ms_abi__` which is the Microsoft ABI
