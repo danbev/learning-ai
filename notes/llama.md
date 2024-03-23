@@ -1467,6 +1467,261 @@ indices into the vocabulary. The vocabulary in llama has 32000 tokens and each
 token has a an embedding dimention of 4096. What the get rows is doing is that
 is it extracting the embeddings for each token in the input.
 
+After this we have:
+```c++
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+
+        // inp_pos - contains the positions
+        struct ggml_tensor * inp_pos = build_inp_pos();
+```
+```c++
+    struct ggml_tensor * build_inp_pos() {
+        lctx.inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
+        cb(lctx.inp_pos, "inp_pos", -1);
+        ggml_set_input(lctx.inp_pos);
+        return lctx.inp_pos;
+    }
+```
+And `inp_pos` is a tensor of i32 with the size of `n_tokens` which is 512 and
+these are the positional encoding values.
+
+Next we have the KQ_mask:
+```c++
+        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
+        struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
+```
+So this is about the Key and Query masking, which is there to prevenet the model
+from considering tokens in the future which can happen during training.
+
+```
+    struct ggml_tensor * build_inp_KQ_mask(bool causal = true) {
+        if (causal) {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
+        } else {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
+        }
+        cb(lctx.inp_KQ_mask, "KQ_mask", -1);
+        ggml_set_input(lctx.inp_KQ_mask);
+        return lctx.inp_KQ_mask;
+    }
+```
+The term "causal" in this context refers to the model's ability to generate or
+process data in a sequence where the generation of each piece of data depends
+only on the previously generated or processed data. It's about establishing a
+cause-and-effect relationship in the sequence of data, where each token (in the
+case of language models) is predicted based on the tokens that precede it.
+With that in mind, and notice that causal has a default value of true, this will
+create a new 2d tensor of type f32 with the size of `n_kv` and `n_tokens`. The
+```console
+(gdb) p n_kv
+$49 = 512
+
+(gdb) p n_tokens
+$50 = 512
+```
+So this will be a 512x512 tensor. The name of this tensor will then be set to
+"KQ_mask". Notice that `ggml_set_input` is called on this tensor as well.
+```c
+void ggml_set_input(struct ggml_tensor * tensor) {
+    tensor->flags |= GGML_TENSOR_FLAG_INPUT;
+}
+
+    enum ggml_tensor_flag {
+        GGML_TENSOR_FLAG_INPUT  = 1,
+        GGML_TENSOR_FLAG_OUTPUT = 2,
+        GGML_TENSOR_FLAG_PARAM  = 4,
+    };
+```
+After that we will be back in the `build_llama` function and we are doing to
+loop over all the n_layers:
+```c++
+        for (int il = 0; il < n_layer; ++il) {
+            struct ggml_tensor * inpSA = inpL;
+```
+```console
+(gdb) p n_layer
+
+$53 = 32
+```
+And recall that `inpL` is the input embeddings tensor (512x4096). And the first
+thing that happens is that a new pointer to `inpL` is saved in `inpSA` which I
+think might stand for input to self-attention. This is later used to build the
+feed forward layer/residual layer after the self attention.
+
+So the example must have a default context of 512 for the context size, and the
+embedding size, sometimes called the hidden size if 4096.
+Next we have:
+```
+            cur = llm_build_norm(ctx0, inpL, hparams,
+                    model.layers[il].attn_norm, NULL,
+                    LLM_NORM_RMS, cb, il);
+            cb(cur, "attn_norm", il);
+```
+
+```c++
+static struct ggml_tensor * llm_build_norm(
+        struct ggml_context * ctx,
+         struct ggml_tensor * cur,        // X (input)
+        const llama_hparams & hparams,
+         struct ggml_tensor * mw,         // weights
+         struct ggml_tensor * mb,         // biases
+              llm_norm_type   type,
+         const llm_build_cb & cb,
+                        int   il) {
+    switch (type) {
+        case LLM_NORM:     cur = ggml_norm    (ctx, cur, hparams.f_norm_eps);     break;
+        case LLM_NORM_RMS: cur = ggml_rms_norm(ctx, cur, hparams.f_norm_rms_eps); break;
+    }
+```
+In this case type is `LLM_NORM_RMS` which is a root mean square normalization.
+
+Just to remind ourselves what RMS normalization is, lets take a look at an
+example:
+```
+     token matrix                          normalized matrix        
+
+         f₁  f₂  f₃                         f₁  f₂  f₃
+        +-----------+    +-----+           +-----------+
+token 1 |v₁ |v₂ |v₃ |    |μ₁|σ₁|           |z₁ |z₂ |z₃ |
+token 2 |   |   |   |    |  |  |           |   |   |   |
+token 3 |   |   |   |    |  |  |           |   |   |   |
+token 4 |   |   |   |    |  |  |           |   |   |   |
+token 5 |   |   |   |    |  |  |           |   |   |   |
+        +-----------+    +-----+           +-----------+
+```
+So we want to normalize the values by scaling them by the root mean squared
+which compared to standard normalization where we would scale the values by the
+mean and standard deviation (providing a mean of 0 and and std of 1).
+TODO: link to notes about standard normalization.
+
+The middle matrix is just intended to clarify that each row is normalized
+independently. The mean and standard deviation is calculated as
+follows (for the first token only) as shown below:
+```
+token 1:
+v₁ = 4
+v₂ = 6
+v₃ = 8
+
+μ = 4+6+8/3 = 6
+σ = 1.63
+    v₁ = (4-6)² = 4
+    v₂ = (6-6)² = 0
+    v₃ = (8-6)² = 4	
+    variance = 4+0+4/3 = 8/3
+    √(8/3) = 1.63
+  = 1.63
+```
+Now for each of the value (v₁, v₂, v₃) we will pass them to RMSNorm:
+```
+               xᵢ
+RMSNorm(xᵢ) = ----
+              RMS
+
+RMS = √1/3 (4² + 6² + 8²)
+    = √1/3 (16 + 36 + 64)
+    = √1/3 116
+    = √38.68
+    = 6.22
+
+z₁ = 4/6.22 = 0.64
+z₂ = 6/6.22 = 0.96
+z₃ = 8/6.22 = 1.29
+```
+So we apply the normalization per token/row and we calculated the mean and the
+standard deviation for each token/row (set of features), this is only done once
+per row. And we are simply dividing by this value which is the scaling part.
+With that in mind lets take a look at:
+```c++
+        case LLM_NORM_RMS: cur = ggml_rms_norm(ctx, cur, hparams.f_norm_rms_eps); break;
+```
+The input to this function is the `cur` tensor which is currently (in the first
+iteration) the input embeddings tensor:
+```console
+(gdb) p *cur
+$64 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 1}, 
+  nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_GET_ROWS, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0xb48d50, 0x7ffef1c40180, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+  perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "inp_embd", '\000' <repeats 55 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+
+```c++
+struct ggml_tensor * ggml_rms_norm(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        float  eps) {
+    return ggml_rms_norm_impl(ctx, a, eps, false);
+}
+
+static struct ggml_tensor * ggml_rms_norm_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        float eps,
+        bool inplace) {
+    bool is_node = false;
+
+    if (!inplace && (a->grad)) {
+        is_node = true;
+    }
+
+    struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
+
+    ggml_set_op_params(result, &eps, sizeof(eps));
+
+    result->op   = GGML_OP_RMS_NORM;
+    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
+    result->src[0] = a;
+
+    return result;
+}
+```
+`inplace` is false which can see is passed in from `ggml_rms_norm` so this will
+call `ggml_dup_tensor`. The result tensor will look like this after
+`ggml_dup_tensor`:
+```console
+(gdb) p *result
+$66 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 1}, 
+  nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Next we are going to set a parameter of the operation for operation of this
+tensor (GGML_OP_RMS_NORM):
+```c++
+    ggml_set_op_params(result, &eps, sizeof(eps));
+```
+```console
+(gdb) p eps
+$67 = 9.99999997e-07
+(gdb) p sizeof(eps)
+$68 = 4
+```
+And apart from an assert and a check (not shown) the above values are set on the
+tensor:
+```c
+static void ggml_set_op_params(struct ggml_tensor * tensor, const void * params, size_t params_size) {
+    memcpy(tensor->op_params, params, params_size);
+}
+```
+op_params is defined as:
+```c
+    int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+```
+Then we set the type of operation, set the source of this tensor to the input
+tensor:
+```c++
+    result->op   = GGML_OP_RMS_NORM;
+    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
+    result->src[0] = a;
+```
+So when a computation graph is computed this tensor will be the output of the
+RMSNorm and the source of this tensor is the input tensor. And this operation
+will take epsilon as a parameter. The resulting tensor will be the normalized
+input tensor.
+
 _wip_
 
 
