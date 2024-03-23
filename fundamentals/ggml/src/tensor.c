@@ -17,6 +17,7 @@ int main(int argc, char **argv) {
 
   // This creates a one dimensional tensor, so it will be like a list of numbers
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  ggml_set_name(x, "x");
   printf("x tensor type: %s\n", ggml_type_name(x->type));
   printf("x tensor backend: %d \n", x->backend);
   printf("x tensor dimensions: %d\n", ggml_n_dims(x));
@@ -106,6 +107,18 @@ int main(int argc, char **argv) {
                                               ggml_blck_size(matrix->type));
   printf("matrix name: %s\n", ggml_get_name(matrix));
   ggml_print_objects(ctx);
+
+  //struct ggml_tensor* y = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  //ggml_set_name(y, "y");
+  struct ggml_tensor* dup = ggml_dup_tensor(ctx, x);
+  printf("dup tensor type: %s\n", ggml_type_name(dup->type));
+  printf("dup tensor dimensions: %d\n", ggml_n_dims(dup));
+  printf("x tensor ne[0]: %ld\n", dup->ne[0]);
+  printf("x tensor n3[1]: %ld\n", dup->ne[1]);
+  printf("x tensor n3[2]: %ld\n", dup->ne[2]);
+  printf("x tensor n3[3]: %ld\n", dup->ne[3]);
+  // Name is not duplicated
+  printf("dup tensor name: %s\n", dup->name);
 
   ggml_free(ctx);
   return 0;
