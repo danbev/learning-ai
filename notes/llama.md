@@ -1543,13 +1543,23 @@ loop over all the n_layers:
 
 $53 = 32
 ```
-And recall that `inpL` is the input embeddings tensor (512x4096). And the first
-thing that happens is that a new pointer to `inpL` is saved in `inpSA` which I
-think might stand for input to self-attention. This is later used to build the
-feed forward layer/residual layer after the self attention.
+And recall that `inpL` is the input embeddings tensor (512(rows/tokens)x4096
+(columns/features). So there is a context size of 512 and each has an embedding
+size of 4096.
+And the first thing that happens is that a new pointer to `inpL` is saved in
+ `inpSA` which I think might stand for input to self-attention. This is later
+used to build the feed forward layer/residual layer after the self attention.
 
-So the example must have a default context of 512 for the context size, and the
-embedding size, sometimes called the hidden size if 4096.
+So the example has a default context of 512 for the context size which can be
+seen in common.h:
+```c++
+struct gpt_params {
+    ...
+    int32_t n_ctx                 = 512;   // context size
+    ...
+```
+And the embedding size, sometimes called the hidden size of 4096.
+
 Next we have:
 ```
             cur = llm_build_norm(ctx0, inpL, hparams,
@@ -1631,6 +1641,7 @@ z₃ = 8/6.22 = 1.29
 So we apply the normalization per token/row and we calculated the mean and the
 standard deviation for each token/row (set of features), this is only done once
 per row. And we are simply dividing by this value which is the scaling part.
+
 With that in mind lets take a look at:
 ```c++
         case LLM_NORM_RMS: cur = ggml_rms_norm(ctx, cur, hparams.f_norm_rms_eps); break;
@@ -1721,6 +1732,85 @@ So when a computation graph is computed this tensor will be the output of the
 RMSNorm and the source of this tensor is the input tensor. And this operation
 will take epsilon as a parameter. The resulting tensor will be the normalized
 input tensor.
+
+So that will returns us to `llm_build_norm`:
+```c++
+    if (mw || mb) {
+        cb(cur, "norm", il);
+    }
+```
+In this case mb, which I think is the bias is null:
+```console
+(gdb) p mb
+$77 = (ggml_tensor *) 0x0
+```
+And the mw, which I think is the weights is:
+```console
+$79 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x799d80, ne = {4096, 1, 1, 
+    1}, nb = {4, 16384, 16384, 16384}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x7fff0a704ec0, 
+  name = "blk.0.attn_norm.weight", '\000' <repeats 41 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+So cur's name will be set to `norm-0` in this case..
+
+Now, as part of the normalization the values are actually also scaled by a
+learned parameter which is called gamma/weight and a beta/bias)
+```
+γ = 1.5, β = 0.5
+
+z₁ = (4/6.22) γ + β = 1.46490128
+z₂ = (6/6.22) γ + Β = 1.94735192
+z₃ = (8/6.22) γ + Β = 2.42980256
+```
+And these valeue would be in a tensor of size 4096x1, one for each
+feature. And this is what `mw` and `mb` are for:
+```
+    if (mw) {
+        cur = ggml_mul(ctx, cur, mw);
+        if (mb) {
+            cb(cur, "norm_w", il);
+        }
+    }
+
+    if (mb) {
+        cur = ggml_add(ctx, cur, mb);
+    }
+
+    return cur;
+```
+So if the wieghts are not null then we multiply the tensor by the weights. The
+next line I find confusing as it is setting the name of the output tensor to
+`norm_w-0` only if the bias is not null and other wise it has non name:
+```console
+(gdb) p *cur
+
+$88 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 1}, 
+  nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_MUL, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0x7ffef1c407c0, 0xb49200, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+  perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+So why would we name this as `norm_w` only if there is no bias tensor?  
+Perhaps this is done to indicated that there will be a bias added later, but why
+not perform the setting of the name in the later if block? Ah, but the weights
+matrix might be null in which case the current block might not have been executed
+but the bias block would (assuming the bias is not null). So that does make
+sense now.
+
+In this case since mb is null there will be now addition performed when there
+computation is executed so no operation for the addition is added either.
+After that we are done in llm_build_norm and back in
+llm_build_context::build_llama:
+```console
+            // norm
+            cur = llm_build_norm(ctx0, inpL, hparams,
+                    model.layers[il].attn_norm, NULL,
+                    LLM_NORM_RMS, cb, il);
+            cb(cur, "attn_norm", il);
+```
+And here we can see that the returned tensor is getting the name `attn_norm-0`.
 
 _wip_
 
