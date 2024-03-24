@@ -28,7 +28,7 @@ the attention mechanism.
 
 When rotating the query and key vectors they are rotated in a certain way that
 is not caotic like the absolute poisitioning. For each position they are
-rotated a certain "fixes" amount of degrees (theta).
+rotated a certain "fixed" amount of degrees (theta).
 
 Rotation:
 ```
@@ -55,7 +55,7 @@ position.
 
 In RoPE each dimension is rotated by a different angle which is a function of
 both the position in the sequence and the dimension. So the angle encodes the
-position information. So the forumal for the angle needs take the position
+position information. So the formula for the angle needs take the position
 index into account.
 
 So a rotation is applied to each dimension of the query and key vectors. These
@@ -101,8 +101,8 @@ So the original points are the vectors for the words as if we were not using
 any rotations at all. Then the rotated points are the vectors for the words
 to show how they have been rotated for this specific sentence.
 
-Now, even if we adding words to the start of the sentence or to the end of the
-sentence, we we look at 'cat' and 'sat' they will still have the same angle
+Now, even if we added words to the start of the sentence or to the end of the
+sentence, when we look at 'cat' and 'sat' they will still have the same angle
 theta between them. So the relative position of the words is still the same. So
 this gives us both positional endcoding and relative positional encoding in a
 single type of embedding technique instead two separate techniques.
