@@ -13,7 +13,7 @@ if we imagine the input embeddings being vectors being moved around according
 to the sinusoidal functions (sine and cosine) then the vectors (think of them
 as 2d vectors) will move around without any pattern to them. The llm will not
 be able to see a pattern in this but instead learn that the positions are the
-way they are. If wee then try to add more tokens to the input the llm will not
+way they are. If we then try to add more tokens to the input the llm will not
 be able to handle this very well. It is kinda like memorizing the answers to
 exam questions instead of actually learning the material. You might do alright
 on the exam (the context length you trained on) but if you get a question that
