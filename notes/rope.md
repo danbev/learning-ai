@@ -20,8 +20,8 @@ on the exam (the context length you trained on) but if you get a question that
 is not exactly the same as the ones you memorized you will not be able to
 answer it.
 
-The goal here is the same, to introduce encode position but instead of adding
-this to the embeddings it will add them to the query and key matrices by
+The goal here is the same, to introduce positional encoding but instead of
+adding this to the embeddings it will add them to the query and key matrices by
 rotating them. The idea is to make the dot product of the query
 and key vectors position-aware, encoding the relative positions of tokens into
 the attention mechanism.
