@@ -1,0 +1,13 @@
+{
+  "name": "tensorflow-js-example",
+  "version": "1.0.0",
+  "description": "A simple example to demonstrate TensorFlow.js in Node.js",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/basic.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^3.0.0"
+  }
+}
+
