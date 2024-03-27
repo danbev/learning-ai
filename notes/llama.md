@@ -1812,7 +1812,281 @@ llm_build_context::build_llama:
 ```
 And here we can see that the returned tensor is getting the name `attn_norm-0`.
 
+Next, we have the self attention block for the current layer:
+```c++
+            // self-attention
+            {
+                // compute Q and K and RoPE them
+                struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, model.layers[il].wq, cur);
+                cb(Qcur, "Qcur", il);
+                if (model.layers[il].bq) {
+                    Qcur = ggml_add(ctx0, Qcur, model.layers[il].bq);
+                    cb(Qcur, "Qcur", il);
+                }
+```
+Lets take a look at `model.layers[il].wq` first:
+```console
+(gdb) p *model.layers[il].wq
+$90 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x799d80, ne = {4096, 4096, 
+    1, 1}, nb = {18, 2304, 9437184, 9437184}, op = GGML_OP_NONE, op_params = {
+    0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+    0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, 
+  data = 0x7fff1019cec0, name = "blk.0.attn_q.weight", '\000' <repeats 44 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+And we are in the first attention block of 32:
+```console
+(gdb) p model.layers.size()
+$93 = 32
+```
+And the first operation is a multrix multipliction of the input and the query
+matrix. `cur` in this case is the output from the normalization layer that we
+went through earlier. The output tensor will be named `Qcur-0`:
+```console
+(gdb) p *Qcur
+
+$107 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 
+    1}, nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_MUL_MAT, op_params = {
+    0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0xb49390, 0x7ffef1c40950, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, 
+  view_offs = 0, data = 0x0, name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+Next we are going to do the same for the key matrix and also add a bias if it
+is not null:
+```c++
+                struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, model.layers[il].wk, cur);
+                cb(Kcur, "Kcur", il);
+                if (model.layers[il].bk) {
+                    Kcur = ggml_add(ctx0, Kcur, model.layers[il].bk);
+                    cb(Kcur, "Kcur", il);
+                }
+```
+Then the same is done for the value matrix:
+```c++
+                struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, model.layers[il].wv, cur);
+                cb(Vcur, "Vcur", il);
+                if (model.layers[il].bv) {
+                    Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
+                    cb(Vcur, "Vcur", il);
+                }
+```
+After that we have the following which is related to
+[rotary position embeddings](rope.md). And recall that RoPE is added in each
+block of the attention layer and not like the original implementation where it
+was added to the input embeddings and was absolute.
+```c++
+                Qcur = ggml_rope_custom(
+                    ctx0, ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens), inp_pos,
+                    n_rot, rope_type, 0, n_orig_ctx, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Qcur, "Qcur", il);
+```
+Lets start by taking a look at `ggml_reshape_3d`. So this is going to take the
+`Qcur` tensor:
+```console
+(gdb) p *Qcur
+$110 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 
+    1}, nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_MUL_MAT, op_params = {
+    0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0xb49390, 0x7ffef1c40950, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, 
+  view_offs = 0, data = 0x0, name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p ggml_n_dims(Qcur)
+$111 = 2
+
+(gdb) p n_embd_head
+$112 = 128
+
+(gdb) p n_head
+$113 = 32
+
+(gdb) p n_tokens
+$114 = 512
+```
+So reshape will take the 2d tensor and reshape it to a 3d tensor with the
+following dimensions, x=128, y=32, z=512:
+```
+    ggml_reshape_3d(ctx0, Qcur, 128, 32, 512)
+```
+And that reshaped tensor will be passed as the second argument to
+`ggml_custom_rope`:
+```c
+struct ggml_tensor * ggml_rope_custom(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        int                   n_dims,
+        int                   mode,
+        int                   n_ctx,
+        int                   n_orig_ctx,
+        float                 freq_base,
+        float                 freq_scale,
+        float                 ext_factor,
+        float                 attn_factor,
+        float                 beta_fast,
+        float                 beta_slow) {
+    return ggml_rope_impl(
+        ctx, a, b, n_dims, mode, n_ctx, n_orig_ctx, freq_base, freq_scale,
+        ext_factor, attn_factor, beta_fast, beta_slow, 0.0f, false, false
+    );
+}
+```
+`b` is a tensor of i32 with the size of 512 and these will hold the calculated
+angles to rotate each item in the token embedding sequence by:
+```console
+(gdb) p *b
+$117 = {type = GGML_TYPE_I32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {512, 1, 1, 1}, 
+  nb = {4, 2048, 2048, 2048}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, 
+  grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "inp_pos", '\000' <repeats 56 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+The rest of the values can be seen below:
+```
+(gdb) s
+ggml_rope_custom (ctx=0x747a28 <g_state+200>, a=0x7ffef1c40f90, b=0x7ffef1c404a0, n_dims=128, 
+    mode=0, n_ctx=0, n_orig_ctx=4096, freq_base=10000, freq_scale=1, ext_factor=0, attn_factor=1, 
+    beta_fast=32, beta_slow=1) at ggml.c:5518
+```
+`mode` is documented as:
+```c
+    // rotary position embedding
+    // if mode & 1 == 1, skip n_past elements (DEPRECATED)
+    // if mode & 2 == 1, GPT-NeoX style
+    // if mode & 4 == 1, ChatGLM style
+    //
+    // b is an int32 vector with size a->ne[2], it contains the positions
+    GGML_API struct ggml_tensor * ggml_rope(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            int                   n_dims,
+            int                   mode,
+            int                   n_ctx);
+```
+`ggml_rope_custom` delegates to `ggml_rope_impl`:
+```console
+5504	struct ggml_tensor * ggml_rope_custom(
+5505	        struct ggml_context * ctx,
+5506	        struct ggml_tensor  * a,
+5507	        struct ggml_tensor  * b,
+5508	        int                   n_dims,
+5509	        int                   mode,
+5510	        int                   n_ctx,
+5511	        int                   n_orig_ctx,
+5512	        float                 freq_base,
+5513	        float                 freq_scale,
+5514	        float                 ext_factor,
+5515	        float                 attn_factor,
+5516	        float                 beta_fast,
+5517	        float                 beta_slow) {
+5518	    return ggml_rope_impl(
+5519	        ctx, a, b, n_dims, mode, n_ctx, n_orig_ctx, freq_base, freq_scale,
+5520	        ext_factor, attn_factor, beta_fast, beta_slow, 0.0f, false, false
+5521	    );
+5522	}
+```
+
+```
+static struct ggml_tensor * ggml_rope_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        int                   n_dims,
+        int                   mode,
+        int                   n_ctx,
+        int                   n_orig_ctx,
+        float                 freq_base,
+        float                 freq_scale,
+        float                 ext_factor,
+        float                 attn_factor,
+        float                 beta_fast,
+        float                 beta_slow,
+        float                 xpos_base,
+        bool                  xpos_down,
+        bool                  inplace) {
+
+    bool is_node = false;
+
+    if (a->grad) {
+        is_node = true;
+    }
+
+    struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
+
+    int32_t params[13] = { /*n_past*/ 0, n_dims, mode, n_ctx, n_orig_ctx };
+    memcpy(params +  5, &freq_base,    sizeof(float));
+    memcpy(params +  6, &freq_scale,   sizeof(float));
+    memcpy(params +  7, &ext_factor,   sizeof(float));
+    memcpy(params +  8, &attn_factor,  sizeof(float));
+    memcpy(params +  9, &beta_fast,    sizeof(float));
+    memcpy(params + 10, &beta_slow,    sizeof(float));
+    memcpy(params + 11, &xpos_base,    sizeof(float));
+    memcpy(params + 12, &xpos_down,    sizeof(bool));
+    ggml_set_op_params(result, params, sizeof(params));
+
+    result->op   = GGML_OP_ROPE;
+    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
+    result->src[0] = a;
+    result->src[1] = b;
+
+    return result;
+}
+```
+This starting to look familiar, this is duplicating the tensor that was 
+reshaped previously and then setting the operation parameters and the operation
+type. Alright there are quite a few parameters here, lets take a look at them.
+
+[rope.md](./rope.md) contains a detailed explanation of the RoPE operation and
+the angles are calculated as follows:
+```
+                ^-2(i-1)/d
+Θ = { θᵢ = 10000          ,  i ∈ {1, 2, ..., d/2 }
+```
+Now, I think that 10000 is the `base_freq` parameter in llama.cpp
+
+`freq_base` is the base of the exponential function, determining the starting 
+point of the positional frequencies.
+
+![image](./freq_scale.png)
+
+A more negative freq_scale (e.g., -2) results in a steeper decay. This means the
+theta values decrease more rapidly as you move across the dimensions. This
+setting emphasizes positional encoding more strongly in the lower dimensions.
+
+A less negative freq_scale (e.g., -0.5) shows a slower decay rate. The theta
+values decrease more gradually, indicating a more uniform distribution of
+positional information across dimensions.
+
+```console
+-2: ['1.00000', '0.74989', '0.56234', '0.42170', '0.31623', '0.23714', '0.17783', '0.13335', '0.10000', '0.07499', '0.05623', '0.04217', '0.03162', '0.02371', '0.01778', '0.01334', '0.01000', '0.00750', '0.00562', '0.00422', '0.00316', '0.00237', '0.00178', '0.00133', '0.00100', '0.00075', '0.00056', '0.00042', '0.00032', '0.00024', '0.00018', '0.00013']
+
+-1: ['1.00000', '0.86596', '0.74989', '0.64938', '0.56234', '0.48697', '0.42170', '0.36517', '0.31623', '0.27384', '0.23714', '0.20535', '0.17783', '0.15399', '0.13335', '0.11548', '0.10000', '0.08660', '0.07499', '0.06494', '0.05623', '0.04870', '0.04217', '0.03652', '0.03162', '0.02738', '0.02371', '0.02054', '0.01778', '0.01540', '0.01334', '0.01155']
+
+-0.5: ['1.00000', '0.93057', '0.86596', '0.80584', '0.74989', '0.69783', '0.64938', '0.60430', '0.56234', '0.52330', '0.48697', '0.45316', '0.42170', '0.39242', '0.36517', '0.33982', '0.31623', '0.29427', '0.27384', '0.25483', '0.23714', '0.22067', '0.20535', '0.19110', '0.17783', '0.16548', '0.15399', '0.14330', '0.13335', '0.12409', '0.11548', '0.10746']
+```
+
+So that was 2 of the parameters, what are the rest for?
+
+#### `beta_fast` and `beta_slow` (blending)
+Imagine a model trained up to a context length of 512 tokens, and you wish to
+extend its capabilities to handle up to 1024 tokens. A blending range might be
+set from 400 to 600 tokens. In this range:
+
+Positions closer to 400 would use predominantly interpolated embeddings, as
+they're closer to the trained range. As positions move towards 600, there's an
+increasing reliance on extrapolated embeddings.
+Beyond 600 tokens, the model uses purely extrapolated embeddings for positional
+information.
+The parameters beta_fast and beta_slow control the blending of interpolated and
+extrapolated embeddings.
+
 _wip_
+
 
 
 
