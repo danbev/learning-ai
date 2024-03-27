@@ -630,4 +630,47 @@ Lets turn our attention to the llama_init_from_gpt_params function:
 ```console
 std::tie(model, ctx) = llama_init_from_gpt_params(params);
 ```
-[zero-to-hero]: fundamentals/rust/zero-to-hero/README.md
+
+### Tensors
+When reading about matrix multiplication we often see it in the format that
+we create a matrix like 3x2 which means 3 rows and 2 columns. When working
+with GGML, and I think this is also common with graphics libraries in general,
+that one first specifies the x-axis, that is the horizontal axis/number of
+columns.
+If we have multiple dimensions then we have another value that specifies the
+size of the y-axis, that is the vertical axis/number of rows. So think of this
+as building a matrix from the bottom up and specifying one dimension at a time.
+
+So if we want to create a 3x2 matrix in GGML we do the following:
+```c
+  struct ggml_tensor* matrix = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2, 3);
+```
+This is because we are first specifying the number of elements in the first
+dimension (x-axis), and then the number of elements in the second dimension
+(y-axis).
+
+Which can be visualized like this:
+```
+    +---+---+
+    | 0 | 1 |
+    +---+---+
+    | 2 | 3 |
+    +---+---+
+    | 4 | 5 |
+    +---+---+ 
+
+ne[0] = 2 (Number of elements in the first dimension) 
+ne[1] = 3 (Number of elements in the second dimension)
+
+nb[0] = 4 (size of each element, moving this number will move to the next column)
+nb[1] = 8 (stride, moving this number will move to the next row)
+
+Memory layout:
+0000 0001    0010 0011    0100 0101
+  0    1      2     3       4    5
+    row 1      row 2        row 3
+             ↑
+             8 (ne[1])
+```  
+
+[zero-to-hero]: ../fundamentals/rust/zero-to-hero/README.md
