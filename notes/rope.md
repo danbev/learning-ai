@@ -343,6 +343,27 @@ x₁:
  [cos(θ) -sin(θ)]  [x₀]
  [sin(θ)  cos(θ)]  [x₁]
 ```
+And theta is taken from the set of angles we calculated earlier (I think):
+```
+                ^-2(i-1)
+Θ = { θᵢ = 10000 ------- ,  i ∈ {1, 2, ..., d/2 }
+                    d
+```
+Now, I think that 10000 is the `base_freq` parameter in llama.cpp and perhaps
+that -2 is the `freq_scale`.
+
+#### beta_fast and beta_slow (blending)
+Imagine a model trained up to a context length of 512 tokens, and you wish to
+extend its capabilities to handle up to 1024 tokens. A blending range might be
+set from 400 to 600 tokens. In this range:
+
+Positions closer to 400 would use predominantly interpolated embeddings, as
+they're closer to the trained range. As positions move towards 600, there's an
+increasing reliance on extrapolated embeddings.
+Beyond 600 tokens, the model uses purely extrapolated embeddings for positional
+information.
+The parameters beta_fast and beta_slow control the blending of interpolated and
+extrapolated embeddings.
 
 ### A Length-Extrapolatable Transformer (XPos RoPE)
 https://arxiv.org/pdf/2212.10554.pdf
