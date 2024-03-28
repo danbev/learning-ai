@@ -364,6 +364,3 @@ Beyond 600 tokens, the model uses purely extrapolated embeddings for positional
 information.
 The parameters beta_fast and beta_slow control the blending of interpolated and
 extrapolated embeddings.
-
-### A Length-Extrapolatable Transformer (XPos RoPE)
-https://arxiv.org/pdf/2212.10554.pdf
