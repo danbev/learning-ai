@@ -51,7 +51,8 @@ Notice that the futher back in context the token is the further away the token
 is the smaller the number (since it is negative) and the more will be subtracted
 from the attention value, that is the dot product between the query and the key.
 So even if the result of a dot product is high, if the distance is large enough
-the attention value will be low. This is the bias part of the Alibi.
+the attention value will be low. This is the bias part of the Alibi, tokens that
+are closer get a higher bias and tokens further away get a lower bias.
 
 Positional embeddings in ALiBi are only applied after the query-key dot product:
 ```
