@@ -33,6 +33,9 @@ get-rows: src/get_rows.c
 reshape: src/reshape.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
 
+transpose: src/transpose.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
