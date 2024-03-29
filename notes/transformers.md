@@ -331,12 +331,12 @@ h = number of heads
 dₖ = d_model / h         For example 4 heads and d_model = 512, dₖ = 128
 ```
 If we look at the Attention function it is the same as we saw earlier. What is
-new is that we are going to split the the matrices Q', K', and V' into smaller
+new is that we are going to split the matrices Q', K', and V' into smaller
 matrices. This is the number of heads that we have.
 
 So for example if we want to have 4 heads and the embedding dimension size is
 512, then we will have 4 4x128 matrices. Each one of these are called a head and
-they are separate from eachother, and are used to perform the single-head
+they are separate from each other, and are used to perform the single-head
 attention function that we went through above. 
 ```
 Attention(Q'₀, K'₀, V'₀) = softmax((Q'₀, K'₀, V'₀)/√dₖ) x V'₀
@@ -398,8 +398,9 @@ Smaller values in the attention score mean that we should pay less attention to
 them and larger values mean that we should pay more attention to those tokens.
 
 Next the output attention layer is passed to the Add&Norm layer which take it
-as input and also takes a copy of the Value matrix which is passed around input
-what is called a skip connection or a residual connection.
+as input and also takes a copy of the Value matrix which is passed around the
+attention layer. This is what is called a skip connection or a residual
+connection.
 
 ### Masked Multi-Head Attention
 We also have multi-head attention as described above in the decoder but there
@@ -524,10 +525,10 @@ it. What is normalization? I've written about this in
 
 In the encoder, the first Add&Norm layer comes after the multi-head attention
 layer. There are two inputs into this layer, the first is the original value
-matrix which notice is passed around (in the diagram we saw earlier), this is
-called a residual connection or a skip connection, the multi-head attention
-layer. The second input is the output of the multihead attention layer. These
-are simply added together:
+matrix which notice is passed around the multihead attention layer (in the
+diagram we saw earlier), this is called a residual connection or a skip
+connectionr. The second input is the output of the multihead attention layer.
+These are simply added together:
 ```
    v_mha = V + MHA
 
