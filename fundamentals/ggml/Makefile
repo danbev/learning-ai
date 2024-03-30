@@ -36,6 +36,9 @@ reshape: src/reshape.c
 transpose: src/transpose.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
 
+view: src/view.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
