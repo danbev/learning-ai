@@ -32,8 +32,8 @@ int main(int argc, char **argv) {
   printf("a ne[3]: %ld\n", a->ne[3]);
 
   printf("matrix a %ldx%ld:\n", a->ne[0], a->ne[1]);
-  for (int y = 0; y < ny; y++) {
-      for (int x = 0; x < nx; x++) {
+  for (int y = 0; y < a->ne[1]; y++) {
+      for (int x = 0; x < a->ne[0]; x++) {
           printf("%.2f ", *(float *) ((char *) a->data + y * a->nb[1] + x * a->nb[0]));
        }
       printf("\n");
@@ -43,8 +43,9 @@ int main(int argc, char **argv) {
   // A permuation is similar to a transpose, but it is a generalization of the
   // transpose operation. The transpose operation is a special case of the
   // permute operation. The first argument is which dimension we want to move
-  // to the x-axis dimension and the second the which dimension index we want
-  // to move/have as the y-axis dimension.
+  // or have become the x-axis dimension and the second the which dimension
+  // index we want // to move/have as the y-axis dimension.
+  //
   // For example, if we want to turn the above 3x2 matrix into a 2x3 matrix we
   // could permute the matrix:
   struct ggml_tensor* p = ggml_permute(ctx, a, 1, 0, 2, 3);
