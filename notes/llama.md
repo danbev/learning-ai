@@ -284,7 +284,13 @@ Time=3
  [650 1300]                   [3250 16250 2210000]
 ```
 Notice that we have calculated the dot product for the first and second token
-again!
+again, in the Key and Value matrices:
+```
+[  Q                 K^T      QK^T  ]  *   V  
+ [1     2 ]   . [1  5  ---] = [5    25    ----   ] =
+ [5     10]     [2 10 ----]   [25   125   -----  ]
+ [650 1300]                   [---- ----- -------]
+```
 
 The transformer architecture needs to have all the previous tokens in the
 sequence to predict the next token but we don't have to recalculate the dot
@@ -2070,7 +2076,24 @@ positional information across dimensions.
 -0.5: ['1.00000', '0.93057', '0.86596', '0.80584', '0.74989', '0.69783', '0.64938', '0.60430', '0.56234', '0.52330', '0.48697', '0.45316', '0.42170', '0.39242', '0.36517', '0.33982', '0.31623', '0.29427', '0.27384', '0.25483', '0.23714', '0.22067', '0.20535', '0.19110', '0.17783', '0.16548', '0.15399', '0.14330', '0.13335', '0.12409', '0.11548', '0.10746']
 ```
 
-So that was 2 of the parameters, what are the rest for?
+So that was 1 of the parameters, what are the rest for?
+
+TODO: complete the following list once I've sorted out where from where these
+parameters come from (RoPE, YARN, XPos, etc.)
+```
+freq_base    This is from RoPE and is the base frequence which is 10000 in the paper
+freq_scale   From YARN and is the scaling factor for the angles
+ext_factor   From YARN and is the extrapolation factor
+attn_factor  From XPos?
+beta_fast
+beta_slow
+xpos_base
+&xpos_down
+```
+
+
+I think that `freq_scale` is actually for YARN scaling and not like I wrote
+above that is was a parameter of the angle calculation.
 
 #### `beta_fast` and `beta_slow` (blending)
 Imagine a model trained up to a context length of 512 tokens, and you wish to
@@ -2084,6 +2107,309 @@ Beyond 600 tokens, the model uses purely extrapolated embeddings for positional
 information.
 The parameters beta_fast and beta_slow control the blending of interpolated and
 extrapolated embeddings.
+
+The `attn_factor` is used to adjust the overall strength or influence of the
+positional embeddings on the self-attention mechanism within the transformer
+model. Essentially, it acts as a scaling factor that can amplify or diminish the
+effect that positional information has on how the model weighs and integrates
+different parts of the input sequence.
+A higher attn_factor means that the positional embeddings will have a more
+pronounced impact on the attention scores, potentially making the model more
+sensitive to the sequence order and the relative distances between tokens.
+When extending the context length beyond what the model was originally trained
+for, adjusting the attn_factor can help the model better accommodate and make
+use of the extended positional embeddings, ensuring that the attention mechanism
+remains effective over longer sequences.
+
+That leaves `xpos_base` and `xpos_down`.
+
+
+I'm currently in:
+```console
+(gdb) bt
+
+#0  ggml_rope_impl (ctx=0x747a28 <g_state+200>, a=0x7ffef1c40f90, b=0x7ffef1c404a0, n_dims=128, 
+    mode=0, n_ctx=0, n_orig_ctx=4096, freq_base=10000, freq_scale=1, ext_factor=0, attn_factor=1, 
+    beta_fast=32, beta_slow=1, xpos_base=0, xpos_down=false, inplace=false) at ggml.c:5461
+#1  0x0000000000417bd6 in ggml_rope_custom (ctx=0x747a28 <g_state+200>, a=0x7ffef1c40f90, 
+    b=0x7ffef1c404a0, n_dims=128, mode=0, n_ctx=0, n_orig_ctx=4096, freq_base=10000, freq_scale=1, 
+    ext_factor=0, attn_factor=1, beta_fast=32, beta_slow=1) at ggml.c:5518
+#2  0x00000000004b3274 in llm_build_context::build_llama (this=0x7fffffff63e0) at llama.cpp:5875
+#3  0x0000000000485e7f in llama_build_graph (lctx=..., batch=..., worst_case=true) at llama.cpp:8641
+#4  0x0000000000495385 in llama_new_context_with_model (model=0x797fd0, params=...)
+    at llama.cpp:13290
+#5  0x000000000052f81f in llama_init_from_gpt_params (params=...) at common/common.cpp:1877
+#6  0x00000000005c0ad9 in main (argc=5, argv=0x7fffffffb318) at examples/main/main.cpp:199
+
+(gdb) br
+
+Breakpoint 4 at 0x417930: file ggml.c, line 5461.
+
+(gdb) save breakpoints brs.txt
+
+Saved to file 'brs.txt'.
+```
+To restart where I left of:
+```console
+$ gdb --args ./main -m models/llama-2-7b-chat.Q4_0.gguf -p "What is your name?"
+(gdb) source brs.txt
+```
+
+So we where in build_llama in llama.cpp:
+```c++
+                Qcur = ggml_rope_custom(
+                    ctx0, ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens), inp_pos,
+                    n_rot, rope_type, 0, n_orig_ctx, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Qcur, "Qcur", il);
+```
+So the tensor `a` is the reshaped tensor `Qcur` and `b` is the tensor `inp_pos`
+So Qcur is a 512x4096 matrix but notice that it will be reshaped before being
+passed into `ggml_rope_custom`.
+```console
+(gdb) p *Qcur
+$4 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 1}, 
+  nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0xb49390, 0x7ffef1c40950, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+  perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+And a will then look like:
+```console
+(gdb) p *a
+$6 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 512, 1}, 
+  nb = {4, 512, 16384, 8388608}, op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, 
+  grad = 0x0, src = {0x7ffef1c40ae0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x7ffef1c40ae0, view_offs = 0, data = 0x0, 
+  name = "Qcur-0 (reshaped)", '\000' <repeats 46 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+Now I think this is done because multihead attention is used and there are 32
+heads.
+
+The rest of this function will do the same as what we have seen before the
+operation is set to `GGML_OP_ROPE` and the source tensors are set to `a` and `b`
+and finally the result is passed back.
+
+Back in `build_llama` the name of the tensor will be set:
+```c++
+                cb(Qcur, "Qcur", il);
+```
+The the same things is done for the Key matrix which is pretty much what we
+expected:
+```
+                Kcur = ggml_rope_custom(
+                    ctx0, ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens), inp_pos,
+                    n_rot, rope_type, 0, n_orig_ctx, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Kcur, "Kcur", il);
+```
+
+After this we have the Key-Value cache, and it might be useful to re-read the
+[key-value cache notes](#key-value-cache) for a refresher before this section:
+```
+                cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
+                        model.layers[il].wo, model.layers[il].bo,
+                        Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f/sqrtf(float(n_embd_head)), cb, il);
+```
+
+Lets take a look at `llm_build_kv`:
+```c++
+static struct ggml_tensor * llm_build_kv(
+        struct ggml_context * ctx,
+          const llama_model & model,
+        const llama_hparams & hparams,
+       const llama_kv_cache & kv,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * wo,
+         struct ggml_tensor * wo_b,
+         struct ggml_tensor * k_cur,
+         struct ggml_tensor * v_cur,
+         struct ggml_tensor * q_cur,
+         struct ggml_tensor * kq_mask,
+         struct ggml_tensor * kq_pos,
+                    int64_t   n_ctx,
+                    int32_t   n_tokens,
+                    int32_t   kv_head,
+                    int32_t   n_kv,
+                    float     kq_scale,
+         const llm_build_cb & cb,
+                    int       il) {
+```
+Notice that the `wo` is taken from the model:
+```console
+(gdb) p *model.layers[il].wo
+$12 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x799d80, ne = {4096, 4096, 1, 
+    1}, nb = {18, 2304, 9437184, 9437184}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x7fff0f89cec0, 
+  name = "blk.0.attn_output.weight", '\000' <repeats 39 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+Notice that the name of this tensor is `blk.0.attn_output.weight` and there will
+be 32 of these. In this case `bo` the bias tensor is NULL.
+
+And `k_cur`, `q_cur` are the tensors that we saw above.
+```console
+(gdb) p *q_cur
+$18 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 512, 1}, 
+  nb = {4, 512, 16384, 8388608}, op = GGML_OP_ROPE, op_params = {0, 128, 0, 0, 4096, 1176256512, 
+    1065353216, 0, 1065353216, 1107296256, 1065353216, 0, 0, 0, 0, 0}, flags = 0, grad = 0x0, src = {
+    0x7ffef1c40f90, 0x7ffef1c404a0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p *k_cur
+$19 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 512, 1}, 
+  nb = {4, 512, 16384, 8388608}, op = GGML_OP_ROPE, op_params = {0, 128, 0, 0, 4096, 1176256512, 
+    1065353216, 0, 1065353216, 1107296256, 1065353216, 0, 0, 0, 0, 0}, flags = 0, grad = 0x0, src = {
+    0x7ffef1c412b0, 0x7ffef1c404a0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "Kcur-0", '\000' <repeats 57 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Looking at the dimensions for these tensors we can see they are 128x32x512 and
+these are the dimension is in a ggml tensor, so we first have the x-axis, then
+the y-axis, and then the z-axis.
+```
+          ↑               .
+         ↑|             .
+        ↑||           .
+        |||        512
+  32    |||       .
+(heads) |||     .
+        |||   .
+        ||------------------------->
+        |------------------------>
+        ------------------------->
+                 128
+              (features)
+```
+So we have 32 heads, and the embedding dimension is 128, recall that we split
+the features which are originally 4096 into 32 heads containing 128 features
+each. And context length is 512, the number of tokens embeddings.
+
+And `v_cur` looks like this:
+```console
+(gdb) p *v_cur
+$21 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 1, 1}, 
+  nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, 
+  flags = 0, grad = 0x0, src = {0xb496b0, 0x7ffef1c40950, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+  perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "Vcur-0", '\000' <repeats 57 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+And we can see that this is is a 512x4096 matrix (x-axis 4096, y-axis 512) and
+these are the tokens in the sequence and tokens embeddings for them.
+
+And the `kv_mask` looks like this:
+```console
+(gdb) p *kq_mask
+$23 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {512, 512, 1, 1}, 
+  nb = {4, 2048, 1048576, 1048576}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, 
+  grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, 
+  perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "KQ_mask", '\000' <repeats 56 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Recall that the embedding dimension in this case is 512 and this makes the
+attention score matrix a 512x512 matrix. And this matrix allows for masking out
+of tokens that the tokens that come later in the sequence. I've written about
+this before and should add a link here. TODO: add link.
+`kq_pos` is NULL in this case.
+```console
+(gdb) p n_ctx
+$25 = 512
+(gdb) p n_tokens
+$26 = 512
+(gdb) p kv_head 
+$27 = 0
+(gdb) p n_kv
+$28 = 512
+(gdb) p kq_scale
+$29 = 0.0883883461
+```
+So the first thing that happens in `llm_build_kv` is:
+```c++
+    ggml_build_forward_expand(graph, q_cur);
+```
+
+```console
+(gdb) p hparams.n_embd_k_gqa()
+$33 = 4096
+```
+```c++
+    uint32_t n_embd_k_gqa() const { // dimension of key embeddings across all k-v heads
+        return n_embd_head_k * n_head_kv;
+    }
+```
+
+(gdb) p hparams.n_embd_v_gqa()
+$34 = 4096
+```
+```c++
+    struct ggml_tensor * v_cur_t = ggml_transpose(ctx, ggml_reshape_2d(ctx, v_cur, n_embd_v_gqa, n_tokens));
+```
+So we have the value matrix which is a 512x4096 matrix. 
+```console
+(gdb) p v_cur.ne
+$41 = {4096, 512, 1, 1}
+(gdb) p ggml_n_dims(v_cur)
+$39 = 2
+```
+And we are going to reshape this to 4096x512 matrix?  
+Lets call this and see what we get back:
+```console
+(gdb) p *ggml_reshape_2d(ctx, v_cur, n_embd_v_gqa, n_tokens)
+$44 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 
+    1, 1}, nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_RESHAPE, op_params = {
+    0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffef1c40e00, 0x0, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x7ffef1c40e00, view_offs = 0, data = 0x0, 
+  name = "Vcur-0 (reshaped)", '\000' <repeats 46 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+And comparing this to the original `v_cur` tensor:
+```console
+(gdb) p *v_cur
+$46 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 512, 
+    1, 1}, nb = {4, 16384, 8388608, 8388608}, op = GGML_OP_MUL_MAT, op_params = {
+    0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0xb496b0, 0x7ffef1c40950, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x0, name = "Vcur-0", '\000' <repeats 57 times>, 
+  extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Not the `op` is set to `GGML_OP_RESHAPE` and the name is `Vcur-0 (reshaped)` but
+other than that I can't really see any difference. Actually there is also a
+difference with the `src` and `src_view` fields.
+
+There is also a note on the line later down in the code asking if this reshaping
+is really necessary.
+```c++
+    //struct ggml_tensor * v_cur_t = ggml_transpose(ctx, v_cur); // TODO: reshape above is likely not needed
+```
+I've opened a pull request to suggest changing this which was later accepted.
+
+We can take a look at this transposed tensor:
+```console
+(gdb) p *ggml_transpose(ctx, ggml_reshape_2d(ctx, v_cur, n_embd_v_gqa, n_tokens))
+$48 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {512, 4096, 1, 1}, nb = {16384, 4, 
+    8388608, 8388608}, op = GGML_OP_TRANSPOSE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {
+    0x7ffef1c41c10, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x7ffef1c40e00, view_offs = 0, data = 0x0, 
+  name = "Vcur-0 (reshaped) (transposed)", '\000' <repeats 33 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+And this is named `v_cur_t`.
+```c++
+    cb(v_cur_t, "v_cur_t", il);
+```
+Next we have:
+```
+    struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, kv.k_l[il], n_tokens*n_embd_k_gqa,
+            (ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa))*kv_head);
+    cb(k_cache_view, "k_cache_view", il);
+```
+
 
 _wip_
 
