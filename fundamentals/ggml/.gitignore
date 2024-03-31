@@ -6,3 +6,4 @@ get-rows
 reshape
 transpose
 view
+permute

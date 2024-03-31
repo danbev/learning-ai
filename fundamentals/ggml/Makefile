@@ -39,6 +39,9 @@ transpose: src/transpose.c
 view: src/view.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
 
+permute: src/permute.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
