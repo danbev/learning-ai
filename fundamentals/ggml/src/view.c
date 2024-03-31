@@ -14,6 +14,7 @@ int main(int argc, char **argv) {
   struct ggml_context* ctx = ggml_init(params);
 
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  ggml_set_name(x, "x");
   ggml_set_f32_1d(x, 0, 1);
   ggml_set_f32_1d(x, 1, 2);
   ggml_set_f32_1d(x, 2, 3);
@@ -37,6 +38,12 @@ int main(int argc, char **argv) {
   printf("view tensor dimensions: %d\n", ggml_n_dims(view));
   printf("view tensor elements: %ld\n", ggml_nelements(view));
   printf("view.ne: %ld\n", view->ne[0]);
+
+  for (int i = 0; i < ggml_nelements(view); i++) {
+    printf("view[%d]: %f\n", i, ggml_get_f32_1d(view, i));
+  }
+
+  view = ggml_view_1d(ctx, x, 5, 5);
 
   //ggml_print_objects(ctx);
 
