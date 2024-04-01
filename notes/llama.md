@@ -1351,9 +1351,11 @@ Lets take a closer look at `build_llama`:
 build this input layer. Note that a callback function is also passed in and this
 is a member of the `llm_build_context` and the callback is passed into the
 constructor. To see where this callback function is defined we have to back up
-to llama_build_graph where we have:
+to `llama_build_graph` where we have:
 ```c++
     llm_build_cb cb = [&](struct ggml_tensor * cur, const char * name, int il) {
+        // The following is setting the tensor name and if this is not the
+        // first layer then use the layer index in the name.
         if (il >= 0) {
             ggml_format_name(cur, "%s-%d", name, il);
         } else {
@@ -1390,13 +1392,13 @@ to llama_build_graph where we have:
             } break;
         case LLM_ARCH_BAICHUAN:
 ```
-So we can see that an llm_build_context is created using the llm_build_cb and
-and this is what is passed into llm_build_inp_embd:
+So we can see that an `llm_build_context` is created using the `llm_build_cb`
+and and this is what is passed into `llm_build_inp_embd`:
 ```c++
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
 ```
 To see what batch is we have to back up the stack to
-llama_new_context_with_model:
+`llama_new_context_with_model`:
 ```c++
             int n_tokens = (int)std::min(cparams.n_ctx, cparams.n_ubatch);
             int n_past = cparams.n_ctx - n_tokens;
@@ -1429,10 +1431,11 @@ $15 = {n_tokens = 512, token = 0x7fffffff655c, embd = 0x0, pos = 0x0, n_seq_id =
         inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
 ```
 Note that the 1d tensor created is a list of i32 and the size in this case is
-512. If we think about the input to the model it is a sequence of tokens which
+512. If we think about the input to the model, it is a sequence of tokens which
 are the indexes into the vocabulary. So this tensor is a list of tokens.
 And the callback will set the name of the tensor to `inp_tokens`. 
-Now, the call to ggml_get_rows was something I've not come accross before and
+
+Now, the call to `ggml_get_rows` was something I've not come accross before and
 I needed to looking it. I've created a standalone example of how this function
 can be used which is in [get-rows.c](../fundamentals/ggml/src/get_rows.c).
 So what this is doing is that it extracting rows from `tok_embd` and the rows
@@ -1466,11 +1469,11 @@ $43 = 1
 $44 = 512
 ```
 But keep in mind that this is just building up the computation graph so that
-there are no actualy values in the tensors yet, at least not the inp_tokens.
+there are no actual values in the tensors yet, at least not the `inp_tokens`.
 
 So this makes sense now I think, we have the input tokens which is a list of
 indices into the vocabulary. The vocabulary in llama has 32000 tokens and each
-token has a an embedding dimention of 4096. What the get rows is doing is that
+token has an embedding dimention of 4096. What the get rows is doing is that
 is it extracting the embeddings for each token in the input.
 
 After this we have:
@@ -1491,12 +1494,12 @@ After this we have:
 And `inp_pos` is a tensor of i32 with the size of `n_tokens` which is 512 and
 these are the positional encoding values.
 
-Next we have the KQ_mask:
+Next we have the `KQ_mask`:
 ```c++
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
 ```
-So this is about the Key and Query masking, which is there to prevenet the model
+So this is about the Key and Query masking, which is there to prevent the model
 from considering tokens in the future which can happen during training.
 
 ```
@@ -1539,7 +1542,7 @@ void ggml_set_input(struct ggml_tensor * tensor) {
     };
 ```
 After that we will be back in the `build_llama` function and we are doing to
-loop over all the n_layers:
+loop over all the `n_layers`:
 ```c++
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
@@ -1553,7 +1556,7 @@ And recall that `inpL` is the input embeddings tensor (512(rows/tokens)x4096
 (columns/features). So there is a context size of 512 and each has an embedding
 size of 4096.
 And the first thing that happens is that a new pointer to `inpL` is saved in
- `inpSA` which I think might stand for input to self-attention. This is later
+`inpSA` which I think might stand for "input to self-attention". This is later
 used to build the feed forward layer/residual layer after the self attention.
 
 So the example has a default context of 512 for the context size which can be
@@ -1589,7 +1592,7 @@ static struct ggml_tensor * llm_build_norm(
         case LLM_NORM_RMS: cur = ggml_rms_norm(ctx, cur, hparams.f_norm_rms_eps); break;
     }
 ```
-In this case type is `LLM_NORM_RMS` which is a root mean square normalization.
+In this case type is `LLM_NORM_RMS` which is a Root Mean Squared normalization.
 
 Just to remind ourselves what RMS normalization is, lets take a look at an
 example:
@@ -1605,8 +1608,8 @@ token 4 |   |   |   |    |  |  |           |   |   |   |
 token 5 |   |   |   |    |  |  |           |   |   |   |
         +-----------+    +-----+           +-----------+
 ```
-So we want to normalize the values by scaling them by the root mean squared
-which compared to standard normalization where we would scale the values by the
+So we want to normalize the values by scaling them by the root mean squared,
+which compared to standard normalization, where we would scale the values by the
 mean and standard deviation (providing a mean of 0 and and std of 1).
 TODO: link to notes about standard normalization.
 
@@ -1706,7 +1709,7 @@ $66 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne =
   name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
 ```
 Next we are going to set a parameter of the operation for operation of this
-tensor (GGML_OP_RMS_NORM):
+tensor (`GGML_OP_RMS_NORM`):
 ```c++
     ggml_set_op_params(result, &eps, sizeof(eps));
 ```
@@ -1723,7 +1726,7 @@ static void ggml_set_op_params(struct ggml_tensor * tensor, const void * params,
     memcpy(tensor->op_params, params, params_size);
 }
 ```
-op_params is defined as:
+`op_params` is defined as:
 ```c
     int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
 ```
@@ -2123,7 +2126,6 @@ remains effective over longer sequences.
 
 That leaves `xpos_base` and `xpos_down`.
 
-
 I'm currently in:
 ```console
 (gdb) bt
@@ -2343,6 +2345,7 @@ $33 = 4096
     }
 ```
 
+```console
 (gdb) p hparams.n_embd_v_gqa()
 $34 = 4096
 ```
@@ -2399,20 +2402,160 @@ $48 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne =
   name = "Vcur-0 (reshaped) (transposed)", '\000' <repeats 33 times>, extra = 0x0, 
   padding = "\000\000\000\000\000\000\000"}
 ```
-And this is named `v_cur_t`.
-```c++
-    cb(v_cur_t, "v_cur_t", il);
+And this is named `v_cur_t` so this is just the value matrix transposed, not
+the value cache. The name of this tensor will be `v_cur_t`.
 ```
-Next we have:
+4096 (features)
+ | 
+ |
+ |
+ |
+ |
+ ↓
+  --------->
+     512 (sequence tokens)
+```
+
+Next we have the key cache view:
 ```
     struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, kv.k_l[il], n_tokens*n_embd_k_gqa,
             (ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa))*kv_head);
     cb(k_cache_view, "k_cache_view", il);
 ```
 
+```console
+(gdb) p *kv.k_l[il]
+$17 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU,
+       buffer = 0x7c43f0, ne = {2097152, 1, 1, 1}, nb = {2, 
+    4194304, 4194304, 4194304}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x7ffef6000020, name = "cache_k_l0", '\000' <repeats 53 times>, 
+  extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Note that the `ne` is 2097152 which is 512x4096. The above is creating a
+view of the `kv.k_l` with 2097152 elements, and the offset used is:
+```console
+(gdb) p ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)
+$22 = 8192
+(gdb) p kv_head
+$23 = 0
+```
+So in this case the offset will be zero. Why is this a 1d tensor?  
+This might be done for performance/memory optimization reasons and I hope to
+understand this better when looking at more code.
+
+So that was the tensor view for the key cache.
+```console
+(gdb) p *k_cache_view 
+$41 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {2097152, 1, 1, 1}, nb = {2, 
+    4194304, 4194304, 4194304}, op = GGML_OP_VIEW, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x7c44d0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x7c44d0, view_offs = 0, data = 0x7ffef6000020, 
+  name = "k_cache_view-0\000w)", '\000' <repeats 46 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+Next we have the Value cache.
+```c++
+    struct ggml_tensor * v_cache_view = ggml_view_2d(ctx, kv.v_l[il], n_tokens, n_embd_v_gqa,
+            (  n_ctx)*ggml_element_size(kv.v_l[il]),
+            (kv_head)*ggml_element_size(kv.v_l[il]));
+```
+
+```console
+(gdb) p *v_cache_view
+$39 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {512, 4096, 1, 1}, nb = {2, 1024, 
+    4194304, 4194304}, op = GGML_OP_VIEW, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {
+    0x7c4660, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x7c4660, view_offs = 0, data = 0x7ffef6400020, name = "cache_v_l0 (view)", '\000' <repeats 46 times>, 
+  extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+Just keep in mind that this is building up a computation graph and the
+operations required for key-value caching. So we have tensors for the key and
+value values which will be used later.
+
+Following that we have (back in `llm_build_kv`) we have:
+```c++
+    struct ggml_tensor * cur;
+
+    cur  = llm_build_kqv(ctx, model, hparams, kv, graph, wo, wo_b,
+            q_cur, kq_mask, kq_pos, n_ctx, n_tokens, n_kv, kq_scale, cb, il);
+    cb(cur, "kqv_out", il);
+
+    return cur;
+```
+And this is the actual QKV computation.
+```c++
+static struct ggml_tensor * llm_build_kqv(
+        struct ggml_context * ctx,
+          const llama_model & model,
+        const llama_hparams & hparams,
+       const llama_kv_cache & kv,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * wo,
+         struct ggml_tensor * wo_b,
+         struct ggml_tensor * q_cur,
+         struct ggml_tensor * kq_mask,
+         struct ggml_tensor * kq_pos,
+                    int64_t   n_ctx,
+                    int32_t   n_tokens,
+                    int32_t   n_kv,
+                    float     kq_scale,
+         const llm_build_cb & cb,
+                    int       il) {
+
+    const int64_t n_head        = hparams.n_head;
+    const int64_t n_head_kv     = hparams.n_head_kv;
+    const int64_t n_embd_head_k = hparams.n_embd_head_k;
+    const int64_t n_embd_k_gqa  = hparams.n_embd_k_gqa();
+    const int64_t n_embd_head_v = hparams.n_embd_head_v;
+
+    struct ggml_tensor * q = ggml_permute(ctx, q_cur, 0, 2, 1, 3);
+    cb(q, "q", il);
+```
+So let start with `ggml_permute` and what this is doing is that it is taking
+the tensor `q_cur` dimensions which looks like this:
+```console
+(gdb) p *q_cur
+$48 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {128, 32, 512, 1}, nb = {4, 512, 16384, 8388608}, op = GGML_OP_ROPE,
+       op_params = {0, 128, 0, 0, 4096, 1176256512, 1065353216, 0, 1065353216, 
+    1107296256, 1065353216, 0, 0, 0, 0, 0}, flags = 0, grad = 0x0, src = {0x7ffef5c40f90, 0x7ffef5c404a0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, 
+  data = 0x0, name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p q_cur.ne
+$46 = {128, 32, 512, 1}
+        ↑    ↑   ↑   ↑
+index:  0    1   2   3
+```
+And permute that into:
+```
+$46 = {128, 32, 512, 1}
+       0     1   2   3
+       |     |   |   |
+       |    +|---+   |
+       |    |+---+   |
+       |    |    |   |
+       ↓    ↓    ↓   ↓
+      {128, 512, 32, 1}
+        ↑    ↑   ↑   ↑
+index:  0    1   2   3
+```
+The permuation `q` will look like this after the operation:
+```console
+(gdb) p *q
+$49 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 512, 32, 1}, nb = {4, 16384, 
+    512, 8388608}, op = GGML_OP_PERMUTE, op_params = {0, 2, 1, 3, 0 <repeats 12 times>}, flags = 0, grad = 0x0, 
+  src = {0x7ffef5c41120, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
+  perf_time_us = 0, view_src = 0x7ffef5c41120, view_offs = 0, data = 0x0, 
+  name = "Qcur-0 (permuted)", '\000' <repeats 46 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+There is a standalone [permute example](../fundamentals/ggml/src/permute.c) to
+get a better understanding of how this works.
+
 
 _wip_
-
 
 
 
