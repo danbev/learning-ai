@@ -2,6 +2,27 @@ CC = gcc
 CFLAGS = -g -Wall -Iggml/include
 LDFLAGS = -Lggml/build/src/
 
+SRCDIR = src
+BINDIR = bin
+
+SOURCES := $(wildcard $(SRCDIR)/*.c)
+TARGETS := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES))
+
+.PHONY: all clean
+
+all: $(TARGETS)
+
+$(TARGETS): % : $(SRCDIR)/%.c | bindir
+	$(CC) $(CFLAGS) $(LDFLAGS) -lggml -o ${BINDIR}/$@ $<
+
+bindir: bin
+
+bin: 
+	@mkdir -p $(BINDIR)
+
+clean:
+	${RM} -rf $(BINDIR)
+
 .PHONY: ggml-init
 ggml-init:
 	cd ggml && \
@@ -16,35 +37,6 @@ ggml-show-build-settings:
 ggml:
 	cd ggml/build && make -j8
 
-all: $(TARGET)
-
-graph: src/graph.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-tensor: src/tensor.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-matrix-mul: src/matrix-mul.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-get-rows: src/get_rows.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-reshape: src/reshape.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-transpose: src/transpose.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-view: src/view.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-permute: src/permute.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
-scale: src/scale.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
-
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
@@ -56,11 +48,6 @@ show-rows-dot:
 
 update-ggml:
 	git submodule update --remote --merge ggml
-
-.PHONY: clean
-clean:
-	${RM} -f graph tensor graph matrix-mul
-
 
 clean-ggml:
 	${RM} -rf ggml/build

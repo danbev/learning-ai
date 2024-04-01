@@ -1,10 +1,2 @@
-graph
-tensor
 tags
-matrix-mul
-get-rows
-reshape
-transpose
-view
-permute
-scale
+bin
