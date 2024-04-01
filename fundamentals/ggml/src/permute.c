@@ -5,7 +5,7 @@
 #include "ggml/ggml-backend.h"
 
 int main(int argc, char **argv) {
-  printf("GGML reshape tensor examples\n");
+  printf("GGML permute tensor examples\n");
 
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024,
