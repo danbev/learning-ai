@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
   printf("x tensor elements: %ld\n", ggml_nelements(x));
   printf("x.ne: %ld\n", x->ne[0]);
 
-  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 0);
+  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 0 * ggml_type_size(x->type));
   printf("view tensor dimensions: %d\n", ggml_n_dims(view));
   printf("view tensor elements: %ld\n", ggml_nelements(view));
   printf("view.ne: %ld\n", view->ne[0]);
