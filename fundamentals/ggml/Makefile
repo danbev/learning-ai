@@ -42,6 +42,9 @@ view: src/view.c
 permute: src/permute.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
 
+scale: src/scale.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lggml -lm
+
 show-add-dot:
 	dot -Tpng add.dot -o add.dot.png && xdg-open add.dot.png
 
