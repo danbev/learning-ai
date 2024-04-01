@@ -43,9 +43,9 @@ int main(int argc, char **argv) {
     printf("view[%d]: %f\n", i, ggml_get_f32_1d(view, i));
   }
 
-  view = ggml_view_1d(ctx, x, 5, 5);
+  view = ggml_view_1d(ctx, x, 5, 5 * ggml_type_size(x->type));
 
-  //ggml_print_objects(ctx);
+  ggml_print_objects(ctx);
 
   for (int i = 0; i < ggml_nelements(view); i++) {
     printf("view[%d]: %f\n", i, ggml_get_f32_1d(view, i));
