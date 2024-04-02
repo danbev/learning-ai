@@ -2484,7 +2484,11 @@ Following that we have (back in `llm_build_kv`) we have:
 
     return cur;
 ```
-And this is the actual QKV computation.
+This is the actual QKV computation, which recall looks like this:
+```
+Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
+```
+
 ```c++
 static struct ggml_tensor * llm_build_kqv(
         struct ggml_context * ctx,
@@ -2545,18 +2549,407 @@ index:  0    1   2   3
 The permuation `q` will look like this after the operation:
 ```console
 (gdb) p *q
-$49 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 512, 32, 1}, nb = {4, 16384, 
-    512, 8388608}, op = GGML_OP_PERMUTE, op_params = {0, 2, 1, 3, 0 <repeats 12 times>}, flags = 0, grad = 0x0, 
-  src = {0x7ffef5c41120, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
-  perf_time_us = 0, view_src = 0x7ffef5c41120, view_offs = 0, data = 0x0, 
-  name = "Qcur-0 (permuted)", '\000' <repeats 46 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+$49 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {128, 512, 32, 1}, nb = {4, 16384, 512, 8388608},
+       op = GGML_OP_PERMUTE, op_params = {0, 2, 1, 3, 0 <repeats 12 times>}, flags = 0, grad = 0x0, 
+       src = {0x7ffef5c41120, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
+       perf_time_us = 0, view_src = 0x7ffef5c41120, view_offs = 0, data = 0x0, 
+       name = "Qcur-0 (permuted)", '\000' <repeats 46 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
 ```
 There is a standalone [permute example](../fundamentals/ggml/src/permute.c) to
 get a better understanding of how this works.
+So that is the `Q` tensor.
+
+Next, we have the `K` tensor:
+```c++
+    struct ggml_tensor * k =
+        ggml_view_3d(ctx, kv.k_l[il],
+                n_embd_head_k, n_kv, n_head_kv,
+                ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa),
+                ggml_row_size(kv.k_l[il]->type, n_embd_head_k),
+                0);
+    cb(k, "k", il);
+```
+And then we have the multiplication of Q and K matrices:
+```
+    struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
+    cb(kq, "kq", il);
+```
+After this there are a couple of `if` statements that depend on the model arch
+which I will skip for now as I'm using the `llama-2-7b-chat.Q4_0.gguf` model.
+TODO: look into `LLM_ARCH_PHI2` and `LLM_ARCH_GROK` in this regard.
+
+After the that there is a check if [Alibi](./alibi.md) is used:
+```c++
+#if defined(GGML_USE_KOMPUTE)
+#pragma message("TODO: ALiBi support in ggml_soft_max_ext is not implemented for Kompute")
+#pragma message("      Falling back to ggml_alibi(). Will become an error in Mar 2024")
+#pragma message("ref:  https://github.com/ggerganov/llama.cpp/pull/5488")
+    if (hparams.f_max_alibi_bias > 0.0f) {
+        kq = ggml_scale(ctx, kq, kq_scale);
+        cb(kq, "kq_scaled", il);
+
+        kq = ggml_alibi(ctx, kq, /*n_past*/ 0, n_head, hparams.f_max_alibi_bias);
+        cb(kq, "kq_scaled_alibi", il);
+
+        kq = ggml_add(ctx, kq, kq_mask);
+        cb(kq, "kq_masked", il);
+
+        kq = ggml_soft_max(ctx, kq);
+        cb(kq, "kq_soft_max", il);
+    } else
+#endif
+    {
+        kq = ggml_soft_max_ext(ctx, kq, kq_mask, kq_pos, kq_scale, hparams.f_max_alibi_bias);
+        cb(kq, "kq_soft_max_ext", il);
+    }
+```
+This will build the softmax operation:
+```
+Attention(Q, K V) = softmax(QK^T / sqrt(d_k)) V
+```
+
+And the declaration of `ggml_soft_max_ext` looks like this:
+```c++
+struct ggml_tensor * ggml_soft_max_ext(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * mask,
+        struct ggml_tensor  * pos,
+        float                 scale,
+        float                 max_bias) {
+    return ggml_soft_max_impl(ctx, a, mask, pos, scale, max_bias, false);
+}
+```
+
+Lets take a look at the arguments to this function:
+```console
+(gdb) p *kq
+$20 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {512, 512, 32, 1}, nb = {4, 2048, 1048576, 33554432},
+       op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {
+       0x7ffef5c41f30, 0x7ffef5c41da0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
+       perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, name = "kq-0", '\000' <repeats 59 times>, 
+       extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+This is the attention score matrix, the result of QK^T. This is the input
+to the softmax function.
+
+Then we have a mask tensor which must be part of the extenion of the softmax
+which I've not seen before:
+```console
+(gdb) p *kq_mask
+$21 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+      ne = {512, 512, 1, 1}, nb = {4, 2048, 1048576, 1048576},
+      op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, grad = 0x0, src = {0x0, 
+      0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+      view_src = 0x0, view_offs = 0, data = 0x0, name = "KQ_mask", '\000' <repeats 56 times>, extra = 0x0, 
+      padding = "\000\000\000\000\000\000\000"}
+```
+This may be used to ignore padding.
+
+Next is the positional encoding tensor if absolute positional encoding is used,
+but if RoPE is used the this will be NULL(0x0):
+```console
+(gdb) p *kq_pos
+Cannot access memory at address 0x0
+```
+Next is the `kq_scale` which I think is the `1/sqrt(d_k)` above:
+```
+(gdb) p kq_scale
+$22 = 0.0883883461
+```
+And finally the `max_bias` which is set to zero and looks like it is related
+to [Alibi](./alibi.md) bias.
+```
+(gdb) p hparams.f_max_alibi_bias 
+$23 = 0
+```
+
+Next a 3d view of `kv.v_l[il]` will be created:
+```console
+(gdb) p *kv.v_l[il]
+$33 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x7c7970,
+       ne = {2097152, 1, 1, 1}, nb = {2, 4194304, 4194304, 4194304},
+       op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+       src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0,
+       perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0,
+       data = 0x7ffef6400020, name = "cache_v_l0", '\000' <repeats 53 times>, 
+       extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+So this is field in `llama_kv_cache` which is a 1d tensor with 2097152 elements.
+```c++
+    // split cached v into n_head heads
+    struct ggml_tensor * v =
+        ggml_view_3d(ctx, kv.v_l[il],
+                n_kv, n_embd_head_v, n_head_kv,
+                ggml_element_size(kv.v_l[il])*n_ctx,
+                ggml_element_size(kv.v_l[il])*n_ctx*n_embd_head_v,
+                0);
+    cb(v, "v", il);
+```
+
+```console
+(gdb) p *v
+$30 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {512, 128, 32, 1}, nb = {2, 1024, 131072, 4194304},
+       op = GGML_OP_VIEW, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {
+       0x7c7be0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+       view_src = 0x7c7be0, view_offs = 0, data = 0x7ffef6400020,
+       name = "cache_v_l0 (view)", '\000' <repeats 46 times>, 
+       extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Then we have the multiplication of V with the result of the softmax (the
+attention score):
+```
+    struct ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);
+    cb(kqv, "kqv", il);
+```
+After this kqv will have the following shape:
+```console
+(gdb) p *kqv
+$43 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {128, 512, 32, 1}, nb = {4, 512, 262144, 8388608},
+       op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+       src = { 0x7ffef5c423e0, 0x7ffef5c42250, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+       perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0,
+       view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0,
+       padding = "\000\000\000\000\000\000\000"}
+```
+
+```
+    struct ggml_tensor * kqv_merged = ggml_permute(ctx, kqv, 0, 2, 1, 3);
+    cb(kqv_merged, "kqv_merged", il);
+```
+
+```console
+(gdb) p *kqv_merged
+$46 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {128, 32, 512, 1}, nb = {4, 262144, 512, 8388608}, op = GGML_OP_PERMUTE,
+       op_params = {0, 2, 1, 3, 0 <repeats 12 times>}, flags = 0, grad = 0x0,
+       src = {0x7ffef5c42570, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
+       perf_time_us = 0, view_src = 0x7ffef5c42570, view_offs = 0, data = 0x0, 
+       name = "kqv-0 (permuted)", '\000' <repeats 47 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+The following is making the `kqv_merged` tensor contiguous:
+```c++
+    struct ggml_tensor * cur = ggml_cont_2d(ctx, kqv_merged, n_embd_head_k*n_head, n_tokens);
+    cb(cur, "kqv_merged_cont", il);
+```
+
+```console
+(gdb) p n_embd_head_k
+$50 = 128
+(gdb) p n_head
+$51 = 32
+(gdb) p n_tokens 
+$52 = 512
+```
+So the above will take the `kqv_merged` tensor which has the shape of 128x32x512
+turn it into a 4096x512 matrix:
+```console
+(gdb) p *cur
+$53 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {4096, 512, 1, 1}, nb = {4, 16384, 8388608, 8388608},
+       op = GGML_OP_CONT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+       src = { 0x7ffef5c42700, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+       perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+       view_src = 0x0, view_offs = 0, data = 0x0,
+       name = "kqv_merged-0 (cont)", '\000' <repeats 44 times>, extra = 0x0, 
+       padding = "\000\000\000\000\000\000\000"}
+```
+This is then multiplied by the weights:
+```
+    cur = ggml_mul_mat(ctx, wo, cur);
+```
+And if the bias weights are not null then they are added:
+```
+    if (wo_b) {
+        cb(cur, "kqv_wo", il);
+    }
+
+    if (wo_b) {
+        cur = ggml_add(ctx, cur, wo_b);
+    }
+```
+Notice that the name of the `kvq_wo` is only set if there is a bias tensor. 
+And `cur` is then returned and we will be back in `llm_build_kv`.
+```c++
+    cur  = llm_build_kqv(ctx, model, hparams, kv, graph, wo, wo_b,
+            q_cur, kq_mask, kq_pos, n_ctx, n_tokens, n_kv, kq_scale, cb, il);
+    cb(cur, "kqv_out", il);
+```
+This is setting the naem and then returning `cur`, and this will land us back
+in `build_llama`.
+And the ends the self-attention block.
+
+The following is the addition of the input, the skip connection which goes
+around self-attention.
+```console
+            struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+            cb(ffn_inp, "ffn_inp", il);
+```
+
+And after this we have the RMSNorm (refer to the diagram at the top of this
+document to get an overview of the components/operations of the llama arch.
+```console
+            if (model.layers[il].ffn_gate_inp == nullptr) {
+                cur = llm_build_norm(ctx0, ffn_inp, hparams,
+                        model.layers[il].ffn_norm, NULL,
+                        LLM_NORM_RMS, cb, il);
+                cb(cur, "ffn_norm", il);
+
+                cur = llm_build_ffn(ctx0, cur,
+                        model.layers[il].ffn_up,   NULL,
+                        model.layers[il].ffn_gate, NULL,
+                        model.layers[il].ffn_down, NULL,
+                        NULL,
+                        LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
+                cb(cur, "ffn_out", il);
+            } else {
+                // MoE branch
+```
+In this case ffn_gate_inp is null so we will enter that block.
+And `llm_build_norm` is the same as we went through above, recall that there
+is an RMSNorm as the first layer in the transformer block.
+After that we have `llm_build_ffn` which we have not come accross before. I've
+written about [FeedForward](./transformers.md#feedforward-layer) layers before
+but essentially they consist of an operation that expands (up) the dimensions of
+the input, then applies a non-linear (the gate) activation function, and then
+reduces (down) the dimensions back to the original size.
+```console
+(gdb) p *model.layers[il].ffn_up
+$66 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x7b9310, ne = {4096, 11008, 1, 1}, nb = {
+    18, 2304, 25362432, 25362432}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x7fff0d768ec0, name = "blk.0.ffn_up.weight", '\000' <repeats 44 times>, 
+  extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+(gdb) p *model.layers[il].ffn_down
+$67 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x7b9310, ne = {11008, 4096, 1, 1}, nb = {
+    18, 6192, 25362432, 25362432}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x7fff0a708ec0, name = "blk.0.ffn_down.weight", '\000' <repeats 42 times>, 
+  extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+(gdb) p *model.layers[il].ffn_gate
+$68 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x7b9310, ne = {4096, 11008, 1, 1}, nb = {
+    18, 2304, 25362432, 25362432}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x7fff0bf38ec0, name = "blk.0.ffn_gate.weight", '\000' <repeats 42 times>, 
+  extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+There are a few different types of gate operations in llama.cpp:
+```
+enum llm_ffn_op_type {
+    LLM_FFN_SILU,
+    LLM_FFN_GELU,
+    LLM_FFN_RELU,
+    LLM_FFN_RELU_SQR,
+};
+```
+After that (skipping the MoE branch for now as it is not used in this example)
+we have another skip connection addition:
+```
+            cur = ggml_add(ctx0, cur, ffn_inp);
+            cb(cur, "ffn_out", il);
+
+            ggml_tensor * layer_dir = lctx.cvec.tensor_for(il);
+            if (layer_dir != nullptr) {
+                cur = ggml_add(ctx0, cur, layer_dir);
+            }
+            cb(cur, "l_out", il);
+
+            // input for next layer
+            inpL = cur;
+```
+And that was the first layer, and the same will be done for `n_layer` (32) in
+the model.
+```console
+(gdb) until 6330
+
+(gdb) p *cur
+$75 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+       ne = {4096, 512, 1, 1}, nb = {4, 16384, 8388608, 8388608},
+       op = GGML_OP_ADD, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+       src = { 0x7ffef5ca4950, 0x7ffef5ca3e60, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+       perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0,
+       data = 0x0, name = "l_out-31\0001", '\000' <repeats 53 times>,
+       extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+After this we should have an RSMNorm layer, an linear layer and then a softmax.
+
+So first we have the the RMSNorm layer:
+```
+        cur = inpL;
+
+        cur = llm_build_norm(ctx0, cur, hparams,
+                model.output_norm, NULL,
+                LLM_NORM_RMS, cb, -1);
+        cb(cur, "result_norm", -1);
+```
+
+The we have the linear layer:
+```
+
+        // lm_head
+        cur = ggml_mul_mat(ctx0, model.output, cur);
+        cb(cur, "result_output", -1);
+
+        ggml_build_forward_expand(gf, cur);
+
+        return gf;
+```
+But we are missing the softmax?  
+The return will take us back into `llm_build_context`:
+```c++
+    switch (model.arch) {
+        case LLM_ARCH_LLAMA:
+            {
+                result = llm.build_llama();
+            } break;
+        ...
+    }
+
+    llm.free();
+
+    return result;
+}
+```
+And this return will take us back into `llama_new_context_with_model`:
+```c++
+            ggml_cgraph * gf = llama_build_graph(*ctx, llama_batch_get_one(&token, n_tokens, n_past, 0), true);
+```
+Lets take a look at the compute graph:
+```console
+(gdb) p *gf
+$83 = {size = 8192, n_nodes = 1030, n_leafs = 359, nodes = 0x7ffef5c00080,
+       grads = 0x0, leafs = 0x7ffef5c10080,
+       visited_hash_table = {size = 16411, keys = 0x7ffef5c20080},
+       order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT, 
+       perf_runs = 0, perf_cycles = 0, perf_time_us = 0}
+
+(gdb) p ggml_graph_dump_dot(graph, 0x0, "llama.dot")
+ggml_graph_dump_dot: dot -Tpng llama.dot -o llama.dot.png && open llama.dot.png
+
+(gdb) shell dot -Tpng llama.dot -o llama.dot.png && open llama.dot.png
+```
 
 
-_wip_
+I'm going to skip the ggml backend code and address this in a separate section
+after going though backends in isolation. 
+```
+            // initialize scheduler with the worst-case graph
+            if (!ggml_backend_sched_reserve(ctx->sched, gf)) {
+                LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
+                llama_free(ctx);
+                return nullptr;
+            }
 
+            ...
+    return ctx;
+```
+And that is the last line of `llama_new_context_with_model` and we will return
+control to `llama_init_from_gpt_params`.
 
 
 ### llm_build_context
