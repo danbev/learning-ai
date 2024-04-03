@@ -2952,6 +2952,50 @@ And that is the last line of `llama_new_context_with_model` and we will return
 control to `llama_init_from_gpt_params`.
 
 
+### ggml_backend
+The following function is called from main.cpp and I was wondering a little
+about it:
+```c++
+void llama_backend_init(void) {
+    ggml_time_init();
+
+    // needed to initialize f16 tables
+    {
+        struct ggml_init_params params = { 0, NULL, false };
+        struct ggml_context * ctx = ggml_init(params);
+        ggml_free(ctx);
+    }
+
+#ifdef GGML_USE_MPI
+    ggml_mpi_backend_init();
+#endif
+}
+```
+At first I though that it looked odd that the was creating a ggml_context to
+just free it again. But this is done as ggml has some static global variables
+(so only accessible from ggml.c) that get initialized:
+```console
+(gdb) info variables ggml
+All variables matching regular expression "ggml":
+
+File ggml-backend.c:
+406:	static struct ggml_backend_reg ggml_backend_registry[16];
+407:	static size_t ggml_backend_registry_count;
+
+File ggml.c:
+318:	float ggml_table_f32_f16[65536];
+315:	static ggml_fp16_t ggml_table_exp_f16[65536];
+306:	static ggml_fp16_t ggml_table_gelu_f16[65536];
+309:	static ggml_fp16_t ggml_table_gelu_quick_f16[65536];
+312:	static ggml_fp16_t ggml_table_silu_f16[65536];
+```
+We can see the declaration of `ggml_table_gelu_f16` for example:
+```c++
+static ggml_fp16_t ggml_table_gelu_f16[1 << 16];
+```
+
+
+
 ### llm_build_context
 This section is doing to take a detailed look at how a computation graph is
 build in llama.cpp. I'll be using the `main` example to step through the code.
