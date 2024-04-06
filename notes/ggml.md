@@ -673,4 +673,240 @@ Memory layout:
              8 (ne[1])
 ```  
 
+### views
+If we inspect a tensor we can see that it contains the following:
+```console
+(gdb) p *x
+$7 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {10, 1, 1, 1}, nb = {
+    4, 40, 40, 40}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
+  perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x7ffff6a001a0, 
+  name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+So this is storing 10 elements of type float (GGML_TYPE_F32):
+```console
+(gdb) p ((float*) x->data)[0]
+$11 = 1
+(gdb) p ((float*) x->data)[1]
+$12 = 2
+(gdb) p ((float*) x->data)[2]
+$13 = 3
+(gdb) p ((float*) x->data)[4]
+$14 = 5
+(gdb) p ((float*) x->data)[3]
+$15 = 4
+(gdb) p ((float*) x->data)[9]
+$16 = 10
+```
+Now if we create a 1d view of this tensor using:
+```c
+  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 5);
+```
+Where the first int argument is the number of elements and the second integer is
+the offset. So this would (in my initial way of thinking) create a new tensor
+which would point to the same memory as the original tensor but it would start
+as position 5.
+```c
+    struct ggml_tensor * result = ggml_view_impl(ctx, a, 1, &ne0, offset);
+```
+```c
+static struct ggml_tensor * ggml_view_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   n_dims,
+        const int64_t       * ne,
+        size_t                offset) {
+    ...
+       
+    struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, n_dims, ne, a, offset);
+    ggml_format_name(result, "%s (view)", a->name);
+```
+If we step into this function we can see the arguments are as follows:
+```console
+(gdb) s
+ggml_new_tensor_impl (ctx=0x7ffff7fba2a8 <g_state+8>, type=GGML_TYPE_F32, n_dims=1, ne=0x7fffffffc7e8, 
+    view_src=0x7ffff6a00030, view_offs=5)
+    at /home/danielbevenius/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:2928
+```
+Notice that `view_src` is a pointer to the `x` tensor:
+```console
+(gdb) p x
+$20 = (struct ggml_tensor *) 0x7ffff6a00030
+(gdb) down
+(gdb) p a
+$21 = (struct ggml_tensor *) 0x7ffff6a00030
+```
+
 [zero-to-hero]: ../fundamentals/rust/zero-to-hero/README.md
+
+### Backend
+Lets take a look at what a ggml backend looks like:
+```console
+(gdb) p cpu
+$1 = (ggml_backend_t) 0x4056e0
+
+(gdb) ptype *cpu_backend
+type = struct ggml_backend {
+    ggml_guid_t guid;
+    struct ggml_backend_i iface;
+    ggml_backend_context_t context;
+}
+```
+`ggml_backend` is defined in ggml/src/ggml-backend-impl.h and we can see above
+that it contains a guid, an interface and a context.
+
+Lets start by looking at the backend interface (`backend_i` :
+```console
+(gdb) ptype cpu_backend.iface
+type = struct ggml_backend_i {
+    const char *(*get_name)(ggml_backend_t);
+    void (*free)(ggml_backend_t);
+
+    ggml_backend_buffer_type_t (*get_default_buffer_type)(ggml_backend_t);
+
+    void  (*set_tensor_async)(ggml_backend_t, struct ggml_tensor *, const void *, size_t, size_t);
+    void  (*get_tensor_async)(ggml_backend_t, const struct ggml_tensor *, void *, size_t, size_t);
+    _Bool (*cpy_tensor_async)(ggml_backend_t, ggml_backend_t, const struct ggml_tensor *, struct ggml_tensor *);
+    void  (*synchronize)(ggml_backend_t);
+
+    ggml_backend_graph_plan_t (*graph_plan_create)(ggml_backend_t, const struct ggml_cgraph *);
+    void (*graph_plan_free)(ggml_backend_t, ggml_backend_graph_plan_t);
+    enum ggml_status (*graph_plan_compute)(ggml_backend_t, ggml_backend_graph_plan_t);
+    enum ggml_status (*graph_compute)(ggml_backend_t, struct ggml_cgraph *);
+
+    _Bool (*supports_op)(ggml_backend_t, const struct ggml_tensor *);
+    _Bool (*offload_op)(ggml_backend_t, const struct ggml_tensor *);
+
+    ggml_backend_event_t (*event_new)(ggml_backend_t);
+    void (*event_free)(ggml_backend_event_t);
+    void (*event_record)(ggml_backend_event_t);
+    void (*event_wait)(ggml_backend_t, ggml_backend_event_t);
+    void (*event_synchronize)(ggml_backend_event_t);
+}
+```
+
+`cpu_backend_i` is defined in ggml/src/ggml-backend-cpu.c:
+```c++
+static struct ggml_backend_i cpu_backend_i = {
+    /* .get_name                = */ ggml_backend_cpu_name,
+    /* .free                    = */ ggml_backend_cpu_free,
+    /* .get_default_buffer_type = */ ggml_backend_cpu_get_default_buffer_type,
+    /* .set_tensor_async        = */ NULL,
+    /* .get_tensor_async        = */ NULL,
+    /* .cpy_tensor_async        = */ NULL,
+    /* .synchronize             = */ NULL,
+    /* .graph_plan_create       = */ ggml_backend_cpu_graph_plan_create,
+    /* .graph_plan_free         = */ ggml_backend_cpu_graph_plan_free,
+    /* .graph_plan_compute      = */ ggml_backend_cpu_graph_plan_compute,
+    /* .graph_compute           = */ ggml_backend_cpu_graph_compute,
+    /* .supports_op             = */ ggml_backend_cpu_supports_op,
+    /* .offload_op              = */ NULL,
+    /* .event_new               = */ NULL,
+    /* .event_free              = */ NULL,
+    /* .event_record            = */ NULL,
+    /* .event_wait              = */ NULL,
+    /* .event_synchronize       = */ NULL,
+};
+```
+Notice the the CPU backend does not support asynchronous operations, and also
+does not support event which I'm guessing are used for the asynchronous
+operations.
+
+Now, if we look at `ggml_backend_buffer_type_t`:
+```console
+(gdb) ptype struct ggml_backend_buffer_type
+type = struct ggml_backend_buffer_type {
+    struct ggml_backend_buffer_type_i iface;
+    ggml_backend_buffer_type_context_t context;
+}
+```
+
+```console
+(gdb) p cpu_backend.iface.get_default_buffer_type(cpu_backend)
+$5 = (struct ggml_backend_buffer_type *) 0x7ffff7efa120 <ggml_backend_cpu_buffer_type>
+
+(gdb) p *cpu_backend.iface.get_default_buffer_type(cpu_backend)
+$6 = {iface = {get_name = 0x7ffff7ea4f58 <ggml_backend_cpu_buffer_type_get_name>, 
+    alloc_buffer = 0x7ffff7ea4f69 <ggml_backend_cpu_buffer_type_alloc_buffer>, 
+    get_alignment = 0x7ffff7ea5058 <ggml_backend_cpu_buffer_type_get_alignment>, get_max_size = 0x0, 
+    get_alloc_size = 0x0, supports_backend = 0x7ffff7ea5067 <ggml_backend_cpu_buffer_type_supports_backend>, 
+    is_host = 0x7ffff7ea5085 <ggml_backend_cpu_buffer_type_is_host>}, context = 0x0}
+
+(gdb) p $6.iface.get_name($6)
+$10 = 0x7ffff7ee10e2 "CPU"
+
+(gdb) p $6.iface.supports_backend($6, cpu_backend)
+$11 = true
+
+(gdb) p $6.iface.is_host($6)
+$12 = true
+```
+
+Even though we pased in the `cpu_backend` above to `get_default_buffer_type` it
+is not actually used in the CPU backend case:
+```c++
+GGML_CALL static ggml_backend_buffer_type_t ggml_backend_cpu_get_default_buffer_type(ggml_backend_t backend) {
+    return ggml_backend_cpu_buffer_type();
+    GGML_UNUSED(backend);
+}
+```
+And the `ggml_backend_cpu_buffer_type` function is defined as follows:
+```
+GGML_CALL ggml_backend_buffer_type_t ggml_backend_cpu_buffer_type(void) {
+    static struct ggml_backend_buffer_type ggml_backend_cpu_buffer_type = {
+        /* .iface = */ {
+            /* .get_name         = */ ggml_backend_cpu_buffer_type_get_name,
+            /* .alloc_buffer     = */ ggml_backend_cpu_buffer_type_alloc_buffer,
+            /* .get_alignment    = */ ggml_backend_cpu_buffer_type_get_alignment,
+            /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
+            /* .get_alloc_size   = */ NULL, // defaults to ggml_nbytes
+            /* .supports_backend = */ ggml_backend_cpu_buffer_type_supports_backend,
+            /* .is_host          = */ ggml_backend_cpu_buffer_type_is_host,
+        },
+        /* .context = */ NULL,
+    };
+
+    return &ggml_backend_cpu_buffer_type;
+}
+```
+Now, a `ggml_backend_buffer_type` is defined as follows and has a interface
+and a pointer to a context (void pointer), which for the CPU backend is NULL:
+```c++
+    struct ggml_backend_buffer_type {
+        struct ggml_backend_buffer_type_i  iface;
+        ggml_backend_buffer_type_context_t context;
+    };
+```
+
+Every tensor has a backend type and and may have buffer:
+```c++
+(gdb) p x
+$14 = (struct ggml_tensor *) 0x7ffff6a00030
+(gdb) p *x
+$15 = {type = GGML_TYPE_F32,
+       backend = GGML_BACKEND_TYPE_CPU,
+       buffer = 0x0, ne = {10, 1, 1, 1}, nb = {4, 40, 40, 40},
+       op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
+       flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+       0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+       view_src = 0x0, view_offs = 0, data = 0x7ffff6a001a0,
+       name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p x.backend
+$16 = GGML_BACKEND_TYPE_CPU
+(gdb) p x.buffer
+$17 = (struct ggml_backend_buffer *) 0x0
+```
+So how do we use a backend?  
+```c++
+  ggml_backend_t cpu_backend = ggml_backend_cpu_init();
+  ggml_backend_buffer_t backend_buffer = ggml_backend_alloc_buffer(cpu_backend, 10*4);
+
+  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  ggml_backend_tensor_set(x, x->data, 0, ggml_nbytes(x));
+```
+I though that the above would work but it does not (not that I'm still exploring
+this and learning and I have no reason to believe that this should work, I'm
+just trying and learning).
+
+_wip_
