@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -Wall -Iggml/include
+CFLAGS = -g -Wall -Iggml/include -Wno-unused-variable
 LDFLAGS = -Lggml/build/src/
 
 SRCDIR = src
