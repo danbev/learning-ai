@@ -10,27 +10,35 @@ int main(int argc, char **argv) {
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024,
     .mem_buffer = NULL,
+    .no_alloc = true,
   };
   struct ggml_context* ctx = ggml_init(params);
-  ggml_backend_t cpu_backend = ggml_backend_cpu_init();
-
-  printf("backend name: %s\n", ggml_backend_name(cpu_backend));
-  printf("backend alignment: %ld\n", ggml_backend_get_alignment(cpu_backend));
-  printf("backend max_size: %ld\n", ggml_backend_get_max_size(cpu_backend));
+  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+  if (x->buffer == NULL) {
+    printf("x backend buffer is NULL\n");
+  } else {
+    printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
+  }
 
   // The following will call ggml_backend_registry_init
   size_t count = ggml_backend_reg_get_count();
   printf("backend count: %ld\n", count);
-  printf("backend name: %s\n", ggml_backend_reg_get_name(0));
+  for (int i = 0; i < count; i++) {
+    printf("backend_%d name: %s\n", i, ggml_backend_reg_get_name(i));
+  }
 
-  ggml_backend_buffer_t backend_buffer = ggml_backend_alloc_buffer(cpu_backend, 10*4);
-  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  ggml_backend_t cuda_backend = ggml_backend_reg_init_backend_from_str("CUDA0");
+  ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(cuda_backend, 10*4);
+  ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
+
   // Is optional and is not implemented for the CPU backend.
-  //ggml_backend_buffer_init_tensor(backend_buffer, x);
+  ggml_backend_buffer_t bb = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buffer_type);
 
-  ggml_backend_tensor_set(x, x->data, 0, ggml_nbytes(x));
-
-  ggml_backend_free(cpu_backend);
+  printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+  printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
+  // Notice that the backend buffer is now CUDA0.
+  ggml_backend_free(cuda_backend);
   ggml_free(ctx);
   return 0;
 }

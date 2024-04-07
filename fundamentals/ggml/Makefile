@@ -29,6 +29,12 @@ ggml-init:
 	rm -rf build && mkdir build && cd build && \
 	cmake -DCMAKE_BUILD_TYPE=Debug .. && make -j8
 
+.PHONY: ggml-init-cuda
+ggml-init-cuda:
+	cd ggml && \
+	rm -rf build && mkdir build && cd build && \
+	cmake -DCMAKE_BUILD_TYPE=Debug -DGGML_CUDA=ON .. && make -j8
+
 .PHONY: ggml-show-build-settings
 ggml-show-build-settings:
 	cmake -L ggml/build
