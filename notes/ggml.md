@@ -58,9 +58,11 @@ The GGML_DEFAULT_GRAPH_SIZE is 2048, and `false` is for the `grad` parameter in
 that gradients should not be computed.
 
 Next the size of the object will be computed
-```console
+```c
 struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t size, bool grads) {
     const size_t obj_size = ggml_graph_nbytes(size, grads);
+```
+```console
 (gdb) p obj_size
 $3 = 65640 
 ```
@@ -76,7 +78,7 @@ struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_GRAPH, obj_size);
 ```
 So we can see that 3 objects types are currently supported.
 
-```console
+```c
 static struct ggml_object * ggml_new_object(struct ggml_context* ctx,
     enum ggml_object_type type, size_t size) {
     // always insert objects at the end of the context's memory pool
@@ -93,9 +95,11 @@ static struct ggml_object * ggml_new_object(struct ggml_context* ctx,
     struct ggml_object * const obj_new = (struct ggml_object *)(mem_buffer + cur_end);
 ```
 This is the first thing to be added to the memory that was allocated in the
-ggml_init call. So this is creating a pointer to a ggml_object which will be
+`ggml_init` call. So this is creating a pointer to a `ggml_object` which will be
 the first thing in the memory area that was allocated. 
-So what is a ggml_object? It is defined as:
+
+So what is a `ggml_object`?  
+It is defined as:
 ```c
 struct ggml_object {
     size_t offs;
@@ -105,7 +109,7 @@ struct ggml_object {
     char padding[4];
 };
 ```
-I think the `offs` is the offset into mem_buffer, and size is the size of that
+I think the `offs` is the offset into `mem_buffer`, and size is the size of that
 memory.
 
 To get a visual of this perhaps we can think about the memory as the following
@@ -117,7 +121,7 @@ initially:
        |                                                      ... 
        +---------------------------------------------------------
 ```
-Then we dedicate a portion of this memory area to an ggml_object:
+Then we dedicate a portion of this memory area to an `ggml_object`:
 ```
     mem_buffer + cur_end
        ↓
@@ -156,7 +160,7 @@ to point to the new object.
 
     ctx->objects_end = obj_new;
 ```
-And on the last line above we update the context objects_end to point to the
+And on the last line above we update the context `objects_end` to point to the
 newly created object. So now our memory looks like this:
 ```
     mem_buffer
@@ -170,6 +174,7 @@ newly created object. So now our memory looks like this:
      ctx->objects_end
 ```
 After this the pointer to the new object is returned.
+
 Just to recap where we were:
 ```console
 (gdb) bt
@@ -186,7 +191,7 @@ So we were in `ggml_new_graph_custom`:
     struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_GRAPH, obj_size);
     struct ggml_cgraph * cgraph = (struct ggml_cgraph *) ((char *) ctx->mem_buffer + obj->offs);
 ```
-So we created an obj and this and ctx->mem_buffer currently point to the same
+So we created an obj and this and `ctx->mem_buffer` currently point to the same
 location:
 ```console
 (gdb) p ctx->mem_buffer
@@ -196,12 +201,12 @@ $19 = (struct ggml_object *) 0x7ffff6ba0010
 (gdb) p obj->offs
 $13 = 32
 ```
-And now we are creating a pointer to a ggml_cgraph (compute graph) which is
-pointing to mem_buffer + 32. So we have the obj which is currently pointing to
-because this is the first object created, and every object as data as in
-ggml_object which we can sort of think of as a base struct. And then after the
-base struct we can have different "subtypes". In the above case we are saying
-that we memory area after the `obj->off` is going to store a `ggml_cgraph`
+And now we are creating a pointer to a `ggml_cgraph` (compute graph) which is
+pointing to `mem_buffer + 32`. So we have the obj which is currently pointing to
+`mem_buffer` because this is the first object created, and every object as data
+as in `ggml_object` which we can sort of think of as a base struct. And then
+after the base struct we can have different "subtypes". In the above case we are
+saying that we memory area after the `obj->off` is going to store a `ggml_cgraph`
 struct.
 ```
     mem_buffer
@@ -239,8 +244,8 @@ Next, we have:
 ```c
     struct ggml_tensor** data_start = (struct ggml_tensor **) (cgraph + 1);
 ```
-This is creating a pointer to a pointer to a ggml_tensor and the location will
-be cgraph + 80 because the size of the ggml_cgraph is 80 bytes:
+This is creating a pointer to a pointer to a `ggml_tensor` and the location will
+be cgraph + 80 because the size of the `ggml_cgraph` is 80 bytes:
 ```console
 (gdb) p sizeof(struct ggml_cgraph)
 $30 = 80
@@ -251,7 +256,7 @@ $32 = (struct ggml_cgraph *) 0x7ffff6ba0080
 (gdb) p 0x7ffff6ba0080 - 0x7ffff6ba0030
 $33 = 80
 ```
-So this will be a pointer to the end of the cgraph struct in memory.
+So this will be a pointer to the end of the `cgraph` struct in memory.
 ```c
     size_t hash_size = ggml_hash_size(size * 2);
     struct ggml_tensor** nodes_ptr = data_start;
@@ -267,8 +272,9 @@ So this will be a pointer to the end of the cgraph struct in memory.
 15640	    size_t hash_size = ggml_hash_size(size * 2);
 Value returned is $36 = 4099
 ```
-Next we can see that `nodes_ptr` will point to the same location as data_start.
-Next, `leafs_ptr` will be set to point to nodes_ptr + size which is:
+Next we can see that `nodes_ptr` will point to the same location as
+`data_start`. Next, `leafs_ptr` will be set to point to `nodes_ptr + size` which
+is:
 ```console
 (gdb) p sizeof(struct ggml_tensor**)
 $45 = 8
@@ -284,9 +290,10 @@ $49 = (struct ggml_tensor **) 0x7ffff6ba0080
 (gdb) p 0x7ffff6ba4080 - 0x7ffff6ba0080
 $50 = 16384
 ```
-So, that is it will point to the memory after all the nodes_ptrs.
+So, that is it will point to the memory after all the `nodes_ptrs`.
 And something similar will happen for `hash_keys_ptr` and `grads_ptr` (unless
 grads is null).
+
 Next the hash keys will be zeroed out:
 ```c
     memset(hash_keys_ptr, 0, hash_size * sizeof(struct ggml_tensor *));
@@ -310,7 +317,9 @@ And then the cgraph will be initialized and returned:
     return cgraph;
 ```
 That will return us back in our program graph.c.
-Now, lets take a look at how a tensor is represented in memory:
+
+Now, lets take a look at how a <span id="tensor_mem">tensor</span>
+tensor is represented in memory:
 ```c
   struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
 ```
@@ -323,7 +332,7 @@ Now, lets take a look at how a tensor is represented in memory:
 2570	    return ggml_new_tensor(ctx, type, 1, &ne0);
 2571	}
 ```
-I think ne0 is the number of elements in the first dimension. 
+`ne0` is the number of elements in the first dimension. 
 ```console
 (gdb) l
 2558	struct ggml_tensor * ggml_new_tensor(
@@ -356,7 +365,7 @@ Next, we have something that might now look familar:
         GGML_OBJECT_TENSOR,
         GGML_TENSOR_SIZE + obj_alloc_size);
 ```
-But this time insted of a `GGML_OBJECT_GRAPH` we are creating a
+But this time instead of a `GGML_OBJECT_GRAPH` we are creating a
 `GGML_OBJECT_TENSOR`.
 ```console
 (gdb) p sizeof(struct ggml_tensor)
@@ -953,3 +962,15 @@ $10 = (struct ggml_backend_buffer *) 0x0
 ```
 
 _wip_
+
+### tensor creation
+What actually happens when we create an tensor as in the following example:
+```c
+  struct ggml_init_params params = {
+    .mem_size   = 16*1024*1024,
+    .mem_buffer = NULL,
+    .no_alloc = true,
+  };
+  struct ggml_context* ctx = ggml_init(params);
+  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+```
