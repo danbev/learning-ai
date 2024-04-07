@@ -710,12 +710,11 @@ $16 = 10
 ```
 Now if we create a 1d view of this tensor using:
 ```c
-  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 5);
+  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 5 * ggml_type_size(x->type));
 ```
 Where the first int argument is the number of elements and the second integer is
-the offset. So this would (in my initial way of thinking) create a new tensor
-which would point to the same memory as the original tensor but it would start
-as position 5.
+the offset in bytes. Notice that we have take into account the size for the
+elements stored.
 ```c
     struct ggml_tensor * result = ggml_view_impl(ctx, a, 1, &ne0, offset);
 ```
