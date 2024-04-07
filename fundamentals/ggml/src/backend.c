@@ -38,6 +38,14 @@ int main(int argc, char **argv) {
   printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
   printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
   // Notice that the backend buffer is now CUDA0.
+
+  static float data_array[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  void* data = (void*) data_array;
+
+  // The following will copy the data from the host to the device.
+  ggml_backend_tensor_set(x, data, 0, 10);
+  printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+
   ggml_backend_free(cuda_backend);
   ggml_free(ctx);
   return 0;
