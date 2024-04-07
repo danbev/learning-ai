@@ -38,6 +38,7 @@ creating a `struct ggml_init_params` and passing it to the `ggml_init`:
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024, // 16 MB
     .mem_buffer = NULL,
+    .no_alloc   = false,
   };
   struct ggml_context* ctx = ggml_init(params);
 ```
@@ -813,12 +814,45 @@ does not support event which I'm guessing are used for the asynchronous
 operations.
 
 Now, if we look at `ggml_backend_buffer_type_t`:
-```console
-(gdb) ptype struct ggml_backend_buffer_type
-type = struct ggml_backend_buffer_type {
-    struct ggml_backend_buffer_type_i iface;
-    ggml_backend_buffer_type_context_t context;
-}
+```c
+    struct ggml_backend_buffer_type {
+        struct ggml_backend_buffer_type_i  iface;
+        ggml_backend_buffer_type_context_t context;
+    };
+    typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
+```
+```c
+    struct ggml_backend_buffer_type_i {
+        const char* (*GGML_CALL get_name) (ggml_backend_buffer_type_t buft);
+        ggml_backend_buffer_t (*GGML_CALL alloc_buffer) (ggml_backend_buffer_type_t buft, size_t size);
+        size_t (*GGML_CALL get_alignment) (ggml_backend_buffer_type_t buft);
+        size_t (*GGML_CALL get_max_size) (ggml_backend_buffer_type_t buft);
+        size_t (*GGML_CALL get_alloc_size) (ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
+        bool (*GGML_CALL supports_backend)(ggml_backend_buffer_type_t buft, ggml_backend_t backend); 
+        bool (*GGML_CALL is_host) (ggml_backend_buffer_type_t buft);
+    };
+```
+And `alloc_buffer` returns a `ggml_backend_buffer`:
+```c
+    struct ggml_backend_buffer {
+        struct ggml_backend_buffer_i  iface;
+        ggml_backend_buffer_type_t    buft;
+        ggml_backend_buffer_context_t context;
+        size_t size;
+        enum ggml_backend_buffer_usage usage;
+    };
+
+    struct ggml_backend_buffer_i {
+        const char* (*GGML_CALL get_name) (ggml_backend_buffer_t buffer);
+        void (*GGML_CALL free_buffer) (ggml_backend_buffer_t buffer);
+        void* (*GGML_CALL get_base) (ggml_backend_buffer_t buffer);
+        void (*GGML_CALL init_tensor) (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor);
+        void (*GGML_CALL set_tensor) (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
+        void (*GGML_CALL get_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size);
+        bool (*GGML_CALL cpy_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * src, struct ggml_tensor * dst);
+        void (*GGML_CALL clear) (ggml_backend_buffer_t buffer, uint8_t value);
+        void (*GGML_CALL reset) (ggml_backend_buffer_t buffer);
+    };
 ```
 
 ```console
@@ -828,9 +862,12 @@ $5 = (struct ggml_backend_buffer_type *) 0x7ffff7efa120 <ggml_backend_cpu_buffer
 (gdb) p *cpu_backend.iface.get_default_buffer_type(cpu_backend)
 $6 = {iface = {get_name = 0x7ffff7ea4f58 <ggml_backend_cpu_buffer_type_get_name>, 
     alloc_buffer = 0x7ffff7ea4f69 <ggml_backend_cpu_buffer_type_alloc_buffer>, 
-    get_alignment = 0x7ffff7ea5058 <ggml_backend_cpu_buffer_type_get_alignment>, get_max_size = 0x0, 
-    get_alloc_size = 0x0, supports_backend = 0x7ffff7ea5067 <ggml_backend_cpu_buffer_type_supports_backend>, 
-    is_host = 0x7ffff7ea5085 <ggml_backend_cpu_buffer_type_is_host>}, context = 0x0}
+    get_alignment = 0x7ffff7ea5058 <ggml_backend_cpu_buffer_type_get_alignment>,
+    get_max_size = 0x0,
+    get_alloc_size = 0x0,
+    supports_backend = 0x7ffff7ea5067 <ggml_backend_cpu_buffer_type_supports_backend>, 
+    is_host = 0x7ffff7ea5085 <ggml_backend_cpu_buffer_type_is_host>
+    }, context = 0x0}
 
 (gdb) p $6.iface.get_name($6)
 $10 = 0x7ffff7ee10e2 "CPU"
@@ -908,5 +945,11 @@ So how do we use a backend?
 I though that the above would work but it does not (not that I'm still exploring
 this and learning and I have no reason to believe that this should work, I'm
 just trying and learning).
+We we create a tensor it by defaults uses the CPU backend and the buffer is
+NULL:
+```console
+(gdb) p x.buffer
+$10 = (struct ggml_backend_buffer *) 0x0
+```
 
 _wip_
