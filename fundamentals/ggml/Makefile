@@ -1,6 +1,10 @@
 CC = gcc
 CFLAGS = -g -Wall -Iggml/include -Wno-unused-variable
 LDFLAGS = -Lggml/build/src/
+CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+
+CUDA_DIR = /usr/local/cuda-12.2/lib64
+CUDA_FLAGS :=
 
 SRCDIR = src
 BINDIR = bin
@@ -13,7 +17,14 @@ TARGETS := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES))
 all: $(TARGETS)
 
 $(TARGETS): % : $(SRCDIR)/%.c | bindir
-	$(CC) $(CFLAGS) $(LDFLAGS) -lggml -o ${BINDIR}/$@ $<
+	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
+	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
+	-lm $(CUDA_FLAGS)
+
+#.PHONY: backend-cuda
+backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+backend-cuda: CC = g++
+backend-cuda: backend
 
 bindir: bin
 
@@ -27,13 +38,19 @@ clean:
 ggml-init:
 	cd ggml && \
 	rm -rf build && mkdir build && cd build && \
-	cmake -DCMAKE_BUILD_TYPE=Debug .. && make -j8
+	cmake ${CMAKE_FLAGS} .. && make -j8 ggml
 
 .PHONY: ggml-init-cuda
 ggml-init-cuda:
 	cd ggml && \
 	rm -rf build && mkdir build && cd build && \
-	cmake -DCMAKE_BUILD_TYPE=Debug -DGGML_CUDA=ON .. && make -j8
+	cmake ${CMAKE_FLAGS} -DGGML_CUDA=ON .. && make -j8 ggml
+
+.PHONY: ggml-init-vulkan
+ggml-init-vulkan:
+	cd ggml && \
+	rm -rf build && mkdir build && cd build && \
+	cmake ${CMAKE_FLAGS} .. && make -j8 C_FLAGS="-DGGML_USE_VULKAN" ggml
 
 .PHONY: ggml-show-build-settings
 ggml-show-build-settings:

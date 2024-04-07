@@ -24,27 +24,27 @@ int main(int argc, char **argv) {
   // The following will call ggml_backend_registry_init
   size_t count = ggml_backend_reg_get_count();
   printf("backend count: %ld\n", count);
-  for (int i = 0; i < count; i++) {
-    printf("backend_%d name: %s\n", i, ggml_backend_reg_get_name(i));
+  for (size_t i = 0; i < count; i++) {
+    printf("backend_%ld name: %s\n", i, ggml_backend_reg_get_name(i));
   }
 
   ggml_backend_t cuda_backend = ggml_backend_reg_init_backend_from_str("CUDA0");
-  ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(cuda_backend, 10*4);
-  ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
+  if (cuda_backend != NULL) {
+      ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(cuda_backend, 10*4);
+      ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
 
-  // Is optional and is not implemented for the CPU backend.
-  ggml_backend_buffer_t bb = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buffer_type);
+      ggml_backend_buffer_t bb = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buffer_type);
 
-  printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
-  printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
-  // Notice that the backend buffer is now CUDA0.
+      printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+      printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
 
-  static float data_array[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-  void* data = (void*) data_array;
+      static float data_array[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+      void* data = (void*) data_array;
 
-  // The following will copy the data from the host to the device.
-  ggml_backend_tensor_set(x, data, 0, 10);
-  printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+      // The following will copy the data from the host to the device.
+      ggml_backend_tensor_set(x, data, 0, 10);
+      printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+  }
 
   ggml_backend_free(cuda_backend);
   ggml_free(ctx);
