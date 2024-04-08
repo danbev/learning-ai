@@ -6,6 +6,8 @@ CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
 CUDA_DIR = /usr/local/cuda-12.2/lib64
 CUDA_FLAGS :=
 
+VULKAN_FLAGS :=
+
 SRCDIR = src
 BINDIR = bin
 
@@ -19,12 +21,20 @@ all: $(TARGETS)
 $(TARGETS): % : $(SRCDIR)/%.c | bindir
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
 	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
-	-lm $(CUDA_FLAGS)
+	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
 #.PHONY: backend-cuda
 backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 backend-cuda: CC = g++
 backend-cuda: backend
+
+backend-vulkan: VULKAN_FLAGS := -Wl,--whole-archive -lvulkan -Wl,--no-whole-archive
+backend-vulkan: CC = g++
+backend-vulkan: backend
+
+.PHONY: run-backend-vulkan
+run-backend-vulkan: backend-vulkan
+	env GGML_VULKAN_DEVICE=1 ./bin/backend
 
 bindir: bin
 
@@ -46,11 +56,12 @@ ggml-init-cuda:
 	rm -rf build && mkdir build && cd build && \
 	cmake ${CMAKE_FLAGS} -DGGML_CUDA=ON .. && make -j8 ggml
 
-.PHONY: ggml-init-vulkan
+# This target does not work at the moment but should once
+# https://github.com/ggerganov/ggml/pull/730 is merged.
 ggml-init-vulkan:
 	cd ggml && \
 	rm -rf build && mkdir build && cd build && \
-	cmake ${CMAKE_FLAGS} .. && make -j8 C_FLAGS="-DGGML_USE_VULKAN" ggml
+	cmake ${CMAKE_FLAGS} -DGGML_VULKAN=ON .. && make -j8 ggml
 
 .PHONY: ggml-show-build-settings
 ggml-show-build-settings:
