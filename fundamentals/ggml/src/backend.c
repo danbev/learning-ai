@@ -59,8 +59,7 @@ int main(int argc, char **argv) {
           printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
       }
 
-      ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
-      ggml_backend_buffer_t bb = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buffer_type);
+      ggml_backend_buffer_t t = ggml_backend_alloc_ctx_tensors(ctx, cuda_backend);
 
       static float data_array[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
       void* data = (void*) data_array;
