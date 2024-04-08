@@ -749,6 +749,8 @@ $21 = (struct ggml_tensor *) 0x7ffff6a00030
 [zero-to-hero]: ../fundamentals/rust/zero-to-hero/README.md
 
 ### Backend
+Exploration code can be found in [backend.c](../fundamentals/ggml/src/backend.c).
+
 Lets take a look at what a ggml backend looks like:
 ```console
 (gdb) p cpu
@@ -817,8 +819,8 @@ static struct ggml_backend_i cpu_backend_i = {
     /* .event_synchronize       = */ NULL,
 };
 ```
-Notice the the CPU backend does not support asynchronous operations, and also
-does not support event which I'm guessing are used for the asynchronous
+Notice that the CPU backend does not support asynchronous operations, and also
+does not support events which I'm guessing are used for the asynchronous
 operations.
 
 Now, if we look at `ggml_backend_buffer_type_t`:
@@ -829,18 +831,27 @@ Now, if we look at `ggml_backend_buffer_type_t`:
     };
     typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
 ```
+Recall that a buffer is a contiguous block of memory of fixed size and intended
+to hold data while moving that data between places (in this case the host and a
+device). And a buffer as a fixed size.
+
+So first we have an interface which describes a type of buffer:
 ```c
     struct ggml_backend_buffer_type_i {
         const char* (*GGML_CALL get_name) (ggml_backend_buffer_type_t buft);
-        ggml_backend_buffer_t (*GGML_CALL alloc_buffer) (ggml_backend_buffer_type_t buft, size_t size);
         size_t (*GGML_CALL get_alignment) (ggml_backend_buffer_type_t buft);
         size_t (*GGML_CALL get_max_size) (ggml_backend_buffer_type_t buft);
         size_t (*GGML_CALL get_alloc_size) (ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
-        bool (*GGML_CALL supports_backend)(ggml_backend_buffer_type_t buft, ggml_backend_t backend); 
+
         bool (*GGML_CALL is_host) (ggml_backend_buffer_type_t buft);
+        bool (*GGML_CALL supports_backend)(ggml_backend_buffer_type_t buft, ggml_backend_t backend); 
+
+        ggml_backend_buffer_t (*GGML_CALL alloc_buffer) (ggml_backend_buffer_type_t buft, size_t size);
     };
 ```
-And `alloc_buffer` returns a `ggml_backend_buffer`:
+
+`alloc_buffer` returns a `ggml_backend_buffer` which is the actual buffer that
+the type describes:
 ```c
     struct ggml_backend_buffer {
         struct ggml_backend_buffer_i  iface;
@@ -854,10 +865,12 @@ And `alloc_buffer` returns a `ggml_backend_buffer`:
         const char* (*GGML_CALL get_name) (ggml_backend_buffer_t buffer);
         void (*GGML_CALL free_buffer) (ggml_backend_buffer_t buffer);
         void* (*GGML_CALL get_base) (ggml_backend_buffer_t buffer);
+
         void (*GGML_CALL init_tensor) (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor);
         void (*GGML_CALL set_tensor) (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
         void (*GGML_CALL get_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size);
         bool (*GGML_CALL cpy_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * src, struct ggml_tensor * dst);
+
         void (*GGML_CALL clear) (ggml_backend_buffer_t buffer, uint8_t value);
         void (*GGML_CALL reset) (ggml_backend_buffer_t buffer);
     };
@@ -887,7 +900,7 @@ $11 = true
 $12 = true
 ```
 
-Even though we pased in the `cpu_backend` above to `get_default_buffer_type` it
+Even though we passed in the `cpu_backend` above to `get_default_buffer_type` it
 is not actually used in the CPU backend case:
 ```c++
 GGML_CALL static ggml_backend_buffer_type_t ggml_backend_cpu_get_default_buffer_type(ggml_backend_t backend) {
@@ -942,34 +955,25 @@ $16 = GGML_BACKEND_TYPE_CPU
 (gdb) p x.buffer
 $17 = (struct ggml_backend_buffer *) 0x0
 ```
-So how do we use a backend?  
-```c++
-  ggml_backend_t cpu_backend = ggml_backend_cpu_init();
-  ggml_backend_buffer_t backend_buffer = ggml_backend_alloc_buffer(cpu_backend, 10*4);
 
-  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
-  ggml_backend_tensor_set(x, x->data, 0, ggml_nbytes(x));
-```
-I though that the above would work but it does not (not that I'm still exploring
-this and learning and I have no reason to believe that this should work, I'm
-just trying and learning).
-We we create a tensor it by defaults uses the CPU backend and the buffer is
-NULL:
+One thing I noticed is that when we call `ggml_backend_tensor_set` the backend
+of the tensor is still CPU in the CUDA case. I would have expected that the
+backend would be GPU. It looks like some of the backends set the tensors backend
+to GPU but the CPU backend does not.
 ```console
-(gdb) p x.buffer
-$10 = (struct ggml_backend_buffer *) 0x0
+$ git diff src/ggml-cuda.cu
+diff --git a/src/ggml-cuda.cu b/src/ggml-cuda.cu
+index be8e33a..3d93d6b 100644
+--- a/src/ggml-cuda.cu
++++ b/src/ggml-cuda.cu
+@@ -418,6 +418,7 @@ GGML_CALL static void ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t
+             CUDA_CHECK(cudaMemset((char *)tensor->data + original_size, 0, padded_size - original_size));
+         }
+     }
++    tensor->backend = GGML_BACKEND_TYPE_GPU;
+ }
+ 
+ GGML_CALL static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
 ```
 
 _wip_
-
-### tensor creation
-What actually happens when we create an tensor as in the following example:
-```c
-  struct ggml_init_params params = {
-    .mem_size   = 16*1024*1024,
-    .mem_buffer = NULL,
-    .no_alloc = true,
-  };
-  struct ggml_context* ctx = ggml_init(params);
-  struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
-```
