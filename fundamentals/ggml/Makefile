@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -g -Wall -Iggml/include -Wno-unused-variable
 LDFLAGS = -Lggml/build/src/
-CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF
 
 CUDA_DIR = /usr/local/cuda-12.2/lib64
 CUDA_FLAGS :=
