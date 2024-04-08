@@ -751,48 +751,188 @@ $21 = (struct ggml_tensor *) 0x7ffff6a00030
 ### Backend
 Exploration code can be found in [backend.c](../fundamentals/ggml/src/backend.c).
 
-Lets take a look at what a ggml backend looks like:
-```console
-(gdb) p cpu
-$1 = (ggml_backend_t) 0x4056e0
+What is a backend in ggml?  
+A backend in ggml is an interface which describes and abstracts operations on a
+buffer. This buffer can be on an accelerator, like a GPU, or on the host.
+All backends implement the same interface which enables them to be used in a
+uniform way and there can be multiple backends available at the same time.
 
-(gdb) ptype *cpu_backend
-type = struct ggml_backend {
-    ggml_guid_t guid;
-    struct ggml_backend_i iface;
-    ggml_backend_context_t context;
-}
+The backend interface is declared in ggml/include/ggml/ggml-backend.h and this
+header contains the functions of the interface to the backend. The actual
+backend is an opaque pointer:
+```c
+    typedef struct ggml_backend * ggml_backend_t;
 ```
-`ggml_backend` is defined in ggml/src/ggml-backend-impl.h and we can see above
-that it contains a guid, an interface and a context.
+This is a way of implementing an abstract data type in C and allows for
+encapsulation. The actual implementation of the backend is hidden from the usero
+of the backend. 
 
-Lets start by looking at the backend interface (`backend_i` :
-```console
-(gdb) ptype cpu_backend.iface
-type = struct ggml_backend_i {
-    const char *(*get_name)(ggml_backend_t);
-    void (*free)(ggml_backend_t);
+The actual definition of `ggml_backend` can be found in
+ggml/src/ggml-backend-impl.h:
+```c
+    struct ggml_backend {
+        ggml_guid_t guid;
 
-    ggml_backend_buffer_type_t (*get_default_buffer_type)(ggml_backend_t);
+        struct ggml_backend_i iface;
+        ggml_backend_context_t context;
+    };
 
-    void  (*set_tensor_async)(ggml_backend_t, struct ggml_tensor *, const void *, size_t, size_t);
-    void  (*get_tensor_async)(ggml_backend_t, const struct ggml_tensor *, void *, size_t, size_t);
-    _Bool (*cpy_tensor_async)(ggml_backend_t, ggml_backend_t, const struct ggml_tensor *, struct ggml_tensor *);
-    void  (*synchronize)(ggml_backend_t);
+    typedef void * ggml_backend_context_t;
+```
+So a backend has a global unique identifier (guid), an interface and a context.
+And notice that the context can be anything, since it is a void pointer.
+The backend interface, `iface` above, is what defines the operations that are
+available for a backend which every backend must implement.
+`struct ggml_backend_i` has functions like (simplified for readability):
+```c
+    const char* get_name();
+    void free();
 
-    ggml_backend_graph_plan_t (*graph_plan_create)(ggml_backend_t, const struct ggml_cgraph *);
-    void (*graph_plan_free)(ggml_backend_t, ggml_backend_graph_plan_t);
-    enum ggml_status (*graph_plan_compute)(ggml_backend_t, ggml_backend_graph_plan_t);
-    enum ggml_status (*graph_compute)(ggml_backend_t, struct ggml_cgraph *);
+    ggml_backend_buffer_type_t get_default_buffer_type();
+    void set_tensor_async(ggml_backend_t backend,
+                          struct ggml_tensor* tensor,
+                          const void* data,
+                          size_t offset,
+                          size_t size);
+    void get_tensor_async(ggml_backend_t backend,
+                         const struct ggml_tensor* tensor,
+                         void* data,
+                         size_t offset,
+                         size_t size);
+    bool cpy_tensor_async(ggml_backend_t backend_src,
+                          ggml_backend_t backend_dst,
+                          const struct ggml_tensor* src,
+                          struct ggml_tensor * dst);
 
-    _Bool (*supports_op)(ggml_backend_t, const struct ggml_tensor *);
-    _Bool (*offload_op)(ggml_backend_t, const struct ggml_tensor *);
+   void synchronize(ggml_backend_t backend);
+   ggml_backend_graph_plan_t graph_plan_create(ggml_backend_t backend,
+                                               const struct ggml_cgraph* cgraph);
+   enum ggml_status graph_plan_compute(ggml_backend_t backend,
+                                       ggml_backend_graph_plan_t plan);
+   enum ggml_status graph_compute(ggml_backend_t backend,
+                                  struct ggml_cgraph* cgraph);
+   bool supports_op(ggml_backend_t backend, const struct ggml_tensor* op);
+   bool offload_op(ggml_backend_t backend, const struct ggml_tensor* op);
 
-    ggml_backend_event_t (*event_new)(ggml_backend_t);
-    void (*event_free)(ggml_backend_event_t);
-    void (*event_record)(ggml_backend_event_t);
-    void (*event_wait)(ggml_backend_t, ggml_backend_event_t);
-    void (*event_synchronize)(ggml_backend_event_t);
+   ggml_backend_event_t event_new(ggml_backend_t backend);
+   void event_free(ggml_backend_event_t event);
+   void event_record(ggml_backend_event_t event);
+   void event_wait(ggml_backend_t backend, ggml_backend_event_t event);
+   void event_synchronize(ggml_backend_event_t event);
+```
+Not all backends support async operations, for example the CPU backend does not
+and the same goes for the support for events.
+
+Lets now take a closer look at the buffer type, `ggml_backend_buffer_type_t`
+which is the type returned from `get_default_buffer_type()` above.
+It is a typedef in ggml/include/ggml/ggml-alloc.h`:
+```c
+    typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
+```
+And the definition can be found in `ggml/src/ggml-backend-impl.h`: 
+```c
+    struct ggml_backend_buffer_type {
+        struct ggml_backend_buffer_type_i  iface;
+        ggml_backend_buffer_type_context_t context;
+    };
+    typedef void * ggml_backend_buffer_type_context_t;
+```
+Notice that a buffer type also has an interface and a context which is also a
+void pointer just like the context of a backend.
+
+Recall that a buffer is a contiguous block of memory of fixed size and intended
+to hold data while moving that data between places (in this case the host and a
+device). And a buffer has a fixed size.
+
+So first we have an interface which describes the buffer, the buffer type:
+```c
+    struct ggml_backend_buffer_type_i {
+        const char* get_name(ggml_backend_buffer_type_t buft);
+        size_t get_alignment(ggml_backend_buffer_type_t buft);
+        size_t get_max_size(ggml_backend_buffer_type_t buft);
+        size_t get_alloc_size(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
+
+        bool is_host(ggml_backend_buffer_type_t buft);
+        bool supports_backend(ggml_backend_buffer_type_t buft, ggml_backend_t backend); 
+
+        ggml_backend_buffer_t alloc_buffer(ggml_backend_buffer_type_t buft, size_t size);
+    };
+```
+So we first have functions that describe the buffer type like the max size that
+can be allocated by this buffer, the memory alighment, if it is a host or
+device buffer etc. These are just describing a buffer, `alloc_buffer` returns a
+`ggml_backend_buffer_t` (typedef in ggml/include/ggml/ggml-alloc.h) which is the
+actual buffer that the type describes:
+```c
+    struct ggml_backend_buffer {
+        struct ggml_backend_buffer_i  iface;
+        ggml_backend_buffer_type_t    buft;
+        ggml_backend_buffer_context_t context;
+        size_t size;
+        enum ggml_backend_buffer_usage usage;
+    };
+```
+The `iface` is the interface of a backend buffer which looks like this:
+```c
+    struct ggml_backend_buffer_i {
+        const char* get_name()
+        void free_buffer()
+        void get_base();
+        void init_tensor(struct ggml_tensor* tensor);
+        void set_tensor(struct ggml_tensor* tensor,
+                        const void* data,
+                        size_t offset,
+                        size_t size);
+        void get_tensor(const struct ggml_tensor* tensor,
+                        void* data,
+                        size_t offset,
+                        size_t size);
+        bool cpy_tensor(const struct ggml_tensor* src,
+                        struct ggml_tensor * dst);
+        void clear(uint8_t value);
+        void reset();
+    };
+```
+`ggml_backend_buffer_type_t` is something we've already seen earlier as it the
+context.
+`ggml_backend_buffer_usage` is defined as follows:
+```
+    enum ggml_backend_buffer_usage {
+        GGML_BACKEND_BUFFER_USAGE_ANY = 0,
+        GGML_BACKEND_BUFFER_USAGE_WEIGHTS = 1,
+    };
+```
+So `ggml_backend_buffer_i` is the bottom most interface and this is what
+interacts with the actual memory. For example, `set_tensor` will set the tensor
+on a backend, which for a device would mean copying the data from the host to
+the device:
+```c
+static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer,
+                                                ggml_tensor* tensor,
+                                                const void* data,
+                                                size_t offset,
+                                                size_t size) {
+    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+
+    ggml_cuda_set_device(ctx->device);
+    CUDA_CHECK(
+        cudaMemcpyAsync((char *)tensor->data + offset,
+                        data,
+                        size,
+                        cudaMemcpyHostToDevice,
+                        cudaStreamPerThread));
+    CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+}
+
+But of the CPU backend would just be `memcpy` function call:
+```c
+static void ggml_backend_cpu_buffer_set_tensor(ggml_backend_buffer_t buffer,
+                                               struct ggml_tensor* tensor,
+                                               const void* data,
+                                               size_t offset,
+                                               size_t size) {
+    memcpy((char *)tensor->data + offset, data, size);
+    GGML_UNUSED(buffer);
 }
 ```
 
@@ -823,91 +963,6 @@ Notice that the CPU backend does not support asynchronous operations, and also
 does not support events which I'm guessing are used for the asynchronous
 operations.
 
-Now, if we look at `ggml_backend_buffer_type_t`:
-```c
-    struct ggml_backend_buffer_type {
-        struct ggml_backend_buffer_type_i  iface;
-        ggml_backend_buffer_type_context_t context;
-    };
-    typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
-```
-Recall that a buffer is a contiguous block of memory of fixed size and intended
-to hold data while moving that data between places (in this case the host and a
-device). And a buffer as a fixed size.
-
-So first we have an interface which describes a type of buffer:
-```c
-    struct ggml_backend_buffer_type_i {
-        const char* (*GGML_CALL get_name) (ggml_backend_buffer_type_t buft);
-        size_t (*GGML_CALL get_alignment) (ggml_backend_buffer_type_t buft);
-        size_t (*GGML_CALL get_max_size) (ggml_backend_buffer_type_t buft);
-        size_t (*GGML_CALL get_alloc_size) (ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
-
-        bool (*GGML_CALL is_host) (ggml_backend_buffer_type_t buft);
-        bool (*GGML_CALL supports_backend)(ggml_backend_buffer_type_t buft, ggml_backend_t backend); 
-
-        ggml_backend_buffer_t (*GGML_CALL alloc_buffer) (ggml_backend_buffer_type_t buft, size_t size);
-    };
-```
-
-`alloc_buffer` returns a `ggml_backend_buffer` which is the actual buffer that
-the type describes:
-```c
-    struct ggml_backend_buffer {
-        struct ggml_backend_buffer_i  iface;
-        ggml_backend_buffer_type_t    buft;
-        ggml_backend_buffer_context_t context;
-        size_t size;
-        enum ggml_backend_buffer_usage usage;
-    };
-
-    struct ggml_backend_buffer_i {
-        const char* (*GGML_CALL get_name) (ggml_backend_buffer_t buffer);
-        void (*GGML_CALL free_buffer) (ggml_backend_buffer_t buffer);
-        void* (*GGML_CALL get_base) (ggml_backend_buffer_t buffer);
-
-        void (*GGML_CALL init_tensor) (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor);
-        void (*GGML_CALL set_tensor) (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
-        void (*GGML_CALL get_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size);
-        bool (*GGML_CALL cpy_tensor) (ggml_backend_buffer_t buffer, const struct ggml_tensor * src, struct ggml_tensor * dst);
-
-        void (*GGML_CALL clear) (ggml_backend_buffer_t buffer, uint8_t value);
-        void (*GGML_CALL reset) (ggml_backend_buffer_t buffer);
-    };
-```
-
-```console
-(gdb) p cpu_backend.iface.get_default_buffer_type(cpu_backend)
-$5 = (struct ggml_backend_buffer_type *) 0x7ffff7efa120 <ggml_backend_cpu_buffer_type>
-
-(gdb) p *cpu_backend.iface.get_default_buffer_type(cpu_backend)
-$6 = {iface = {get_name = 0x7ffff7ea4f58 <ggml_backend_cpu_buffer_type_get_name>, 
-    alloc_buffer = 0x7ffff7ea4f69 <ggml_backend_cpu_buffer_type_alloc_buffer>, 
-    get_alignment = 0x7ffff7ea5058 <ggml_backend_cpu_buffer_type_get_alignment>,
-    get_max_size = 0x0,
-    get_alloc_size = 0x0,
-    supports_backend = 0x7ffff7ea5067 <ggml_backend_cpu_buffer_type_supports_backend>, 
-    is_host = 0x7ffff7ea5085 <ggml_backend_cpu_buffer_type_is_host>
-    }, context = 0x0}
-
-(gdb) p $6.iface.get_name($6)
-$10 = 0x7ffff7ee10e2 "CPU"
-
-(gdb) p $6.iface.supports_backend($6, cpu_backend)
-$11 = true
-
-(gdb) p $6.iface.is_host($6)
-$12 = true
-```
-
-Even though we passed in the `cpu_backend` above to `get_default_buffer_type` it
-is not actually used in the CPU backend case:
-```c++
-GGML_CALL static ggml_backend_buffer_type_t ggml_backend_cpu_get_default_buffer_type(ggml_backend_t backend) {
-    return ggml_backend_cpu_buffer_type();
-    GGML_UNUSED(backend);
-}
-```
 And the `ggml_backend_cpu_buffer_type` function is defined as follows:
 ```
 GGML_CALL ggml_backend_buffer_type_t ggml_backend_cpu_buffer_type(void) {
@@ -927,17 +982,9 @@ GGML_CALL ggml_backend_buffer_type_t ggml_backend_cpu_buffer_type(void) {
     return &ggml_backend_cpu_buffer_type;
 }
 ```
-Now, a `ggml_backend_buffer_type` is defined as follows and has a interface
-and a pointer to a context (void pointer), which for the CPU backend is NULL:
-```c++
-    struct ggml_backend_buffer_type {
-        struct ggml_backend_buffer_type_i  iface;
-        ggml_backend_buffer_type_context_t context;
-    };
-```
 
 Every tensor has a backend type and and may have buffer:
-```c++
+```console
 (gdb) p x
 $14 = (struct ggml_tensor *) 0x7ffff6a00030
 (gdb) p *x
