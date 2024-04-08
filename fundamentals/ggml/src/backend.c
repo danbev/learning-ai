@@ -4,7 +4,7 @@
 #include "ggml/ggml-alloc.h"
 #include "ggml/ggml-backend.h"
 
-void print_backend_info(ggml_backend_t backend, ggml_context* ctx) {
+void print_backend_info(ggml_backend_t backend, struct ggml_context* ctx) {
       ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(backend, 10*4);
       printf("------- backend info -------\n");
       printf("buffer name: %s\n", ggml_backend_buffer_name(buffer));
