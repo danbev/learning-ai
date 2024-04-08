@@ -4,6 +4,24 @@
 #include "ggml/ggml-alloc.h"
 #include "ggml/ggml-backend.h"
 
+void print_backend_info(ggml_backend_t backend, ggml_context* ctx) {
+      ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(backend, 10*4);
+      printf("------- backend info -------\n");
+      printf("buffer name: %s\n", ggml_backend_buffer_name(buffer));
+      printf("buffer size: %ld\n", ggml_backend_buffer_get_size(buffer));
+      printf("buffer alignment: %ld\n", ggml_backend_buffer_get_alignment(buffer));
+      printf("buffer max size: %ld\n", ggml_backend_buffer_get_max_size(buffer));
+      printf("buffer is host: %d\n", ggml_backend_buffer_is_host(buffer));
+
+      ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
+      printf("buffer type name: %s\n", ggml_backend_buft_name(buffer_type));
+      printf("buffer type alignment: %ld\n", ggml_backend_buft_get_alignment(buffer_type));
+      printf("buffer type max size: %ld\n", ggml_backend_buft_get_max_size(buffer_type));
+      printf("buffer type is host: %d\n", ggml_backend_buft_is_host(buffer_type));
+      printf("buffer type supports backend: %d\n", ggml_backend_buft_supports_backend(buffer_type, backend));
+      ggml_backend_buffer_t bb = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buffer_type);
+}
+
 int main(int argc, char **argv) {
   printf("GGML backend examples\n");
 
@@ -23,18 +41,20 @@ int main(int argc, char **argv) {
 
   // The following will call ggml_backend_registry_init
   size_t count = ggml_backend_reg_get_count();
-  printf("backend count: %ld\n", count);
+  printf("Number of backends registered: %ld\n", count);
   for (size_t i = 0; i < count; i++) {
-    printf("backend_%ld name: %s\n", i, ggml_backend_reg_get_name(i));
+    printf("backend %ld name: %s\n", i, ggml_backend_reg_get_name(i));
+  }
+
+  ggml_backend_t cpu_backend = ggml_backend_reg_init_backend_from_str("CPU");
+  if (cpu_backend != NULL) {
+      print_backend_info(cpu_backend, ctx);
+      ggml_backend_free(cpu_backend);
   }
 
   ggml_backend_t cuda_backend = ggml_backend_reg_init_backend_from_str("CUDA0");
   if (cuda_backend != NULL) {
-      ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(cuda_backend, 10*4);
-      ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(buffer);
-
-      ggml_backend_buffer_t bb = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buffer_type);
-
+      print_backend_info(cuda_backend, ctx);
       printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
       printf("x backend buffer: %s\n", ggml_backend_buffer_name(x->buffer));
 
@@ -44,9 +64,9 @@ int main(int argc, char **argv) {
       // The following will copy the data from the host to the device.
       ggml_backend_tensor_set(x, data, 0, 10);
       printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
+      ggml_backend_free(cuda_backend);
   }
 
-  ggml_backend_free(cuda_backend);
   ggml_free(ctx);
   return 0;
 }
