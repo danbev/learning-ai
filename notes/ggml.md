@@ -761,7 +761,7 @@ accelerator, like a GPU, or on the host.
 All backends implement the same interface which enables them to be used in a
 uniform way and there can be multiple backends available at the same time.
 
-The backend interface is declared in ggml/include/ggml/ggml-backend.h and this
+The backend interface is declared in `ggml/include/ggml/ggml-backend.h` and this
 header contains the functions of the interface to the backend. The actual
 backend is an opaque pointer:
 ```c
@@ -785,6 +785,7 @@ ggml/src/ggml-backend-impl.h:
 ```
 So a backend has a global unique identifier (guid), an interface and a context.
 And notice that the context can be anything, since it is a void pointer.
+
 The backend interface, `iface` above, is what defines the operations that are
 available for a backend which every backend must implement.
 `struct ggml_backend_i` has functions like (simplified for readability):
@@ -793,43 +794,37 @@ available for a backend which every backend must implement.
     void free();
 
     ggml_backend_buffer_type_t get_default_buffer_type();
-    void set_tensor_async(ggml_backend_t backend,
-                          struct ggml_tensor* tensor,
+    void set_tensor_async(struct ggml_tensor* tensor,
                           const void* data,
                           size_t offset,
                           size_t size);
-    void get_tensor_async(ggml_backend_t backend,
-                         const struct ggml_tensor* tensor,
+    void get_tensor_async(const struct ggml_tensor* tensor,
                          void* data,
                          size_t offset,
                          size_t size);
-    bool cpy_tensor_async(ggml_backend_t backend_src,
-                          ggml_backend_t backend_dst,
+    bool cpy_tensor_async(ggml_backend_t backend_dst,
                           const struct ggml_tensor* src,
                           struct ggml_tensor * dst);
 
-   void synchronize(ggml_backend_t backend);
-   ggml_backend_graph_plan_t graph_plan_create(ggml_backend_t backend,
-                                               const struct ggml_cgraph* cgraph);
-   enum ggml_status graph_plan_compute(ggml_backend_t backend,
-                                       ggml_backend_graph_plan_t plan);
-   enum ggml_status graph_compute(ggml_backend_t backend,
-                                  struct ggml_cgraph* cgraph);
-   bool supports_op(ggml_backend_t backend, const struct ggml_tensor* op);
-   bool offload_op(ggml_backend_t backend, const struct ggml_tensor* op);
+   void synchronize();
+   ggml_backend_graph_plan_t graph_plan_create(const struct ggml_cgraph* cgraph);
+   enum ggml_status graph_plan_compute(ggml_backend_graph_plan_t plan);
+   enum ggml_status graph_compute(struct ggml_cgraph* cgraph);
+   bool supports_op(const struct ggml_tensor* op);
+   bool offload_op(const struct ggml_tensor* op);
 
-   ggml_backend_event_t event_new(ggml_backend_t backend);
+   ggml_backend_event_t event_new();
    void event_free(ggml_backend_event_t event);
    void event_record(ggml_backend_event_t event);
-   void event_wait(ggml_backend_t backend, ggml_backend_event_t event);
+   void event_wait(ggml_backend_event_t event);
    void event_synchronize(ggml_backend_event_t event);
 ```
 Not all backends support async operations, for example the CPU backend does not
-and the same goes for the support for events.
+and the same goes for the support of events.
 
 Lets now take a closer look at the buffer type, `ggml_backend_buffer_type_t`
 which is the type returned from `get_default_buffer_type()` above.
-It is a typedef in ggml/include/ggml/ggml-alloc.h`:
+It is a typedef in `ggml/include/ggml/ggml-alloc.h`:
 ```c
     typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
 ```
@@ -859,11 +854,13 @@ So first we have an interface which describes the buffer, the buffer type:
     };
 ```
 So we first have functions that describe the buffer type like the max size that
-can be allocated by this buffer, the memory alighment, if it is a host or
+can be allocated by this buffer, the memory alignment, if it is a host or
 device buffer etc. These are just describing a buffer, `alloc_buffer` returns a
 `ggml_backend_buffer_t` (typedef in ggml/include/ggml/ggml-alloc.h) which is the
 actual buffer that the type describes:
 ```c
+    typedef struct ggml_backend_buffer* ggml_backend_buffer_t;
+
     struct ggml_backend_buffer {
         struct ggml_backend_buffer_i  iface;
         ggml_backend_buffer_type_t    buft;
