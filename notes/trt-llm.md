@@ -19,10 +19,10 @@ possible on NVIDIA GPUs:
   |   options     |-----+
   +---------------+
 ```
-Optimization options can things like quantization. Notice that this compilation
-is done on the device environment (GPU) and the optimized model is specific to
-the GPU in use. So the same type of GPU must be used for compilation and
-inference.
+Optimization options can be things like quantization. Notice that this
+compilation is done on the device environment (GPU) and the optimized model is
+specific to the GPU in use. So the same type of GPU must be used for compilation
+and inference.
 
 Not all models are supported by TensorRT. The model must be supported by the
 listed [here](https://github.com/NVIDIA/TensorRT-LLM?tab=readme-ov-file#models).
@@ -68,13 +68,14 @@ Thu Mar 28 11:47:17 2024
 ```
 So we are using Docker run to run a container which will be based on the
 ubuntu image and the command run will be `nvidia-smi`. 
+
 The `--runtime` flag and the `--gpus` flags are new to me.  The `--gpus` flag
-allows access to NVIDIA GPU resorces an this needs the
-`nvidia-container-toolkit` to be installed. The ``--runtime`` flag is used to
+allows access to NVIDIA GPU resources and this needs the
+`nvidia-container-toolkit` to be installed. The `--runtime` flag is used to
 to specify the runtime, which by default is `runc`. This enables containers to
 access GPU hardware.
-The available runtimes (I'm assuming those apart from the default one) can be
-listed with:
+
+The available runtimes can be listed with:
 ```console
 $ docker info | grep Runtimes
  Runtimes: io.containerd.runc.v2 nvidia runc
@@ -91,5 +92,8 @@ $ cat /etc/docker/daemon.json
     }
 }
 ```
+For a refresher on containers I've written about this in
+[containers](https://github.com/danbev/learning-knative?tab=readme-ov-file#container)
+and specifically [runtimes](https://github.com/danbev/learning-knative?tab=readme-ov-file#container-runtime).
 
 _wip_
