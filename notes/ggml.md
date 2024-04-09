@@ -753,7 +753,11 @@ Exploration code can be found in [backend.c](../fundamentals/ggml/src/backend.c)
 
 What is a backend in ggml?  
 A backend in ggml is an interface which describes and abstracts operations on a
-buffer. This buffer can be on an accelerator, like a GPU, or on the host.
+buffer. Recall that a buffer is a contiguous block of memory of fixed size and
+intended to hold data while moving that data between places (in this case the
+host and a device). And a buffer has a fixed size. This buffer can be on an
+accelerator, like a GPU, or on the host.
+
 All backends implement the same interface which enables them to be used in a
 uniform way and there can be multiple backends available at the same time.
 
@@ -839,10 +843,6 @@ And the definition can be found in `ggml/src/ggml-backend-impl.h`:
 ```
 Notice that a buffer type also has an interface and a context which is also a
 void pointer just like the context of a backend.
-
-Recall that a buffer is a contiguous block of memory of fixed size and intended
-to hold data while moving that data between places (in this case the host and a
-device). And a buffer has a fixed size.
 
 So first we have an interface which describes the buffer, the buffer type:
 ```c
