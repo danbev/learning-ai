@@ -27,10 +27,10 @@ as:
 'cream': [1.3, 1.4, 1.5, 1.6]
 ```
 Think of each row in the logits matrix as a set of scores given by the network,
-However, these scores are not probabilities yet—they can be any real number. The
-softmax function's role is to transform these scores into actual probabilities.
-What we want to do is to normalize each row of this matrix. So we apply the
-softmax function to each row: 
+However, these scores are not probabilities yet, they can be any real number.
+The softmax function's role is to transform these scores into actual
+probabilities. What we want to do is to normalize each row of this matrix. So
+we apply the softmax function to each row: 
 ```
 'Dan':   [0.1, 0.2, 0.3, 0.4] -> [0.1, 0.2, 0.3, 0.4]
 'loves': [0.5, 0.6, 0.7, 0.8] -> [0.1, 0.2, 0.3, 0.4]
