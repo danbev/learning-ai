@@ -923,6 +923,7 @@ static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer,
                         cudaStreamPerThread));
     CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
 }
+```
 
 But of the CPU backend would just be `memcpy` function call:
 ```c
@@ -1006,7 +1007,11 @@ $17 = (struct ggml_backend_buffer *) 0x0
 One thing I noticed is that when we call `ggml_backend_tensor_set` the backend
 of the tensor is still CPU in the CUDA case. I would have expected that the
 backend would be GPU. It looks like some of the backends set the tensors backend
-to GPU but the CPU backend does not.
+to GPU but the CPU backend does not. For example the sycl backend does as does
+the kompute backend.
+
+The following is a suggestion to update the CUDA backend to also set the
+tensor backend to GPU:
 ```console
 $ git diff src/ggml-cuda.cu
 diff --git a/src/ggml-cuda.cu b/src/ggml-cuda.cu
@@ -1023,4 +1028,268 @@ index be8e33a..3d93d6b 100644
  GGML_CALL static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
 ```
 
+When we call `ggml_backend_alloc_ctx_tensors`, which is a call that allocate
+the passed in ggml_contexts tensors to the backend, like this:
+```c
+      ggml_backend_buffer_t t = ggml_backend_alloc_ctx_tensors(ctx, cuda_backend);
+```
+
+```console
+$ !gdb
+gdb --args ./bin/backend 
+Reading symbols from ./bin/backend...
+(gdb) br backend.c:62
+Breakpoint 1 at 0x404e16: file src/backend.c, line 62.
+(gdb) r
+```
+This function call  will end up in ggml-alloc.c:
+```c
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {
+    return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));
+}
+```
+And `ggml_backend_alloc_ctx_tensors_from_buft` can also be found in ggml-alloc.c:
+```c
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx,
+    ggml_backend_buffer_type_t buft) {
+    GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
+
+    size_t alignment = ggml_backend_buft_get_alignment(buft);
+    size_t max_size = ggml_backend_buft_get_max_size(buft);
+    ggml_backend_buffer_t * buffers = NULL;
+    size_t n_buffers = 0;
+
+    size_t cur_buf_size = 0;
+    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+```
+```console
+(gdb) p alignment 
+$4 = 128
+(gdb) p max_size 
+$5 = 18446744073709551615
+
+(gdb) p *first
+$8 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU,
+      buffer = 0x0, ne = {10, 1, 1, 1}, nb = {4, 40, 40, 40},
+      op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
+      flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+      0x0, 0x0, 0x0, 0x0},
+      perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+      view_src = 0x0, view_offs = 0,
+      data = 0x0,
+      name = "x", '\000' <repeats 62 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+Inside the above for loop we have:
+```console
+(gdb) l
+926	
+927	    size_t cur_buf_size = 0;
+928	    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+929	    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+930	        size_t this_size = 0;
+931	        if (t->data == NULL && t->view_src == NULL) {
+932	            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+933	        }
+934	
+935	        if (this_size > max_size) {
+
+(gdb) p t->data
+$9 = (void *) 0x0
+(gdb) p t->view_src
+$10 = (struct ggml_tensor *) 0x0
+
+(gdb) p this_size
+$14 = 128
+
+(gdb) l
+959	    // allocate remaining tensors
+960	    if (cur_buf_size > 0) {
+961	        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+962	            return NULL;
+963	        }
+964	    }
+(gdb) s
+
+(gdb) l
+878	
+879	static bool alloc_tensor_range(struct ggml_context * ctx,
+880	        struct ggml_tensor * first, struct ggml_tensor * last,
+881	        ggml_backend_buffer_type_t buft, size_t size,
+882	        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+883	    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+884	    if (buffer == NULL) {
+885	#ifndef NDEBUG
+886	        fprintf(stderr, "%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(buft), size);
+887	#endif
+```
+`ggml_backed_buft_alloc_buffer` will
+```console
+21	ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+22	    return buft->iface.alloc_buffer(buft, size);
+23	}
+
+(gdb) l
+492	GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+493	    ggml_backend_cuda_buffer_type_context * buft_ctx = (ggml_backend_cuda_buffer_type_context *)buft->context;
+494	
+495	    ggml_cuda_set_device(buft_ctx->device);
+496	
+497	    size = std::max(size, (size_t)1); // cudaMalloc returns null for size 0
+498	
+499	    void * dev_ptr;
+500	    cudaError_t err = cudaMalloc(&dev_ptr, size);
+501	    if (err != cudaSuccess) {
+```
+Notice that this is allocating 128 bytes of memory on the GPU which the device
+pointer (dev_ptr) will point to if successful.
+
+```console
+506	    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr);
+507	
+508	    return ggml_backend_buffer_init(buft, ggml_backend_cuda_buffer_interface, ctx, size);
+509	}
+
+(gdb) p *ctx
+$4 = {device = 0, dev_ptr = 0x7fff94c00200, name = "CUDA0"}
+```
+The final thing to happen in this function is that ggml_backend_buffer_init is
+called.
+```c
+GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
+               ggml_backend_buffer_type_t      buft,
+        struct ggml_backend_buffer_i           iface,
+               ggml_backend_buffer_context_t   context,
+               size_t                          size) {
+    ggml_backend_buffer_t buffer = malloc(sizeof(struct ggml_backend_buffer));
+
+    (*buffer) = (struct ggml_backend_buffer) {
+        /* .interface = */ iface,
+        /* .buft      = */ buft,
+        /* .context   = */ context,
+        /* .size      = */ size,
+        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
+    };
+
+    return buffer;
+}
+```
+
+```console
+
+895	    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+896	
+897	    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
+898	        if (t->data == NULL) {
+899	            if (t->view_src == NULL) {
+900	                ggml_tallocr_alloc(&tallocr, t);
+901	            } else if (t->buffer == NULL) {
+902	                ggml_backend_view_init(buffer, t);
+903	            }
+904	        } else {
+```
+```c
+void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
+    size_t size = ggml_backend_buffer_get_alloc_size(talloc->buffer, tensor);
+    size = GGML_PAD(size, talloc->alignment);
+
+    if (talloc->offset + size > ggml_backend_buffer_get_size(talloc->buffer)) {
+        fprintf(stderr, "%s: not enough space in the buffer to allocate %s (needed %zu, available %zu)\n",
+                __func__, tensor->name, size, ggml_backend_buffer_get_size(talloc->buffer) - talloc->offset);
+        GGML_ASSERT(!"not enough space in the buffer");
+        return;
+    }
+
+    void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
+    talloc->offset += size;
+
+    assert(((uintptr_t)addr % talloc->alignment) == 0);
+
+    ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
+}
+``` 
+The call to `ggml_backend_tensor_alloc` will set the tensors buffer and
+data (which my be null):
+```c
+void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    GGML_ASSERT(tensor->buffer == NULL);
+    GGML_ASSERT(tensor->data == NULL);
+    GGML_ASSERT(tensor->view_src == NULL);
+    GGML_ASSERT(addr >= ggml_backend_buffer_get_base(buffer));
+    GGML_ASSERT((char *)addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
+                (char *)ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
+
+    tensor->buffer = buffer;
+    tensor->data = addr;
+    ggml_backend_buffer_init_tensor(buffer, tensor);
+}
+```
+The last function call will then `ggml_backend_buffer_init_tensor` will then
+...
+
+Before this call the tensor looks like this:
+```console
+(gdb) p *tensor
+$38 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x41ac880, ne = {10, 1, 1, 1}, nb = {4, 40, 
+    40, 40}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, 
+  view_offs = 0, data = 0x7fff94c00200, name = "x", '\000' <repeats 62 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+
+```c
+GGML_CALL void ggml_backend_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    // init_tensor is optional
+    if (buffer->iface.init_tensor) {
+        buffer->iface.init_tensor(buffer, tensor);
+    }
+}
+```
+```console
+(gdb) p buffer->iface.init_tensor
+$39 = (void (*)(ggml_backend_buffer_t, 
+    struct ggml_tensor *)) 0x4e20c4 <ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t, ggml_tensor*)>
+```
+So that will land us in `ggml_backend_cuda_buffer_init_tensor`:
+```console
+(gdb) s
+ggml_backend_cuda_buffer_init_tensor (buffer=0x41ac880, tensor=0x7fffcaa00030)
+    at /home/danielbevenius/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-cuda.cu:402
+402	    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+```
+So lets take a closer look at this function:
+```c
+GGML_CALL static void ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+
+    if (tensor->view_src != NULL) {
+        assert(tensor->view_src->buffer->buft == buffer->buft);
+        return;
+    }
+
+    if (ggml_is_quantized(tensor->type)) {
+        // initialize padding to 0 to avoid possible NaN values
+        size_t original_size = ggml_nbytes(tensor);
+        size_t padded_size = ggml_backend_buft_get_alloc_size(buffer->buft, tensor);
+
+        if (padded_size > original_size && tensor->view_src == nullptr) {
+            ggml_cuda_set_device(ctx->device);
+            CUDA_CHECK(cudaMemset((char *)tensor->data + original_size, 0, padded_size - original_size));
+        }
+    }
+    // The following line was added by me as a suggestion that the cuda backend
+    // should set this to GPU (change it from CPU).
+    tensor->backend = GGML_BACKEND_TYPE_GPU;
+}
+```
+```console
+(gdb) p *ctx
+$41 = {device = 0, dev_ptr = 0x7fff94c00200, name = "CUDA0"}
+(gdb) p tensor->view_src
+$42 = (ggml_tensor *) 0x0
+(gdb) p ggml_is_quantized(tensor->type)
+$43 = false
+```
+
 _wip_
+
