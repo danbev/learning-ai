@@ -22,6 +22,8 @@ int main(int argc, char **argv) {
   }
 
   struct ggml_tensor* dup = ggml_dup_tensor(ctx, x);
+  // Only the tensor type and its dimensions are duplicated, that is a new
+  // tensor is created with the same type and dimensions.
   printf("dup tensor type: %s\n", ggml_type_name(dup->type));
   printf("dup tensor dimensions: %d\n", ggml_n_dims(dup));
   printf("x tensor ne[0]: %ld\n", dup->ne[0]);
