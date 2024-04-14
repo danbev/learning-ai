@@ -52,4 +52,148 @@ can specify their own token ids and things will still work.
 
 
 ### Implementation
-TODO:
+Looking in [gguf-py/constants.py](https://github.com/ggerganov/llama.cpp/blob/4bd0f93e4ab4fe6682e7d0241c1bdec1397e954a/gguf-py/gguf/constants.py#L73) there is a Tokenizer class and it contains
+constants for `BOS_ID`, `EOS_ID`, `PAD_ID`, `UNK_ID`, etc. Perhaps a start would
+be to add these infill tokens to this class.
+
+What we want is to add new properties to the `Tokenizer` class in `constants.py`
+which can be used to add key-value pairs to the GGUF model file. For example:
+```python
+    class Tokenizer:
+        ...
+        PREFIX_ID        = "tokenizer.ggml.prefix_id"
+        MIDDLE_ID        = "tokenizer.ggml.middle_id"
+        SUFFIX_ID        = "tokenizer.ggml.suffix_id"
+        EOT_ID           = "tokenizer.ggml.eot_id"
+```
+These will then have to be added to the generated GGUF file.
+TODO: How do we add these to the GGUF file?
+
+The other special tokens can be inspected in a gguf file using the
+`gguf-dump.py`:
+```console
+(venv3) $ gguf-py/scripts/gguf-dump.py models/codegemma-7b-it-f16.gguf 
+* Loading: models/codegemma-7b-it-f16.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+
+* Dumping 24 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 254
+      3: UINT64     |        1 | GGUF.kv_count = 21
+      4: STRING     |        1 | general.architecture = 'gemma'
+      5: STRING     |        1 | general.name = 'codegemma-7b-it'
+      6: UINT32     |        1 | gemma.context_length = 8192
+      7: UINT32     |        1 | gemma.block_count = 28
+      8: UINT32     |        1 | gemma.embedding_length = 3072
+      9: UINT32     |        1 | gemma.feed_forward_length = 24576
+     10: UINT32     |        1 | gemma.attention.head_count = 16
+     11: UINT32     |        1 | gemma.attention.head_count_kv = 16
+     12: UINT32     |        1 | gemma.attention.key_length = 256
+     13: UINT32     |        1 | gemma.attention.value_length = 256
+     14: FLOAT32    |        1 | gemma.attention.layer_norm_rms_epsilon = 9.999999974752427e-07
+     15: STRING     |        1 | tokenizer.ggml.model = 'llama'
+     16: UINT32     |        1 | tokenizer.ggml.bos_token_id = 2
+     17: UINT32     |        1 | tokenizer.ggml.eos_token_id = 1
+     18: UINT32     |        1 | tokenizer.ggml.padding_token_id = 0
+     19: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 3
+```
+So we want to have these new properties added to the GGUF file.
+
+This will then enable us to add them to the `llm_kv` enum in `llama.cpp`:
+```c++
+enum llm_kv {
+    ...
+    LLM_KV_TOKENIZER_PREFIX_ID,
+    LLM_KV_TOKENIZER_SUFFIX_ID,
+    LLM_KV_TOKENIZER_MIDDLE_ID,
+    LLM_KV_TOKENIZER_EOT_ID,
+};
+```
+```c++
+static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+    { LLM_KV_GENERAL_ARCHITECTURE,          "general.architecture"                  },
+    { LLM_KV_GENERAL_QUANTIZATION_VERSION,  "general.quantization_version"          },
+    { LLM_KV_GENERAL_ALIGNMENT,             "general.alignment"                     },
+    { LLM_KV_GENERAL_NAME,                  "general.name"                          },
+    { LLM_KV_GENERAL_AUTHOR,                "general.author"                        },
+    { LLM_KV_GENERAL_VERSION,               "general.version"                       },
+    { LLM_KV_GENERAL_URL,                   "general.url"                           },
+    { LLM_KV_GENERAL_DESCRIPTION,           "general.description"                   },
+    { LLM_KV_GENERAL_LICENSE,               "general.license"                       },
+    { LLM_KV_GENERAL_SOURCE_URL,            "general.source.url"                    },
+    { LLM_KV_GENERAL_SOURCE_HF_REPO,        "general.source.huggingface.repository" },
+
+    { LLM_KV_VOCAB_SIZE,                    "%s.vocab_size"            },
+    { LLM_KV_CONTEXT_LENGTH,                "%s.context_length"        },
+    { LLM_KV_EMBEDDING_LENGTH,              "%s.embedding_length"      },
+    { LLM_KV_BLOCK_COUNT,                   "%s.block_count"           },
+    { LLM_KV_FEED_FORWARD_LENGTH,           "%s.feed_forward_length"   },
+    { LLM_KV_USE_PARALLEL_RESIDUAL,         "%s.use_parallel_residual" },
+    { LLM_KV_TENSOR_DATA_LAYOUT,            "%s.tensor_data_layout"    },
+    { LLM_KV_EXPERT_COUNT,                  "%s.expert_count"          },
+    { LLM_KV_EXPERT_USED_COUNT,             "%s.expert_used_count"     },
+    { LLM_KV_POOLING_TYPE ,                 "%s.pooling_type"          },
+    { LLM_KV_LOGIT_SCALE,                   "%s.logit_scale"           },
+
+    { LLM_KV_TOKENIZER_BOS_ID,              "tokenizer.ggml.bos_token_id"       },
+    { LLM_KV_TOKENIZER_EOS_ID,              "tokenizer.ggml.eos_token_id"       },
+    { LLM_KV_TOKENIZER_UNK_ID,              "tokenizer.ggml.unknown_token_id"   },
+    { LLM_KV_TOKENIZER_SEP_ID,              "tokenizer.ggml.seperator_token_id" },
+    { LLM_KV_TOKENIZER_PAD_ID,              "tokenizer.ggml.padding_token_id"   },
+    { LLM_KV_TOKENIZER_CLS_ID,              "tokenizer.ggml.cls_token_id"       },
+    { LLM_KV_TOKENIZER_MASK_ID,             "tokenizer.ggml.mask_token_id"      },
+    { LLM_KV_TOKENIZER_ADD_BOS,             "tokenizer.ggml.add_bos_token"      },
+    { LLM_KV_TOKENIZER_ADD_EOS,             "tokenizer.ggml.add_eos_token"      },
+    { LLM_KV_TOKENIZER_ADD_PREFIX,          "tokenizer.ggml.add_space_prefix"   },
+    { LLM_KV_TOKENIZER_HF_JSON,             "tokenizer.huggingface.json"        },
+    { LLM_KV_TOKENIZER_RWKV,                "tokenizer.rwkv.world"              },
+
+    { LLM_KV_TOKENIZER_PREFIX_ID,           "tokenizer.ggml.prefix_token_id"    },
+    { LLM_KV_TOKENIZER_SUFFIX_ID,           "tokenizer.ggml.suffix_token_id"    },
+    { LLM_KV_TOKENIZER_MIDDLE_ID,           "tokenizer.ggml.middle_token_id"    },
+    { LLM_KV_TOKENIZER_EOT_ID,              "tokenizer.ggml.eot_token_id"       },
+};
+```
+And when the vocabulary is loaded in `llm_load_vocab` we can add these special
+tokens types:
+```c++
+        const std::vector<std::pair<enum llm_kv, int32_t &>> special_token_types = {
+            { LLM_KV_TOKENIZER_BOS_ID,    vocab.special_bos_id  },
+            { LLM_KV_TOKENIZER_EOS_ID,    vocab.special_eos_id  },
+            { LLM_KV_TOKENIZER_UNK_ID,    vocab.special_unk_id  },
+            { LLM_KV_TOKENIZER_SEP_ID,    vocab.special_sep_id  },
+            { LLM_KV_TOKENIZER_PAD_ID,    vocab.special_pad_id  },
+            { LLM_KV_TOKENIZER_CLS_ID,    vocab.special_cls_id  },
+            { LLM_KV_TOKENIZER_MASK_ID,   vocab.special_mask_id },
+            { LLM_KV_TOKENIZER_PREFIX_ID, vocab.special_prefix_id },
+            { LLM_KV_TOKENIZER_SUFFIX_ID, vocab.special_suffix_id },
+            { LLM_KV_TOKENIZER_MIDDLE_ID, vocab.special_middle_id },
+            { LLM_KV_TOKENIZER_EOT_ID,    vocab.special_eot_id },
+        };
+```
+
+### Testing/Verification
+To be able to test this while developing we will need to have a model that
+supports infill, like CodeLlama or CodeGemma. Lets use CodeGemma and the first
+step is to checkout the model from huggingface. This will be a non-gguf model
+since I'm assuming that the metadata is added to the gguf model during the
+conversion.
+
+You'll need to use a HuggingFace [access token](https://huggingface.co/settings/tokens)
+instead of a password in the following command with your HuggingFace username:
+```console
+$ pushd ~/work/ai
+$ git clone https://huggingface.co/google/codegemma-7b-it
+```
+
+And we should install `gguf.py` in editable mode:
+```console
+$ cd ~/work/ai/llama.cpp/gguf-py
+$ source venv/bin/activate
+$ pip install -e .
+```
+With that setup we should be able to run `convert-hf-to-gguf.py`:
+```console
+./convert-hf-to-gguf.py --outtype f16 --outfile models/codegemma-7b-it-f16.gguf ~/work/ai/codegemma-7b-it
+```
+
