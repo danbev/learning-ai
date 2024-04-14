@@ -72,8 +72,8 @@ TODO: How do we add these to the GGUF file?
 The other special tokens can be inspected in a gguf file using the
 `gguf-dump.py`:
 ```console
-(venv3) $ gguf-py/scripts/gguf-dump.py models/codegemma-7b-it-f16.gguf 
-* Loading: models/codegemma-7b-it-f16.gguf
+(venv3) $ gguf-py/scripts/gguf-dump.py models/codegemma-7b-f16.gguf
+* Loading: models/codegemma-7b-f16.gguf
 * File is LITTLE endian, script is running on a LITTLE endian host.
 
 * Dumping 24 key/value pair(s)
@@ -81,7 +81,7 @@ The other special tokens can be inspected in a gguf file using the
       2: UINT64     |        1 | GGUF.tensor_count = 254
       3: UINT64     |        1 | GGUF.kv_count = 21
       4: STRING     |        1 | general.architecture = 'gemma'
-      5: STRING     |        1 | general.name = 'codegemma-7b-it'
+      5: STRING     |        1 | general.name = 'codegemma-7b'
       6: UINT32     |        1 | gemma.context_length = 8192
       7: UINT32     |        1 | gemma.block_count = 28
       8: UINT32     |        1 | gemma.embedding_length = 3072
@@ -96,6 +96,11 @@ The other special tokens can be inspected in a gguf file using the
      17: UINT32     |        1 | tokenizer.ggml.eos_token_id = 1
      18: UINT32     |        1 | tokenizer.ggml.padding_token_id = 0
      19: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 3
+     20: [STRING]   |   256128 | tokenizer.ggml.tokens
+     21: [FLOAT32]  |   256128 | tokenizer.ggml.scores
+     22: [INT32]    |   256128 | tokenizer.ggml.token_type
+     23: UINT32     |        1 | general.quantization_version = 2
+     24: UINT32     |        1 | general.file_type = 1
 ```
 So we want to have these new properties added to the GGUF file.
 
@@ -176,7 +181,7 @@ For CodeGemma, the infill tokens are in the `added_tokens` array in
 tokenizer.json. `added_tokens` are tokens that have been added to the tokenizer
 beyond the standard vocabulary.
 ```console
-(venv3) $ cat ../codegemma-7b-it/tokenizer.json | jq '.added_tokens[67:71]'
+(venv3) $ cat ../codegemma-7b/tokenizer.json | jq '.added_tokens[67:71]'
 [
   {
     "id": 67,
@@ -218,13 +223,13 @@ beyond the standard vocabulary.
 ```
 And we can check that the vocabulary also contains these tokens:
 ```console
-$ cat ../codegemma-7b-it/tokenizer.json | jq '.model.vocab["<|fim_prefix|>"]'
+(venv3) $ cat ../codegemma-7b/tokenizer.json | jq '.model.vocab["<|fim_prefix|>"]'
 67
 ```
 
 ```console
-(venv3) $ cat ../codegemma-7b-it/tokenizer.json | jq '.model.type'
-"BPE"
+(venv3) $ cat ../codegemma-7b/tokenizer.json | jq '.model.type'
+"BPE
 ```
 
 The `tokenizer.json` file is loaded by `vocab.py` which has a `SpecialVocab`
@@ -343,6 +348,49 @@ TODO: sort out the usage of usage `tokenizer_config.json`. It only looks like
 the `chat_template` element is used from this file so I'm ignoring it for this
 specific task.
 
+Lets see if we can convert the model to a GGUF model (see instructions in
+[Testing/Verification](#testingverification)) before running this command the
+first time:
+```console
+./convert-hf-to-gguf.py --outtype f16 --outfile models/codegemma-7b-it-f16.gguf ~/work/ai/codegemma-7b-it
+...
+Model successfully exported to 'models/codegemma-7b-it-f16.gguf'
+```
+Now, lets inspect the generated GGUF model:
+```console
+* Loading: models/codegemma-7b-it-f16.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+
+* Dumping 26 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 254
+      3: UINT64     |        1 | GGUF.kv_count = 23
+      4: STRING     |        1 | general.architecture = 'gemma'
+      5: STRING     |        1 | general.name = 'codegemma-7b-it'
+      6: UINT32     |        1 | gemma.context_length = 8192
+      7: UINT32     |        1 | gemma.embedding_length = 3072
+      8: UINT32     |        1 | gemma.block_count = 28
+      9: UINT32     |        1 | gemma.feed_forward_length = 24576
+     10: UINT32     |        1 | gemma.attention.head_count = 16
+     11: UINT32     |        1 | gemma.attention.head_count_kv = 16
+     12: FLOAT32    |        1 | gemma.attention.layer_norm_rms_epsilon = 9.999999974752427e-07
+     13: UINT32     |        1 | gemma.attention.key_length = 256
+     14: UINT32     |        1 | gemma.attention.value_length = 256
+     15: UINT32     |        1 | general.file_type = 1
+     16: STRING     |        1 | tokenizer.ggml.model = 'llama'
+     17: [STRING]   |   256000 | tokenizer.ggml.tokens
+     18: [FLOAT32]  |   256000 | tokenizer.ggml.scores
+     19: [INT32]    |   256000 | tokenizer.ggml.token_type
+     20: UINT32     |        1 | tokenizer.ggml.bos_token_id = 2
+     21: UINT32     |        1 | tokenizer.ggml.eos_token_id = 1
+     22: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 3
+     23: UINT32     |        1 | tokenizer.ggml.padding_token_id = 0
+     24: BOOL       |        1 | tokenizer.ggml.add_bos_token = True
+     25: BOOL       |        1 | tokenizer.ggml.add_eos_token = False
+     26: STRING     |        1 | tokenizer.chat_template = "{{ bos_token }}{% if messages[0]['role'] == 'system' %}{{ ra"
+```
+Hmm, that did not work out as expected.
+
 ### Testing/Verification
 To be able to test this while developing we will need to have a model that
 supports infill, like CodeLlama or CodeGemma. Lets use CodeGemma and the first
@@ -354,7 +402,7 @@ You'll need to use a HuggingFace [access token](https://huggingface.co/settings/
 instead of a password in the following command with your HuggingFace username:
 ```console
 $ pushd ~/work/ai
-$ git clone https://huggingface.co/google/codegemma-7b-it
+$ git clone https://huggingface.co/google/codegemma-7b
 ```
 
 And we should install `gguf.py` in editable mode:
