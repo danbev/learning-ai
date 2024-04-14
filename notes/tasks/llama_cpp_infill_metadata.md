@@ -172,6 +172,177 @@ tokens types:
         };
 ```
 
+For CodeGemma, the infill tokens are in the `added_tokens` array in
+tokenizer.json. `added_tokens` are tokens that have been added to the tokenizer
+beyond the standard vocabulary.
+```console
+(venv3) $ cat ../codegemma-7b-it/tokenizer.json | jq '.added_tokens[67:71]'
+[
+  {
+    "id": 67,
+    "content": "<|fim_prefix|>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": false
+  },
+  {
+    "id": 68,
+    "content": "<|fim_middle|>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": false
+  },
+  {
+    "id": 69,
+    "content": "<|fim_suffix|>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": false
+  },
+  {
+    "id": 70,
+    "content": "<|file_separator|>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": false
+  }
+]
+```
+And we can check that the vocabulary also contains these tokens:
+```console
+$ cat ../codegemma-7b-it/tokenizer.json | jq '.model.vocab["<|fim_prefix|>"]'
+67
+```
+
+```console
+(venv3) $ cat ../codegemma-7b-it/tokenizer.json | jq '.model.type'
+"BPE"
+```
+
+The `tokenizer.json` file is loaded by `vocab.py` which has a `SpecialVocab`
+class which looks like this:
+```python
+class SpecialVocab:
+    merges: list[str]
+    add_special_token: dict[str, bool]
+    special_token_ids: dict[str, int]
+    chat_template: str | None
+
+    def __init__(
+        self, path: str | os.PathLike[str], load_merges: bool = False,
+        special_token_types: tuple[str, ...] | None = None,
+        n_vocab: int | None = None,
+    ):
+        self.special_token_ids = {}
+        self.add_special_token = {}
+        self.n_vocab = n_vocab
+        self.load_merges = load_merges
+        self.merges = []
+        self.chat_template = None
+        if special_token_types is not None:
+            self.special_token_types = special_token_types
+        else:
+            self.special_token_types = ('bos', 'eos', 'unk', 'sep', 'pad', 'cls', 'mask',
+                                        'prefix', 'suffix', 'middle', 'eot')
+        self._load(Path(path))
+```
+Notice that `special_token_types` is a parameter to the constructor and is
+defined as a tuple of strings (any number), and recall that a tuple is immutable
+and also more performant than a list when iterating and accessing element. 
+So we can either passing in a list of special token types when creating a new
+instance of `SpecialVocab` or we can use the default values which shown above.
+Next `_load` will be called:
+```python
+    def _load(self, path: Path) -> None:
+        self._try_load_from_tokenizer_json(path)
+        self._try_load_from_config_json(path)
+        if self.load_merges and not self.merges:
+            self._try_load_merges_txt(path)
+```
+```
+    def _try_load_from_tokenizer_json(self, path: Path) -> bool:
+        tokenizer_file = path / 'tokenizer.json'
+        if tokenizer_file.is_file():
+            with open(tokenizer_file, encoding = 'utf-8') as f:
+                tokenizer = json.load(f)
+            if self.load_merges:
+                merges = tokenizer.get('model', {}).get('merges')
+                if isinstance(merges, list) and merges and isinstance(merges[0], str):
+                    self.merges = merges
+            added_tokens = tokenizer.get('added_tokens', {})
+        else:
+            added_tokens = {}
+```
+Notice that `added_tokens` will contain the infill special tokens in our case.
+Now, that is the loading/construction of the `SpecialVocab` class. When this
+class's `add_to_gguf` method is called 
+```python
+    def add_to_gguf(self, gw: GGUFWriter, quiet: bool = False) -> None:
+        ...
+        for typ, tokid in self.special_token_ids.items():
+            id_handler: Callable[[int], None] | None = getattr(gw, f'add_{typ}_token_id', None)
+            if id_handler is None:
+                print(
+                    f'gguf: WARNING: No handler for special token type {typ} with id {tokid} - skipping',
+                    file = sys.stderr,
+                )
+                continue
+            if not quiet:
+                print(f'gguf: Setting special token type {typ} to {tokid}')
+            id_handler(tokid)
+
+        for typ, value in self.add_special_token.items():
+            add_handler: Callable[[bool], None] | None = getattr(gw, f'add_add_{typ}_token', None)
+            if add_handler is None:
+                print(
+                    f'gguf: WARNING: No handler for add_{typ}_token with value {value} - skipping',
+                    file = sys.stderr,
+                )
+                continue
+            if not quiet:
+                print(f'gguf: Setting add_{typ}_token to {value}')
+            add_handler(value)
+```
+So the first loop will iterate over the special token ids and call the functions
+in `gguf_writer.py` to set the token ids like this one for the `bos` token:
+```python
+    def add_bos_token_id(self, id: int) -> None:
+        self.add_uint32(Keys.Tokenizer.BOS_ID, id)
+```
+But for the `add_special_token` these functions should have an addition `add_`
+prefix like this one for the `add_bos_token`:
+```python
+    def add_add_prefix_token_id(self, id: int) -> None:
+        self.add_uint32(Keys.Tokenizer.PREFIX_ID, id)
+```
+So adding method like the above for the infill tokens should be enough to have
+them added to the GGUF file.
+
+Now, this model also has a `tokenizer_config.json` file and it also has entries
+for the infill tokens:
+```console
+(venv3) $ cat ../codegemma-7b-it/tokenizer_config.json | jq '.added_tokens_decoder."67"'
+{
+  "content": "<|fim_prefix|>",
+  "lstrip": false,
+  "normalized": false,
+  "rstrip": false,
+  "single_word": false,
+  "special": false
+}
+```
+TODO: sort out the usage of usage `tokenizer_config.json`. It only looks like
+the `chat_template` element is used from this file so I'm ignoring it for this
+specific task.
+
 ### Testing/Verification
 To be able to test this while developing we will need to have a model that
 supports infill, like CodeLlama or CodeGemma. Lets use CodeGemma and the first
