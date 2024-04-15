@@ -630,3 +630,7 @@ $ git clone https://huggingface.co/codellama/CodeLlama-7b-hf/
 ```console
 $ ./convert-hf-to-gguf.py --outtype f16 --outfile models/codellama-7b-hf-f16.gguf ~/work/ai/CodeLlama-7b-hf
 ```
+
+The work resulted in the following PRs:
+https://github.com/ggerganov/llama.cpp/pull/6689
+
