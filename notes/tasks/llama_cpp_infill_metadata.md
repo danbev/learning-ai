@@ -572,6 +572,26 @@ key-values for the infill special tokens that is). Perhaps we could reach out
 to the maintainers of those models and see if they would be willing to
 re-convert and publish updates?
 
+With those changes made, can we still use the existing models?  
+Lets try CodeLlama:
+```console
+./infill -t 10 -ngl 0 -m models/codellama-13b.Q5_K_S.gguf -c 4096 --temp 0.7 --repeat_penalty 1.1 -n 20 --in-prefix "def helloworld():\n    print(\"hell" --in-suffix "\n   print(\"goodbye world\")\n    "
+...
+#####  Infill mode  #####
+
+ <PRE> def helloworld():\n    print("hell <SUF> \n   print("goodbye world")\n     <MID>o world")',
+        'def goodbyeworld(): <EOT>
+```
+And CodeGemma:
+```console
+./infill -t 10 -ngl 0 -m ~/Downloads/codegemma-7b-f16.gguf -c 4096 --temp 0.7 --repeat_penalty 1.1 -n 20 --in-prefix "def helloworld():\n    print(\"hell" --in-suffix "\n   print(\"goodbye world\")\n    "
+...
+
+#####  Infill mode  #####
+
+<|fim_prefix|> def helloworld():\n    print("hell<|fim_suffix|> \n   print("goodbye world")\n    <|fim_middle|>o World!")<|file_separator|>
+```
+
 #### Questions
 * Should the special tokens values really be extracted from the model files
 instead of being hardcoded in the `convert-hf-to-gguf.py` script like this?
