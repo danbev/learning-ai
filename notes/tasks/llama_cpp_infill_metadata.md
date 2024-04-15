@@ -390,6 +390,78 @@ Now, lets inspect the generated GGUF model:
      26: STRING     |        1 | tokenizer.chat_template = "{{ bos_token }}{% if messages[0]['role'] == 'system' %}{{ ra"
 ```
 Hmm, that did not work out as expected.
+Ah, we also need to make sure that these special tokens are added when the
+model is converted. This can be done in `convert-hf-to-gguf.py`:
+```python
+@Model.register("GemmaForCausalLM")
+class GemmaModel(Model):
+    model_arch = gguf.MODEL_ARCH.GEMMA
+
+    def set_vocab(self):
+        self._set_vocab_sentencepiece()
+
+        special_vocab = gguf.SpecialVocab(self.dir_model, load_merges=False,
+                                          special_token_types = ['prefix', 'suffix', 'middle', 'eot'])
+        special_vocab._set_special_token("prefix", 67)
+        special_vocab._set_special_token("suffix", 68)
+        special_vocab._set_special_token("middle", 69)
+        special_vocab._set_special_token("eot", 70)
+        special_vocab.add_to_gguf(self.gguf_writer)
+```
+This may not be the best way to do this but I'm trying to get this working and
+will then go back and clean this up. With that change and re-running the the
+conversion the generated model has the special token key-value fields:
+```console
+(venv3) $ gguf-py/scripts/gguf-dump.py models/codegemma-7b-f16.gguf
+* Loading: models/codegemma-7b-f16.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+
+* Dumping 29 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 254
+      3: UINT64     |        1 | GGUF.kv_count = 26
+      4: STRING     |        1 | general.architecture = 'gemma'
+      5: STRING     |        1 | general.name = 'codegemma-7b'
+      6: UINT32     |        1 | gemma.context_length = 8192
+      7: UINT32     |        1 | gemma.embedding_length = 3072
+      8: UINT32     |        1 | gemma.block_count = 28
+      9: UINT32     |        1 | gemma.feed_forward_length = 24576
+     10: UINT32     |        1 | gemma.attention.head_count = 16
+     11: UINT32     |        1 | gemma.attention.head_count_kv = 16
+     12: FLOAT32    |        1 | gemma.attention.layer_norm_rms_epsilon = 9.999999974752427e-07
+     13: UINT32     |        1 | gemma.attention.key_length = 256
+     14: UINT32     |        1 | gemma.attention.value_length = 256
+     15: UINT32     |        1 | general.file_type = 1
+     16: STRING     |        1 | tokenizer.ggml.model = 'llama'
+     17: [STRING]   |   256000 | tokenizer.ggml.tokens
+     18: [FLOAT32]  |   256000 | tokenizer.ggml.scores
+     19: [INT32]    |   256000 | tokenizer.ggml.token_type
+     20: UINT32     |        1 | tokenizer.ggml.bos_token_id = 2
+     21: UINT32     |        1 | tokenizer.ggml.eos_token_id = 1
+     22: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 3
+     23: UINT32     |        1 | tokenizer.ggml.padding_token_id = 0
+     24: BOOL       |        1 | tokenizer.ggml.add_bos_token = True
+     25: BOOL       |        1 | tokenizer.ggml.add_eos_token = False
+     26: UINT32     |        1 | tokenizer.ggml.prefix_token_id = 67
+     27: UINT32     |        1 | tokenizer.ggml.suffix_token_id = 68
+     28: UINT32     |        1 | tokenizer.ggml.middle_token_id = 69
+     29: UINT32     |        1 | tokenizer.ggml.eot_token_id = 70
+```
+Now we can run the `infill` program and see if this works using the generated
+model:
+```console
+$ ./infill -t 10 -ngl 0 -m models/codegemma-7b-f16.gguf -c 4096 --temp 0.7 --repeat_penalty 1.1 -n 20 --in-prefix "def helloworld():\n    print(\"hell" --in-suffix "\n   print(\"goodbye world\")\n    "
+
+#####  Infill mode  #####
+
+<|fim_prefix|> def helloworld():\n    print("hell<|fim_middle|> \n   print("goodbye world")\n    <|fim_suffix|>
+Traceback (most recent call last):
+
+  File "<ipython-input>", line 2<|file_separator|>
+```
+This does not look very good at all and I need to look into this. The good thing
+to note is that the correct special tokens specific to CodeGemma are being used.
+
 
 ### Testing/Verification
 To be able to test this while developing we will need to have a model that
