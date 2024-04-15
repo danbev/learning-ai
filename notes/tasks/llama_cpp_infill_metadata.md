@@ -39,7 +39,10 @@ which uses the following ids:
     },
 ```
 I've tried setting the above ids to these instead to see that it works with
-CodeGemma, but and it kind of works, but it's not perfect:
+CodeGemma, which it did once I just the correct model (I initially used the
+model that was trained for instruction following which had `it` in it's name
+when I should have been using the model that was trained for code completion
+which does not have `it` in it's name):
 ```
 id special_prefix_id = 67;
 id special_middle_id = 68;
