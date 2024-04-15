@@ -61,10 +61,10 @@ which can be used to add key-value pairs to the GGUF model file. For example:
 ```python
     class Tokenizer:
         ...
-        PREFIX_ID        = "tokenizer.ggml.prefix_id"
-        MIDDLE_ID        = "tokenizer.ggml.middle_id"
-        SUFFIX_ID        = "tokenizer.ggml.suffix_id"
-        EOT_ID           = "tokenizer.ggml.eot_id"
+        PREFIX_ID        = "tokenizer.ggml.prefix_token_id"
+        MIDDLE_ID        = "tokenizer.ggml.middle_token_id"
+        SUFFIX_ID        = "tokenizer.ggml.suffix_token_id"
+        EOT_ID           = "tokenizer.ggml.eot_token_id"
 ```
 These will then have to be added to the generated GGUF file.
 TODO: How do we add these to the GGUF file?
@@ -226,10 +226,49 @@ And we can check that the vocabulary also contains these tokens:
 (venv3) $ cat ../codegemma-7b/tokenizer.json | jq '.model.vocab["<|fim_prefix|>"]'
 67
 ```
-
+One thing I noticed is that CodeLlama does not have any entried related to
+Fill-In-the-Middle (FIM)/Infill tokens in it's `add_tokens` array:
+```
+(venv3) $ cat ../codellama-13b/tokenizer.json | jq '.added_tokens'
+[
+  {
+    "id": 0,
+    "content": "<unk>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 1,
+    "content": "<s>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 2,
+    "content": "</s>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  }
+]
+```
 ```console
-(venv3) $ cat ../codegemma-7b/tokenizer.json | jq '.model.type'
-"BPE
+(venv3) $ cat ../CodeLlama-7b-hf/tokenizer.json | jq '.model.vocab["▁<PRE>"]'
+32007
+(venv3) $ cat ../CodeLlama-7b-hf/tokenizer.json | jq '.model.vocab["▁<SUF>"]'
+32008
+(venv3) $ cat ../CodeLlama-7b-hf/tokenizer.json | jq '.model.vocab["▁<MID>"]'
+32009
+(venv3) $ cat ../CodeLlama-7b-hf/tokenizer.json | jq '.model.vocab["▁<EOT>"]'
+32010
 ```
 
 The `tokenizer.json` file is loaded by `vocab.py` which has a `SpecialVocab`
@@ -259,9 +298,10 @@ class SpecialVocab:
                                         'prefix', 'suffix', 'middle', 'eot')
         self._load(Path(path))
 ```
-Notice that `special_token_types` is a parameter to the constructor and is
+Notice that `special_token_types` is a parameter of the constructor and is
 defined as a tuple of strings (any number), and recall that a tuple is immutable
 and also more performant than a list when iterating and accessing element. 
+
 So we can either passing in a list of special token types when creating a new
 instance of `SpecialVocab` or we can use the default values which shown above.
 Next `_load` will be called:
@@ -286,7 +326,9 @@ Next `_load` will be called:
         else:
             added_tokens = {}
 ```
-Notice that `added_tokens` will contain the infill special tokens in our case.
+Notice that `added_tokens` will now contain the infill special tokens in our
+case. But note that this is not the case for CodeLlama. 
+
 Now, that is the loading/construction of the `SpecialVocab` class. When this
 class's `add_to_gguf` method is called 
 ```python
@@ -322,14 +364,9 @@ in `gguf_writer.py` to set the token ids like this one for the `bos` token:
     def add_bos_token_id(self, id: int) -> None:
         self.add_uint32(Keys.Tokenizer.BOS_ID, id)
 ```
-But for the `add_special_token` these functions should have an addition `add_`
-prefix like this one for the `add_bos_token`:
-```python
-    def add_add_prefix_token_id(self, id: int) -> None:
-        self.add_uint32(Keys.Tokenizer.PREFIX_ID, id)
-```
 So adding method like the above for the infill tokens should be enough to have
-them added to the GGUF file.
+them added to the GGUF file provided we also specify the tokens that we want
+in the constructor of SpecialVocab.
 
 Now, this model also has a `tokenizer_config.json` file and it also has entries
 for the infill tokens:
@@ -408,9 +445,11 @@ class GemmaModel(Model):
         special_vocab._set_special_token("eot", 70)
         special_vocab.add_to_gguf(self.gguf_writer)
 ```
-This may not be the best way to do this but I'm trying to get this working and
-will then go back and clean this up. With that change and re-running the the
-conversion the generated model has the special token key-value fields:
+This may not be the correct/best way to do this but I'm trying to get this
+working and will then go back and clean this up. With that change and re-running
+the the conversion the generated model has the special token key-value fields.
+
+Re-running the conversion and inspecting the generated GGUF model:
 ```console
 (venv3) $ gguf-py/scripts/gguf-dump.py models/codegemma-7b-f16.gguf
 * Loading: models/codegemma-7b-f16.gguf
@@ -447,6 +486,8 @@ conversion the generated model has the special token key-value fields:
      28: UINT32     |        1 | tokenizer.ggml.middle_token_id = 69
      29: UINT32     |        1 | tokenizer.ggml.eot_token_id = 70
 ```
+And we can see that the FIM/infill tokens ids are in the GGUF model.
+
 Now we can run the `infill` program and see if this works using the generated
 model:
 ```console
@@ -462,6 +503,75 @@ Traceback (most recent call last):
 This does not look very good at all and I need to look into this. The good thing
 to note is that the correct special tokens specific to CodeGemma are being used.
 
+Lets also try converting CodeLlama to a GGUF model and see if that works as
+well after adding the special tokens to the `convert-hf-to-gguf.py` script:
+```console
+$ ./convert-hf-to-gguf.py --outtype f16 --outfile models/codellama-7b-hf-f16.gguf ~/work/ai/CodeLlama-7b-hf
+```
+And we can inspect the generated GGUF model:
+```console
+(venv3) $ gguf-py/scripts/gguf-dump.py models/codellama-7b-hf-f16.gguf 
+* Loading: models/codellama-7b-hf-f16.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+
+* Dumping 29 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 291
+      3: UINT64     |        1 | GGUF.kv_count = 26
+      4: STRING     |        1 | general.architecture = 'llama'
+      5: STRING     |        1 | general.name = 'CodeLlama-7b-hf'
+      6: UINT32     |        1 | llama.block_count = 32
+      7: UINT32     |        1 | llama.context_length = 16384
+      8: UINT32     |        1 | llama.embedding_length = 4096
+      9: UINT32     |        1 | llama.feed_forward_length = 11008
+     10: UINT32     |        1 | llama.attention.head_count = 32
+     11: UINT32     |        1 | llama.attention.head_count_kv = 32
+     12: FLOAT32    |        1 | llama.rope.freq_base = 1000000.0
+     13: FLOAT32    |        1 | llama.attention.layer_norm_rms_epsilon = 9.999999747378752e-06
+     14: UINT32     |        1 | general.file_type = 1
+     15: UINT32     |        1 | llama.vocab_size = 32016
+     16: UINT32     |        1 | llama.rope.dimension_count = 128
+     17: STRING     |        1 | tokenizer.ggml.model = 'llama'
+     18: [STRING]   |    32016 | tokenizer.ggml.tokens
+     19: [FLOAT32]  |    32016 | tokenizer.ggml.scores
+     20: [INT32]    |    32016 | tokenizer.ggml.token_type
+     21: UINT32     |        1 | tokenizer.ggml.bos_token_id = 1
+     22: UINT32     |        1 | tokenizer.ggml.eos_token_id = 2
+     23: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 0
+     24: BOOL       |        1 | tokenizer.ggml.add_bos_token = True
+     25: BOOL       |        1 | tokenizer.ggml.add_eos_token = False
+     26: UINT32     |        1 | tokenizer.ggml.prefix_token_id = 32007
+     27: UINT32     |        1 | tokenizer.ggml.suffix_token_id = 32008
+     28: UINT32     |        1 | tokenizer.ggml.middle_token_id = 32009
+     29: UINT32     |        1 | tokenizer.ggml.eot_token_id = 32010
+```
+And then run it:
+```console
+(venv3) $ ./infill -t 10 -ngl 0 -m models/codellama-7b-hf-f16.gguf -c 4096 --temp 0.7 --repeat_penalty 1.1 -n 20 --in-prefix "def helloworld():\n    print(\"hell" --in-suffix "\n   print(\"goodbye world\")\n    "
+
+#####  Infill mode  #####
+
+ <PRE> def helloworld():\n    print("hell <SUF> \n   print("goodbye world")\n     <MID>o world")\n  <EOT>
+```
+
+There are also changes required to llama.cpp. Currently, the special tokens
+are specified with default values in llama_vocab:
+```c++
+struct llama_vocab {
+    id special_prefix_id = 32007;
+    id special_middle_id = 32009;
+    id special_suffix_id = 32008;
+    id special_eot_id    = 32010;
+```
+If we set these to `-1` for example the existing gguf models will not work since
+they have not been converted with the updates in this task (they won't have the
+key-values for the infill special tokens that is). Perhaps we could reach out
+to the maintainers of those models and see if they would be willing to
+re-convert and publish updates?
+
+#### Questions
+* Should the special tokens values really be extracted from the model files
+instead of being hardcoded in the `convert-hf-to-gguf.py` script like this?
 
 ### Testing/Verification
 To be able to test this while developing we will need to have a model that
@@ -485,6 +595,15 @@ $ pip install -e .
 ```
 With that setup we should be able to run `convert-hf-to-gguf.py`:
 ```console
-./convert-hf-to-gguf.py --outtype f16 --outfile models/codegemma-7b-it-f16.gguf ~/work/ai/codegemma-7b-it
+./convert-hf-to-gguf.py --outtype f16 --outfile models/codegemma-7b-f16.gguf ~/work/ai/codegemma-7b
 ```
 
+We also need to try out `CodeLlama` to make sure that it works as well.
+```console
+$ pushd ~/work/ai
+$ git clone https://huggingface.co/codellama/CodeLlama-7b-hf/
+```
+
+```console
+$ ./convert-hf-to-gguf.py --outtype f16 --outfile models/codellama-7b-hf-f16.gguf ~/work/ai/CodeLlama-7b-hf
+```
