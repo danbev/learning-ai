@@ -1278,7 +1278,7 @@ In this case that would be like calling:
 ```c++
 LLM_TENSOR_NAMES[LLM_ARCH_LLAMA].at(LLM_TENSOR_TOKEN_EMBD) + "." + "weight";
 ```
-LLM_TEONS_NAMES is defined as:
+LLM_TENOR_NAMES is defined as:
 ```c++
 static std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
     {
@@ -2915,6 +2915,9 @@ The return will take us back into `llm_build_context`:
     return result;
 }
 ```
+Notice that this was just building the graph for the llama model. For other
+models there are similar functions that will be called.
+
 And this return will take us back into `llama_new_context_with_model`:
 ```c++
             ggml_cgraph * gf = llama_build_graph(*ctx, llama_batch_get_one(&token, n_tokens, n_past, 0), true);
