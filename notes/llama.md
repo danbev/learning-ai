@@ -3128,6 +3128,696 @@ backend. So lets look a how these backends are initialized.
         }
 ```
 
+### `llama_model`/`llm_load_tensors`
+This section takes a closer look at the `llama_model` struct and the
+`llm_load_tensors` function.
+
+Just printing the model gives a little too much information at once so lets
+start by looking at the type:
+```console
+$ gdb --args ./main -m models/llama-2-7b-chat.Q4_0.gguf -p "What is your name?"
+(gdb) br llm_load_tensors
+Breakpoint 2 at 0x452b77: file llama.cpp, line 4341.
+(gdb) r
+
+(gdb) ptype struct llama_model
+type = struct llama_model {
+    e_model type;
+    llm_arch arch;
+    llama_ftype ftype;
+    std::string name;
+    llama_hparams hparams;
+    llama_vocab vocab;
+    ggml_tensor *tok_embd;
+    ggml_tensor *type_embd;
+    ggml_tensor *pos_embd;
+    ggml_tensor *tok_norm;
+    ggml_tensor *tok_norm_b;
+    ggml_tensor *output_norm;
+    ggml_tensor *output_norm_b;
+    ggml_tensor *output;
+    ggml_tensor *output_b;
+    std::vector<llama_layer> layers;
+    llama_split_mode split_mode;
+    int main_gpu;
+    int n_gpu_layers;
+    std::unordered_map<std::string, std::string> gguf_kv;
+    llama_model::layer_buft buft_input;
+    llama_model::layer_buft buft_output;
+    std::vector<llama_model::layer_buft> buft_layer;
+    std::vector<ggml_context*> ctxs;
+    std::vector<ggml_backend_buffer*> bufs;
+    llama_mmaps mappings;
+    llama_mlocks mlock_bufs;
+    llama_mlocks mlock_mmaps;
+    std::vector<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, ggml_tensor*>> tensors_by_name;
+    int64_t t_load_us;
+    int64_t t_start_us;
+  public:
+    ~llama_model(void);
+}
+```
+
+```console
+(gdb) p model->type
+$6 = MODEL_7B
+
+(gdb) p model->arch
+$7 = LLM_ARCH_LLAMA
+
+(gdb) p model->name
+$8 = "LLaMA v2"
+
+(gdb) p model.ftype
+$9 = LLAMA_FTYPE_MOSTLY_Q4_0
+
+(gdb) p model->vocab.id_to_token.size()
+$13 = 32000
+```
+Now, let look closer at the tensors that the model has:
+```console
+(gdb) p model->tok_embd
+```
+Notice that a model has a vector of `llama_layers`. Before looking it this I
+had to detour and look more closely att [ggml_backends](./ggml.md#backend).
+
+The following will choose a backend based on the backends that llama.cpp was
+compiled with, and if none then the `ggml_backend_cpu_buffer_type` will be
+returned: 
+```
+    // there is very little benefit to offloading the input layer, so always keep it on the CPU
+    model.buft_input = llama_default_buffer_type_cpu(true);
+```
+Notice that the above will call the conversion constructor will be used:
+```c++
+    // layer -> buffer type mapping
+    struct layer_buft {
+        layer_buft(ggml_backend_buffer_type_t matrix) : buft_matrix(matrix), buft(matrix) {}
+
+        // matrices only - used by split buffers and backends that support only matrix multiplication
+        ggml_backend_buffer_type_t buft_matrix;
+        // everything else
+        ggml_backend_buffer_type_t buft;
+    }
+```
+Next the vector of models `buft_layer` vector will be resized from 0 to the size
+of the number of layers in the model:
+```c++
+    std::vector<llama_model::layer_buft> buft_layer;
+```
+And the resizing is done like this:
+```c++
+    model.buft_layer.resize(n_layer);
+```
+So each of the 32 layers will have a `layer_buft`:
+```console
+(gdb) p model.buft_layer
+$13 = std::vector of length 32, capacity 32 = {{buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {
+    buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}, {buft_matrix = 0x0, buft = 0x0}}
+```
+Next, each layer is assigned a buffer type:
+```c++
+    // assign cpu layers
+    for (int64_t i = 0; i < i_gpu_start; ++i) {
+        model.buft_layer[i] = llama_default_buffer_type_cpu(true);
+    }
+```
+
+```c++
+    // count used buffer types
+    std::map<ggml_backend_buffer_type_t, int> buft_layer_count;
+    buft_layer_count[model.buft_input.buft]++;
+    buft_layer_count[model.buft_input.buft_matrix]++;
+    buft_layer_count[model.buft_output.buft]++;
+    buft_layer_count[model.buft_output.buft_matrix]++;
+    for (int64_t i = 0; i < n_layer; ++i) {
+        buft_layer_count[model.buft_layer[i].buft]++;
+        buft_layer_count[model.buft_layer[i].buft_matrix]++;
+    }
+```
+This above is counting the number of `ggml_backend_buffer_type_t`s, and after
+the first four have been added we have:
+```console
+(gdb) p buft_layer_count 
+$38 = std::map with 1 element = {[0x68cec0 <ggml_backend_cpu_buffer_type>] = 4}
+```
+And after the ones in the for loop:
+```console
+(gdb) p buft_layer_count 
+$40 = std::map with 1 element = {[0x68cec0 <ggml_backend_cpu_buffer_type>] = 68}
+```
+There is also a map of contexts for each element in the `buft_layer_count` map:
+```c++
+    // create one context per buffer type
+    size_t ctx_size = ggml_tensor_overhead()*(ml.n_tensors + 1); // +1 for models where tok_embd is duplicated as output
+
+    // for moe merged tensors
+    ctx_size += ggml_tensor_overhead()*hparams.n_expert*n_layer;
+
+    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
+    for (auto & it : buft_layer_count) {
+        struct ggml_init_params params = {
+            /*.mem_size   =*/ ctx_size,
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc   =*/ true,
+        };
+        ggml_context * ctx = ggml_init(params);
+        if (!ctx) {
+            throw std::runtime_error(format("failed to create context"));
+        }
+        ctx_map[it.first] = ctx;
+        model.ctxs.push_back(ctx);
+    }
+```
+```console
+(gdb) n
+llm_load_tensors: ggml ctx size =    0.11 MiB
+```
+
+Next, the tensors are going to be created for weights.
+Lets start by looking at the first part of this section:
+```c++
+    // create tensors for the weights
+    {
+        const int64_t n_embd       = hparams.n_embd;
+        const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa();
+        const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa();
+        const int64_t n_embd_gqa   = n_embd_v_gqa;
+        const int64_t n_vocab      = hparams.n_vocab;
+        const int64_t n_vocab_type = hparams.n_vocab_type;
+        const int64_t n_ff         = hparams.n_ff;
+        const int64_t n_expert     = hparams.n_expert;
+
+        if (n_expert > 0 && hparams.n_expert_used == 0) {
+            throw std::runtime_error("model has expert layers but no expert layers are used");
+        }
+
+        GGML_ASSERT(n_embd_gqa == n_embd_k_gqa);
+
+        ggml_context * ctx_input        = ctx_map.at(model.buft_input.buft);
+        ggml_context * ctx_output       = ctx_map.at(model.buft_output.buft);
+        ggml_context * ctx_output_split = ctx_map.at(model.buft_output.buft_matrix);
+        auto ctx_for_layer              = [&](int i) { return ctx_map.at(model.buft_layer[i].buft); };
+        auto ctx_for_layer_split        = [&](int i) { return ctx_map.at(model.buft_layer[i].buft_matrix); };
+
+        model.layers.resize(n_layer);
+
+        const auto tn = LLM_TN(model.arch);
+        switch (model.arch) {
+            case LLM_ARCH_LLAMA:
+            case LLM_ARCH_REFACT:
+            case LLM_ARCH_MINICPM:
+                {
+                    model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+```
+```console
+(gdb) p n_embd
+$74 = 4096
+(gdb) p n_embd_k_gqa 
+$75 = 4096
+(gdb) p n_embd_v_gqa 
+$76 = 4096
+(gdb) p n_embd_gqa 
+$77 = 4096
+(gdb) p n_vocab
+$78 = 32000
+(gdb) p n_vocab_type 
+$79 = 0
+(gdb) p n_ff
+$80 = 11008
+(gdb) p n_expert
+$82 = 0
+```
+The we have the `ggml_context`s for the input, output, and output split followed
+by the model.layers being resized to 32:
+```console
+(gdb) ptype model.layers
+type = std::vector<llama_layer>
+(gdb) p model.layers
+$88 = std::vector of length 0, capacity 0
+(gdb) p n_layer
+$89 = 32
+```
+There is a section about [LLM_TN](#llm_tn-(llm-tensor-names)) earlier in this
+document.)
+```console
+(gdb) p model.arch
+$93 = LLM_ARCH_LLAMA
+(gdb) p tn
+$94 = {arch = LLM_ARCH_LLAMA}
+```
+```c++
+model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+```
+This function is a member of `llama_model_loader` and has a default value for
+the `required` parameter which is `true` and note that it takes an
+`std::vector<int64_t>` which has an initializer list constructor and this is
+used create the vector from the values of `n_embd` and `n_vocab`. And this is
+named `ne` which I think is number of elements.
+```c++
+    struct ggml_tensor * create_tensor(struct ggml_context * ctx,
+                                       const std::string & name,
+                                       const std::vector<int64_t> & ne,
+                                       bool required = true) {
+        const struct ggml_tensor * cur = check_tensor_dims(name, ne, required);
+
+        if (cur == NULL) {
+            return NULL;
+        }
+
+        return create_tensor_for(ctx, cur);
+    }
+```
+`check_tensor_dims` is a function in llama.cpp. 
+```c++
+    const struct ggml_tensor * check_tensor_dims(const std::string & name,
+        const std::vector<int64_t> & ne,
+        bool required) const {
+        const struct ggml_tensor * cur = get_tensor_meta(name.c_str());
+        ...
+}
+```
+```console
+(gdb) p name
+$97 = "token_embd.weight"
+(gdb) p ne
+$98 = std::vector of length 2, capacity 2 = {4096, 32000}
+```
+`llama_model_loader` has a field named `weights` which is of type:
+```console
+(gdb) ptype llama_model_loader
+type = struct llama_model_loader {
+    int n_kv;
+    int n_tensors;
+    int n_created;
+    int64_t n_elements;
+    size_t n_bytes;
+    bool use_mmap;
+    llama_files files;
+    llama_ftype ftype;
+    llama_fver fver;
+    llama_mmaps mappings;
+
+    std::vector<llama_model_loader::llama_tensor_weight> weights;
+    ...
+
+(gdb) ptype llama_model_loader::llama_tensor_weight
+type = struct llama_model_loader::llama_tensor_weight {
+    uint16_t idx;
+    size_t offs;
+    ggml_tensor *tensor;
+  public:
+    llama_tensor_weight(uint16_t, const char *, const gguf_context *, ggml_tensor *);
+}
+```
+When a `llama_tensor_weight` is created we can see that it gets passed char*
+which is the name of the tensor. This is used to search for an index in the
+gguf context. This happens when the model is loaded which I've not looked at
+yet.
+We can inspect one of the weights using:
+```console
+(gdb) p weights[0]
+$113 = {idx = 0, offs = 741056, tensor = 0x8f21a0}
+(gdb) p *weights[0].tensor
+$112 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU,
+        buffer = 0x0, ne = {4096, 32000, 1, 1},
+        nb = {18, 2304, 73728000, 73728000},
+        op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
+        flags = 0, grad = 0x0, src = { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+        perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+        view_src = 0x0, view_offs = 0,
+        data = 0x0,
+        name = "token_embd.weight", '\000' <repeats 46 times>, extra = 0x0,
+        padding = "\000\000\000\000\000\000\000"}
+```
+```console
+(gdb) f
+#0  llama_model_loader::check_tensor_dims (this=0x7fffffff8d60, name="token_embd.weight", 
+    ne=std::vector of length 2, capacity 2 = {...}, required=true) at llama.cpp:3226
+3226	        const struct ggml_tensor * cur = get_tensor_meta(name.c_str());
+
+(gdb) tbreak get_tensor_meta
+Note: breakpoint 4 also set at pc 0x4af908.
+```
+Setting a temporary breakpoint (will be deleted after it is hit) like this
+useful when you don't want to step into the `name.c_str()` function.
+```c++
+    struct ggml_tensor * get_tensor_meta(const char * name) const {
+        const auto * weight = get_weight(name);
+        if (!weight) {
+            return nullptr;
+        }
+        return weight->tensor;
+    }
+
+    const llama_tensor_weight * get_weight(const char * name) const {
+        for (const auto & weight : weights) {
+            if (strcmp(name, weight.tensor->name) == 0) {
+                return &weight;
+            }
+        }
+        return nullptr;
+    }
+```
+And recall that we are currently in `llama_model_loader`
+Next in `check_tensor_dims` we have:
+```c++
+            bool is_ok = true;
+            for (size_t i = 0; i < GGML_MAX_DIMS; ++i) {
+                if ((i < ne.size() && ne[i] != cur->ne[i]) || (i >= ne.size() && cur->ne[i] != 1)) {
+                    is_ok = false;
+                    break;
+                }
+            }
+```
+Recall that `GGML_MAX_DIMS` is 4 an the `ne` vector has a size of 2. So the
+number of dimensions in ne cannot be greater than 4. And the number of elements
+in the ith dimension of the vector must match the number of elements in the ith
+dimension of the tensor. This is true in the current case so the second part of
+the if statement is not executed. But lets say that i is greater than ne.size()
+then the number of elements in the tensor dimension must be not be 1.
+After this we will return to `create_tensor`.
+```c++
+        return create_tensor_for(ctx, cur);
+    }
+
+    struct ggml_tensor * create_tensor_for(struct ggml_context * ctx, const struct ggml_tensor * cur) {
+        struct ggml_tensor * tensor = ggml_dup_tensor(ctx, cur);
+        ggml_set_name(tensor, ggml_get_name(cur));
+
+        n_created++;
+
+        return tensor;
+    }
+```
+This above function is using `ggml_dup_tensor` to create a new tensor with the
+same type and dimensions as the `cur` tensor has. The name is not duplicated
+and it is set to the name of the `cur` tensor:
+```console
+(gdb) p *tensor
+$131 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 32000, 1, 1}, nb = {18, 
+    2304, 73728000, 73728000}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x0, name = "token_embd.weight", '\000' <repeats 46 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+This tensor is returned and is set to the `model.tok_embd` tensor. We can
+visualize this as matrix with 32000 rows, one row for each token in the
+vocabulary, and 4096 columns which are the features for each token:
+```
+   0                     4096
+   | ..................... 
+   | .....................
+   | .....................
+   | .....................
+   | .....................
+   | .....................
+   | .....................
+   ↓
+ 32000
+```
+Next we are doing to to something similar to the above but the following will
+create a 1d tensor with 4096 elements:
+```c++
+  // output
+  {
+      model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
+      ...
+```
+
+_wip_
+
+### Model loading
+```console
+$ gdb --args ./main -m models/llama-2-7b-chat.Q4_0.gguf -p "What is your name?"
+(gdb) br llama_load_model_from_file
+Breakpoint 1 at 0x4bda64
+(gdb) r
+```
+```c++
+struct llama_model * llama_load_model_from_file(
+        const char * path_model,
+        struct llama_model_params   params) {
+    llama_model * model = new llama_model;
+```
+```console
+(gdb) p mparams
+$1 = {n_gpu_layers = 0, split_mode = LLAMA_SPLIT_MODE_LAYER, main_gpu = 0, tensor_split = 0x7fffffffacbc, 
+  progress_callback = 0x0, progress_callback_user_data = 0x0, kv_overrides = 0x0, vocab_only = false, 
+  use_mmap = true, use_mlock = false}
+```
+```c++
+    struct llama_model_params {
+        int32_t n_gpu_layers; // number of layers to store in VRAM
+        enum llama_split_mode split_mode; // how to split the model across multiple GPUs
+
+        // main_gpu interpretation depends on split_mode:
+        // LLAMA_SPLIT_NONE: the GPU that is used for the entire model
+        // LLAMA_SPLIT_ROW: the GPU that is used for small tensors and intermediate results
+        // LLAMA_SPLIT_LAYER: ignored
+        int32_t main_gpu;
+
+        // proportion of the model (layers or rows) to offload to each GPU, size: llama_max_devices()
+        const float * tensor_split;
+
+        // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
+        // If the provided progress_callback returns true, model loading continues.
+        // If it returns false, model loading is immediately aborted.
+        llama_progress_callback progress_callback;
+
+        // context pointer passed to the progress callback
+        void * progress_callback_user_data;
+
+        // override key-value pairs of the model meta data
+        const struct llama_model_kv_override * kv_overrides;
+
+        // Keep the booleans together to avoid misalignment during copy-by-value.
+        bool vocab_only; // only load the vocabulary, no weights
+        bool use_mmap;   // use mmap if possible
+        bool use_mlock;  // force system to keep model in RAM
+    };
+```
+`use_mlock` will use `mlock` to keep an virtual address space section/range in
+RAM and prevent it from being swapped to disk.
+
+```c++
+    enum llama_split_mode {
+        LLAMA_SPLIT_MODE_NONE    = 0, // single GPU
+        LLAMA_SPLIT_MODE_LAYER   = 1, // split layers and KV across GPUs
+        LLAMA_SPLIT_MODE_ROW     = 2, // split rows across GPUs
+    };
+```
+A new `llama_model` is created which is initially "empty" and just contains
+default values. These will be populated from information from the model .gguf
+file: 
+```console
+(gdb) p path_model
+$8 = 0x7921d0 "models/llama-2-7b-chat.Q4_0.gguf"
+```
+In our case there progress.callback param is null so this will first be set up
+but I'm going to skip this for now and jump to the following line:
+```console
+(gdb) until 14225
+llama_load_model_from_file (path_model=0x7921d0 "models/llama-2-7b-chat.Q4_0.gguf", params=...) at llama.cpp:14225
+14225	    int status = llama_model_load(path_model, *model, params);
+```
+```c++
+// Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
+static int llama_model_load(const std::string & fname, llama_model & model, llama_model_params & params) {
+    try {
+        llama_model_loader ml(fname, params.use_mmap, params.kv_overrides);
+
+        model.hparams.vocab_only = params.vocab_only;
+```
+So a llama_model_loader is created using it's constructor:
+```c++
+    llama_model_loader(const std::string & fname,
+        bool use_mmap,
+        const struct llama_model_kv_override * param_overrides_p) {
+        ...
+```
+This is fairly long contructor and I'm not going to got through it line by line
+but will step through it and create temporary breakpoint that I think are of
+interest:
+```console
+(gdb) tbreak gguf_init_from_file 
+Temporary breakpoint 2 at 0x4517d5: file ggml.c, line 20574.
+```
+The file is read into a FILE pointer and a `gguf_context` is malloced:
+```c++
+    struct gguf_context * ctx = GGML_ALIGNED_MALLOC(sizeof(struct gguf_context));
+```
+
+For a good reference of the gguf file format see:
+https://github.com/ggerganov/ggml/blob/master/docs/gguf.md
+
+```console
+(gdb) p sizeof(struct gguf_context)
+$14 = 72
+
+(gdb) p *ctx
+$13 = {header = {magic = "r\030y", version = 0, n_tensors = 0, n_kv = 0}, kv = 0x0, infos = 0x13, 
+  alignment = 7938376, offset = 15, size = 7362932551652699234, data = 0x6e776f645f6e66}
+
+(gdb) ptype *ctx
+type = struct gguf_context {
+    struct gguf_header header;
+    struct gguf_kv *kv;
+    struct gguf_tensor_info *infos;
+    size_t alignment;
+    size_t offset;
+    size_t size;
+    void *data;
+}
+```
+Next the header is read.
+```console
+(gdb) ptype ctx->header
+type = struct gguf_header {
+    char magic[4];
+    uint32_t version;
+    uint64_t n_tensors;
+    uint64_t n_kv;
+}
+```
+Next `version`, `n_tensors`, and `n_kv` are read from the file using
+`gguf_fread_el`.
+```console
+(gdb) p ctx.header
+$17 = {magic = "GGUF", version = 2, n_tensors = 291, n_kv = 19}
+```
+`n_kv` is the number of key-value pairs in the file and has nothing to do with
+the kv-cache.
+
+After all the key-value pairs have been read which are the metadata of the
+model I think, then the tensor will be read from the file.
+```c++
+        ctx->infos = GGML_MALLOC(ctx->header.n_tensors * sizeof(struct gguf_tensor_info));
+
+        for (uint64_t i = 0; i < ctx->header.n_tensors; ++i) {
+            struct gguf_tensor_info * info = &ctx->infos[i];
+```
+
+```console
+(gdb) ptype *ctx->infos
+type = struct gguf_tensor_info {
+    struct gguf_str name;
+    uint32_t n_dims;
+    uint64_t ne[4];
+    enum ggml_type type;
+    uint64_t offset;
+    const void *data;
+    size_t size;
+}
+```
+```console
+(gdb) p ctx->infos[0]
+$29 = {name = {n = 17, data = 0x90acc0 "token_embd.weight"}, n_dims = 2, ne = {4096, 32000, 1, 1}, 
+  type = GGML_TYPE_Q4_0, offset = 0, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[1]
+$30 = {name = {n = 22, data = 0x90ace0 "blk.0.attn_norm.weight"}, n_dims = 1, ne = {4096, 1, 1, 1}, 
+  type = GGML_TYPE_F32, offset = 73728000, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[2]
+$31 = {name = {n = 21, data = 0x90ad00 "blk.0.ffn_down.weight"}, n_dims = 2, ne = {11008, 4096, 1, 1}, 
+  type = GGML_TYPE_Q4_0, offset = 73744384, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[3]
+$32 = {name = {n = 21, data = 0x90ad20 "blk.0.ffn_gate.weight"}, n_dims = 2, ne = {4096, 11008, 1, 1}, 
+  type = GGML_TYPE_Q4_0, offset = 99106816, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[4]
+$33 = {name = {n = 19, data = 0x90ad40 "blk.0.ffn_up.weight"}, n_dims = 2, ne = {4096, 11008, 1, 1}, 
+  type = GGML_TYPE_Q4_0, offset = 124469248, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[5]
+$34 = {name = {n = 21, data = 0x90ad60 "blk.0.ffn_norm.weight"}, n_dims = 1, ne = {4096, 1, 1, 1}, 
+  type = GGML_TYPE_F32, offset = 149831680, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[6]
+$35 = {name = {n = 19, data = 0x90ad80 "blk.0.attn_k.weight"}, n_dims = 2, ne = {4096, 4096, 1, 1}, 
+  type = GGML_TYPE_Q4_0, offset = 149848064, data = 0x0, size = 0}
+
+(gdb) p ctx->infos[7]
+$36 = {name = {n = 24, data = 0x90ada0 "blk.0.attn_output.weight"}, n_dims = 2, ne = {4096, 4096, 1, 1}, 
+  type = GGML_TYPE_Q4_0, offset = 159285248, data = 0x0, size = 0}
+```
+Now, the `offset` is an offset into the file where the data for this tensor can
+be found. So at this point the data has not been read and this happend later
+but my also be skipped.
+
+Hmm, the data is not set because `params.no_alloc` is true:
+```console
+(gdb) p params.no_alloc
+$44 = true
+```
+So when is the data read, I mean the weights need to have the values loaded
+don't they?
+This was set earlier in `llama_model_loader` constructor:
+```
+        struct gguf_init_params params = {
+            /*.no_alloc = */ true,
+            /*.ctx      = */ &ctx,
+        };
+```
+So when we return from this function and the `gguf_context` is set to meta:
+```c++
+        meta = gguf_init_from_file(fname.c_str(), params);
+```
+```c++
+    std::vector<llama_tensor_weight> weights;
+    ...
+
+        for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
+            weights.emplace_back(0, cur->name, meta, cur);
+        }
+```
+Recall the `emplace_back` will create a new `llama_tensor_weight` and add it to
+the `weights` vector. The constructor for `llama_tensor_weight` looks like this:
+```c++
+    struct llama_tensor_weight {
+        uint16_t  idx; // source file index
+        size_t   offs; // tensor data offset in the original file
+
+        ggml_tensor * tensor;
+
+        llama_tensor_weight(uint16_t idx,
+                            const char * name,
+                            const struct gguf_context * gguf_ctx,
+                            ggml_tensor * tensor) : idx(idx), tensor(tensor) {
+            const int tensor_idx = gguf_find_tensor(gguf_ctx, name);
+            offs = gguf_get_data_offset(gguf_ctx) + gguf_get_tensor_offset(gguf_ctx, tensor_idx);
+        }
+    };
+```
+
+If `vocab_only` is set then the tensors will not be loaded and
+`llama_model_load` will return early:
+```c++
+        if (params.vocab_only) {
+            LLAMA_LOG_INFO("%s: vocab only - skipping tensors\n", __func__);
+            return 0;
+        }
+```
+```c++
+        if (!llm_load_tensors(
+            ml, model, params.n_gpu_layers, params.split_mode,  params.main_gpu, params.tensor_split, params.use_mlock,
+            params.progress_callback, params.progress_callback_user_data
+        )) {
+            return -2;
+        }
+```
+
 ### GGML_CALL macro
 This macro uses a calling convention of `__ms_abi__` which is the Microsoft ABI
 if the `GGML_MULTIPLATFORM` macro is defined:
