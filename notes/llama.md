@@ -3157,3 +3157,13 @@ MS ABI, such as NVCC (NVIDIA CUDA Compiler), ROCm (for AMD GPUs), XCode
 $ source flake_venv/bin/activate
 $ flake8 --ignore E203,E211,E221,E225,E231,E241,E251,E261,E266,E501,E701,E704,W503 --exclude examples/*,examples/*/**,*/**/__init__.py .
 ```
+
+### editorconfig-checker
+Is a tool used to check if files adhere to the rules specified in an
+.editorconfig file.
+
+It can be run in llama.cpp using the following command:
+```console
+$ source editorvm/bin/activate
+(editorvm) $ editorconfig-checker  -verbose
+```
