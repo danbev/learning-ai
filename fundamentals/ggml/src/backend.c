@@ -29,6 +29,7 @@ int main(int argc, char **argv) {
   };
   struct ggml_context* ctx = ggml_init(params);
   struct ggml_tensor* x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10);
+  ggml_set_name(x, "x");
   printf("x backend type (0=CPU, 10=GPU): %d\n", x->backend);
   if (x->buffer == NULL) {
     printf("x backend buffer is NULL\n");
