@@ -691,27 +691,35 @@ This struct holdes `input` data for `llama_decode` and is defined as:
         llama_token  * token;
         float        * embd;
         llama_pos    * pos;
+        int32_t      * n_seq_id;
         llama_seq_id * seq_id;
         int8_t       * logits;
     } llama_batch;
+
+    typedef int32_t llama_token;
 ```
 The `n_tokens` is a counter of the number of tokens that this batch contains.
+Now, `llama_token` is defined as an integer and this is like an index into the
+vocabulary of the model. And this is a pointer to a int so think of it as an
+array. A `llama_batch` can either contains tokens or embeddings (embd) which
+are floats. 
 
-A `llama_batch` is simlilar to the contept of context we talked about
+A `llama_batch` is similar to the contept of context we talked about
 [llm.md](../../notes/llm.md#context_size). Below we are adding the input query
 tokens to this batch/context. So it will initially just contain the tokens for
 our query. But after running the inference, we will append the next token to the
 batch and run the inference again and then run the inference again to predict
 the next token, now with more context (the previous token).
 
-The `embd` is the embedding of the tokens (I think). So this was not obvious to
-me at first, but recall that the tokens are just integer representations of
-works/subwords, like a mapping of the token to an index in the vocabulary. But
-they don't contains any semantic information. Notice that embed is a pointer
-to float and not an integer like the token field.
-TODO: clarify the embd field.
-
-The `pos` is the position of the tokens in the sequence.
+The `pos` is the position of the token in the sequence. Notice that this is a
+pointer and we can think of it as an array:
+```
+    pos[0]  position in the sequence for token[0]
+```
+Next we have the number of sequence id's in this batch.
+```
+    seq_id[0
+```
 
 This struct holds `input` data for llama_decode. For example, if we pass in
 a prompt of "What is LoRA" that would first be tokenized and then the tokens
@@ -730,7 +738,7 @@ that this batch holds. In the above case `n_tokens` would be 7.
         // the number of sequence id's of this batch entry.
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;  // the sequence id
-        // Determins if the logits for this token should be generated or not.
+        // Determines if the logits for this token should be generated or not.
         batch.logits[i] = false;
         // Increment the number of tokens in the batch.
         batch.n_tokens++;
@@ -766,7 +774,7 @@ $9 = 0
 ```
 Lets see if we can figure this out by looking at `llama_decode` and how it
 uses these sequence values. If we set these pointers to null and rerun we
-will be able to see how llama_decode uses these values:
+will be able to see how `llama_decode` uses these values:
 ```c++
     batch.n_seq_id = nullptr;
     batch.seq_id = nullptr;
@@ -794,11 +802,10 @@ We have the following if statement in llama_decode:
     }
 ```
 First notice that 3 vectors are initialized and these will be populated if
-the batch.seq_id is null. Each entry in the `n_seq_id` vector will be set to 1,
+the `batch.seq_id` is null. Each entry in the `n_seq_id` vector will be set to 1,
 and the `seq_id` will be resized to that size (1) as well. Next, the actual
 value of the sequence id is set to `batch.all_seq_id` which is 0.
 Finally `batch.n_seq_id` and `batch.seq_id` are set to point to this data.
-Hmm, so the batch position tells use the position of the token in this batch.
 
 ```
 batch tokenized from "What is LoRA", n_tokens = 7
@@ -823,6 +830,37 @@ of the second token to 2, then we will have two sequences in this batch.
     batch.seq_id[1][0] = 2;
 ```
 I'm still not sure how this is useful.
+
+### llama_context
+
+### Pooling type
+This is an enum in llama.h which looks like this:
+```c++
+    enum llama_pooling_type {
+        LLAMA_POOLING_TYPE_UNSPECIFIED = -1,
+        LLAMA_POOLING_TYPE_NONE = 0,
+        LLAMA_POOLING_TYPE_MEAN = 1,
+        LLAMA_POOLING_TYPE_CLS  = 2,
+    };
+```
+Now, my understanding of these is that pooling is used for tasks like
+sentiment analysis where we have a sequence of tokens and we want to classify
+the sentiment of the text. For this we might use MAIN or CLS pooling. What
+happens is that the ouput of the transformer is a single vector with dimensions
+size of the embedding but the values will be the mean in the case of the MEAN
+type.
+```
+  token0  [1   2  3  4  5]
+  token1  [6   7  8  9 10]
+  token2  [11 12 13 14 15]
+  token3  [16 17 18 19 20]
+  token4  [21 22 23 24 25]
+```
+And for each feature we would take the mean and that would be the value of the
+output vector.
+```
+  output  [11 12 13 14 15]
+```
 
 ### tensor-split
 There is model_param value which is a pointer to floats and the size of this
@@ -3198,7 +3236,7 @@ Now, let look closer at the tensors that the model has:
 ```console
 (gdb) p model->tok_embd
 ```
-Notice that a model has a vector of `llama_layers`. Before looking it this I
+Notice that a model has a vector of `llama_layers`. Before looking at this I
 had to detour and look more closely att [ggml_backends](./ggml.md#backend).
 
 The following will choose a backend based on the backends that llama.cpp was
@@ -3208,7 +3246,7 @@ returned:
     // there is very little benefit to offloading the input layer, so always keep it on the CPU
     model.buft_input = llama_default_buffer_type_cpu(true);
 ```
-Notice that the above will call the conversion constructor will be used:
+Notice that the above will call the conversion constructor of `layer_buft`:
 ```c++
     // layer -> buffer type mapping
     struct layer_buft {
@@ -3275,7 +3313,8 @@ And after the ones in the for loop:
 (gdb) p buft_layer_count 
 $40 = std::map with 1 element = {[0x68cec0 <ggml_backend_cpu_buffer_type>] = 68}
 ```
-There is also a map of contexts for each element in the `buft_layer_count` map:
+There is also a map of `ggml_context`s for each element in the
+`buft_layer_count` map:
 ```c++
     // create one context per buffer type
     size_t ctx_size = ggml_tensor_overhead()*(ml.n_tensors + 1); // +1 for models where tok_embd is duplicated as output
@@ -3357,8 +3396,8 @@ $80 = 11008
 (gdb) p n_expert
 $82 = 0
 ```
-The we have the `ggml_context`s for the input, output, and output split followed
-by the model.layers being resized to 32:
+Then we have the `ggml_context`s for the input, output, and output split
+followed by the model.layers being resized to 32:
 ```console
 (gdb) ptype model.layers
 type = std::vector<llama_layer>
@@ -3545,6 +3584,9 @@ vocabulary, and 4096 columns which are the features for each token:
    ↓
  32000
 ```
+Notice that the `data` field is `0x0/NULL` so at this point the tensor does
+not contain any embeddings.
+
 Next we are doing to to something similar to the above but the following will
 create a 1d tensor with 4096 elements:
 ```c++
@@ -3553,6 +3595,95 @@ create a 1d tensor with 4096 elements:
       model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
       ...
 ```
+
+
+If we jump forward to after all the tensors have been created we find the
+following:
+```c++
+    ml.init_mappings(true, use_mlock ? &model.mlock_mmaps : nullptr);
+    model.mappings.reserve(ml.mappings.size());
+```
+```c++
+    void init_mappings(bool prefetch = true, llama_mlocks * mlock_mmaps = nullptr) {
+        if (use_mmap) {
+            mappings.reserve(files.size());
+            mmaps_used.reserve(files.size());
+            for (const auto & file : files) {
+                std::unique_ptr<llama_mmap> mapping(new llama_mmap(file.get(), prefetch ? -1 : 0, ggml_is_numa()));
+                mmaps_used.emplace_back(mapping->size, 0);
+                if (mlock_mmaps) {
+                    std::unique_ptr<llama_mlock> mlock_mmap(new llama_mlock());
+                    mlock_mmap->init(mapping->addr);
+                    mlock_mmaps->emplace_back(std::move(mlock_mmap));
+                }
+                mappings.emplace_back(std::move(mapping));
+            }
+        }
+
+        // compute the total size of all tensors for progress reporting
+        for (auto & w : weights) {
+            size_data += ggml_nbytes(w.tensor);
+        }
+    }
+```
+In `llm_load_tensors` we later have:
+```c++
+    // populate tensors_by_name
+    for (ggml_context * ctx : model.ctxs) {
+        for (auto * cur = ggml_get_first_tensor(ctx); cur != NULL; cur = ggml_get_next_tensor(ctx, cur)) {
+            model.tensors_by_name.emplace_back(ggml_get_name(cur), cur);
+        }
+    }
+```
+This will populate the `tensors_by_name` vector with the name of the tensor and
+the tensor itself. This is useful for looking up tensors by name:
+```console
+(gdb) p ggml_get_name(cur)
+$24 = 0xbe2930 "token_embd.weight"
+
+(gdb) until 4788
+```
+After all tensors have been added we will the following number of tensors in
+this vector:
+```console
+(gdb) p model.tensors_by_name.size()
+$26 = 291
+```
+And we can inspect one of the tensors like this:
+```console
+(gdb) p model.tensors_by_name[0]
+$27 = {first = "token_embd.weight", second = 0xbe2810}
+(gdb) p model.tensors_by_name[0].second
+$28 = (ggml_tensor *) 0xbe2810
+(gdb) p *model.tensors_by_name[0].second
+$29 = {type = GGML_TYPE_Q4_0, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 32000, 1, 1}, nb = {18, 
+    2304, 73728000, 73728000}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, 
+  view_src = 0x0, view_offs = 0, data = 0x0, name = "token_embd.weight", '\000' <repeats 46 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+And notice that `data` is still null.
+
+Next we have the loading of tensors:
+```c++
+    // load tensor data
+    for (auto & it : ctx_bufs) {
+        ggml_context * ctx = it.first;
+        auto & bufs = it.second;
+        if (!ml.load_all_data(ctx, bufs,
+                 use_mlock ? &model.mlock_mmaps : NULL,
+                 progress_callback,
+                 progress_callback_user_data)) {
+            return false;
+        }
+    }
+```
+And `load_all_data` is where the tensors data is populated.
+```c++
+                if (buf_mmap && cur->data == nullptr) {
+                    ggml_backend_tensor_alloc(buf_mmap, cur, (uint8_t *) mapping->addr + weight->offs);
+```
+This will then return the model which has now been completely loaded.
 
 _wip_
 
@@ -3762,7 +3893,11 @@ Hmm, the data is not set because `params.no_alloc` is true:
 $44 = true
 ```
 So when is the data read, I mean the weights need to have the values loaded
-don't they?
+don't they?  
+We are currently in the `llama_model_loader` and later there is a
+`llm_load_tensors` which I left to look at the model loading. Perhaps this where
+the tensors are loaded with data.
+
 This was set earlier in `llama_model_loader` constructor:
 ```
         struct gguf_init_params params = {
@@ -3818,7 +3953,7 @@ If `vocab_only` is set then the tensors will not be loaded and
         }
 ```
 
-### GGML_CALL macro
+### `GGML_CALL` macro
 This macro uses a calling convention of `__ms_abi__` which is the Microsoft ABI
 if the `GGML_MULTIPLATFORM` macro is defined:
 ```c++
