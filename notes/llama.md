@@ -862,6 +862,17 @@ output vector.
   output  [11 12 13 14 15]
 ```
 
+For CLS (in the context for BERT this is the "classification" token) the output
+is the "token" vector for the CLS:
+```
+  CLS     [1   2  3  4  5]
+  token1  [6   7  8  9 10]
+  token2  [11 12 13 14 15]
+  token3  [16 17 18 19 20]
+  token4  [21 22 23 24 25]
+  token4  [26 27 28 29 30]
+```
+
 ### tensor-split
 There is model_param value which is a pointer to floats and the size of this
 array is the value of LLAMA_MAX_DEVICES. This value is defined in llama.h:
