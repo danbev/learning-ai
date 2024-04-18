@@ -2,7 +2,7 @@
 I've been very confused about the different model formats and their
 configurations. Different frameworks have different ways of storing and
 configuring models and to run these in llama.cpp they have to be converted to
-GGUF format. I've not really know what convertion script to run just be looking
+GGUF format. I've not really known what convertion script to run just be looking
 at the files in the models directory or the file extensions. This page is an
 attempt to clarify this.
 
@@ -24,6 +24,10 @@ necessary for the tokenizer's operation.
 
 `vocab.txt` is a text file that lists all tokens in the model's vocabulary, each
 on a new line.
+
+`merges.txt' is a text file that is used with Byte-Pair Encoding (BPE) and
+similar tokenizers. This file contains rules for how to combine subword units
+, or tokens, into larger units during tokenization.
 
 ### TensorFlow
 Uses the SavedModel format, which is a serialized model that can be loaded into
