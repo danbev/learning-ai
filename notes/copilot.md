@@ -56,8 +56,9 @@ in the vector space.
 ...
 ```
 In the same way we can get explaination api's 
-# Show and example of using the github api to get the number of star for a Repo in Rust
 ```rust
+# Show and example of using the github api to get the number of star for a Repo in Rust
+
 use reqwest::blocking::Client;
 use serde::Deserialize;
 
