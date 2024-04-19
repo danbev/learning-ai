@@ -34,7 +34,9 @@ OBJS = llama.cpp/common.o \
        llama.cpp/ggml-alloc.o \
        llama.cpp/ggml-quants.o \
        llama.cpp/ggml-backend.o \
-       llama.cpp/unicode.o
+       llama.cpp/unicode.o \
+       llama.cpp/unicode-data.o \
+       llama.cpp/json-schema-to-grammar.o
 
 simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
@@ -84,6 +86,10 @@ quantize-llama-model:
 download-llama-7b-q4:
 	cd models && \
 	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf
+
+download-llama-2-13b-chat.Q4:
+	cd models && \
+	wget https://huggingface.co/TheBloke/Llama-2-13B-chat-GGUF/resolve/main/llama-2-13b-chat.Q4_0.gguf
 
 download-llama-7b-q8:
 	cd models && \
