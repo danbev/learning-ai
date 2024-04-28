@@ -4006,3 +4006,87 @@ It can be run in llama.cpp using the following command:
 $ source editorvm/bin/activate
 (editorvm) $ editorconfig-checker  -verbose
 ```
+
+### Guidance
+This is related to negative prompts (as least I think so at this stage), and
+can be used to instruct the model what not to include. I think this is quite
+common to use with diffusion models and image generation where you can first
+describe what you want with the prompt, and then also specify things that you
+don't want. 
+
+In `sampling.h` we have:
+```c++
+    // Classifier-Free Guidance
+    // https://arxiv.org/abs/2306.17806
+    std::string cfg_negative_prompt; // string to help guidance
+    float       cfg_scale     = 1.f; // how strong is guidance
+```
+So `cfg_scale` has a default value of 1.0 which means guidance is disabled (
+think of this a multiplication/scaling by 1/identity).
+
+```console
+-cfg-scale N         strength of guidance (default: 1.000000, 1.0 = disable)
+```
+
+Lets set a breakpoint in main.cpp:
+```c++
+    std::tie(model, ctx) = llama_init_from_gpt_params(params);
+    if (sparams.cfg_scale > 1.f) {
+        struct llama_context_params lparams = llama_context_params_from_gpt_params(params);
+        ctx_guidance = llama_new_context_with_model(model, lparams);
+    }
+```
+And later in main.cpp we have:
+```c++
+    if (ctx_guidance) {
+        LOG("cfg_negative_prompt: \"%s\"\n", log_tostr(sparams.cfg_negative_prompt));
+
+        guidance_inp = ::llama_tokenize(ctx_guidance, sparams.cfg_negative_prompt, true, true);
+        LOG("guidance_inp tokenized: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx_guidance, guidance_inp).c_str());
+
+        std::vector<llama_token> original_inp = ::llama_tokenize(ctx, params.prompt, true, true);
+        LOG("original_inp tokenized: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, original_inp).c_str());
+
+        original_prompt_len = original_inp.size();
+        guidance_offset = (int)guidance_inp.size() - original_prompt_len;
+        LOG("original_prompt_len: %s", log_tostr(original_prompt_len));
+        LOG("guidance_offset:     %s", log_tostr(guidance_offset));
+    }
+```
+Lets inspect the guidance_inp and original_inp:
+```console
+(gdb) call LOG_TOKENS_TOSTR_PRETTY<llama_context*, std::vector<int, std::allocator<int> > >($13, original_inp)
+$15 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]"
+```
+That is pretty painful to type so lets define a command for it:
+```console
+(gdb) define call_log_tokens
+Type commands for definition of "call_log_tokens".
+End with a line saying just "end".
+>call LOG_TOKENS_TOSTR_PRETTY<llama_context*, std::vector<int, std::allocator<int> > >($arg0, $arg1)
+>end
+(gdb) call_log_tokens ctx original_inp
+$16 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]"
+```
+And we can save it in `.gdbinit`:
+```console
+$ cat .gdbinit 
+define call_log_tokens
+call LOG_TOKENS_TOSTR_PRETTY<llama_context*, std::vector<int, std::allocator<int> > >($arg0, $arg1)
+end
+```
+And the we can call this using:
+```console
+(gdb) call_log_tokens ctx original_inp 
+$2 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]
+(gdb) call_log_tokens ctx_guidance guidance_inp
+$4 = "[ '<s>':1 ]"
+```
+_wip_
+
+### Control vectors
+TODO: what are control vectors?
+
+
+### Sessions
+TODO: what are sessions (in main.cpp)?
