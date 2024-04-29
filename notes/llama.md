@@ -4079,10 +4079,284 @@ And the we can call this using:
 ```console
 (gdb) call_log_tokens ctx original_inp 
 $2 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]
+
 (gdb) call_log_tokens ctx_guidance guidance_inp
 $4 = "[ '<s>':1 ]"
 ```
+
+Guidance is something that is decoded before the input tokens are and uses
+a separate `llama_context`:
+```c++
+                for (int i = 0; i < input_size; i += params.n_batch) {
+                    int n_eval = std::min(input_size - i, params.n_batch);
+                    if (llama_decode(ctx_guidance, llama_batch_get_one(input_buf + i, n_eval, n_past_guidance, 0))) {
+                        LOG_TEE("%s : failed to eval\n", __func__);
+                        return 1;
+                    }
+
+                    n_past_guidance += n_eval;
+                }
+```
+
+Lets take a closer look at how main.cpp decodes the input and first print some
+of the variables used:
+```console
+(gdb) p embd.size()
+$40 = 6
+
+(gdb) p params.n_batch
+$41 = 2048
+
+(gdb) call_log_tokens ctx embd
+$39 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]"
+```
+```console
+            for (int i = 0; i < (int) embd.size(); i += params.n_batch) {
+                int n_eval = (int) embd.size() - i;
+                if (n_eval > params.n_batch) {
+                    n_eval = params.n_batch;
+                }
+
+                LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd).c_str());
+
+                if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval, n_past, 0))) {
+                    LOG_TEE("%s : failed to eval\n", __func__);
+                    return 1;
+                }
+
+                n_past += n_eval;
+
+                LOG("n_past = %d\n", n_past);
+                // Display total tokens alongside total time
+                if (params.n_print > 0 && n_past % params.n_print == 0) {
+                    LOG_TEE("\n\033[31mTokens consumed so far = %d / %d \033[0m\n", n_past, n_ctx);
+                }
+            }
+```
+Don't get confused by the the call to `llama_batch_get_one` and keep in mind
+that embd is a vector of type `std::vector<int>` and that `embd[i]` is a just
+an integer representing the token id:
+```console
+(gdb) p embd[0]
+$46 = 1
+(gdb) p &embd[0]
+$47 = (int *) 0x555555a1a810
+(gdb) p *$47
+$49 = 1
+
+(gdb) p $48+1
+$50 = (int *) 0x555555a1a814
+(gdb) p *$50
+$51 = 1724
+```
+And not that these match the token ids show above in the `call_log_tokens`
+output.
+So we decode the tokens in the input embedding and `n_past` is zero at this
+stage so it is incremented by the number of tokens in the input embedding which
+is 6.
+And that is how the input is decoded. `i` will be incremented by `params.n_batch`
+which in this case is 2048. So i will be 2048 and embd.size() is 6 so the loop
+will exit.
+
+
+```c++
+static llama_token_data_array llama_sampling_prepare_impl(
+                  struct llama_sampling_context * ctx_sampling,
+                  struct llama_context * ctx_main,
+                  struct llama_context * ctx_cfg,
+                  const int idx,
+                  bool apply_grammar,
+                  std::vector<float> * original_logits) {
+    ...
+    if (ctx_cfg) {
+        float * logits_guidance = llama_get_logits_ith(ctx_cfg, idx);
+        llama_sample_apply_guidance(ctx_main, logits, logits_guidance, params.cfg_scale);
+    }
+```
+
+So we have the the logits (`original_logits`) and the `logits_guidance` which is
+are both vectors of floats representing the log probability of the two
+prompts:
+```console
+(gdb) call_log_tokens ctx original_inp 
+$2 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]
+(gdb) call_log_tokens ctx_guidance guidance_inp
+$4 = "[ '<s>':1 ]"
+
+```console
+(gdb) call_log_tokens ctx original_inp 
+$2 = "[ '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973 ]
+
+(gdb) call_log_tokens ctx_guidance guidance_inp
+$4 = "[ '<s>':1 ]"
+```
+
+```c++
+void llama_sample_apply_guidance(
+          struct llama_context * ctx,
+                         float * logits,
+                         float * logits_guidance,
+                         float   scale) {
+    GGML_ASSERT(ctx);
+
+    const auto t_start_sample_us = ggml_time_us();
+    const auto n_vocab = llama_n_vocab(llama_get_model(ctx));
+
+    llama_log_softmax(logits, n_vocab);
+    llama_log_softmax(logits_guidance, n_vocab);
+
+    for (int i = 0; i < n_vocab; ++i) {
+              auto & l = logits[i];
+        const auto & g = logits_guidance[i];
+
+        l = scale * (l - g) + g;
+    }
+
+    ctx->t_sample_us += ggml_time_us() - t_start_sample_us;
+}
+```
+So both logits are passed through the softmax function and the for each
+feature in the logits the following is done:
+```c++
+        l = scale * (l - g) + g;
+```
+So this is updating each original logit float with the difference between
+the original logit and the guidance logit (think about this is a distance in
+in the embedding space). This is then scaled by `scale` and then adding
+the guidance logit back to it.
+
+
+```
+l     = [ 2.0 1.5 0.5 ]
+g     = [ 1.0 2.0 0.0 ]
+scale = 0.5
+
+l[0] = 0.5 * (2.0 - 1.0) + 1.0 = 1.5
+l[1] = 0.5 * (1.5 - 2.0) + 2.0 = 1.75
+l[2] = 0.5 * (0.5 - 0.0) + 0.0 = 0.25
+
+scale = 1.0
+l[0] = 1.0 * (2.0 - 1.0) + 1.0 = 2.0
+l[1] = 1.0 * (1.5 - 2.0) + 2.0 = 1.5
+l[2] = 1.0 * (0.5 - 0.0) + 0.0 = 0.5
+
+scale = 0.0
+l[0] = 0.0 * (2.0 - 1.0) + 1.0 = 1.0
+l[1] = 0.0 * (1.5 - 2.0) + 2.0 = 2.0
+l[2] = 0.0 * (0.5 - 0.0) + 0.0 = 0.0
+```
+Alright so I think one way to think about this is that I might have an input
+prompt like "What is LoRA?", and a negative prompt something like "Don't include
+information about Lora in the context of large language models."
+Now, both of these prompts will be decoded by llama.cpp and the logits for each
+will be returned both will have a size of the vocabulary size (32000).
+Taking the difference between a feature in the logits and the corresponding
+feature in the guidance logits will give a measure of how much the feature in
+the input prompt should be "moved" towards the negative prompt. 
+```
+
+<---|---|---|---|---|---|---|---|---|---|--->
+                0      1.0     2.0
+                       (g)     (l)
+
+2.0 - 1.0 = 1.0
+```
+So the feature in the input prompt is 1.0 away from the desired value when
+taking the negative prompt into account. And the scale determines how much 
+we should adjust in input prompt towards the negative prompt.
+
+We figure out how much we should adjust the input prompt by scaling:
+```
+        1.0
+ 0.5 * |----| = 0.5 [--]
+```
+And then we add this to the guidance logit:
+```
+<---|---|---|---|---|---|---|---|---|---|--->
+                0       ↑   |
+                       1.0  |
+                       (g)  |
+                           (1.0 + 0.5)
+```
+And that will be the value of for this particular feature.
+
+Recall that we are currently in `llama_sampling_prepare_impl` so this is
+preparing for doing the actual sampling and next the penalties are applied.
+```c++
+    // apply penalties
+    const auto& penalty_tokens = params.use_penalty_prompt_tokens ? params.penalty_prompt_tokens : prev;
+    const int penalty_tokens_used_size = std::min((int)penalty_tokens.size(), penalty_last_n);
+    if (penalty_tokens_used_size) {
+        const float nl_logit = logits[llama_token_nl(llama_get_model(ctx_main))];
+
+        llama_sample_repetition_penalties(ctx_main, &cur_p,
+                penalty_tokens.data() + penalty_tokens.size() - penalty_tokens_used_size,
+                penalty_tokens_used_size, penalty_repeat, penalty_freq, penalty_present);
+
+        if (!penalize_nl) {
+            for (size_t idx = 0; idx < cur_p.size; idx++) {
+                if (cur_p.data[idx].id == llama_token_nl(llama_get_model(ctx_main))) {
+                    cur_p.data[idx].logit = nl_logit;
+                    break;
+                }
+            }
+        }
+    }
+```
+One thing I noticed is that the new line token is first extracted from the
+model and used to to set the `ln_logit`. The same call is then performed in the
+for loop. Perhaps this could be extracted to a separate variable and reused.
+
+TODO: take a closer look at how penalties are applied.
+
+And following that we have grammar:
+```c++
+    // apply grammar checks before sampling logic
+    if (apply_grammar && ctx_sampling->grammar != NULL) {
+        llama_sample_grammar(ctx_main, &cur_p, ctx_sampling->grammar);
+    }
+```
+TODO: take a closer look at how grammar is applied.
+After this the function will return controll to `llama_sampling_sample_impl`
+
+
+After all sampling is we are back in `main.cpp`
+```console
+set print elements 0
+(gdb) call_log_tokens ctx ctx_sampling->prev
+$100 = "[ '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '<s>':1, ' What':1724, ' is':338, ' Lo':4309, 'RA':4717, '?':29973, '':13 ]"
+```
+The last token it the token predicted.
+
+
 _wip_
+
+
+### Grammar
+A grammer is something that can be specified/configured and is part of the
+sampling process, that is after the model has decoded the input and produced
+some output tokens. Like there are different type of sampling configurations
+like greedy, topk, etc.
+```c++
+struct llama_sampling_context {
+    // parameters that will be used for sampling
+    llama_sampling_params params;
+
+    // mirostat sampler state
+    float mirostat_mu;
+
+    llama_grammar * grammar;
+
+    // internal
+    grammar_parser::parse_state parsed_grammar;
+
+    // TODO: replace with ring-buffer
+    std::vector<llama_token>      prev;
+    std::vector<llama_token_data> cur;
+
+    std::mt19937 rng;
+};
+```
 
 ### Control vectors
 TODO: what are control vectors?
