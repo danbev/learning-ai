@@ -4364,3 +4364,75 @@ TODO: what are control vectors?
 
 ### Sessions
 TODO: what are sessions (in main.cpp)?
+
+
+### Eval properties
+A `llama_context` as two properties named `n_eval` and `n_p_eval` which are
+used to keep track of the number of tokens used for evaluation.
+
+```c++
+struct llama_context {
+    ...
+    int32_t n_sample = 0; // number of tokens sampled
+    int32_t n_p_eval = 0; // number of tokens in eval calls for the prompt (with batch size > 1)
+    int32_t n_eval   = 0; // number of eval calls
+
+    int64_t n_queued_tokens = 0;
+```
+In `llama_decode_internal` we have the `batch.n_tokens` will be used to set
+the `n_queued_tokens` property:
+```c++
+    lctx.n_queued_tokens += n_tokens_all;
+```
+I found the naming a little confusing and perhaps this could be changed to
+simple `n_tokens`.
+
+```c++
+static int llama_decode_internal(
+         llama_context & lctx,
+         llama_batch   batch_all, // TODO: rename back to batch
+         std::string& error) { 
+```
+
+The `n_eval` property is used to keep track of the number of tokens used for
+evaluation other than the initial prompt, it is used when the batch size is 1.
+This is done in 
+```c++
+void llama_synchronize(struct llama_context * ctx) {
+    ggml_backend_sched_synchronize(ctx->sched);
+
+    // add the evaluation to the stats
+    if (ctx->n_queued_tokens == 1) {
+        ctx->t_eval_us += ggml_time_us() - ctx->t_compute_start_us;
+        ctx->n_eval++;
+    } else if (ctx->n_queued_tokens > 1) {
+        ctx->t_p_eval_us += ggml_time_us() - ctx->t_compute_start_us;
+        ctx->n_p_eval += ctx->n_queued_tokens;
+    }
+    ...
+    ctx->n_queued_tokens = 0;
+}
+```
+For the initial prompt the number of tokens in the batch will more than 1
+unless the prompt is empty in which case it will be 1 as it will only contains
+the start of sequence token. 
+
+The property `n_p_eval` contains the number of tokens in the first batch
+(p for prompt).
+
+There is also a property `n_sample` which is the number of samples taken and
+this is updated for each sampling function:
+* `llama_sample_token_greedy`
+* `llama_sample_token_with_rng`
+* `llama_beam_search`
+What about the other sampling functions?  
+It turns out that they call 
+```c++
+    llama_token X = llama_sample_token(ctx, candidates);
+```
+Which calls:
+```c++
+llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_array * candidates) {
+    return llama_sample_token_with_rng(ctx, candidates, ctx->rng);
+}
+```
