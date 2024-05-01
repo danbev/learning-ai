@@ -4436,3 +4436,192 @@ llama_token llama_sample_token(struct llama_context * ctx, llama_token_data_arra
     return llama_sample_token_with_rng(ctx, candidates, ctx->rng);
 }
 ```
+
+### `llama_sampling_accept`
+This is a function declared in `sampling.h`:
+```c++
+void llama_sampling_accept(
+        struct llama_sampling_context* ctx_sampling,
+        struct llama_context* ctx_main,
+        llama_token id,
+        bool apply_grammar);
+```
+And is defined in `sampling.cpp`:
+```c++
+void llama_sampling_accept(
+        struct llama_sampling_context * ctx_sampling,
+        struct llama_context * ctx_main,
+        llama_token id,
+        bool apply_grammar) {
+    ctx_sampling->prev.erase(ctx_sampling->prev.begin());
+    ctx_sampling->prev.push_back(id);
+
+    if (ctx_sampling->grammar != NULL && apply_grammar) {
+        llama_grammar_accept_token(ctx_main, ctx_sampling->grammar, id);
+    }
+}
+```
+```c++
+struct llama_sampling_context {
+    // parameters that will be used for sampling
+    llama_sampling_params params;
+
+    // mirostat sampler state
+    float mirostat_mu;
+
+    llama_grammar * grammar;
+
+    // internal
+    grammar_parser::parse_state parsed_grammar;
+
+    // TODO: replace with ring-buffer
+    std::vector<llama_token>      prev;
+    std::vector<llama_token_data> cur;
+
+    std::mt19937 rng;
+};
+```
+So `prev` is just a vector of `llama_token`s. But `cur` is a vector of
+`llma_token_data` 
+```c++
+    typedef struct llama_token_data {
+        llama_token id; // token id
+        float logit;    // log-odds of the token
+        float p;        // probability of the token
+    } llama_token_data;
+```
+This also contains the `llama_token` which is just an integer and we can think
+of it as an index into the models vocabulary. The `logit` is the log-odds of
+the token and the `p` is the probability of the token.
+```c++
+    ctx_sampling->prev.erase(ctx_sampling->prev.begin());
+    ctx_sampling->prev.push_back(id);
+```
+The first line above will erase/remove the first element of the vector, and
+the second inserts the new token id to the end of the vector.
+
+
+### Session file
+This a feature of the main example in llama.cpp and can be enabled by passing
+`--prompt-cache` to main which should be a file which if it does not exist will
+be populated by data:
+```console
+$ ./main -m models/tinyllama-1.1b-1t-openorca.Q2_K.gguf -p 'Hello world' --n-predict 20 --prompt-cache danbev-prompt-cache.txt
+```
+```console
+Thread 1 "main" hit Breakpoint 1, main (argc=9, argv=0x7fffffffe018) at examples/main/main.cpp:225
+225	    std::string path_session = params.path_prompt_cache;
+(gdb) p
+The history is empty.
+(gdb) n
+226	    std::vector<llama_token> session_tokens;
+(gdb) p path_session 
+$1 = "danbev-prompt-cache.txt"
+```
+After the decoding (final thing in the loop)
+```c++
+    std::string path_session = params.path_prompt_cache;
+    std::vector<llama_token> session_tokens;
+    ...
+
+    while ((n_remain != 0 && !is_antiprompt) || params.interactive) {
+        // predict
+        if (!embd.empty()) {
+            ...
+
+            if (!embd.empty() && !path_session.empty()) {
+                session_tokens.insert(session_tokens.end(), embd.begin(), embd.end());
+                n_session_consumed = session_tokens.size();
+            }
+     }
+```
+```console
+(gdb) p embd
+$4 = std::vector of length 3, capacity 4 = {1, 15043, 3186}
+(gdb) p path_session
+$5 = "danbev-prompt-cache.txt"
+```
+```console
+(gdb) p session_tokens
+$6 = std::vector of length 0, capacity 0
+
+(gdb) p session_tokens
+$7 = std::vector of length 3, capacity 3 = {1, 15043, 3186}
+```
+The next time we start with this same command line argument this file will be
+loaded:
+```c++
+    if (!path_session.empty()) {
+        LOG_TEE("%s: attempting to load saved session from '%s'\n", __func__, path_session.c_str());
+        if (!file_exists(path_session)) {
+            LOG_TEE("%s: session file does not exist, will create.\n", __func__);
+        } else if (file_is_empty(path_session)) {
+            LOG_TEE("%s: The session file is empty. A new session will be initialized.\n", __func__);
+        } else {
+            // The file exists and is not empty
+            session_tokens.resize(n_ctx);
+            size_t n_token_count_out = 0;
+            if (!llama_state_load_file(ctx,
+                                       path_session.c_str(),
+                                       session_tokens.data(),
+                                       session_tokens.capacity(),
+                                       &n_token_count_out)) {
+                LOG_TEE("%s: error: failed to load session file '%s'\n", __func__, path_session.c_str());
+                return 1;
+            }
+            session_tokens.resize(n_token_count_out);
+            LOG_TEE("%s: loaded a session with prompt size of %d tokens\n", __func__, (int)session_tokens.size());
+        }
+    }
+```
+And later we have a check for if the `session_tokens` is empty:
+```c++
+    if (params.interactive_first || params.instruct || params.chatml || !params.prompt.empty() || session_tokens.empty()) {
+        LOG("tokenize the prompt\n");
+        if (params.chatml) {
+            params.prompt = "<|im_start|>system\n" + params.prompt + "<|im_end|>";
+        }
+        embd_inp = ::llama_tokenize(ctx, params.prompt, true, true);
+    } else {
+        LOG("use session tokens\n");
+        embd_inp = session_tokens;
+    }
+```
+Notice, that the prompt must still be specified but can be empty.
+And notice that `embd_inp` is set to the session tokens loaded.
+
+Alright, so upon the next startup if we pass in an empty prompt the session
+cache will be checked and used.
+```c++
+    size_t n_matching_session_tokens = 0;
+    if (!session_tokens.empty()) {
+        for (llama_token id : session_tokens) {
+            if (n_matching_session_tokens >= embd_inp.size() || id != embd_inp[n_matching_session_tokens]) {
+                break;
+            }
+            n_matching_session_tokens++;
+        }
+
+        if (params.prompt.empty() && n_matching_session_tokens == embd_inp.size()) {
+            LOG_TEE("%s: using full prompt from session file\n", __func__);
+        } else if (n_matching_session_tokens >= embd_inp.size()) {
+            LOG_TEE("%s: session file has exact match for prompt!\n", __func__);
+        } else if (n_matching_session_tokens < (embd_inp.size() / 2)) {
+            LOG_TEE("%s: warning: session file has low similarity to prompt (%zu / %zu tokens); will mostly be reevaluated\n",
+                __func__, n_matching_session_tokens, embd_inp.size());
+        } else {
+            LOG_TEE("%s: session file matches %zu / %zu tokens of prompt\n",
+                __func__, n_matching_session_tokens, embd_inp.size());
+        }
+
+        // remove any "future" tokens that we might have inherited from the previous session
+        llama_kv_cache_seq_rm(ctx, -1, n_matching_session_tokens, -1);
+    }
+```
+And if we pass a prompt which is similar:
+```console
+main: attempting to load saved session from 'danbev-prompt-cache.txt'
+main: loaded a session with prompt size of 3 tokens
+main: session file matches 2 / 5 tokens of prompt
+```
+
