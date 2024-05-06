@@ -4393,10 +4393,28 @@ static int llama_decode_internal(
          llama_batch   batch_all, // TODO: rename back to batch
          std::string& error) { 
 ```
+Now, decode is strictly involved with performing the forward pass of the model
+and this will generate logits for the tokens in the batch in this case.
+For example, we might have the first call to decode if warmup is set to true
+in which case only two tokens will be passed.
+```console
+(gdb) p batch_all.token[0]
+$1 = 1
+(gdb) p batch_all.token[1]
+$2 = 2
+(gdb) p batch_all.n_tokens
+$3 = 2
+```
+These are the bos and eos tokens only:
+```c++
+std::vector<llama_token> tmp = { llama_token_bos(model), llama_token_eos(model), };
+```
+The warmup will also call `llama_synchronize` which will update the `n_p_eval`
+but this will also be reset with a call to `llama_reset_timings`.
 
 The `n_eval` property is used to keep track of the number of tokens used for
-evaluation other than the initial prompt, it is used when the batch size is 1.
-This is done in 
+evaluations other than the initial prompt, it is used when the batch size is 1.
+This is done in:
 ```c++
 void llama_synchronize(struct llama_context * ctx) {
     ggml_backend_sched_synchronize(ctx->sched);
@@ -4413,7 +4431,7 @@ void llama_synchronize(struct llama_context * ctx) {
     ctx->n_queued_tokens = 0;
 }
 ```
-For the initial prompt the number of tokens in the batch will more than 1
+For the initial prompt the number of tokens in the batch will be more than 1
 unless the prompt is empty in which case it will be 1 as it will only contains
 the start of sequence token. 
 
