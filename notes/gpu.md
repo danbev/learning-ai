@@ -1092,3 +1092,26 @@ Sat Apr 20 08:15:56 2024
 +-----------------------------------------------------------------------------------------+
 ```
 And this also allowed my external Dell 24" monitor to work with the laptop.
+
+### Installing CUDA 11.8
+I needed to install CUDA 11.8 for a project I was working on and these are the
+steps I took to install it. 
+```console
+$ https://developer.nvidia.com/cuda-11-8-0-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network
+$ sudo dpkg -i cuda-keyring_1.0-1_all.deb
+$ sudo apt-get update
+$ sudo apt install cuda-toolkit-11-8
+```
+
+The update the PATH and LD_LIBRARY_PATH variables your environment. I've save
+this in a script so that I can switch between different versions of CUDA if
+needed:
+```bash
+export PATH=/usr/local/cuda-11.8/bin:$PATH                                      
+export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH                 
+nvcc --version 
+```
+
+```console
+apt list --installed
+```
