@@ -4642,3 +4642,220 @@ main: loaded a session with prompt size of 3 tokens
 main: session file matches 2 / 5 tokens of prompt
 ```
 
+### main.cpp (example from llama.cpp)
+Initially if we pass in a prompt to this program, for example:
+```console
+gdb --args ./main -m models/tinyllama-1.1b-1t-openorca.Q2_K.gguf --prompt 'The answer to 1 + 1 is' -n 5 --verbose-prompt
+```
+
+The prompt passed in will be stored in `embd_inp`:
+```c++
+    std::vector<llama_token> embd_inp;
+```
+And this will be populated using:
+```c++
+    embd_inp = ::llama_tokenize(ctx, params.prompt, true, true);
+```
+The two last arguments are for `add_special` and `parse_special`.
+```console
+(gdb) p embd_inp 
+$34 = std::vector of length 10, capacity 24 = {1, 450, 1234, 304, 29871, 29896, 718, 29871, 29896, 338}
+(gdb) call_log_tokens ctx embd_inp
+$35 = "[ '<s>':1, ' The':450, ' answer':1234, ' to':304, ' ':29871, '1':29896, ' +':718, ' ':29871, '1':29896, ' is':338 ]"
+```
+And a far bit further down in the file we have `embd` declared as:
+```c++
+    std::vector<llama_token> embd;
+```
+
+The main look looks like this:
+```c++
+    int n_remain           = params.n_predict;
+    int n_consumed         = 0;
+    int n_past             = 0;
+    ...
+
+    while ((n_remain != 0 && !is_antiprompt) || params.interactive) {
+      ...
+    }
+```
+`params.n_predit` is set to 5 which is done by the `-n` command line argument.
+Now, the first block of this look is guarded by 
+```c++
+        if (!embd.empty()) {
+          ...
+        }
+
+        embd.clear();
+```
+The first time through `embd` is empty so this will not entered on the first
+iteration. And notice that embd is always cleared at this point.
+The next if block is the following:
+```c++
+        if ((int) embd_inp.size() <= n_consumed && !is_interacting) {
+        }
+```
+We know that `embd_inp` size is 10 and `n_consumed` is 0 so this will not be
+entered, insted the else block of this statement will:
+```c++
+        } else {
+            while ((int) embd_inp.size() > n_consumed) {
+                embd.push_back(embd_inp[n_consumed]);
+
+                llama_sampling_accept(ctx_sampling, ctx, embd_inp[n_consumed], false);
+
+                ++n_consumed;
+                if ((int) embd.size() >= params.n_batch) {
+                    break;
+                }
+            }
+        }
+```
+Where we are looping over the `embd_inp`, the tokens of our prompt, and adding
+them to `embd`.
+After this there is some printing but I'll skip the details of that here.
+The next if block the following and now since we have added all the tokens to
+embd it will have a size of 10, and `n_consumed` will also be 10:
+```c++
+        if ((int) embd_inp.size() <= n_consumed) {
+            if (!params.antiprompt.empty()) {
+              ...
+            }
+            if (llama_token_is_eog(model, llama_sampling_last(ctx_sampling))) {
+              ...
+            }
+            if (n_past > 0 && is_interacting) {
+              ...
+            }
+        }
+```
+I'll skip the  antiprompt block as it will not be entered during this session.
+```console
+(gdb) p  llama_token_is_eog(model, (int) llama_sampling_last(ctx_sampling))
+$49 = false
+```
+After that we have the following block:
+```c++
+        if (!embd.empty() && llama_token_is_eog(model, embd.back()) && !(params.instruct || params.interactive || params.chatml)) {
+     ...
+   }
+        if (params.interactive && n_remain <= 0 && params.n_predict >= 0) {
+           ...
+        }
+```
+And then we continue with at the beginning of the while loop, and this time
+we have a populated `embd` vector or tokens, and `n_remain` is still 5 and the
+other variables are as before. So this time will will enter the if block that
+we skipped on the first iteration:
+```c++
+    while ((n_remain != 0 && !is_antiprompt) || params.interactive) {
+        // predict
+        if (!embd.empty()) {
+            // Note: (n_ctx - 4) here is to match the logic for commandline prompt handling via
+            // --prompt or --file which uses the same value.
+            int max_embd_size = n_ctx - 4;
+```
+This `n_ctx - 4` is bothering me and I've yet to be able to track down why this
+is subtracted. 
+Next is a check if the size of the `embd` vector is larger than `max_embd_size`
+in which case `embd` is resized to be that size, truncating the prompt.
+```c++
+            if ((int) embd.size() > max_embd_size) {
+              ...
+            }
+```
+Next we have a check of the number of groups for the grouped attention and
+if this is 1 it like having normal multi-head attention. 
+```c++
+            if (ga_n == 1) {
+                if (n_past + (int) embd.size() + std::max<int>(0, guidance_offset) >= n_ctx) {
+                   ..
+                }
+            }
+```
+```c++
+            if (n_session_consumed < (int) session_tokens.size()) {
+               ...
+            }
+            if (ctx_guidance) {
+               ...
+            }
+```
+Finally we will iterate for the tokens in embd:
+```c++
+            for (int i = 0; i < (int) embd.size(); i += params.n_batch) {
+                int n_eval = (int) embd.size() - i;
+                if (n_eval > params.n_batch) {
+                    n_eval = params.n_batch;
+                }
+
+                LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd).c_str());
+
+                if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval, n_past, 0))) {
+                    LOG_TEE("%s : failed to eval\n", __func__);
+                    return 1;
+                }
+                n_past += n_eval;
+            }
+```
+Notice that `n_past` is 10 so we will be passing the complete prompt to decode.
+And `n_past` is 0 at this point.
+And that will have performed the forward pass of the module with those tokens.
+This will break out take us out of the first if block and we again have what
+we went through above where we clear embd:
+```c++
+        embd.clear();
+```
+This time around we will enter the following block:
+```
+        if ((int) embd_inp.size() <= n_consumed && !is_interacting) {
+           
+            const llama_token id = llama_sampling_sample(ctx_sampling, ctx, ctx_guidance);
+
+            llama_sampling_accept(ctx_sampling, ctx, id, true);
+
+            LOG("last: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, ctx_sampling->prev).c_str());
+
+            embd.push_back(id);
+
+            // echo this to console
+            input_echo = true;
+
+            // decrement remaining sampling budget
+            --n_remain;
+        }
+```
+This will sample from the context and then add that sampled token id to embd
+vector of tokens (only one token this time). And notice that `n_remain` is 
+decremented by one.
+Notice that at this stage `n_eval` and `n_p_eval` have the following values:
+```console
+(gdb) p ctx->n_eval
+$62 = 0
+(gdb) p ctx->n_p_eval
+$63 = 10
+(gdb) p id
+$66 = 29871
+```
+And we can inspect the `ctx_sampling->prev`:
+```console
+(gdb) set print elements 0
+(gdb) call_log_tokens ctx ctx_sampling->prev
+$65 = "[ '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '':0, '<s>':1, ' The':450, ' answer':1234, ' to':304, ' ':29871, '1':29896, ' +':718, ' ':29871, '1':29896, ' is':338, ' ':29871 ]"
+
+(gdb) p embd
+$67 = std::vector of length 1, capacity 16 = {29871}
+(gdb) p n_remain
+$68 = 4
+(gdb) p n_past
+$73 = 10
+```
+And then we will again return back to the beginning of the while loop.
+And this time it will be processing a single token, the one that was predicted
+in the previous iteration.
+We pass that token to decode and later sample from the context again and get
+a new token id for that prediction. And that is added to embd, and `n_remain`
+is decremented by one again. And this continues until `n_remain` is zero of if
+someother condition is met.
+
+
