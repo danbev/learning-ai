@@ -4359,12 +4359,11 @@ struct llama_sampling_context {
 ```
 
 ### Control vectors
-TODO: what are control vectors?
-
-
-### Sessions
-TODO: what are sessions (in main.cpp)?
-
+These are vectors, per layer, that can be applied to the result of the model
+layers during inference. This is something that is added at inference time to
+control the models behaviour. This is done without any changes to the prompt or
+any fine tuning of the model.
+More notes can be found in [control_vectors.md](control-vectors.md).
 
 ### Eval properties
 A `llama_context` as two properties named `n_eval` and `n_p_eval` which are
@@ -4519,7 +4518,7 @@ The first line above will erase/remove the first element of the vector, and
 the second inserts the new token id to the end of the vector.
 
 
-### Session file
+### Sessions in main.cpp (session file)
 This a feature of the main example in llama.cpp and can be enabled by passing
 `--prompt-cache` to main which should be a file which if it does not exist will
 be populated by data:
