@@ -1095,7 +1095,14 @@ And this also allowed my external Dell 24" monitor to work with the laptop.
 
 ### Installing CUDA 11.8
 I needed to install CUDA 11.8 for a project I was working on and these are the
-steps I took to install it. 
+steps I took to install it. Note that I'm using ubuntu 22.04:
+```console
+$ lsb_release -r
+Release:	22.04
+``` 
+So this is adding the CUDA 11.8 repository to the system in addition to CUDA
+12.4.
+
 ```console
 $ https://developer.nvidia.com/cuda-11-8-0-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network
 $ sudo dpkg -i cuda-keyring_1.0-1_all.deb
