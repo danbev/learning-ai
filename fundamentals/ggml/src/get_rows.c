@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
   struct ggml_context* ctx = ggml_init(params);
 
   // This tensor will act as the tensor that we want to extract from.
-  const int nx = 2; // x-axis, width of number of columns in the matrix.
+  const int nx = 2; // x-axis, width or number of columns in the matrix.
   const int ny = 3; // y-axis, the height or the number of rows in the matrix.
   struct ggml_tensor* a = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, nx, ny, 1);
   ggml_set_name(a, "a");
@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
   ggml_set_i32_1d(indices, 0, 2);
   // Specify that we want to extract the first row.
   ggml_set_i32_1d(indices, 1, 0);
+  printf("row indices to extract/get:\n");
   for (int i = 0; i < indices->ne[0]; i++) {
       printf("%d ", ggml_get_i32_1d(indices, i));
   }
