@@ -1,0 +1,22 @@
+name: Main Branch Commit Action
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Building ggml examples
+        run: |
+          echo "Build ggml examples"
+          cd fundamentals/ggml
+          make ggml-init
+          make ggml
+          make
