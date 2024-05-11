@@ -17,6 +17,7 @@ jobs:
         run: |
           echo "Build ggml examples"
           cd fundamentals/ggml
+          git submodule update --init --recursive ggml
           make ggml-init
           make ggml
           make
