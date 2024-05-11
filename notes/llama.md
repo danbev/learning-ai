@@ -305,6 +305,7 @@ Time=2
 ```
 By adding the output token to the `Key` and the `Value` matrices we perform
 fewer operations. This is the key-value cache.
+
 So for every token processed it needs to be added to the Key and Value cache
 matrices to be use in the next predition.
 
@@ -4859,3 +4860,284 @@ is decremented by one again. And this continues until `n_remain` is zero of if
 someother condition is met.
 
 
+### `llama_decode_internal`
+This section will take a closer look at the `llama_decode_internal` function in
+llama.cpp.
+```c++
+static int llama_decode_internal(
+         llama_context & lctx,
+           llama_batch   batch_all) { // TODO: rename back to batch
+
+    const uint32_t n_tokens_all = batch_all.n_tokens;
+}
+```
+Lets set a breakpoint on this function:
+```console
+gdb --args ./main -m models/tinyllama-1.1b-1t-openorca.Q2_K.gguf --prompt 'Hello world' -n 3 --verbose-prompt --dump-kv-cache
+
+(gdb) br llama_decode_internal(llama_context&, llama_batch) 
+Breakpoint 1 at 0xace11: file llama.cpp, line 11298.
+(gdb) r
+Breakpoint 1, llama_decode_internal (lctx=..., batch_all=...) at llama.cpp:11298
+11298	           llama_batch   batch_all) { // TODO: rename back to batc
+```
+So lets start by inspecting the `batch_all`:
+```console
+(gdb) p batch_all 
+$1 = {n_tokens = 2, token = 0x555555dd7260, embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, logits = 0x0, all_pos_0 = 0, 
+  all_pos_1 = 1, all_seq_id = 0}
+```
+Now this might be a little surprising as the `n_tokens` is 2 and clearly our
+prompt above is longer than two tokens. But this is a warmup run and can be
+disabled using `--warmup=false`. This is done in common/common.cpp:
+```c++
+std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_params(gpt_params & params) {
+    ...
+
+    if (params.warmup) {
+        LOG("warming up the model with an empty run\n");
+
+        std::vector<llama_token> tmp = { llama_token_bos(model), llama_token_eos(model), };
+        llama_decode(lctx, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, 0));
+        llama_kv_cache_clear(lctx);
+        llama_synchronize(lctx);
+        llama_reset_timings(lctx);
+    }
+
+    return std::make_tuple(model, lctx);
+}
+```
+We can verify this:
+```console
+(gdb) p batch_all.token[0]
+$8 = 1
+(gdb) p batch_all.token[1]
+$9 = 2
+(gdb) p lctx.model.vocab.special_bos_id
+$11 = 1
+(gdb) p lctx.model.vocab.special_eos_id
+$12 = 2
+(gdb) p lctx.model.vocab.id_to_token[1]
+$4 = {text = "<s>", score = 0, type = LLAMA_TOKEN_TYPE_CONTROL}
+(gdb) p lctx.model.vocab.id_to_token[2]
+$10 = {text = "</s>", score = 0, type = LLAMA_TOKEN_TYPE_CONTROL}
+```
+So lets continue until this break point is hit again:
+```console
+<s> Hello world
+Thread 1 "main" hit Breakpoint 1, llama_decode_internal (lctx=..., batch_all=...) at llama.cpp:11298
+11298	           llama_batch   batch_all) { // TODO: rename back to batch
+(gdb) p batch_all
+$2 = {n_tokens = 3, token = 0x555555dd7230, embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, logits = 0x0, all_pos_0 = 0, 
+  all_pos_1 = 1, all_seq_id = 0}
+(gdb) p lctx.model.vocab.id_to_token[15043]
+$5 = {text = "▁Hello", score = -14784, type = LLAMA_TOKEN_TYPE_NORMAL}
+(gdb) p lctx.model.vocab.id_to_token[3186]
+$7 = {text = "▁world", score = -2927, type = LLAMA_TOKEN_TYPE_NORMAL}
+```
+Alright, that was some orientation about the input so lets step through this
+and see what we can learn.
+There are some convience variables created and some asserts that I'm skipping
+but following those we have:
+```c++
+    lctx.n_queued_tokens += n_tokens_all;
+```
+So we will update the `n_queued_tokens` property of the context with the number
+of tokens in the batch which is 3 in our case:
+```console
+11320	    lctx.n_queued_tokens += n_tokens_all;
+(gdb) p lctx.n_queued_tokens
+$10 = 0
+(gdb) s
+(gdb) p lctx.n_queued_tokens
+$11 = 3
+```
+Next we have a ref to the `kv_self` property of the context:
+```c++
+    auto & kv_self = lctx.kv_self;
+```
+```console
+(gdb) p kv_self.n
+$13 = 256
+(gdb) p kv_self.cells.size()
+$14 = 512
+(gdb) p kv_self.total_size()
+$16 = 11534368
+(gdb) p kv_self.head
+$17 = 0
+(gdb) p kv_self.k_l
+$18 = std::vector of length 22, capacity 22 = {0x555555a42080, 0x555555a423a0, 0x555555a426c0, 0x555555a429e0, 0x555555a42d00, 
+  0x555555a43020, 0x555555a43340, 0x555555a43660, 0x555555a43980, 0x555555a43ca0, 0x555555a43fc0, 0x555555a442e0, 0x555555a44600, 
+  0x555555a44920, 0x555555a44c40, 0x555555a44f60, 0x555555a45280, 0x555555a455a0, 0x555555a458c0, 0x555555a45be0, 0x555555a45f00, 
+  0x555555a46220}
+(gdb) p kv_self.used
+$19 = 0
+```
+```c++
+    const int64_t n_embd  = hparams.n_embd;
+    const int64_t n_vocab = hparams.n_vocab;
+
+    uint32_t n_outputs = 0;
+    uint32_t n_outputs_prev = 0;
+
+    const auto n_ubatch = cparams.n_ubatch;
+```
+```console
+(gdb) p n_embd
+$20 = 2048
+(gdb) p n_vocab
+$21 = 32000
+(gdb) p n_ubatch 
+$22 = 512
+```
+TODO: fill in the middle part of the function.
+
+Lets take a look at the following loop which is going to iterate over the 3
+tokens in our batch:
+```c++
+    for (uint32_t cur_token = 0; cur_token < n_tokens_all; cur_token += n_ubatch) {
+        const uint32_t n_tokens = std::min(n_ubatch, n_tokens_all - cur_token);
+    }
+```
+```console
+(gdb) p n_ubatch
+$29 = 512
+(gdb) p n_tokens_all
+$30 = 3
+(gdb) p cur_token
+$31 = 0
+```
+Then a new `llama_batch` will be created:
+```c++
+        llama_batch u_batch = {
+            /* .n_tokens   = */ (int32_t) n_tokens,
+            /* .token      = */ batch_all.token     ? batch_all.token    + cur_token        : nullptr,
+            /* .embd       = */ batch_all.embd      ? batch_all.embd     + cur_token*n_embd : nullptr,
+            /* .pos        = */ batch_all.pos       ? batch_all.pos      + cur_token        : nullptr,
+            /* .n_seq_id   = */ batch_all.n_seq_id  ? batch_all.n_seq_id + cur_token        : nullptr,
+            /* .seq_id     = */ batch_all.seq_id    ? batch_all.seq_id   + cur_token        : nullptr,
+            /* .logits     = */ batch_all.logits    ? batch_all.logits   + cur_token        : nullptr,
+            /* .all_pos_0  = */ batch_all.all_pos_0 + (llama_pos) cur_token*batch_all.all_pos_1,
+            /* .all_pos_1  = */ batch_all.all_pos_1,
+            /* .all_seq_id = */ batch_all.all_seq_id,
+        };
+```
+```console
+(gdb) p u_batch
+$33 = {n_tokens = 3, token = 0x555555dd7230, embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, logits = 0x0, all_pos_0 = 0, 
+  all_pos_1 = 1, all_seq_id = 0}
+```
+```c++
+        if (hparams.causal_attn) {
+            llama_kv_cache_update(&lctx);
+```
+This actually does nothing in our case.
+```c++
+            if (kv_self.head > kv_self.used + 2*n_tokens) {
+                kv_self.head = 0;
+            }
+```
+That will boil down to 0 > 6.
+```c++
+            if (!llama_kv_cache_find_slot(kv_self, u_batch)) {
+                return 1;
+            }
+```
+Lets take a closer look at `llama_kv_cache_find_slot` and lets just look at the
+type of `kv_self` first:
+```console
+```console
+(gdb) ptype kv_self
+type = struct llama_kv_cache {
+    bool has_shift;
+    bool do_defrag;
+    bool do_copy;
+    bool recurrent;
+    bool v_trans;
+    uint32_t head;
+    uint32_t size;
+    uint32_t used;
+    uint32_t n;
+    ggml_type type_k;
+    ggml_type type_v;
+    std::vector<llama_kv_cell> cells;
+    std::vector<ggml_tensor*> k_l;
+    std::vector<ggml_tensor*> v_l;
+    std::vector<ggml_context*> ctxs;
+    std::vector<ggml_backend_buffer*> bufs;
+  public:
+    size_t total_size(void) const;
+    ~llama_kv_cache();
+} &
+```
+```c++
+static bool llama_kv_cache_find_slot(struct llama_kv_cache & cache,
+        const struct llama_batch & batch) {
+```
+
+```
+        bool found = true;
+        for (uint32_t i = 0; i < n_tokens; i++) {
+            if (cache.cells[cache.head + i].pos >= 0) {
+                found = false;
+                cache.head += i + 1;
+                n_tested   += i + 1;
+                break;
+            }
+        }
+```
+```console
+(gdb) p i
+$62 = 0
+(gdb) p cache.cells.size()
+$63 = 512
+(gdb) p cache.cells[0]
+$66 = {pos = -1, delta = 0, src = 0, seq_id = std::set with 0 elements}
+
+(gdb) ptype cache.cells[0]
+type = struct llama_kv_cell {
+    llama_pos pos;
+    llama_pos delta;
+    int32_t src;
+    std::set<int> seq_id;
+  public:
+    bool has_seq_id(const llama_seq_id &) const;
+    bool is_empty(void) const;
+    bool is_same_seq(const llama_kv_cell &) const;
+}
+```
+In our case pos is -1 for all of the cells checked 0, 1, 2, so found will remain
+true.
+```c++
+        if (found) {
+            break;
+        }
+```
+Then we will iterate over the 3 tokens:
+```
+    for (uint32_t i = 0; i < n_tokens; i++) {
+        cache.cells[cache.head + i].pos = batch.pos[i];
+
+        for (int32_t j = 0; j < batch.n_seq_id[i]; j++) {
+            cache.cells[cache.head + i].seq_id.insert(batch.seq_id[i][j]);
+        }
+    }
+```
+So we are setting the first three cells positions to 0, 1, 2.
+```console
+(gdb) p batch.pos[0]
+$75 = 0
+(gdb) p batch.pos[1]
+$76 = 1
+(gdb) p batch.pos[2]
+$77 = 2
+```
+The cache.cells sequence ids will also be populated using the batches sequence
+ids.
+
+And finally cache.uses is set to 3:
+```c++
+    cache.used += n_tokens;
+
+    return true;
+```
