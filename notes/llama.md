@@ -5141,3 +5141,97 @@ And finally cache.uses is set to 3:
 
     return true;
 ```
+```c++
+static struct ggml_tensor * llm_build_inp_embd(
+        struct ggml_context * ctx,
+       struct llama_context & lctx,
+        const llama_hparams & hparams,
+          const llama_batch & batch,
+         struct ggml_tensor * tok_embd,
+         const llm_build_cb & cb) {
+    const int64_t n_embd = hparams.n_embd;
+
+    struct ggml_tensor * inpL;
+
+    if (batch.token) {
+        lctx.inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
+        cb(lctx.inp_tokens, "inp_tokens", -1);
+        ggml_set_input(lctx.inp_tokens);
+
+        inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
+    } else {
+        lctx.inp_embd = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, batch.n_tokens);
+        inpL = lctx.inp_embd;
+        ggml_set_input(lctx.inp_embd);
+    }
+
+    cb(inpL, "inp_embd", -1);
+
+    return inpL;
+}
+```
+Notice that the 1d tensor is does not contain any data at this point. The passed
+in batch is only used to specify then number of tokens. Later when these tokens
+have values they will be used a indices into the `tok_embd` tensor via the
+`ggml_get_rows` operation. The data will be set in the call 
+`llama_set_inputs` I think.
+
+If we take a look at the batch:
+```console
+(gdb) p batch
+$149 = (const llama_batch &) @0x7fffffffbd10: {n_tokens = 3, token = 0x555555dd7230, embd = 0x0, pos = 0x555555db28c0, 
+  n_seq_id = 0x555555dd7310, seq_id = 0x555555dd72f0, logits = 0x0, all_pos_0 = 0, all_pos_1 = 1, all_seq_id = 0}
+```
+Notice that this is our initial prompt of three tokens. And the first things
+is that a 1d tensor is created. Recall that the tokens are just ids into the
+models vocabulary. This 1d tensor, which we can think of a list of ids, is
+then used as an indices tensor to `ggml_get_rows` and the tensor what we want to
+get/extract rows from is the embeddings tensor. This is how we go from tokens
+ids to embedding. This is setting up the operation that does this.
+And the `tok_embd` looks like this
+```console
+(gdb) p *model.tok_embd
+$154 = {type = GGML_TYPE_Q2_K, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555b87370, ne = {2048, 32000, 1, 1}, nb = {84, 672, 
+    21504000, 21504000}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, 
+  data = 0x7fffda2b39e0, name = "token_embd.weight", '\000' <repeats 46 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+So just to remind ourselves that we have a embedding length of 2048 and the
+the total number of tokens in the vocabulary is 32000. This is mainly because
+one has to recall that the x dimension is first, followed by y, and possibly
+other dimensions in ggml which is why  `ne = {2048, 32000, 1, 1}`. We can
+visualize this as:
+```
+y             x
+|       ----------------->
+|[0]    [0    ....  2047]
+|[1]    [0    ....  2047]
+|...
+|[32998][0    ....  2047]
+|[32999][0    ....  2047]
+V
+```
+So what `ggml_get_rows` will do is it will use the 1d tensor and use them as
+indices into the `tok_embd` tensor and return the rows for those indices:
+```
+(gdb) p batch.token[0]
+$161 = 1
+(gdb) p batch.token[1]
+$162 = 15043
+(gdb) p batch.token[2]
+$163 = 3186
+
+[1]     [0    ....  2047]
+[15043] [0    ....  2047]
+[3186]  [0    ....  2047]
+```
+And again just to get used to the ggml axis ordering, x comes first which is
+2048 (features), followed by y which is 3 (3 tokens):
+```
+(gdb) p *inpL
+$165 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {2048, 3, 1, 1}, nb = {4, 8192, 24576, 24576}, 
+  op = GGML_OP_GET_ROWS, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555555dda9a0, 0x7fffd9491180, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
