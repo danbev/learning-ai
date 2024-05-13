@@ -5,7 +5,7 @@
 #include "ggml/ggml-backend.h"
 
 int main(int argc, char **argv) {
-  printf("GGML reshape tensor examples\n");
+  printf("GGML view examples\n");
 
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024,
@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   ggml_set_f32_1d(x, 9, 10);
 
   for (int i = 0; i < ggml_nelements(x); i++) {
-    printf("view[%d]: %f\n", i, ggml_get_f32_1d(x, i));
+    printf("x[%d]: %f\n", i, ggml_get_f32_1d(x, i));
   }
 
   printf("x tensor dimensions: %d\n", ggml_n_dims(x));
