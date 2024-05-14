@@ -1,7 +1,9 @@
 ## Single Instruction, Multiple Data (SIMD)
 
 ### Introduction
-TODO:
+SIMD utilizes special registers which can hold 128, 256, 512, or even 1024 bits
+of data. The register used is divided into smaller blocks of 8, 16, 32, or 64
+bits and perform the same operation on all the blocks simultaneously.
 
 ### Machine specific options/support
 If you just try to compile a program using SIMD instructions, you may get the

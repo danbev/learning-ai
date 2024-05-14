@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -g -Wall -mavx2 -Wno-unused-variable
+CXXFLAGS = -g -Wall -mavx2 -mavx512vnni -mavx512f -mavx512dq -mavx512vl -mavx512bw -Wno-unused-variable
 
 SRCDIR = src
 BINDIR = bin
