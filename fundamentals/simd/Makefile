@@ -15,3 +15,15 @@ $(TARGETS): % : $(SRCDIR)/%.cpp | bindir
 bindir: bin
 bin: 
 	@mkdir -p $(BINDIR)
+
+# Fused Multiply and Add
+.PHONY: lscpu-fma
+lscpu-fma: FLAG = fma
+lscpu-fma: lscpu
+
+.PHONY: lscpu-avx
+lscpu-avx: FLAG = avx
+lscpu-avx: lscpu
+
+lscpu:
+	@lscpu | grep Flags | tr ' ' '\n' | grep $(FLAG)
