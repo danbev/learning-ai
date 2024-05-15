@@ -3,9 +3,10 @@
 #include <array>
 
 bool check_avx512_vnni_support() {
+    // store the output registers EAX, EBX, ECX, and EDX
     std::array<int, 4> cpuid_data;
 
-    // EAX = 7, ECX = 0 => Extended Features
+    // EAX = 7, ECX = 0 => Extended Features, a = EAX, b = EBX, c = ECX, d = EDX (output)
     __asm__("cpuid"
             : "=a"(cpuid_data[0]), "=b"(cpuid_data[1]), "=c"(cpuid_data[2]), "=d"(cpuid_data[3])
             : "a"(7), "c"(0));
