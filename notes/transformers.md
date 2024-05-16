@@ -286,11 +286,12 @@ V matrix which is just the input matrix unchanged. The resulting matrix will
 give us the attention scores for each of the words/tokens.
 
 I just want to point out that this was using a single Q, K, and V matrix which
-could be called single head attention. And also notice that there were no
+could be called `single head attention`. And also notice that there were no
 learnable parameters in this case. We only used the input matrix which was
 copied into Q, K, and V. In actual implementation what is used is something
-called multi-head attention which I'll try to explain now.
+called `multi-head attention` which I'll try to explain now.
 
+### Multi-Head Attention
 So we have our input matrix like before and we create copies of it just the
 same as for single head attention:
 ```
@@ -319,32 +320,112 @@ updated by the model during training.
                      +-------+    +-------+    +-------+
             -------> | Value | X  | W^v   | =  |   V'  |
                      +-------+    +-------+    +-------+
-```
 
-The multi-head attention function looks like this:
+Query = (seq_len, embd_dim)
+Key = (seq_len, embd_dim)
+Value = (seq_len, embd_dim)
+W^q = (embd_dim, embd_dim)
+W^k = (embd_dim, embd_dim)
+W^v = (embd_dim, embd_dim)
+Q' = (seq_len, embd_dim)
+K' = (seq_len, embd_dim)
+V' = (seq_len, embd_dim)
+```
+So the above is just a single head attention but this would be the same thing
+if we have a multihead attention but the number of heads is 1.
+
+The `multi-head attention` function looks like this:
 ```
 MultiHeadAttention(Q, K, V) = Concat(head_1, ..., head_h) x W^o
 head_i = Attention(QW^qᵢ, KW^kᵢ, VW^Vᵢ)
 Attention(Q, K, V) = softmax(Q, K, V) x V
 
 h = number of heads
+d_model = embedding dimension size
 dₖ = d_model / h         For example 4 heads and d_model = 512, dₖ = 128
 ```
 If we look at the Attention function it is the same as we saw earlier. What is
 new is that we are going to split the matrices Q', K', and V' into smaller
 matrices. This is the number of heads that we have.
 
-So for example if we want to have 4 heads and the embedding dimension size is
+So for example, if we want to have 4 heads and the embedding dimension size is
 512, then we will have 4 4x128 matrices. Each one of these are called a head and
 they are separate from each other, and are used to perform the single-head
 attention function that we went through above. 
+```
+ +--------+          +-------+    +-------+    +-------+
+ | Input  | -------> | Query | X  | W^q   | =  |   Q'  |
+ |        |          +-------+    +-------+    +-------+
+ +--------+ -------> +-------+    +-------+    +-------+
+                     |  Key  | X  | W^k   | =  |   K'  |
+                     +-------+    +-------+    +-------+
+                     +-------+    +-------+    +-------+
+            -------> | Value | X  | W^v   | =  |   V'  |
+                     +-------+    +-------+    +-------+
+seq_len = 4
+embd_dim = 512
+heads = 1
+
+Query = (4, 512)
+Key = (4, 512)
+Value = (4, 512)
+W^q = (512, 512)
+W^k = (512, 512)
+W^v = (512, 512)
+Q' = (4, 512)
+K' = (4, 512)
+V' = (4, 512)
+```
+So that would produce three matrices of size 4x512 if we have 1 head:
+```
+          512             512             512
+     +-----------+    +-----------+    +-----------+ 
+     |    Q'     |    |    K'     |    |    V'     |
+ 4   |           |  4 |           |  4 |           |
+     |           |    |           |    |           |
+     |           |    |           |    |           |
+     +-----------+    +-----------+    +-----------+
+```
+But if we have two heads we will split these into multiple matrices:
+```
+       256    256      256     256       256     256
+     +-----+ +-----+  +-----+ +-----+  +-----+ +-----+
+     | Q'_1| | Q'_2|  | K'_1| | K'_2|  | V'_1| | V'_2|
+ 4   |     | |     |  |     | |     |  |     | |     |
+     |     | |     |  |     | |     |  |     | |     |
+     |     | |     |  |     | |     |  |     | |     |
+     +-----+ +-----+  +-----+ +-----+  +-----+ +-----+
+```
+Then we take each of these and perform the single head attention on each of
+them separatly:
+```
+head1 = Attention(Q'_1, K'_1, V'_1) = softmax((Q'_1, K'_1, V'_1)/√dₖ) x V'_1
+head2 = Attention(Q'_2, K'_2, V'_2) = softmax((Q'_2, K'_2, V'_2)/√dₖ) x V'_2
+```
+The we contatenate those heads and multiple by W^o.
+
+So for example, if we want to have 4 heads and the embedding dimension size is
+512, then we will have 4 4x128 matrices. Each one of these are called a head and
+they are separate from each other, and are used to perform the single-head
+attention function that we went through above. 
+```
+   +----------------+   +-------+     +--------+
+   |      Q         |   |  Key  |     |   Q'   |
+   |                | X |       |  =  |        |   
+   |  (4, 512)      |   |(512,4)|     | (4, 4) |
+   +----------------+   |       |     +--------+
+                        |       |
+                        |       |
+                        +-------+
+```
+
 ```
 Attention(Q'₀, K'₀, V'₀) = softmax((Q'₀, K'₀, V'₀)/√dₖ) x V'₀
 Attention(Q'₁, K'₁, V'₁) = softmax((Q'₁, K'₁, V'₁)/√dₖ) x V'₁
 Attention(Q'₂, K'₂, V'₂) = softmax((Q'₂, K'₂, V'₂)/√dₖ) x V'₂
 Attention(Q'₃, K'₃, V'₃) = softmax((Q'₃, K'₃, V'₃)/√dₖ) x V'₃
 ```
-Those will output 4 (sequence_length x dₖ) matrices. So why would we want to do
+Those will output 4 (`sequence_length x dₖ`) matrices. So why would we want to do
 this?  
 Well, notice how each attention calculation will still be using all the words/
 tokens of the input sequence but uses fewer dimensions than with the single head
@@ -369,6 +450,80 @@ And this matrix is then multiplied by a learnable parameter matrix W^o:
 ```
 Notice that we did not have additional matrices in the single head attention
 model.
+
+### Multi-Query Attention
+In multi-head attention (MHA) we have multiple heads and each head has its own
+query, key, and value matrices:
+```
+     +-----+   +-----+  +-----+   +-----+
+     | Q'_1|   | Q'_2|  | Q'_3|   | Q'_4|
+     |     |   |     |  |     |   |     |
+     |     |   |     |  |     |   |     |
+     |     |   |     |  |     |   |     | 
+     +-----+   +-----+  +-----+   +-----+
+
+     +-----+   +-----+  +-----+   +-----+   
+     | K'_1|   | K'_2|  | K'_3|   | K'_4|
+     |     |   |     |  |     |   |     | 
+     |     |   |     |  |     |   |     | 
+     |     |   |     |  |     |   |     | 
+     +-----+   +-----+  +-----+   +-----+ 
+
+     +-----+   +-----+  +-----+   +-----+
+     | V'_1|   | V'_2|  | V'_3|   | V'_4|
+     |     |   |     |  |     |   |     |
+     |     |   |     |  |     |   |     |
+     |     |   |     |  |     |   |     |
+     +-----+   +-----+  +-----+   +-----+
+```
+We will still have a number of query heads (h) but only a single key and values
+vector:
+```
+     +-----+   +-----+  +-----+   +-----+
+     | Q'_1|   | Q'_2|  | Q'_3|   | Q'_4|
+     |     |   |     |  |     |   |     |
+     |     |   |     |  |     |   |     |
+     |     |   |     |  |     |   |     | 
+     +-----+   +-----+  +-----+   +-----+
+
+                   +-----+
+                   | K   |
+                   |     |
+                   |     |
+                   |     |
+                   +-----+
+
+                   +-----+
+                   | V   |
+                   |     |
+                   |     |
+                   |     |
+                   +-----+ 
+```
+There is also a grouped query attention (GQA) where we have the same number of
+query heads but we group them:
+```
+     +-----+   +-----+          +-----+   +-----+
+     | Q'_1|   | Q'_2|          | Q'_3|   | Q'_4|
+     |     |   |     |          |     |   |     |
+     |     |   |     |          |     |   |     |
+     |     |   |     |          |     |   |     | 
+     +-----+   +-----+          +-----+   +-----+
+
+          +-----+                     +-----+
+          | K   |                     | K   |
+          |     |                     |     |
+          |     |                     |     |
+          |     |                     |     |
+          +-----+                     +-----+
+
+          +-----+                    +-----+
+          | V   |                    | V   |
+          |     |                    |     |
+          |     |                    |     |
+          |     |                    |     |
+          +-----+                    +-----+
+```
 
 
 The Query vector is information that we are looking for, like the reason for
@@ -413,7 +568,7 @@ current token.
 Lets say we are training a model and the input sequence is "Dan älskar glass"
 which is Swedish for "Dan loves icecream" which is the target sequence which is
 the input to the decoder. We don't want the computation of the first token `Dan`
-to take into any account of the tokens ahead of it, like "loves", "ice", and
+to take into account any of the tokens ahead of it, like "loves", "ice", and
 "cream". So we mask those tokens out. This is done by setting the attention
 scores for those tokens to negative infinity. This will cause the softmax
 function to output 0 for those tokens:
@@ -866,3 +1021,8 @@ a set of predefined weights:
 Att+(W, K, V) = -----------------
                 Σ exp(Wₜᵢ+kᵢ)
 ```
+
+### Query Attention
+There are multiple variants of attention. There is the one in the original
+paper where query, key, and value matrix per layer.
+There is also one where we split the 
