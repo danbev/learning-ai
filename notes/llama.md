@@ -5235,3 +5235,141 @@ $165 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne 
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
   name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
 ```
+```c++
+        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
+        struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
+```
+```c++
+    struct ggml_tensor * build_inp_KQ_mask(bool causal = true) {
+        if (causal) {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv,     GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+        } else {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+        }
+        cb(lctx.inp_KQ_mask, "KQ_mask", -1);
+        ggml_set_input(lctx.inp_KQ_mask);
+        return flash_attn ? ggml_cast(ctx0, lctx.inp_KQ_mask, GGML_TYPE_F16) : lctx.inp_KQ_mask;
+    }
+```
+```console
+(gdb) p n_kv
+$167 = 256
+(gdb) p n_tokens
+$168 = 3
+```
+```c++
+#define GGML_KQ_MASK_PAD 32
+#define GGML_PAD(x, n) (((x) + (n) - 1) & ~((n) - 1))
+
+GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
+GGML_PAD(3, 32));
+GGML_PAD(3, 32) (((3) + (32) - 1) & ~((32) - 1))
+= 32
+```
+So this becomes:
+```c++
+  lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 256, 32);
+```
+So this would look something like this:
+```
+  0   [0      ...         255]
+  1   [0      ...         255]
+  ...
+  30  [0      ...         255]
+  31  [0      ...         255]
+```
+And this is for the Qeury matrix matrix masking to prevent the model from
+looking at tokens "in the future".
+```c++
+        for (int il = 0; il < n_layer; ++il) {
+            ...
+                cur = llm_build_kv(ctx0, model, hparams, cparams, kv_self, gf,
+                        model.layers[il].wo, model.layers[il].bo,
+                        Kcur, Vcur, Qcur, KQ_mask, nullptr, n_tokens, kv_head, n_kv, 1.0f/sqrtf(float(n_embd_head)), cb, il);
+        }
+```
+```c++
+static void llm_build_kv_store(
+        struct ggml_context * ctx,
+        const llama_hparams & hparams,
+        const llama_cparams & cparams,
+       const llama_kv_cache & kv,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * k_cur,
+         struct ggml_tensor * v_cur,
+                    int32_t   n_tokens,
+                    int32_t   kv_head,
+         const llm_build_cb & cb,
+                    int64_t   il) {
+    const int64_t n_ctx = cparams.n_ctx;
+    const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa();
+    const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa();
+```
+```console
+(gdb) p n_ctx
+$175 = 512
+(gdb) p n_embd_k_gqa
+$176 = 256
+(gdb) p n_embd_v_gqa
+$177 = 256
+```
+
+```c++
+    struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, kv.k_l[il], n_tokens*n_embd_k_gqa,
+            (ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa))*kv_head);
+
+```
+The arguments `ggml_view_id` are the context, the tensor that we want to create
+a view (think slice of), the number of elements that should be in our view, and
+the offset in bytes where we want to start from.
+The source tensor of the view will be:
+```console
+(gdb) p *kv.k_l[il]
+$32 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555bf0730,
+ne = {131072, 1, 1, 1}, nb = {2, 262144, 262144, 262144},
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0,
+perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, 
+data = 0x7fffd97b2020, name = "cache_k_l0", '\000' <repeats 53 times>,
+extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+And the number of elements will be:
+```console
+(gdb) p n_tokens * n_embd_k_gqa 
+$29 = 131072
+```
+And the offset to start from will be:
+```console
+(gdb) p ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)
+$33 = 512
+(gdb) p kv_head
+$34 = 0
+```
+So that will start at the beginning.
+
+### SIMD support
+llama.cpp can be configured to compile in support for SIMD using the following
+options.
+```
+if (LLAMA_NATIVE)
+    set(INS_ENB OFF)
+else()
+    set(INS_ENB ON)
+endif()
+option(LLAMA_AVX                             "llama: enable AVX"                                ${INS_ENB})
+option(LLAMA_AVX2                            "llama: enable AVX2"                               ${INS_ENB})
+option(LLAMA_AVX512                          "llama: enable AVX512"                             OFF)
+option(LLAMA_AVX512_VBMI                     "llama: enable AVX512-VBMI"                        OFF)
+option(LLAMA_AVX512_VNNI                     "llama: enable AVX512-VNNI"                        OFF)
+option(LLAMA_FMA                             "llama: enable FMA"                                ${INS_ENB})
+option(LLAMA_F16C                            "llama: enable F16C"                               ${INS_ENB})
+```
+If `LLAMA_NATIVE` then the following will be set:
+```
+        if (LLAMA_NATIVE)
+            list(APPEND ARCH_FLAGS -march=native)
+        endif()
+```
+`-march=native` will cause the compiler to query/probe the current cpu for
+features that it supports, using something like `cpuid` on x86. Depening on what
+is supported the compiler will add flags to enable those features.
