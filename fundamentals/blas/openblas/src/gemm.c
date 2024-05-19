@@ -22,12 +22,14 @@ int main() {
     B[2] = 3; B[3] = 4;
     B[4] = 5; B[5] = 6;
 
-    // Initialize matrix C with initial non-zero values
+    // Initialize matrix C with initial zero values
     C[0] = 0; C[1] = 0;
     C[2] = 0; C[3] = 0;
 
-    // Perform matrix multiplication C = alpha * A * B + beta * C
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, alpha, A, K, B, N, beta, C, N);
+    // Perform single precision matrix multiplication C = alpha * A * B + beta * C
+    CBLAS_TRANSPOSE transA = CblasNoTrans;
+    CBLAS_TRANSPOSE transB = CblasNoTrans;
+    cblas_sgemm(CblasRowMajor, transA, transB, M, N, K, alpha, A, K, B, N, beta, C, N);
 
     // Print the resulting matrix C
     printf("Resulting matrix C:\n");
