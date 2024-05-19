@@ -7,6 +7,23 @@ like magic to me at the moment.
 CUDA is a parallel computing platform and programming model developed by Nvidia
 for general computing on its own GPUs (graphics processing units).
 
+### CUDA Ecosystem
+```
+Dev tools:     NVIDIA SMI  Data Center GPU Mgr  GPU REST Engine
+
+Libraries:     cuBlas   cuFFT  cuSPARSE  cuSOLVER  AGM-X
+               Thrust   CUB    cuDNN     cuRand    NCCL
+
+Compilers:     nvcc,nvc  CUDA-GDB  NVIDIA Nsight NVIDIA Visual Profiler PAPI CUDA
+               nvc++
+               nvfortran
+
+Programming:   CUDA       OpenMP API   OpenACC   OpenCL   PyCUDA
+models
+
+Drivers:       Linux and Windows device drivers and runtime (no mac?)
+```
+
 ### Colab
 For this I chose a runtime with a A100 GPU which is an NVIDIA GPU which uses
 their Ampere architecture. The A100 is a high-end GPU that is used for
