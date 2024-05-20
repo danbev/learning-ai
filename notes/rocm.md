@@ -68,5 +68,45 @@ operations over a number of GPUs.
 functions specific to deep learning workloads. It has functions like activation
 functions, normalization functions, pooling functions etc.
 
+
+### Targets
+When you see things like gfx1030, gfx1100, gfx1101 these refer to specific
+GPU architectures. These identifiers are used to specify the architecture of the
+AMD GPUs to ensure that the compiled code is optimized for the specific GPU
+model.
+
+
 ### Links
 * https://rocmdocs.amd.com/en/latest/what-is-rocm.html
+
+
+### ROCm Ubuntu 23.04 issue
+```console
+CMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:62 (message):
+  The C++ compiler
+
+    "/opt/rocm-6.1.1/llvm/bin/clang++"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /home/danbev/work/build/ROCm/CMakeFiles/CMakeTmp
+    
+    Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_fe407/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_fe407.dir/build.make CMakeFiles/cmTC_fe407.dir/build
+    gmake[1]: Entering directory 'build/ROCm/CMakeFiles/CMakeTmp'
+    Building CXX object CMakeFiles/cmTC_fe407.dir/testCXXCompiler.cxx.o
+    /opt/rocm-6.1.1/llvm/bin/clang++    -MD -MT CMakeFiles/cmTC_fe407.dir/testCXXCompiler.cxx.o -MF CMakeFiles/cmTC_fe407.dir/testCXXCompiler.cxx.o.d -o CMakeFiles/cmTC_fe407.dir/testCXXCompiler.cxx.o -c /ROCm/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+    Linking CXX executable cmTC_fe407
+    /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_fe407.dir/link.txt --verbose=1
+    /opt/rocm-6.1.1/llvm/bin/clang++ CMakeFiles/cmTC_fe407.dir/testCXXCompiler.cxx.o -o cmTC_fe407 
+    ld.lld: error: unable to find library -lstdc++
+    clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+    gmake[1]: *** [CMakeFiles/cmTC_fe407.dir/build.make:100: cmTC_fe407] Error 1
+    gmake: *** [Makefile:127: cmTC_fe407/fast] Error 2
+```
+The issue is that the `libstdc++` library 12 is not installed. To fix this, run:
+```console
+$ sudo apt install libstdc++-12-dev
+```
+
