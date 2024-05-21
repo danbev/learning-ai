@@ -24,6 +24,11 @@ models
 Drivers:       Linux and Windows device drivers and runtime (no mac?)
 ```
 
+`CUB` (CUDA UnBound) is a library of high-performance primitives for CUDA.
+`AMG-X` (Adaptive General Matrix eXponentiation)
+`NCCL` (NVIDIA Collective Communications Library) is a library that provides
+multi-GPU and multi-node collective communication primitives.
+
 ### Colab
 For this I chose a runtime with a A100 GPU which is an NVIDIA GPU which uses
 their Ampere architecture. The A100 is a high-end GPU that is used for
