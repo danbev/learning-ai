@@ -29,12 +29,17 @@ C = alpha * A * B + beta * C
 ```
 Where `A`, `B`, the input matrices that we want to multiply and and `C` is the
 resulting output matrix. `alpha` and `beta` are scalars and if we set them to
-1 and 0 respectively, we get the standard matrix multiplication.
+1 and 0 respectively, we get the standard matrix multiplication and initial
+values of C are ignored.
+
 But C might also be a non-zero matrix in which case beta will be applied before
 the addition of the result of the multiplication.
 
 Now, in the context of a neural network A might be the weights and B the
-incoming activations. 
+incoming activations. Normally alpha and beta would be set to 1 and 0, but if
+there is a skip connection (residual connection) then beta would be set to 1
+allowing the new activations to be added to the previous activations.
+
 
 Example can be found in [gemm.c](../fundamentals/blas/openblas/src/gemm.c).
 
