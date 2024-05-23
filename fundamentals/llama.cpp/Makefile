@@ -36,6 +36,9 @@ OBJS = llama.cpp/common.o \
        llama.cpp/ggml-backend.o \
        llama.cpp/unicode.o \
        llama.cpp/unicode-data.o \
+       llama.cpp/sgemm.o \
+       llama.cpp/sampling.o \
+       llama.cpp/grammar-parser.o \
        llama.cpp/json-schema-to-grammar.o
 
 simple-prompt: src/simple-prompt.cpp

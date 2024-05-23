@@ -182,14 +182,14 @@ int main(int argc, char** argv) {
         // 8 here a "guess". If the token is longer than 8 bytes then we
         // will resize the result vector and call llama_token_to_piece again.
         std::vector<char> piece(8, 0);
-        int n_tokens = llama_token_to_piece(model, new_token_id, piece.data(), piece.size());
+        int n_tokens = llama_token_to_piece(model, new_token_id, piece.data(), piece.size(), false);
         // llama_token_to_piece will return the negative length of the token if
         // it is longer that the passed in result.length. If that is the case
         // then we need to resize the result vector to the length of the token
         // and call llama_token_to_piece again.
         if (n_tokens < 0) {
             piece.resize(-n_tokens);
-            int new_len = llama_token_to_piece(model, new_token_id, piece.data(), piece.size());
+            int new_len = llama_token_to_piece(model, new_token_id, piece.data(), piece.size(), false);
         } else {
             piece.resize(n_tokens);
         }
