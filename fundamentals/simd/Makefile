@@ -10,11 +10,17 @@ TARGETS := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES))
 all: $(TARGETS)
 
 $(TARGETS): % : $(SRCDIR)/%.cpp | bindir
-	$(CXX) $(CXXFLAGS) -o ${BINDIR}/$@ $<
+	$(CXX) -v $(CXXFLAGS) -o ${BINDIR}/$@ $<
 
 bindir: bin
 bin: 
 	@mkdir -p $(BINDIR)
+
+bin/add: | bindir
+	$(CXX) -march=native -v -o $@ src/add.cpp
+
+bin/avx: src/avx.cpp | bindir
+	$(CXX) -mavx -v -o $@ src/avx.cpp
 
 # Fused Multiply and Add
 .PHONY: lscpu-fma
