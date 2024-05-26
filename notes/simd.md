@@ -95,6 +95,44 @@ stands for packed double precision (doubles), `epi` stands for extended packed
 integer, `si` stands for scalar integer, `sd` stands for scalar double, `ss`
 stands for scalar single, `epi8` stands for extended packed integer 8-bit.
 
+### maskload
+The idea here is that one might have a data type that does not fill a complete
+vector register. In this one can add a mask to the operation to only operate
+on the elements that are set in the mask. For examples:
+```c
+#include <stdio.h>
+#include <immintrin.h>
+
+int main() {
+    int i;
+    int int_array[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    
+    __m256i mask = _mm256_setr_epi32(-1, -1, -1, -1, 0, 0, 0, 0);
+    
+    __m256i result = _mm256_maskload_epi32(int_array, mask);
+    
+    int* res = (int*)&result;
+    printf("%d %d %d %d %d %d %d %d\n", 
+        res[0], res[1], res[2], res[3], res[4], res[5], res[6], res[7]);
+    
+    return 0;
+}
+```
+This will generate:
+```console
+$ ./bin/masking 
+1 2 3 4 0 0 0 0
+```
+My initial though would be that -1 would be used to indicate that the elements
+should be included in the operation but the reason for using -1 is that that
+produces a 1 in all bits of the integer and the most signficant bit is 1 so this
+is a simple check to be performed. This is using -1 so the processor can check
+the MSB and if it is 1 then it knows to include this element, and if zero it
+knows not to. Lets say we used 0 to determine if the element should be included
+instead then it would have to check the first bit if it is 0 and also the other
+bits to make sure they are all zeros as well which would be more work.
+
+
 ### immintrin.h
 This header provides immidate access to SIMD instructions. Immediate in that one
 only has to include this single header file to get access to all the SIMD and
