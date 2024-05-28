@@ -10,7 +10,7 @@ TARGETS := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES))
 all: $(TARGETS)
 
 $(TARGETS): % : $(SRCDIR)/%.cpp | bindir
-	$(CXX) -v $(CXXFLAGS) -o ${BINDIR}/$@ $<
+	$(CXX) $(CXXFLAGS) -o ${BINDIR}/$@ $<
 
 bindir: bin
 bin: 
