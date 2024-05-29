@@ -4937,6 +4937,7 @@ $7 = {text = "▁world", score = -2927, type = LLAMA_TOKEN_TYPE_NORMAL}
 ```
 Alright, that was some orientation about the input so lets step through this
 and see what we can learn.
+
 There are some convience variables created and some asserts that I'm skipping
 but following those we have:
 ```c++
@@ -5045,7 +5046,6 @@ That will boil down to 0 > 6.
 ```
 Lets take a closer look at `llama_kv_cache_find_slot` and lets just look at the
 type of `kv_self` first:
-```console
 ```console
 (gdb) ptype kv_self
 type = struct llama_kv_cache {
