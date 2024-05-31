@@ -1,11 +1,13 @@
 // main.c
 #include <stdio.h>
 #include <stdlib.h>
+#define CL_TARGET_OPENCL_VERSION 300
 #include <CL/cl.h>
 
 #define NUM_ELEMENTS 1024
 
 int main() {
+    printf("OpenCL Exploration...!\n");
 
     cl_int err;
 

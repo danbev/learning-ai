@@ -1,5 +1,5 @@
 main: src/main.c
-	${CC}  $<  -o $@ -lOpenCL
+	${CC} -DCL_TARGET_OPENCL_VERSION=300 $<  -o $@ -lOpenCL
 
 .PHONY: run
 run: 
