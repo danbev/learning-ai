@@ -27,7 +27,8 @@ int main() {
     clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL);
 
     cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, NULL);
-    cl_command_queue queue = clCreateCommandQueue(context, device, 0, NULL);
+    cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0 };
+    cl_command_queue queue = clCreateCommandQueueWithProperties(context, device, properties, NULL);
 
     unsigned int numElements = NUM_ELEMENTS;
 
