@@ -1,5 +1,5 @@
 main: src/main.c
-	${CC} -DCL_TARGET_OPENCL_VERSION=300 $<  -o $@ -lOpenCL
+	${CC} -v -DCL_TARGET_OPENCL_VERSION=300 $<  -o $@ -lOpenCL
 
 .PHONY: run
 run: 
@@ -8,3 +8,7 @@ run:
 .PHONY: clean
 clean:
 	${RM} main
+
+.PHONY: tags
+tags:
+	ctags -R /urc/include/CL src/
