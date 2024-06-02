@@ -138,3 +138,39 @@ which is a cuda directory. By including the OpenCL ICD loader in the CUDA
 toolkit, NVIDIA ensures that developers have a straightforward way to develop
 and run OpenCL applications on NVIDIA hardware without needing to separately
 install a different ICD loader.
+
+### OpenCL ICD Loader
+The OpenCL ICD Loader is a library seems to often be provided by implementations
+but it is possible to build this yourself. This can be useful for example when
+you only need to compile and link and not actually run the code, for example in
+a CI pipeline that packages the code for distribution.
+```console
+$ mkdir opencl
+$ git clone https://github.com/KhronosGroup/OpenCL-ICD-Loader
+$ git clone https://github.com/KhronosGroup/OpenCL-Headers
+```
+```console
+$ cmake -D CMAKE_INSTALL_PREFIX=./OpenCL-Headers/install -S ./OpenCL-Headers -B ./OpenCL-Headers/build
+$ cmake --build ./OpenCL-Headers/build --target install
+```
+```console
+$ cmake -D CMAKE_PREFIX_PATH=${PWD}/OpenCL-Headers/install -D CMAKE_INSTALL_PREFIX=./OpenCL-ICD-Loader/install -S ./OpenCL-ICD-Loader -B ./OpenCL-ICD-Loader/build 
+$ cmake --build ./OpenCL-ICD-Loader/build --target install
+...
+[100%] Built target PrintLayer
+Install the project...
+-- Install configuration: ""
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/libOpenCL.so.1.2
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/libOpenCL.so.1
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/libOpenCL.so
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/bin/cllayerinfo
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/share/cmake/OpenCLICDLoader/OpenCLICDLoaderTargets.cmake
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/share/cmake/OpenCLICDLoader/OpenCLICDLoaderTargets-noconfig.cmake
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/share/cmake/OpenCLICDLoader/OpenCLICDLoaderConfig.cmake
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/share/cmake/OpenCLICDLoader/OpenCLICDLoaderConfigVersion.cmake
+-- Up-to-date: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/libOpenCL.so.1.2
+-- Up-to-date: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/libOpenCL.so.1
+-- Up-to-date: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/libOpenCL.so
+-- Installing: /home/danbev/work/ai/opencl/OpenCL-ICD-Loader/install/lib/pkgconfig/OpenCL.pc
+
+```
