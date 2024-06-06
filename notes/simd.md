@@ -147,3 +147,25 @@ then compiler flags will determine which headers to include.
 #include <wmmintrin.h>
 #include <avxintrin.h>
 ```
+
+### Instructions
+When compling for x86 architectures (Intel and AMD) we can specify compiler
+flags to limit the instructions set to a specific instruction set. For example
+to enable AVX we can specify `-mavx` and to enable AVX2 we can specify `-mavx2`.
+We can also explicitely disable AVX2 by specifying `-mno-avx2`.
+
+But how do we verify that our code is actually using the instructions we think
+it is using?  
+
+We can use 'objdump' to disassemble the binary and look for the instructions
+we are interested in. For example:
+```console
+$ objdump -d somthing.so | grep vbroadcastss
+
+230231:  123fc3:	c4 e2 7d 18 55 b0    	vbroadcastss ymm2,DWORD PTR [rbp-0x50]
+```
+Now, AVX uses 256-bit registers which are YMM0-YMM15 and AVX2 uses 512-bit
+which are ZMM0-ZMM31. So if we see YMM2 in the disassembly then we know that
+Now AVX is mostly focused on floating point operations and AVX2 extends this to
+integer operations but still uses the YMM registers.
+
