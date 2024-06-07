@@ -8,8 +8,15 @@
 // to ensure that the correct flags are being passed to the compiler. Whan even
 // more concerning is that you probably won't notice this issue until you
 // run the code or inspect it.
+
+#include <stdio.h>
+
 #ifdef __SSSE3__
-#error "SSSE3 is still defined"
+#error "SSSE3 is defined"
+#endif
+
+#ifdef __AVX__
+#error "AVX is defined"
 #endif
 
 int main() {
