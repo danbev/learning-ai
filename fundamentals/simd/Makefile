@@ -22,6 +22,9 @@ bin/add: | bindir
 bin/avx: src/avx.cpp | bindir
 	$(CXX) -mavx -v -o $@ src/avx.cpp
 
+bin/ssse3: src/ssse3.c | bindir
+	$(CC) -mno-ssse3 -mavx -o $@ $<
+
 # Fused Multiply and Add
 .PHONY: lscpu-fma
 lscpu-fma: FLAG = fma
@@ -33,3 +36,7 @@ lscpu-avx: lscpu
 
 lscpu:
 	@lscpu | grep Flags | tr ' ' '\n' | grep $(FLAG)
+
+.PHONY: clean
+clean:
+	${RM} -r ${BINDIR}
