@@ -25,6 +25,11 @@ $(TARGETS): % : $(SRCDIR)/%.c | bindir
 	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
+.PHONY: pre-quants
+pre-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
+pre-quants:
+	$(CC) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/quants.pre $(SRCDIR)/quants.c
+
 #.PHONY: backend-cuda
 backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 backend-cuda: CC = g++
