@@ -18,6 +18,8 @@ TARGETS := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES))
 
 all: $(TARGETS)
 
+quants: CFLAGS += -Iggml/src -Iggml/include/ggml
+
 $(TARGETS): % : $(SRCDIR)/%.c | bindir
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
 	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
