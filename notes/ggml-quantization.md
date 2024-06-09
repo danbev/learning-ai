@@ -78,6 +78,58 @@ org_value = quantized_value * delta
 ```
 So this is how the delta stored in the block struct is used.
 
+### `block_q4_1`
+This is very similar to `block_q4_0` but we have an additional field in the
+struct which is a union (so only one of the members can be used a one time):
+```c
+#define QK4_1 32
+typedef struct {
+    union {
+        struct {
+            ggml_half d;
+            ggml_half m;
+        } GGML_COMMON_AGGR;
+        ggml_half2 dm;
+    };
+    uint8_t qs[QK4_1 / 2];
+} block_q4_1;
+```
+So we can now have either a struct of a `ggml_half2` (the same information only
+packed into `ggml_half2` I think) member. The `m` member is used to store the
+smallest value in the block of float values.
+
+#### Quantization
+Calculate min and delta using the forumla:
+```
+delta = (max_value - min_value) / 15
+```
+Then quantize using the formula:
+```
+quantized_value = round((org_value - min_value) / delta)
+
+org_values = {0.2, 0.3, 0.4, 0.5}
+min_value = 0.2
+delta = (0.5 - 0.2) / 15
+delta = 0.3 / 15
+delta ~ 0.02
+0.2 -> (0.2 - 0.2) / 0.02 = 0
+0.3 -> (0.3 - 0.2) / 0.02 = 5
+0.4 -> (0.4 - 0.2) / 0.02 = 10
+0.5 -> (0.5 - 0.2) / 0.02 = 15
+```
+
+#### Dequantization
+To dequantize we use the formula:
+```
+org_value = (quantized_value * delta) + min_value
+
+quantized values = {0, 5, 10, 15}
+0 -> (0 * 0.02) + 0.2 = 0.2
+5 -> (5 * 0.02) + 0.2 = 0.3
+10 -> (10 * 0.02) + 0.2 = 0.4
+15 -> (15 * 0.02) + 0.2 = 0.5
+```
+
 
 `qs` is where are quantized values are stored.
 So we have a array of 16 elements and notice the type is `uint8_t` which is 1
