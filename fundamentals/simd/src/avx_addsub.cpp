@@ -10,6 +10,15 @@ int main() {
     __m256d b = _mm256_setr_pd(5.0, 6.0, 7.0, 8.0);
     printf("vector b: [%f, %f, %f, %f]\n", b[0], b[1], b[2], b[3]);
 
+    // Perform add/sub operation alternating subtraction and addition:
+    // a[0] - b[0]
+    // a[1] + b[1]
+    // a[2] - b[2]
+    // a[3] + b[3]
+    // Now I found this to be confusing since the name of this operation is
+    // addsub and not subadd. But the reason for this naming or the order of
+    // operations is because is stems from complex number operations.
+    // TODO: add notes about this.
     __m256d result = _mm256_addsub_pd(a, b);
 
     double* f = (double*)&result;
