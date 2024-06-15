@@ -1,20 +1,10 @@
 #include <stdio.h>
-
-#include "ggml.h"
-#include "ggml-quants.h"
-
-#ifdef GGML_COMMON_DECL_C
-#warning "[danbev] GGML_COMMON_DECL_C is defined"
-#endif
-
-#ifdef GGML_COMMON_DECL_CUDA
-#warning "[danbev] GGML_COMMON_DECL_CUDA is defined"
-#endif
+#include <stdint.h>
 
 #define DANBEV_QK4_0 32
 
 typedef struct {
-    float d;                // delta
+    float d;                       // delta
     uint8_t qs[DANBEV_QK4_0 / 2];  // nibbles / quants
 } danbev_block_q4_0;
 
@@ -26,7 +16,7 @@ void quantize(float* input, int length, danbev_block_q4_0* output) {
             max_val = input[i];
         }
     }
-    output->d = max_val / 15.0;  // 15 is the max value for 4-bit
+    output->d = max_val / 15.0;  // 15 is the max value for 4-bit (1111b)
 
     printf("max_val = %f, d = %f\n", max_val, output->d);
 
@@ -42,7 +32,7 @@ void quantize(float* input, int length, danbev_block_q4_0* output) {
     }
 }
 
-void dequantize(block_q4_0 *input, float *output, int length) {
+void dequantize(danbev_block_q4_0 *input, float *output, int length) {
     for (int i = 0; i < length; i++) {
         uint8_t quantized_val;
         if (i % 2 == 0) {
@@ -63,7 +53,6 @@ void print_nibbles(uint8_t *qs, int length) {
         printf("Byte %d: high nibble = %u, low nibble = %u\n", i, high_nibble, low_nibble);
     }
 }
-
 
 #define Q_SIZE 4
 
