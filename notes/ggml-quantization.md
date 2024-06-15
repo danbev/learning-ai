@@ -98,6 +98,10 @@ So we can now have either a struct of a `ggml_half2` (the same information only
 packed into `ggml_half2` I think) member. The `m` member is used to store the
 smallest value in the block of float values.
 
+So this is a common patterns where `_0` there is only the one delta value but
+with `_1` there is an additional field to store data which in this case is the
+minimum.
+
 #### Quantization
 Calculate min and delta using the forumla:
 ```
@@ -130,6 +134,19 @@ quantized values = {0, 5, 10, 15}
 15 -> (15 * 0.02) + 0.2 = 0.5
 ```
 
+### `block_q5_0`
+We now have 5 bits (11111b, 32 values) to quantize the values:
+```c
+#define QK5_0 32
+typedef struct {
+    ggml_half d;           // delta
+    uint8_t qh[4];         // 5-th bit of quants
+    uint8_t qs[QK5_0 / 2]; // nibbles / quants
+} block_q5_0;
+```
+Notice that `qa` is in fact the same size as for `block_q4_0` but we have an
+additional field `qh` which has an array of 5 (0-4). This is used to store the
+5th bit of the quantized value.
 
 `qs` is where are quantized values are stored.
 So we have a array of 16 elements and notice the type is `uint8_t` which is 1
@@ -176,3 +193,5 @@ as there is no risk of another pointer accessing the same memory concurrently.
 * The compiler can perform vectorization and other loop optimizations more
 aggressively, as there is no risk of data dependencies between iterations due to
  aliasing.
+
+### Bits Per Weight (BPW)
