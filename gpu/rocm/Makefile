@@ -4,4 +4,4 @@ helloworld: src/helloworld.cpp
 
 .PHONY: clean
 clean:
-	${RM} hello-world
+	${RM} helloworld
