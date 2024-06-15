@@ -1,6 +1,8 @@
 ## Radeon Open Compute Platform (ROCm)
 
 ### Installation
+
+#### Fedora
 ```console
 $ sudo usermod -a -G video $LOGNAME
 $ sudo dnf -y install rocminfo
@@ -8,13 +10,56 @@ $ sudo dnf install rocm-opencl
 $ sudo dnf install rocm-clinfo
 $ sudo dnf install hipcc
 ```
-
 Unfortunately, the ROCm OpenCL implementation does not seem to support my
 NVIDIA GPU.
 ```
 $ rocminfo 
 ROCk module is NOT loaded, possibly no GPU devices
 ```
+
+#### Ubuntu
+```console
+$ wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
+    gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+$ echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/6.1.2/ubuntu jammy main" \
+    | sudo tee /etc/apt/sources.list.d/amdgpu.list
+$ sudo apt update
+
+$ echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.1.2 jammy main" \
+    | sudo tee --append /etc/apt/sources.list.d/rocm.list
+$ echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' \
+    | sudo tee /etc/apt/preferences.d/rocm-pin-600
+$ sudo apt update
+```
+
+Install the kernel driver:
+```console
+$ sudo apt install amdgpu-dkms
+$ sudo apt install rocm-dkms
+$ sudo reboot
+```
+
+Install the ROCm packages:
+```console
+$ sudo apt install rocm
+```
+
+```console
+$ hipconfig --full
+```
+
+```console
+$ sudo modprobe amdgpu
+```
+
+### HIP_PLATFORM env variable
+The `HIP_PLATFORM` environment variable is that directs the HIP to the correct
+backend to target. HIP, designed to be a cross-platform programming model, can
+target both AMD (via the ROCm platform) and NVIDIA GPUs (via the CUDA platform).
+
+So if we want to target CUDA we set the `HIP_PLATFORM` environment variable to
+`nvcc` and if we want to target ROCm we set it to `hcc`.
+
 
 ```console
 $ rocm-clinfo
