@@ -4,12 +4,29 @@ precision floating point number (32 bits) or a half precision floating point
 number (16 bits) and converting it to a fixed point number with a fixed number
 of bits. 
 
+### ggml_half
+This typedef is defined in `ggml/src/ggml-common.h`:
+```c
+typedef uint16_t ggml_half;
+```
+So this is an unsigned 16 bit integer, that is 2 bytes. And unsigned meaning
+that it can only store positive values.
+
+### ggml_half2
+This typedef is defined in `ggml/src/ggml-common.h`:
+```c
+typedef uint32_t ggml_half2;
+```
+And this is a 32 bit unsigned integer, that is 4 bytes, and like `ggml_half` it
+can only store positive values.
+
+
 * QI is the quantized value
 * QK is the number of bits used for quantization
 * QR is the ratio of the quantized value and the number for which it is a quantization(?)
 
 ### `block_q4_0`
-This struct is defined in ggml/src/ggml-quants.h:
+This struct is defined in `ggml/src/ggml-common.h`:
 ```c
 #define QK4_0 32
 
@@ -31,6 +48,7 @@ delta = max_value / 15                (1111b)
 `qs` is where are quantized values are stored. So we have a array of 16 elements
 (32/2=16), and notice the type is `uint8_t` which is 1 byte so each entry can
 hold 8 bits.
+
 Now each quantized value is 4 bits so we can store two in each entry in this
 array:
 ```
@@ -83,6 +101,7 @@ This is very similar to `block_q4_0` but we have an additional field in the
 struct which is a union (so only one of the members can be used a one time):
 ```c
 #define QK4_1 32
+
 typedef struct {
     union {
         struct {
@@ -95,18 +114,21 @@ typedef struct {
 } block_q4_1;
 ```
 So we can now have either a struct of a `ggml_half2` (the same information only
-packed into `ggml_half2` I think) member. The `m` member is used to store the
-smallest value in the block of float values.
+packed, two ggml_half's, into `ggml_half2` I think) member. The `m` member is
+used to store the smallest value in the block of float values.
 
-So this is a common patterns where `_0` there is only the one delta value but
-with `_1` there is an additional field to store data which in this case is the
-minimum.
+So the above is a common patterns where `_0` there is only the one delta value
+but with `_1` there is an additional field to store data which in this case is
+the minimum. I'm thinking that `_0` is because it needs at least the delta.
 
 #### Quantization
 Calculate min and delta using the forumla:
 ```
 delta = (max_value - min_value) / 15
 ```
+The 15 comes from the number of bits used for quantization which in this case
+is 4 (1111b, 15d).
+
 Then quantize using the formula:
 ```
 quantized_value = round((org_value - min_value) / delta)
@@ -134,10 +156,18 @@ quantized values = {0, 5, 10, 15}
 15 -> (15 * 0.02) + 0.2 = 0.5
 ```
 
+### Naming Convention
+So the above is a common patterns where `_0` there is only the one delta value
+but with `_1` there is an additional field to store data which in this case is
+the minimum. I'm thinking that `_0` is because it needs at least the delta which
+is used to dequantize the quantized value when we scale the quantized value back
+to the "original" (there is/maybe some loss).
+
 ### `block_q5_0`
 We now have 5 bits (11111b, 32 values) to quantize the values:
 ```c
 #define QK5_0 32
+
 typedef struct {
     ggml_half d;           // delta
     uint8_t qh[4];         // 5-th bit of quants
@@ -163,6 +193,34 @@ store two in each entry in this array:
    [ nibble0  ][ nibble1   ]
 ```
 With this we can store 32 quantized values in this array.
+`qh` (h for high) is used to store the 5th bit of the quantized value so this is
+16 bits in total, one for each entry in `qs` (the quantized values).
+
+Like before we first need to calculate the delta:
+```
+delta = max_value / 31
+```
+This time we use 31 because we have 5 bits (11111b, 31d).
+The to get the quantized values we use the formula:
+```
+quantized_value = round(org_value / delta)
+```
+For example:
+```
+org_values = {0.2, 0.3, 0.4, 0.5}
+max_value = 0.5
+delta = 0.5 / 31 = 0.0161
+
+0.2 -> 0.2 / 0.0161 = 12
+0.3 -> 0.3 / 0.0161 = 18
+0.4 -> 0.4 / 0.0161 = 25
+0.5 -> 0.5 / 0.0161 = 31
+
+12 (01100b) = qs[0] = 1100b  gh[0] = 0
+18 (10010b) = qs[1] = 0010b  gh[1] = 1
+25 (11001b) = qs[2] = 1001b  gh[2] = 1
+31 (11111b) = qs[3] = 1111b  gh[3] = 1
+```
 
 ```console
 $ gdb --args bin/quants
