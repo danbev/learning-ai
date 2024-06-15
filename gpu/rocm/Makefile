@@ -1,6 +1,7 @@
 
 helloworld: src/helloworld.cpp
-	hipcc -o $@ $<
+	# use --keep to inspect the generated assembly code
+	env HIP_PLATFORM=nvidia hipcc -o $@ $<
 
 .PHONY: clean
 clean:
