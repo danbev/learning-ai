@@ -18,7 +18,7 @@ TARGETS := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES))
 
 all: $(TARGETS)
 
-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
+ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
 $(TARGETS): % : $(SRCDIR)/%.c | bindir
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \

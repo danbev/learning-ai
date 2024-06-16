@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "ggml.h"
+#include "ggml/ggml.h"
 #include "ggml-quants.h"
 #include "ggml-impl.h"
 
@@ -34,7 +34,10 @@ int main(int argc, char **argv) {
     printf("data[%d]: %f\n", i, block_q4_0.qs[i] * ggml_compute_fp16_to_fp32(block_q4_0.d));
   }
 
-  //ggml_type_traits_t q4_0 = type_traits[GGML_TYPE_Q4_0];
+  ggml_type_traits_t q4_0 = ggml_internal_get_type_traits(GGML_TYPE_Q4_0);
+  printf("ggml type trait name: %s\n", q4_0.type_name);
+  printf("ggml type trait block size: %d\n", q4_0.blck_size);
+  printf("ggml type trait is_quantized: %s\n", q4_0.is_quantized ? "true" : "false");
 
   return 0;
 }
