@@ -27,9 +27,13 @@ int main(int argc, char **argv) {
         }
     };
   printf("block_q4_0 delta: %f\n", ggml_compute_fp16_to_fp32(block_q4_0.d));
-  printf("block_q4_0 qs:\n");
-  for (int i = 0; i < Q_SIZE; i++) {
+  for (int i = 0; i < QK4_0/2; i++) {
     printf("block_q4_0.qs[%d]: %d\n", i, block_q4_0.qs[i]);
+  }
+
+  printf("Dequantize block_q4_0\n");
+  for (int i = 0; i < QK4_0/2; i++) {
+    printf("data[%d]: %f\n", i, block_q4_0.qs[i] * ggml_compute_fp16_to_fp32(block_q4_0.d));
   }
 
   return 0;
