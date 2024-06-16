@@ -12,12 +12,10 @@
 #warning "[danbev] GGML_COMMON_DECL_CUDA is defined"
 #endif
 
-#define Q_SIZE 4
-
 int main(int argc, char **argv) {
   printf("GGML Quantization examples\n");
   
-  float data[Q_SIZE] = {0.2, 0.3, 0.4, 0.5};
+  float data[] = {0.2, 0.3, 0.4, 0.5};
 
   float d = 0.5 / 15.0;
   block_q4_0 block_q4_0 = {
@@ -35,6 +33,8 @@ int main(int argc, char **argv) {
   for (int i = 0; i < QK4_0/2; i++) {
     printf("data[%d]: %f\n", i, block_q4_0.qs[i] * ggml_compute_fp16_to_fp32(block_q4_0.d));
   }
+
+  //ggml_type_traits_t q4_0 = type_traits[GGML_TYPE_Q4_0];
 
   return 0;
 }
