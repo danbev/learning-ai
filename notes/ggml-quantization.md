@@ -222,6 +222,44 @@ delta = 0.5 / 31 = 0.0161
 31 (11111b) = qs[3] = 1111b  gh[3] = 1
 ```
 
+### `block_q5_1`
+This struct is defined as follows:
+```c
+#define QK5_1 32
+
+typedef struct {
+    union {
+        struct {
+            ggml_half d; // delta
+            ggml_half m; // min
+        } GGML_COMMON_AGGR;
+        ggml_half2 dm;
+    };
+    uint8_t qh[4];         // 5-th bit of quants
+    uint8_t qs[QK5_1 / 2]; // nibbles / quants
+} block_q5_1;
+``
+So this is very similar to `block_q5_0` and similar in the same way as
+`block_q4_1` is to `block_q4_0`.
+
+### `block_q8_0`
+```c
+#define QK8_0 32
+typedef struct {
+    ggml_half d;       // delta
+    int8_t  qs[QK8_0]; // quants
+} block_q8_0;
+```
+This is pretty similar to what we have seen before but notice that the quantized
+values array are now 32 elements long. And the type is `int8_t` which is 1 byte
+and not `uint8_t`. This is because the lower quantization blocks we have seen so
+far is because the values are all positive, like for 4 bits we have 0000b-1111b
+(0-15d). But now we have 8 bits so we can represent negative values as well
+which as another advantage of having symmetric quantization.
+But other than that the quantization is the same as before.
+
+__wip__
+
 ```console
 $ gdb --args bin/quants
 (gdb) ptype  q4_0
