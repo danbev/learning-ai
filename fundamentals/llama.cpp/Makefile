@@ -24,7 +24,7 @@ llama-cuda-debug:
 llama-debug: 
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
-CXXFLAGS = -g3 -Wall -Illama.cpp/ -Illama.cpp/common -Lllama.cpp/
+CXXFLAGS = -g3 -Wall -Illama.cpp/ -Illama.cpp/common -Lllama.cpp/ -fopenmp
 
 OBJS = llama.cpp/common.o \
        llama.cpp/build-info.o \
@@ -196,7 +196,7 @@ merge-lora-adapter-with-base-model:
 	--lora lora-${TYPE}-training-LATEST.gguf
 
 predict-lora:
-	./llama.cpp/main -m models/open_llama-2-7b.gguf \
+	./llama.cpp/llama-cli -m models/open_llama-2-7b.gguf \
         --lora lora-training-LATEST.gguf \
 	-n 100 \
         --n-gpu-layers 10 \
@@ -214,7 +214,7 @@ predict-open-llama-lora-merged-model: PROMPT = "Love's fire heats water"
 predict-open-llama-lora-merged-model: predict-lora-merged-model
 
 predict-lora-merged-model:
-	./llama.cpp/main -m ${MODEL} \
+	./llama.cpp/llama-cli -m ${MODEL} \
         -n 100 \
         --n-gpu-layers ${LAYERS} \
         --no-display-prompt \
@@ -229,8 +229,8 @@ predict-lora-merged-model:
 #-p "<s>[INST] What is the capital of Sweden? [/INST]"
 #-p "<s>[INST] Can you show me a summary of 2 things to do Stockholm? [/INST]"
 
-llama-main:
-	cd llama.cpp && make main LLAMA_CUBLAS=1
+llama-cli:
+	cd llama.cpp && make llama-cli LLAMA_CUBLAS=1
 
 check-llama.cpp-finetune-include:
 	/home/danielbevenius/work/c++/include-what-you-use/build/bin/include-what-you-use -Illama.cpp -I/usr/lib/clang/17/include/ -Illama.cpp/common llama.cpp/examples/finetune/finetune.cpp
