@@ -417,10 +417,10 @@ The predicted output will be:
  ["Somewhere", "over", "the"] -> "rainbow"
  ["Somewhere", "over", "the", "desert"] -> "far"
 ```
-Now, is we compare the actual predition of our original sequence we can see that
-our guess was incorrect, so we can use second token, but we still have the next
-token (simliar to if we had only decoded the original sequence). And then this
-continues with guessing.
+Now, if we compare the actual predition of our original sequence we can see that
+our guess was incorrect, so we can't use the second token, but we still have the
+next token (simliar to if we had only decoded the original sequence). And then
+this continues with guessing.
 
 The above is the gist of it, we try to guess `n` future tokens and then decode
 them in parallel.
@@ -440,8 +440,9 @@ not use one to predict the next token? This is called a helper model or a
 draft model. So we use a small LLM to predict the next token and then use that
 as our guess for the larger LLM model that we are using.
 In llama.cpp the main application has the following options for the draft model:
+
 ```console
-$ ./llama.cpp/main -h | grep draft
+$ ./llama.cpp/llama-cli -h | grep draft
   --draft N             number of tokens to draft for speculative decoding (default: 8)
   -ngld N, --n-gpu-layers-draft N
                         number of layers to store in VRAM for the draft model
