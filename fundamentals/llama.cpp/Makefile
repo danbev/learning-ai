@@ -41,6 +41,9 @@ OBJS = llama.cpp/common.o \
        llama.cpp/grammar-parser.o \
        llama.cpp/json-schema-to-grammar.o
 
+kv-cache: src/kv-cache.cpp
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+
 simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
 
