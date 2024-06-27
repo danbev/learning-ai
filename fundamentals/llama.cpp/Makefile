@@ -24,7 +24,7 @@ llama-cuda-debug:
 llama-debug: 
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
-CXXFLAGS = -g3 -Wall -Illama.cpp/ -Illama.cpp/common -Lllama.cpp/ -fopenmp
+CXXFLAGS = -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ -fopenmp
 
 OBJS = llama.cpp/common.o \
        llama.cpp/build-info.o \
