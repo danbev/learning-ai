@@ -1,8 +1,8 @@
 #include <stdio.h>
 
-#include "ggml/ggml.h"
-#include "ggml/ggml-alloc.h"
-#include "ggml/ggml-backend.h"
+#include "ggml.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 
 int main(int argc, char **argv) {
   printf("GGML reshape tensor examples\n");

@@ -1,8 +1,8 @@
 #include <stdio.h>
 
-#include "ggml/ggml.h"
-#include "ggml/ggml-alloc.h"
-#include "ggml/ggml-backend.h"
+#include "ggml.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 
 void print_backend_info(ggml_backend_buffer_t buffer, struct ggml_context* ctx) {
       printf("------- backend info -------\n");

@@ -1,8 +1,8 @@
 #include <stdio.h>
 
-#include "ggml/ggml.h"
-#include "ggml/ggml-alloc.h"
-#include "ggml/ggml-backend.h"
+#include "ggml.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 
 int main(int argc, char **argv) {
   printf("GGML tensor example\n");
@@ -67,6 +67,7 @@ int main(int argc, char **argv) {
   for (int y = 0; y < ny; y++) {
       for (int x = 0; x < nx; x++) {
           float* value = (float *)( (char *) matrix->data + (y * matrix->nb[1]) + (x * matrix->nb[0]));
+          printf("value: %p\n", value);
           // Since we want to perform byte-level operations and a char is 1 byte.
           // If we don't do this the additions would be done of the size of the
           // type, so 4 bytes for a float. And after we are done we need to
