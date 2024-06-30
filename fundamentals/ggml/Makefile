@@ -1,5 +1,6 @@
 CC = gcc
-CFLAGS = -g -Wall -Iggml/include -Wno-unused-variable
+CXX = g++
+CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -fopenmp
 LDFLAGS = -Lggml/build/src/
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF
 
@@ -11,8 +12,10 @@ VULKAN_FLAGS :=
 SRCDIR = src
 BINDIR = bin
 
-SOURCES := $(wildcard $(SRCDIR)/*.c)
-TARGETS := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES))
+SOURCES_C := $(wildcard $(SRCDIR)/*.c)
+SOURCES_CPP := $(wildcard $(SRCDIR)/*.cpp)
+TARGETS_C := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES_C))
+TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 
 .PHONY: all clean
 
@@ -20,8 +23,13 @@ all: $(TARGETS)
 
 ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
-$(TARGETS): % : $(SRCDIR)/%.c | bindir
+$(TARGETS_C): % : $(SRCDIR)/%.c | bindir
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
+	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
+	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
+
+$(TARGETS_CPP): % : $(SRCDIR)/%.cpp | bindir
+	$(CXX) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
 	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
