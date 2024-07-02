@@ -324,10 +324,90 @@ gdb) l
 8737	    }
 8738	
 8739	    llama_context * ctx = new llama_context(*model);
-(gdb) p ctx.kv_self
-$5 = {has_shift = false, head = 0, size = 0, used = 0, n = 0, cells = std::vector of length 0, capacity 0, k = 0x0, 
-  v = 0x0, ctx = 0x0, buf = {data = 0x0, size = 0, fallback = false}}
 ```
+
+```c
+        if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
+            LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
+            llama_free(ctx);
+            return nullptr;
+        }
+```
+```console
+(gdb) p type_k
+$11 = GGML_TYPE_F16
+(gdb) p type_v
+$12 = GGML_TYPE_F16
+(gdb) p kv_size
+$13 = 1024
+(gdb) p cparams.offload_kqv 
+$14 = true
+(gdb) p ctx->kv_self
+$15 = {has_shift = false, do_defrag = false, do_copy = false, recurrent = false,
+v_trans = true, head = 0, size = 0, used = 0, n = 0,
+type_k = GGML_TYPE_F16,
+type_v = GGML_TYPE_F16,
+cells = std::vector of length 0, capacity 0,
+k_l = std::vector of length 0, capacity 0,
+v_l = std::vector of length 0, capacity 0,
+ctxs = std::vector of length 0, capacity 0, 
+bufs = std::vector of length 0, capacity 0}
+```
+```c++
+static bool llama_kv_cache_init(
+             struct llama_kv_cache & cache,
+               const llama_context * ctx,
+                         ggml_type   type_k,
+                         ggml_type   type_v,
+                          uint32_t   kv_size,
+                              bool   offload) {
+    ...
+    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa() + hparams.n_embd_k_s();
+    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa() + hparams.n_embd_v_s();
+    const int64_t  n_layer      = hparams.n_layer;
+```
+```console
+(gdb) p n_embd_k_gqa 
+$19 = 5120
+(gdb) p n_embd_v_gqa 
+$20 = 5120
+(gdb) p n_layer
+$21 = 40
+```
+
+```c++
+    cache.head = 0;
+    cache.size = kv_size;
+    cache.used = 0;
+
+    cache.type_k = type_k;
+    cache.type_v = type_v;
+
+    cache.cells.clear();
+    cache.cells.resize(kv_size);
+```
+After the resize the cache cells  will contain 1024 cells:
+```console
+(gdb) p cache.cells.size()
+$28 = 1024
+```
+```c++
+    cache.k_l.reserve(n_layer);
+    cache.v_l.reserve(n_layer);
+
+    for (int i = 0; i < (int) n_layer; i++) {
+        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
+        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
+        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
+        ggml_format_name(k, "cache_k_l%d", i);
+        ggml_format_name(v, "cache_v_l%d", i);
+        cache.k_l.push_back(k);
+        cache.v_l.push_back(v);
+    }
+```
+
+
+
 At this stage the kv_self is uninitialized. We can inspect this struct using:
 ```console
 gdb) ptype ctx.kv_self
@@ -3005,7 +3085,7 @@ And that is the last line of `llama_new_context_with_model` and we will return
 control to `llama_init_from_gpt_params`.
 
 
-### ggml_backend
+### `ggml_backend_init`
 The following function is called from main.cpp and I was wondering a little
 about it:
 ```c++
@@ -3024,7 +3104,7 @@ void llama_backend_init(void) {
 #endif
 }
 ```
-At first I though that it looked odd that the was creating a ggml_context to
+At first I though that it looked odd that the was creating a `ggml_context` to
 just free it again. But this is done as ggml has some static global variables
 (so only accessible from ggml.c) that get initialized:
 ```console
@@ -3047,9 +3127,7 @@ We can see the declaration of `ggml_table_gelu_f16` for example:
 static ggml_fp16_t ggml_table_gelu_f16[1 << 16];
 ```
 
-
-
-### llm_build_context
+### `llm_build_context`
 This section is doing to take a detailed look at how a computation graph is
 build in llama.cpp. I'll be using the `main` example to step through the code.
 
@@ -5373,3 +5451,8 @@ If `LLAMA_NATIVE` then the following will be set:
 `-march=native` will cause the compiler to query/probe the current cpu for
 features that it supports, using something like `cpuid` on x86. Depening on what
 is supported the compiler will add flags to enable those features.
+
+
+```console
+$ g++ -mno-f16c -mno-fma -mavx -mno-avx2 -O0 -g -E ggml.c -o ggml.pre
+```
