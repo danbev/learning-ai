@@ -1004,6 +1004,41 @@ $25 = {pos = 64, delta = -192, src = 0, seq_id = std::set with 1 element = {[0] 
 $27 = {pos = 1855, delta = -192, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
 ```
 And after this `n_past` is updated to 2048-192 = 1856. This will cause the
+while loop to be entered again as it's condition is `n_past >= ga_i + ga_w`
+which in this case is `1856 >= 64 + 256` which is true.
+This time through the first shift will be performed on the range 64->1856.
+```console
+(gdb) tbreak  3275
+Temporary breakpoint 3 at 0x5555558275c4: file src/llama.cpp, line 3275.
+(gdb) continue 
+Continuing.
+
+Thread 1 "llama-cli" hit Temporary breakpoint 3, llama_kv_cache_seq_add (cache=..., seq_id=0, p0=64, p1=1856, delta=192) at src/llama.cpp:3275
+3275	            cache.has_shift = true;
+(gdb) p i
+$44 = 256
+(gdb) p cache.cells[i]
+$45 = {pos = 64, delta = -192, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+```
+So we adjusted the remaining positions when we updated during the last iteration
+and we could have exited the loop if the conditions were different. But in this
+case we need to shift the positions from 64 to the end of the cache. We want
+the 'normal/natural' sequence order for these entries, think of this as array
+order from 0-2048. So we adjusted the first 64 entries by dividing, and then
+adjusted all the values above that as well so this will work with the decode
+function. But now we want them in normal order so cell[256] should have pos 256
+and so on.
+After the update we can inspect the cells:
+```console
+(gdb) p cache.cells[256]
+$50 = {pos = 256, delta = -192, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+
+(gdb) p cache.cells[257]
+$52 = {pos = 65, delta = -192, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+```
+Next time though the loop call 257 will be updated to pos 257.
+After that the division will operate on the range 256-512.
+
 
 
 Configuration parameters:
