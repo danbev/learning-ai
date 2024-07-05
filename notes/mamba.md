@@ -109,7 +109,7 @@ independently of the input.
 Lets say we have the following sequence of inputs:
 ```
 "Dan loves icecream"
-```
+
 h'(t) = Ah(0) + B["Dan"]
 ```
 This is the first time so the hidden state is initialized to zeros. B["Dan"] is
