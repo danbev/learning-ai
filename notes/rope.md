@@ -238,12 +238,12 @@ cosine part and the imaginary part is the sine part. So, if we have a complex
 number `a + bi` we can represent it as `r(cos(θ) + i sin(θ))` where `r` is the
 magnitude of the complex number and `θ` is the angle of the complex number.
 
-And just to clarify this for myself, we we can have a varable like m in the
+And just to clarify this for myself, we can have a varable like m in the
 exponentiation:
 ```
 e^imΘ = cos(m * Θ) + i sin(m * Θ)
 ```
-So in this case m is scaling the angle theta before calculating the cosine and
+So in this case `m` is scaling the angle theta before calculating the cosine and
 sine of the angle.
 
 We can rewrite the above formula as
