@@ -4742,7 +4742,7 @@ $34 = std::vector of length 10, capacity 24 = {1, 450, 1234, 304, 29871, 29896, 
 (gdb) call_log_tokens ctx embd_inp
 $35 = "[ '<s>':1, ' The':450, ' answer':1234, ' to':304, ' ':29871, '1':29896, ' +':718, ' ':29871, '1':29896, ' is':338 ]"
 ```
-And a far bit further down in the file we have `embd` declared as:
+And a bit further down in the file we have `embd` declared as:
 ```c++
     std::vector<llama_token> embd;
 ```
@@ -4758,7 +4758,8 @@ The main look looks like this:
       ...
     }
 ```
-`params.n_predit` is set to 5 which is done by the `-n` command line argument.
+`params.n_predict` is set to 5 which is done by the `-n` command line argument.
+
 Now, the first block of this look is guarded by 
 ```c++
         if (!embd.empty()) {
@@ -4767,7 +4768,7 @@ Now, the first block of this look is guarded by
 
         embd.clear();
 ```
-The first time through `embd` is empty so this will not entered on the first
+The first time through `embd` is empty so this will not be entered on the first
 iteration. And notice that embd is always cleared at this point.
 The next if block is the following:
 ```c++
@@ -4775,7 +4776,7 @@ The next if block is the following:
         }
 ```
 We know that `embd_inp` size is 10 and `n_consumed` is 0 so this will not be
-entered, insted the else block of this statement will:
+entered, instead the else block of this statement will:
 ```c++
         } else {
             while ((int) embd_inp.size() > n_consumed) {
@@ -4792,8 +4793,10 @@ entered, insted the else block of this statement will:
 ```
 Where we are looping over the `embd_inp`, the tokens of our prompt, and adding
 them to `embd`.
+
 After this there is some printing but I'll skip the details of that here.
-The next if block the following and now since we have added all the tokens to
+
+The next if-block the following and now since we have added all the tokens to
 embd it will have a size of 10, and `n_consumed` will also be 10:
 ```c++
         if ((int) embd_inp.size() <= n_consumed) {
@@ -4808,7 +4811,7 @@ embd it will have a size of 10, and `n_consumed` will also be 10:
             }
         }
 ```
-I'll skip the  antiprompt block as it will not be entered during this session.
+I'll skip the antiprompt block as it will not be entered during this session.
 ```console
 (gdb) p  llama_token_is_eog(model, (int) llama_sampling_last(ctx_sampling))
 $49 = false
@@ -4824,8 +4827,10 @@ After that we have the following block:
 ```
 And then we continue with at the beginning of the while loop, and this time
 we have a populated `embd` vector or tokens, and `n_remain` is still 5 and the
-other variables are as before. So this time will will enter the if block that
-we skipped on the first iteration:
+other variables are as before.
+
+So this time will will enter the if block that we skipped on the first
+iteration:
 ```c++
     while ((n_remain != 0 && !is_antiprompt) || params.interactive) {
         // predict
@@ -4836,6 +4841,7 @@ we skipped on the first iteration:
 ```
 This `n_ctx - 4` is bothering me and I've yet to be able to track down why this
 is subtracted. 
+
 Next is a check if the size of the `embd` vector is larger than `max_embd_size`
 in which case `embd` is resized to be that size, truncating the prompt.
 ```c++
@@ -4877,8 +4883,10 @@ Finally we will iterate for the tokens in embd:
                 n_past += n_eval;
             }
 ```
-Notice that `n_past` is 10 so we will be passing the complete prompt to decode.
-And `n_past` is 0 at this point.
+Notice that `n_eval` is 10 so we will be passing the complete prompt to decode.
+And `n_past` is 0 at this point. `n_past` specifies the number of key and values
+vectors from the kv-cache. This is the first run so this is 0, but notice that
+it gets updated after the decode operations finishes.
 And that will have performed the forward pass of the module with those tokens.
 This will break out take us out of the first if block and we again have what
 we went through above where we clear embd:
