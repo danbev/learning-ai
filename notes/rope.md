@@ -206,6 +206,7 @@ f_q([1 2 3 4 5 6 7 8], 2)
 
 ```
 f_q(Xₘ, m) = (W_q xₘ)e^(imθ)
+```
 
 Where `W_q` is the query weight matrix, `xₘ` is the m-th row of the query matrix,
 and `θ` is the rotation angle for the m-th position.
