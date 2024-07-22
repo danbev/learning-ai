@@ -38,6 +38,11 @@ pre-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 pre-quants:
 	$(CC) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/quants.pre $(SRCDIR)/quants.c
 
+.PHONY: pre-ggml.c
+pre-ggml.c: CFLAGS += -Iggml/src -Iggml/include/ggml
+pre-ggml.c:
+	$(CC) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/ggml.c.pre ggml/src/ggml.c
+
 #.PHONY: backend-cuda
 backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 backend-cuda: CC = g++
