@@ -19,7 +19,7 @@ TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 
 .PHONY: all clean
 
-all: $(TARGETS)
+all: $(TARGETS_C)
 
 ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
