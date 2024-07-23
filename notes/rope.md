@@ -378,7 +378,7 @@ For example:
 L  = 1024
 L' = 2048
 m  = 500
-m  = 500 * 1048/2024 = 250
+m  = 500 * 2048/1024 = 250
 ```
 
 So the modified RoPE function becomes:
@@ -399,6 +399,16 @@ Addresses the crowding issue of PI and instead of scaling all positions it
 divides the range into groups which can have _different_ scaling factors. This
 method aims to preserve more of the high-frequency information that can be lost
 with uniform scaling.
+My understanding is the NTK interpolation allows a different scaling factor for
+lower dimensions (higher frequences) and one for higher dimension (lower
+frequencies).
+
+Al least in LongRope NTK uses two groups:
+1.  A low-frequency group for shorter positions (smaller scaling factor).
+2.  A high-frequency group for longer positions (larger scaling factor).
+
+### YaRN (Yet another RoPE Network)
+TODO:
 
 
 ### Theta calculation
