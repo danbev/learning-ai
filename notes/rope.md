@@ -353,6 +353,160 @@ And theta is taken from the set of angles we calculated earlier (I think):
 Now, I think that 10000 is the `base_freq` parameter in llama.cpp and perhaps
 that -2 is the `freq_scale`.
 
+### Position Interpolation (PI)
+Is an extension ofr RoPE which allows for the model to handle longer sequences.
+This is a way to squeeze larger context lengths into the length that the model
+was trained on. Instead of extending the position indices beyond the range the
+model was trained on, PI interpolates the positional embeddings for the new
+positions.
+PI introdues a scaling factor 's':
+```
+     L'
+s =  --
+     L
+
+L' = the new longer context lenght.
+L  = the original context length.
+
+                 L'
+m' = m * s = m * --
+                 L
+
+m  = any position in the token embedding sequence.
+
+For example:
+L  = 1024
+L' = 2048
+m  = 500
+m  = 500 * 1048/2024 = 250
+```
+
+So the modified RoPE function becomes:
+```
+                mL'
+f'(x, m) = f(x, ---)
+                 L
+```
+The scaling introduced by Position Interpolation (PI) is applied directly to the
+position index `𝑚`` before calling the original Rotary Position Embedding (RoPE)
+function.
+Doing this for all positions can make the cause the positions that are close to
+each other (where the frequency is high) to be "crowded" and can effect the
+attention calculation.
+
+### NTK (Neural Tangent Kernel) Interpolation
+Addresses the crowding issue of PI and instead of scaling all positions it
+divides the range into groups which can have _different_ scaling factors. This
+method aims to preserve more of the high-frequency information that can be lost
+with uniform scaling.
+
+
+### Theta calculation
+The values of theta are per embedding dimension and are calculated as follows:
+```
+θ_j = 10000^-2j/d
+```
+Notice that this value, only theta does not depend on the position of the token
+embedding in the sequence, it only depends on the dimension of the embedding.
+`d` is the size of the embedding space divided by 2, so this is operating on
+pairs of dimentions. So if we have an embedding space of 1024 dimensions, then
+`d` would be 512. This means that if we know the size of the embedding space we
+can pre-calculate the values of theta for each dimension.
+
+Lets look at the first 10 values:
+```
+--- Dimensions 0-10 ---
+theta_0: 1.036633
+theta_1: 1.000000
+theta_2: 0.964662
+theta_3: 0.930572
+theta_4: 0.897687
+theta_5: 0.865964
+theta_6: 0.835363
+theta_7: 0.805842
+theta_8: 0.777365
+theta_9: 0.749894
+```
+So the values start of around 1 and then decrease as we go along the dimensions.
+This will cause the earlier rotations to have longer "wavelengths" and thus lower
+frequencies.
+
+And then the last 10 values:
+```
+--- Dimensions 502-512 ---
+theta_502: 0.0000000148550802
+theta_503: 0.0000000143301257
+theta_504: 0.0000000138237223
+theta_505: 0.0000000133352143
+theta_506: 0.0000000128639694
+theta_507: 0.0000000124093776
+theta_508: 0.0000000119708503
+theta_509: 0.0000000115478198
+theta_510: 0.0000000111397386
+theta_511: 0.0000000107460783
+```
+And notice that these values are smaller and will therefor have shorter
+"wavelengths" and thus higher frequencies.
+
+If we look at the graph for this we will see something like this:
+
+[image: rope-theta.png]
+
+Now, to make this more concrete lets look at `theta_2`.
+Recall that we have a rotation matrix that looks like this:
+```
+Rotation matrix: [cos(θ_i * p) -sin(θ_i * p)]
+                 [sin(θ_i * p)  cos(θ_i * p)]
+
+p = position in the sequence.
+
+p = 1:
+theta_2 = 0.964662
+
+For p = 1    [cos(0.964662 * 1) -sin(0.964662 * 1)]
+             [sin(0.964662 * 1)  cos(0.964662 * 1)]
+
+For p = 2    [cos(0.964662 * 2) -sin(0.964662 * 2)]
+             [sin(0.964662 * 2)  cos(0.964662 * 2)]
+```
+Now recall that we have an input sequence of token embeddings. Each token
+embedding has a position in the input sequence, and is a vector of a certain
+dimension. The grouping is of the dimensions of the embedding vector.
+
+So, for `theta_2` we apply the same theta value but we multiply it by the
+token embedding position.
+
+```
+Rotation matrix: [cos(θ_i * p) -sin(θ_i * p)]
+                 [sin(θ_i * p)  cos(θ_i * p)]
+
+v = [v₁, v₂]
+[cos(θ_i * p) -sin(θ_i * p)] [v₁] = [v₁ cos(θ_i * p) - v₂ sin(θ_i * p)]
+[sin(θ_i * p)  cos(θ_i * p)] [v₂]   [v₁ sin(θ_i * p) + v₂ cos(θ_i * p)]
+```
+
+Lets recap the process...We have token embeddings which describe the semantic
+meaning of the tokens. So tokens that are simliar will be closer to each other.
+By rotating these vectors (token embeddings) differently based on their position
+in the sequence, RoPE modifies their direction slightly but distinctively. This
+rotation does not fundamentally change the proximity of vectors with similar
+meanings but adds a layer of positional nuance to them.
+When embeddings are rotated by RoPE, the dot product between two embeddings now
+captures not only their semantic similarity but also their relative positions.
+The rotation ensures that even semantically identical tokens are distinguished
+by their positions in the sequence.
+During training, the model learns to interpret these rotations as indicators of
+sequence structure. 
+
+Where `i` is the index of the embedding dimension, and `d` is the total number
+of dimensions in the embedding space.
+
+Notice that the position 'p' is used above in the rotation matrix and depending
+on the context length the model was trained on there will be a certain range
+where the model is trained to handle. If we exceed this range the model might
+not produce good results.
+
+
 #### beta_fast and beta_slow (blending)
 Imagine a model trained up to a context length of 512 tokens, and you wish to
 extend its capabilities to handle up to 1024 tokens. A blending range might be
