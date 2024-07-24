@@ -35,18 +35,17 @@ dimensional vector that contains the positions. And I think that `c` is a
 tensor that contains scaling factors but I've not gotten this far in my
 understanding of this yet, and in the example it NULL is passed in.
 
-`n_dims` is, `d` in RoPE. TODO: link with rope.md document.
-`mode` is ?
-`n_ctx_orig` is the models original context that it was trained on, this might
+* `n_dims` is, `d` in RoPE. TODO: link with rope.md document.
+* `mode` is ?
+* `n_ctx_orig` is the models original context that it was trained on, this might
 be used by PI and used to calculate 's' (s = L'/L) I think?
-`freq_base` is the base frequency which is 10000 by default.
-`freq_scale` is the scaling factor which I thought might be -2 because this is
-what the paper uses but the default for this is 1.0f.
-`ext_factor` might be the extrapolation factor but I'm not sure.
-`attn_factor` ? 
-`beta_fast` might be the scaling factor for YaRN and which should be used for
+* `freq_base` is the base frequency which is 10000 by default.
+* `freq_scale` TODO: what is this?
+* `ext_factor` might be the extrapolation factor but I'm not sure.
+* `attn_factor` TODO: what is this? 
+* `beta_fast` might be the scaling factor for YaRN and which should be used for
 scaling the higher frequencies.
-`beta_slow` also related to YaRN and might be  used to scale the lower
+* `beta_slow` also related to YaRN and might be  used to scale the lower
 frequencies.
 
 So that will set up the context and the tensor operations for RoPE. Next we
@@ -64,12 +63,12 @@ Breakpoint 5 at 0x55555558acf8: file /home/danbev/work/ai/learning-ai/fundamenta
 (gdb) r
 ```
 Keep in mind that the excution in GGML is multithreaded and multiple threads
-will be running when our break point is it. So just continuing stepping will
-this using:
+will be running when our break point is hit. So we will disable this behavior
+and lock the current thread using the following command:
 ```console
 (gdb) set scheduler-locking on
 ```
-And now we can step only the current thread.
+And now we can step using only the current thread.
 
 ```c
 static void ggml_compute_forward_rope(
