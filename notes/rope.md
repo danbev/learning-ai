@@ -407,8 +407,158 @@ Al least in LongRope NTK uses two groups:
 1.  A low-frequency group for shorter positions (smaller scaling factor).
 2.  A high-frequency group for longer positions (larger scaling factor).
 
-### YaRN (Yet another RoPE Network)
-TODO:
+### YaRN (Yet another RoPE ExtensioN method)
+Is also an extention of RoPE and builds upon the NTK idea as well.
+
+The notation that the YaRN paper uses is a bit different from the one I have
+used above:
+```
+f'w(x_m, m, Θ_d) = fw(x_m, g(m), h(Θ_d))
+```
+So the function `fw` is parameterized by W (W for weights). You can think of
+this as a field/member of a struct/class that this function is also a member of.
+The other parameters as the input to the function. `x_m` is an embedding for a
+token in the sequence. `m` is that tokens position in the sequence. And 'Θ_d' is
+the set of angles for the dimensions of the embedding space.
+
+For PI the function becomes:
+```
+g(m) = m/s
+h(Θ_d) = Θ_d
+
+s = L'/L
+```
+
+YaRN introduces a new parameter lambda (λ) which is defined as:
+```
+      2Π     
+λ_d = --- = 2Πb^(2d/|D|)
+      Θ_d
+
+Θ_d = the rotation angle for the d-th dimension.
+b   = the base frequency.
+|D| = the total number of dimensions in the embedding space.
+```
+The wavelength λ_d specifies how far along the sequence of input tokens we need
+to go before the positional embedding for a particular dimension repeats.
+
+'Θ_d' Each dimension in the embedding space has its own value for 'Θ_d'. For a
+given token at position 'm', the positional encoding for the d-th dimension is
+derived from m scaled by theta_d, 'm * Θ_d'.
+
+Lets try to understand  this a little better. Take the following table that
+tries to show the values for λ_d=4
+```
+Token postiion      λ_d      Rotation Angle (radians)  Rotation angle (degrees)
+0                   4        0                         0
+1                   4        π/2                       90
+2                   4        π                         180
+3                   4        3π/2                      270
+4                   4        2π   (same as 0)          360 (same as 0)
+5                   4        5π/2 (same as π/2)        450 (same as 90)                     
+6                   4        3π   (same as π)          540 (same as 180)
+7                   4        7π/2 (same as 3π/2)       630 (same as 270)
+8                   4        4π   (same as 0)          720 (same as 0)
+9                   4        9π/2 (same as π/2)        810 (same as 90)
+```
+Notice that after a full cycle (2π) the rotation angle is reset to 0 so there
+are only 4 unique values for the rotation angle. Recall that sine/cosine are
+cycles (think of the unit circle) and going around the circle and landing only
+same place but going around multiple times we will have the same rotation angle.
+
+So the model will only be able to distinguish between 4 different tokens
+positions for this dimension. Recall that Θ_d is the rotation angle for a
+specific dimension, and after 4 tokens the this rotation angle will repeat so
+at most the model will be able to distinguish between 4 tokens apart or something
+like that.
+
+The positional encoding allows the model to recognize patterns and relationships
+within each span of 4 tokens uniquely. However, beyond this span, the same
+values repeat, providing a way to capture periodic structures.
+
+```
+         emb₀ emb₁  emb₂  emb₃  emb₄
+token₀: 
+token₁:
+token₂:
+token₃:
+token₄:
+...
+```
+Each embedding has its own theta, namely Θ_d. And recall that each embedding
+is/represents a feature. So every feature has a rotation angle.
+```
+         Θ₀   Θ₁    Θ₂    Θ₃    Θ₄
+token₀: 
+token₁:
+token₂:
+token₃:
+token₄:
+...
+```
+In YaRN every dimension can have a λ_d value which specifies how many tokens
+that can be rotated before the cycle repeats. So if we have a λ_d value of 4
+then the rotation angle will repeat every 4 tokens. There will be 4 unique
+rotations.
+
+
+```
+Sequence: "Dan loves ice cream"
+
+                    Θ₁
+token₀ (Dan)        sin(0)=0, cos(0)=1
+token₁ (loves)      sin(π/2)=1, cos(π/2)=0
+token₂ (ice)        sin(π)=0, cos(π)=-1
+token₃ (cream)      sin(3π/2)=-1, cos(3π/2)=0
+
+token₄ (Dan)        sin(2π)=0, cos(2π)=1 (same as token₀)
+token₅ (loves)      sin(5π/2)=1, cos(5π/2)=0 (same as token₁)
+token₆ (ice)        sin(3π)=0, cos(3π)=-1 (same as token₂)
+token₇ (cream)      sin(7π/2)=-1, cos(7π/2)=0 (same as token₃)
+```
+Now, keep in mind that each dimension represents a feature of some kind that
+the model has learned. But keep in mind that we are only dealing with positional
+encodings here so when a rotation angle repeats it does so for a this specific
+dimension and each dimension has its own lambda value.
+
+#### NTK-by-parts:
+In PI and NTK-aware interpolation all RoPE demensions are scaled by the same
+factor. On thing that was observed is that for a given context lenght L there
+were dimensions that end up with a wavelength greater than the max context
+length seen during training (lambda_d > L).
+They also mention in the YaRN paper that when streching the RoPE dimensions
+by either a scale 's' or by changing the base frequency 'b' all tokens become
+closer to each other.
+To address these issues they choose not to interpolate the higher frequencies
+at all, while always interpolating the lower frequencies.
+* if the wavelenght λ_d is much smaller than the context size L no interpolation
+  is done.
+* if the wavelenght λ_d is much larger, or equal, than the context size L the
+  dimension is interpolated (not extrapolated).
+* for dimensions in between the two above they do a bit of both, simlar token
+  NTK-aware?
+
+So there is a need to distinguish between when we don't interpolate and where
+we do interpolate, and the range inbetween where we do a bit of both.
+
+The rotation for a specific dimension is determined by:
+```
+         L          L
+r(d) =  --- =  -----------
+        λ_d     2Πb'^(2d/|D|)
+```
+
+They introduce two extra parameters `α` and `β` which are used to determine 
+these ranges.
+Where rd(d) < `α` we linearly interpolate by the scale `s` (same as PI).
+Where rd(d) > `β` we don't interpolate at all (use 1).
+```
+y(r) = {0,      if r < α
+        1,      if r > β
+        r - a
+        ------,  otherwise
+        β - a
+```
 
 
 ### Theta calculation
