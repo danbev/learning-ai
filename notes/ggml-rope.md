@@ -93,9 +93,10 @@ static void ggml_compute_forward_rope(
     }
 }
 ```
-I need to readup on how this works but with some handwaving the
+I need to read up on how this works but with some handwaving the
 `ggml_compute_params` is part of GGMLs multithreading and contains information
 about which thread and what part of the tensor this thread is working on.
+
 ```console
 (gdb) p *dst->src[0]
 $9 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 512, 1}, nb = {4, 512, 16384, 8388608}, op = GGML_OP_RESHAPE, 
@@ -131,9 +132,10 @@ $13 = {type = GGML_TYPE_I32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne =
   op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, 
   data = 0x7ffff70ed460, name = "pos", '\000' <repeats 60 times>, extra = 0x0}
 ```
-And in this case we did not specify a c so src2 is null.
-Next the parameters, that is the parameters that were set on the operation
-parameters and not the computation params:
+And in this case we did not specify a `c` argument so `src2` is null.
+
+Next the parameters, that is the tensor operation parameters not the computation
+params:
 ```console
 (gdb) p dst.op_params
 $16 = {0, 128, 0, 0, 4096, 1176256512, 1065353216, 0, 1065353216, 1107296256, 0, 0, 0, 0, 0, 0}
@@ -179,51 +181,82 @@ by the make target `pre-ggml.c`).`:
     const size_t   nb2 = (dst)->nb[2]; (void)(nb2);
     const size_t   nb3 = (dst)->nb[3]; (void)(nb3);
 ```
-So this is simply extracting local variables for src0 and dst and the casts are
-to avoid warnings that the variables might not be used.
+So this is simply extracting local variables from src0 and dst and the casts are
+to avoid warnings that the variables might not be used. Specifically it is
+creating local variables for the number of elements and the number the strides.
 
 
 A little further down we have the following:
 ```c
     const float theta_scale = powf(freq_base, -2.0f/n_dims);
 ```
-Now, this looks familar (at least after reading [rope.md](rope.md) and notice
-that this also clarifies that the `freq_scale` is not the scaling factor for
-the frequency which I originally thought.
+Now, this looks familar (at least it might be after reading [rope.md](rope.md)
+and notice that this also clarifies that the `freq_scale` is not the scaling
+factor for the frequency which I initially thought (the -2f that is).
 ```console
 (gdb) p theta_scale
 $27 = 0.865964353
 ```
-Following that we have this function:
+
+Following that we have `ggml_rope_yarn_corr_dims`:
 ```c
     float corr_dims[2];
     ggml_rope_yarn_corr_dims(n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
 ```
-And notice that this is where we use (or at least pass in) the original context
-length, the `freq_base`, `beta_fast` and `beta_slow`. And notice that corr_dims
-is an array of two floats that will be populated by the function.
+So this is where `beta_fast` and `beta_slow` are used and notice that
+`corr_dims` is an array of two floats that will be populated by the function.
 
 ```c
 GGML_CALL void ggml_rope_yarn_corr_dims(
-    int n_dims, int n_ctx_orig, float freq_base, float beta_fast, float beta_slow, float dims[2]
+    int n_dims,
+    int n_ctx_orig,
+    float freq_base,
+    float beta_fast,
+    float beta_slow,
+    float dims[2]
 ) {
     // start and end correction dims
     float start = floorf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_fast, freq_base));
+
     float end   =  ceilf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_slow, freq_base));
+
     dims[0] = MAX(0, start);
     dims[1] = MIN(n_dims - 1, end);
 }
 ```
-Lets break this down a little and start by looking the function `ggml_rope_yarn_corr_dim`:
+Lets break this down a little and start by looking first call to
+`ggml_rope_yarn_corr_dim`:
+```console
+(gdb) s
+ggml_rope_yarn_corr_dims (n_dims=128, n_ctx_orig=4096, freq_base=10000, beta_fast=0, beta_slow=0, dims=0x7ffff58e9c50) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:13801
+13801	    float start = floorf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_fast, freq_base));
+```
+And this will first call `ggml_rope_yarn_corr_dim`:
+```console
+(gdb) s
+ggml_rope_yarn_corr_dim (n_dims=128, n_ctx_orig=4096, n_rot=0, base=10000) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:13778
+13778	    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
+```
+Notice that we are passing in `beta_fast` as `n_rot`. This function has the
+following comment:
+```c
+// Apparently solving `n_rot = 2pi * x * base^((2 * max_pos_emb) / n_dims)` for x, we get
+// `corr_dim(n_rot) = n_dims * log(max_pos_emb / (n_rot * 2pi)) / (2 * log(base))`
+```
+```
+      2Π
+λ_d = --- = 2Πb^(2d/|D|)
+      Θ_d
+
+Θ_d = the rotation angle for the d-th dimension.
+b   = the base frequency.
+|D| = the total number of dimensions in the embedding space.
+```
+
 ```c
 static float ggml_rope_yarn_corr_dim(int n_dims, int n_ctx_orig, float n_rot, float base) {
     return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
 }
-```
-Notice that we are passing in `beta_fast` and `beta_slow` as `n_rot`.
-```c
-// Apparently solving `n_rot = 2pi * x * base^((2 * max_pos_emb) / n_dims)` for x, we get
-// `corr_dim(n_rot) = n_dims * log(max_pos_emb / (n_rot * 2pi)) / (2 * log(base))`
 static float ggml_rope_yarn_corr_dim(int n_dims, int n_ctx_orig, float n_rot, float base) {
     return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
 }
@@ -266,3 +299,119 @@ So this becomes `128 * log(4096 / (32 * 2 * pi)) / (2 * log(10000))` which is
 `128 * log(4096 / 201.06193) / (2 * log(10000))` which is `128 * log(20.354) /
 (2 * 4)` which is `128 * 3.015 / 8` which is `48`. So the start is 48 and the
 end is 80. And this is the start and end of the correction dimensions.
+
+The following will iterate over all the batches which is 1 in this case.
+And then iterate over all the tokens (ne2) which is my case is only 2 as this
+is the warmup decoding call:
+```console
+(gdb) p src0.ne
+$29 = {128, 32, 2, 1}
+```
+```
+         [position embeddings]
+  0                                             127
+  +----------------------------------------------+
+  |                                              |
+  |                                              |
+  |                                              |  [heads]
+  |                                              |
+  |                                              |
+  |                                              |
+  |                                              |
+  +----------------------------------------------+
+31
+```
+
+```c
+    for (int64_t i3 = 0; i3 < ne3; i3++) {
+        for (int64_t i2 = 0; i2 < ne2; i2++) {
+            const int64_t p = pos[i2];
+
+            float * cache = (float *) params->wdata + (ne0 + CACHE_LINE_SIZE_F32)*ith;
+            ggml_rope_cache_init(p,
+                                 freq_scale,
+                                 freq_factors,
+                                 corr_dims,
+                                 ne0,
+                                 ext_factor,
+                                 attn_factor,
+                                 cache, sin_sign, theta_scale);
+```
+So for each token we iterate over we will initialize a cache for the position
+encodings.
+```c
+static void ggml_rope_cache_init(
+     float theta_base,
+     float freq_scale,
+     const float * freq_factors,
+     float corr_dims[2],
+     int64_t ne0,
+     float ext_factor,
+     float mscale,
+     float * cache,
+     float sin_sign,
+     float theta_scale) {
+    float theta = theta_base;
+
+    for (int64_t i0 = 0; i0 < ne0; i0 += 2) {
+        const float ff = freq_factors ? freq_factors[i0/2] : 1.0f;
+        rope_yarn(
+            theta/ff, freq_scale, corr_dims, i0, ext_factor, mscale, &cache[i0 + 0], &cache[i0 + 1]
+        );
+        cache[i0 + 1] *= sin_sign;
+
+        theta *= theta_scale;
+    }
+}
+```
+This will iterate over all the position embedding dimensions which is 128 in
+this case. And notice that this is done in pair which is he pairwise rotation.
+So this is where the third tensor, 'c' is used which is called frequency factors.
+If this is null the frequency factor is 1.0f. 
+We then call `rope_yarn`.
+```c
+static void rope_yarn(
+    float theta_extrap,
+    float freq_scale,
+    float corr_dims[2],
+    int64_t i0,
+    float ext_factor,
+    float mscale,       // named attn_factor in caller function.
+    float * cos_theta,
+    float * sin_theta) {
+
+    // Get n-d rotational scaling corrected for extrapolation
+    float theta_interp = freq_scale * theta_extrap;
+    float theta = theta_interp;
+    if (ext_factor != 0.0f) {
+        float ramp_mix = rope_yarn_ramp(corr_dims[0], corr_dims[1], i0) * ext_factor;
+        theta = theta_interp * (1 - ramp_mix) + theta_extrap * ramp_mix;
+
+        // Get n-d magnitude scaling corrected for interpolation
+        mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
+    }
+    *cos_theta = cosf(theta) * mscale;
+    *sin_theta = sinf(theta) * mscale;
+}
+```
+In my case `ext_factor` is 0.0f so we don't do the extrapolation. But I'll return
+to this later and specify the correct command line parameters so that this is
+enabled. Right not I'd like to look at the last two lines:
+```c
+    *cos_theta = cosf(theta) * mscale;
+    *sin_theta = sinf(theta) * mscale;
+```
+So this is calculating the angles for cosine and sine for the rotation, and
+notice that it is also scaling the result of cos(theta) and sin(theta).
+In the YaRN paper section 3.4 YaRN they describe this as introducing a
+temperature `t` on the logits before the softmax function:
+```
+         q^T_m k_n
+softmax(-----------)
+          t√|D|
+```
+They use a `scaling trick` where they achive the same effect by scaling the
+RoPE embeddings by √1/t which in our case would be √1/mscale or √1/attn_factor.
+By doing this there are no changes to the model architecture and the only
+difference is the scaling of the embeddings.
+
