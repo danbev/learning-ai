@@ -121,17 +121,11 @@ static void ggml_compute_forward_rope_f32(
     const struct ggml_tensor * src1 = dst->src[1];
     const struct ggml_tensor * src2 = dst->src[2];
 ```
-```console
-(gdb) p *src0
-$12 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 512, 1}, nb = {4, 512, 16384, 8388608}, op = GGML_OP_RESHAPE, 
-  op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff68ed030, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
-  view_src = 0x7ffff68ed030, view_offs = 0, data = 0x7ffff68ed180, name = "a_reshaped", '\000' <repeats 53 times>, extra = 0x0}
 
-(gdb) p *src1
-$13 = {type = GGML_TYPE_I32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {512, 1, 1, 1}, nb = {4, 2048, 2048, 2048}, op = GGML_OP_NONE, 
-  op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, 
-  data = 0x7ffff70ed460, name = "pos", '\000' <repeats 60 times>, extra = 0x0}
-```
+Now `src0` is the tensor that is to be rotated and it will have a shape of
+`{128, 32, sequence_length, 1}`. And `src1` is the tensor that contains the
+positions and it be a vector of the same size of the sequence length.
+
 And in this case we did not specify a `c` argument so `src2` is null.
 
 Next the parameters, that is the tensor operation parameters not the computation
@@ -203,8 +197,12 @@ Following that we have `ggml_rope_yarn_corr_dims`:
     float corr_dims[2];
     ggml_rope_yarn_corr_dims(n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
 ```
-So this is where `beta_fast` and `beta_slow` are used and notice that
-`corr_dims` is an array of two floats that will be populated by the function.
+So this is where `beta_fast` and `beta_slow` are used and they correspond to
+the alpha and beta parameters in the YaRN paper. These are used to define the
+boundaries for the different interpolation strategies.
+
+Notice that `corr_dims` is an array of two floats that will be populated by the
+function.
 
 ```c
 GGML_CALL void ggml_rope_yarn_corr_dims(
@@ -224,13 +222,20 @@ GGML_CALL void ggml_rope_yarn_corr_dims(
     dims[1] = MIN(n_dims - 1, end);
 }
 ```
-Lets break this down a little and start by looking first call to
-`ggml_rope_yarn_corr_dim`:
+
 ```console
 (gdb) s
-ggml_rope_yarn_corr_dims (n_dims=128, n_ctx_orig=4096, freq_base=10000, beta_fast=0, beta_slow=0, dims=0x7ffff58e9c50) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:13801
-13801	    float start = floorf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_fast, freq_base));
+ggml_rope_yarn_corr_dims (n_dims=128,
+                          n_ctx_orig=4096,
+                          freq_base=10000,
+                          beta_fast=32,
+                          beta_slow=1,
+                          dims=0x7fffffffb220) at ggml/src/ggml.c:13941
+13941	    float start = floorf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_fast, freq_base));
 ```
+
+Lets break this down a little and start by looking first call to
+`ggml_rope_yarn_corr_dim`:
 And this will first call `ggml_rope_yarn_corr_dim`:
 ```console
 (gdb) s
@@ -243,85 +248,68 @@ following comment:
 // Apparently solving `n_rot = 2pi * x * base^((2 * max_pos_emb) / n_dims)` for x, we get
 // `corr_dim(n_rot) = n_dims * log(max_pos_emb / (n_rot * 2pi)) / (2 * log(base))`
 ```
+This is calculating the dimension that would give us a certain number of
+rotations (n_rot) at the maxium position (n_ctx_orig).
+```console
+n_dims=128, n_ctx_orig=4096, n_rot=32, base=10000
+(gdb) p n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)3.14)) / (2 * logf(base))
+$10 = 20.9480038
 ```
-      2Π
-λ_d = --- = 2Πb^(2d/|D|)
-      Θ_d
+The value `20.95` represents a specific dimension of the position embedding when
+the sequence length is at the maximum value (n_ctx_orig).
 
-Θ_d = the rotation angle for the d-th dimension.
-b   = the base frequency.
-|D| = the total number of dimensions in the embedding space.
-```
+So imagine we have a sequence length of 4096 what we are asking is that at what
+dimension does the position embedding rotate 32 times.
+Dimensions lower than 20.95 will rotate more than 32 times and dimensions higher
+will rotate fewer times.
+This value will be passed to floorf so it will become 20.
 
-```c
-static float ggml_rope_yarn_corr_dim(int n_dims, int n_ctx_orig, float n_rot, float base) {
-    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
-}
-static float ggml_rope_yarn_corr_dim(int n_dims, int n_ctx_orig, float n_rot, float base) {
-    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
-}
-```
-What is going on here is that this function calculates the start and end
-dimensions for which rotation corrections should be applied. So in our case
-they should be applied for dimensions greater than 48 and less than 80.
-
-From the paper we see:
-
-```
-       2 PI      
-λ_d = -------  = 2PI b^(2d|D|)
-       theta_d   
-
-d = index of the hidden dimension.
-b = base frequency.
-D = number of hidden dimensions.
-```
-λ_d indicates how many tokens are required for the positional encoding at the
-d-th dimension to cycle through a complete period.
-
-This describes the number of tokens needed for the positional embedding at the 
-d-th hidden dimension to complete a full rotation of 2PI.
-
-
-```
-          L         L 
-r(d) = -------- = ----------
-       lambda_d    2PI b^2d|D|
-
-```
-
+Then we will do the same for `beta_slow`:
 ```console
 (gdb) s
-ggml_rope_yarn_corr_dim (n_dims=128, n_ctx_orig=4096, n_rot=32, base=10000) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:13778
-13778	    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
+ggml_rope_yarn_corr_dim (n_dims=128, n_ctx_orig=4096, n_rot=1, base=10000) at ggml/src/ggml.c:13918
+13918	    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
+(gdb) p n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)3.14)) / (2 * logf(base))
+$11 = 45.0304031
 ```
-So this becomes `128 * log(4096 / (32 * 2 * pi)) / (2 * log(10000))` which is
-`128 * log(4096 / 201.06193) / (2 * log(10000))` which is `128 * log(20.354) /
-(2 * 4)` which is `128 * 3.015 / 8` which is `48`. So the start is 48 and the
-end is 80. And this is the start and end of the correction dimensions.
+And similar to above here we are asking at which dimension the position rotates
+only once (slower frequence compared to the above).
+And this value will be passed to ceilf so it will become 46.
+
+```
+(gdb) p corr_dims 
+$17 = {20, 46}
+```
 
 The following will iterate over all the batches which is 1 in this case.
-And then iterate over all the tokens (ne2) which is my case is only 2 as this
-is the warmup decoding call:
+And then iterate over all the tokens (ne2) which is my case is only 6 as the
+prompt was "What is LoRA?"
 ```console
 (gdb) p src0.ne
-$29 = {128, 32, 2, 1}
+$18 = {128, 32, 6, 1}
 ```
+So we have 128 position embeddings, 32 heads, 6 tokens and 1 batch.
+
 ```
-         [position embeddings]
-  0                                             127
-  +----------------------------------------------+
-  |                                              |
-  |                                              |
+       +----------------------------------------------+
+      /                                              /|
+     /   [position embeddings]                      / |
+    /                                             /   |
+  0/                                            127   |
+  +----------------------------------------------+    |
+  |                                              |    |
+  |                                              |    |
   |                                              |  [heads]
-  |                                              |
-  |                                              |
-  |                                              |
-  |                                              |
+  |                                              |    |
+  |                                              |   /5
+  |                                              |  / tokens in sequence (6)
+  |                                              | /0
   +----------------------------------------------+
 31
 ```
 
+So we first iterate over the batches (ne3), followed by the number of tokens
+in the sequence (ne2=6):
 ```c
     for (int64_t i3 = 0; i3 < ne3; i3++) {
         for (int64_t i2 = 0; i2 < ne2; i2++) {
@@ -339,6 +327,9 @@ $29 = {128, 32, 2, 1}
 ```
 So for each token we iterate over we will initialize a cache for the position
 encodings.
+
+One thing I missed the first time through this is that the position `p` is
+passed as the `theta_base` so it will be 0 for the first iteration. 
 ```c
 static void ggml_rope_cache_init(
      float theta_base,
@@ -351,6 +342,7 @@ static void ggml_rope_cache_init(
      float * cache,
      float sin_sign,
      float theta_scale) {
+
     float theta = theta_base;
 
     for (int64_t i0 = 0; i0 < ne0; i0 += 2) {
@@ -364,10 +356,13 @@ static void ggml_rope_cache_init(
     }
 }
 ```
-This will iterate over all the position embedding dimensions which is 128 in
-this case. And notice that this is done in pair which is he pairwise rotation.
+This will iterate over all the position embedding dimensions which is 128 for
+a single token in the sequence.
+
+And notice that this is done in pair which is he pairwise rotation.
 So this is where the third tensor, 'c' is used which is called frequency factors.
 If this is null the frequency factor is 1.0f. 
+
 We then call `rope_yarn`.
 ```c
 static void rope_yarn(
@@ -394,9 +389,79 @@ static void rope_yarn(
     *sin_theta = sinf(theta) * mscale;
 }
 ```
-In my case `ext_factor` is 0.0f so we don't do the extrapolation. But I'll return
-to this later and specify the correct command line parameters so that this is
-enabled. Right not I'd like to look at the last two lines:
+The function `rope_yarn_ramp` is related to the gamma function in the YaRN
+paper. `i0` is the position embedding dimension we are currently iterating over.
+```c
+static float rope_yarn_ramp(const float low, const float high, const int i0) {
+    const float y = (i0 / 2 - low) / MAX(0.001f, high - low);
+    return 1 - MIN(1, MAX(0, y));
+}
+```
+Recall that we are iterating over all the position embedding dimensions which are
+128 in this case, but we do this in pairs. This is the reason for `i0/2` in the
+code above. So we are taking the current position (0) minus the value of low
+which is 20 in our case. Then we are taking the maximum of 0.001 and the
+difference between high and low which is 46 - 20 = 26. And we are then taking
+the ratio of these values:
+```
+-20 / 26 = -0.769230769
+```
+Now,  low represents the dimension where interpolation starts to transition to
+extrapolation and high is the dimension where the transition is complete. i0/2 is
+the current dimension pair we are calculating the gamma function for.
+
+* When i0/2 < low y will be negative.
+* When i0/2  is between low and high y will be between 0 and 1.
+* When i0/2 > high y will be greater than 1.
+
+This value is clamped and inverted  using:
+```
+    return 1 - MIN(1, MAX(0, y));
+```
+So for our first dimension we will get:
+-20 / 26 = -0.769230769
+1 - MIN(1, MAX(0, -0.769230769)) = 
+1 - MIN(1, -0.769230769) = 
+1 - 0 = 1
+```
+
+So this will return:
+* For dimensions < low we return 1 (full interpolation)
+* For dimensions > high we return 0 (full extrapolation)
+* For dimensions between low and high we return a value between 0 and 1.
+
+We then use the value of `ramp_mix`:
+```c
+        theta = theta_interp * (1 - ramp_mix) + theta_extrap * ramp_mix;
+```
+When `ramp_mix` is 0 we will use the interpolated value which is the case for
+the current iteration:
+```
+theta = thread_interp * (1) + 0;
+theta = thread_interp * 1;
+theta = thread_interp;
+```
+But if `ramp_mix` is 1 we will use the extrapolated value:
+```
+theta = theta_interp * (0) + theta_extrap * 1;
+theta = theta_extrap * 1;
+theta = theta_extrap;
+```
+For a value between 0 and 1 we will get a mix:
+```
+theta = theta_interp * (1 - 0.5) + theta_extrap * 0.5;
+theta = theta_interp * (0.5) + theta_extrap * 0.5;
+```
+We then scale the magnitude of the rotation:
+```c
+    mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
+```
+This is the "length scaling" trick referred to in the YaRN paper, in Equation
+22.
+
+__wip__
+
+Notice the last two lines:
 ```c
     *cos_theta = cosf(theta) * mscale;
     *sin_theta = sinf(theta) * mscale;
@@ -415,3 +480,30 @@ RoPE embeddings by √1/t which in our case would be √1/mscale or √1/attn_fa
 By doing this there are no changes to the model architecture and the only
 difference is the scaling of the embeddings.
 
+
+```c
+static void rope_yarn(
+    float theta_extrap,
+    float freq_scale,
+    float corr_dims[2],
+    int64_t i0,
+    float ext_factor,
+    float mscale,             // attn_factor
+    float * cos_theta,
+    float * sin_theta) {
+
+    // Get n-d rotational scaling corrected for extrapolation
+    float theta_interp = freq_scale * theta_extrap;
+    float theta = theta_interp;
+    if (ext_factor != 0.0f) {
+        float ramp_mix = rope_yarn_ramp(corr_dims[0], corr_dims[1], i0) * ext_factor;
+        theta = theta_interp * (1 - ramp_mix) + theta_extrap * ramp_mix;
+
+        // Get n-d magnitude scaling corrected for interpolation
+        mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
+    }
+    *cos_theta = cosf(theta) * mscale;
+    *sin_theta = sinf(theta) * mscale;
+}
+```
+`theta_interp` corresponds to θ_d/s in the paper and `theta_extrap` corresponds to θ_d
