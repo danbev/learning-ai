@@ -2,10 +2,8 @@
 
 This document contains a walkthrough of the RoPE function in GGML.
 
-The code for this can be found in [rope.c](../fundamentals/ggml/src/rope.c).
-
 ```console
-$ gdb --args bin/rope
+gdb --args ./llama-cli -m models/llama-2-7b.Q4_0.gguf --no-warmup --rope-scaling yarn --rope-freq-scale 1 --yarn-ext-factor 1.0 -ngl 10 -p "What is LoRA?" -n 10
 ```
 The first function call we make is to set up the tensors and operations in the
 context which is done by calling `ggml_rope_ext`.
@@ -99,9 +97,13 @@ about which thread and what part of the tensor this thread is working on.
 
 ```console
 (gdb) p *dst->src[0]
-$9 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 512, 1}, nb = {4, 512, 16384, 8388608}, op = GGML_OP_RESHAPE, 
-  op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff68ed030, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
-  view_src = 0x7ffff68ed030, view_offs = 0, data = 0x7ffff68ed180, name = "a_reshaped", '\000' <repeats 53 times>, extra = 0x0}
+$9 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {128, 32, 512, 1}, 
+b = {4, 512, 16384, 8388608},
+op = GGML_OP_RESHAPE, 
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x7ffff68ed030, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+view_src = 0x7ffff68ed030, view_offs = 0, data = 0x7ffff68ed180, name = "a_reshaped", '\000' <repeats 53 times>, extra = 0x0}
 ```
 In our case the type of the src tensor is F32:
 ```c
@@ -122,7 +124,7 @@ static void ggml_compute_forward_rope_f32(
     const struct ggml_tensor * src2 = dst->src[2];
 ```
 
-Now `src0` is the tensor that is to be rotated and it will have a shape of
+Now `src0` is the tensor that is goint to be rotated and it will have a shape of
 `{128, 32, sequence_length, 1}`. And `src1` is the tensor that contains the
 positions and it be a vector of the same size of the sequence length.
 
@@ -153,7 +155,7 @@ So these parameters are extracted into local variables:
     GGML_TENSOR_UNARY_OP_LOCALS
 ```
 The macro will create local variables like the following (which can be generated
-by the make target `pre-ggml.c`).`:
+by the make target `pre-ggml.c`):
 ```c
     const int64_t ne00 = (src0)->ne[0]; (void)(ne00);
     const int64_t ne01 = (src0)->ne[1]; (void)(ne01);
@@ -178,7 +180,6 @@ by the make target `pre-ggml.c`).`:
 So this is simply extracting local variables from src0 and dst and the casts are
 to avoid warnings that the variables might not be used. Specifically it is
 creating local variables for the number of elements and the number the strides.
-
 
 A little further down we have the following:
 ```c
@@ -258,7 +259,7 @@ $10 = 20.9480038
 The value `20.95` represents a specific dimension of the position embedding when
 the sequence length is at the maximum value (n_ctx_orig).
 
-So imagine we have a sequence length of 4096 what we are asking is that at what
+So imagine we have a sequence length of 4096, what we are asking is that at what
 dimension does the position embedding rotate 32 times.
 Dimensions lower than 20.95 will rotate more than 32 times and dimensions higher
 will rotate fewer times.
@@ -280,10 +281,18 @@ And this value will be passed to ceilf so it will become 46.
 (gdb) p corr_dims 
 $17 = {20, 46}
 ```
+So the above will figurare out the range of dimensions for which interpolation
+extrapolation will be performed and used later when we iterate over all the
+token position embeddings.
 
-The following will iterate over all the batches which is 1 in this case.
-And then iterate over all the tokens (ne2) which is my case is only 6 as the
-prompt was "What is LoRA?"
+
+
+The following code will iterate over all the batches, which is 1 in this case.
+And then iterate over all the tokens in the sequence (ne2) which is my case is
+only 6 as the prompt was "What is LoRA?".
+
+Lets just take a quick look at the shape of the tensor that we are going token
+rotate:
 ```console
 (gdb) p src0.ne
 $18 = {128, 32, 6, 1}
@@ -307,10 +316,13 @@ So we have 128 position embeddings, 32 heads, 6 tokens and 1 batch.
   +----------------------------------------------+
 31
 ```
+Is this heads or layers?  TODO: I think we heads but verify this!
 
 So we first iterate over the batches (ne3), followed by the number of tokens
 in the sequence (ne2=6):
 ```c
+    const int32_t * pos = (const int32_t *) src1->data;
+
     for (int64_t i3 = 0; i3 < ne3; i3++) {
         for (int64_t i2 = 0; i2 < ne2; i2++) {
             const int64_t p = pos[i2];
@@ -359,19 +371,40 @@ static void ggml_rope_cache_init(
 This will iterate over all the position embedding dimensions which is 128 for
 a single token in the sequence.
 
-And notice that this is done in pair which is he pairwise rotation.
+And notice that this is done in pairs which is the pairwise rotation.
 So this is where the third tensor, 'c' is used which is called frequency factors.
 If this is null the frequency factor is 1.0f. 
+
+These are the arguments passed to `ggml_rop_cache_init`:
+```console
+(gdb) s
+ggml_rope_cache_init (
+theta_base=0,
+freq_scale=1,
+freq_factors=0x0,
+corr_dims=0x7ffeb6e90790,
+ne0=128,
+ext_factor=1,
+mscale=1,
+cache=0x5555645547b0,
+sin_sign=1,
+theta_scale=0.865964353) at ggml/src/ggml.c:13952
+```
+Like we mentioned before `theta_base` is the position and in this case it will
+be 0 since this is the first token in the sequence. This value is set as the
+initial value for the rotation angle `theta`. The code will iterate over the
+number of position embedding dimensions which is 128 in this case pairwise.
+
 
 We then call `rope_yarn`.
 ```c
 static void rope_yarn(
-    float theta_extrap,
-    float freq_scale,
+    float theta_extrap,        // yarn_ext_factor parameter.
+    float freq_scale,          // rope-freq-scale parameter.
     float corr_dims[2],
-    int64_t i0,
-    float ext_factor,
-    float mscale,       // named attn_factor in caller function.
+    int64_t i0,                // the current position embedding dimension.
+    float ext_factor,          // yarn-ext-factor parameter.
+    float mscale,              // yarn-attn-factor parameter.
     float * cos_theta,
     float * sin_theta) {
 
@@ -457,20 +490,21 @@ We then scale the magnitude of the rotation:
     mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
 ```
 This is the "length scaling" trick referred to in the YaRN paper, in Equation
-22. This is something that they the authors observed that introducing a
-temperature `t` on the logits before the softmax function so they modify they
-scaled attention to:
+22. This is something that the authors observed that introducing a temperature
+`t` on the logits before the softmax function so they modify they scaled
+attention to:
 ```
         q^T_m k_n
 softmax(----------)
           t√|D|
 ```
 Recall that the scaling is usually √|D|.
+
 This temperature controls how "sharp" or "soft" the attention is. A high
 temperature will make the attention more uniform and a low temperature will make
 the attention more focused. When extending to longer sequences the attention
 patterns become diluted or less effective. For example, lets say we have an 
-article that is less than the max context length that the model was trainedonr,
+article that is less than the max context length that the model was trained on,
 and when processing this article the model attention makes strong connections/
 focuses on certain tokens. But if we now extend the article beyond the max
 length the model was trained on the attention will be less focused and the
@@ -482,8 +516,9 @@ softmax(----------)
 ```
 And recall that softmax normalizes the scores so that they sum to 1. With longer
 context this normalization is spread over more tokens. So the raw attention
-score (pre softmax) are not lower but because the normailzation is spread over
+score (pre softmax) are not lower, but because the normailzation is spread over
 more tokens the effect of them is diluted.
+For example:
 ```
    [A B C D]
 
@@ -497,7 +532,7 @@ Attention scores: [0.05, 0.3, 0.05, 0.05, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1]
 
 B still has the highest attention score but it is now 0.3.
 ```
-So that makes sense but how does teh temperature `t` help?  
+So that makes sense but how does the temperature `t` help?  
 Lets take the same example but now we introduce a temperature `t`:
 ```
    [A B C D]
@@ -530,10 +565,12 @@ As sequences get longer (s increases), the temperature t increases slightly.
 
 1.0f is the base value and it guarantees that the scaling factor is at least 1.
 0.1f is a constant from the paper and was found to work well in practice.
-1.0f / freq_scale is  equivalent to `√1/t` in the paper.
+1.0f / `freq_scale` is  equivalent to `√1/t` in the paper.
 
-If freq_scale is 1.0:
+If `freq_scale` is 1.0:
 ```
+    mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
+
     mscale *= 1.0f + 0.1f * logf(1.0f / 1);
     mscale *= 1.0f + 0.1f * logf(1.0f / 1);
     mscale *= 1.0f + 0.1f * logf(1);
@@ -546,9 +583,6 @@ So in this case there will be no scaling.
 Instead of directly modifying the attention computation, they propose scaling
 the RoPE embeddings. This achieves the same effect as scaling the attention
 scores, but without changing the attention code.
-
-
-__wip__
 
 Notice the last two lines:
 ```c
@@ -568,6 +602,98 @@ They use a `scaling trick` where they achive the same effect by scaling the
 RoPE embeddings by √1/t which in our case would be √1/mscale or √1/attn_factor.
 By doing this there are no changes to the model architecture and the only
 difference is the scaling of the embeddings.
+
+For each token in the sequence we will call `ggml_rope_cache_init` which will
+iterate over all the embedding dimensions for the current token.
+When that is done the cache as been populated with the cosine and sine values
+for the rotation of the position embeddings.
+
+We will then iterate over ne1 which is the number of heads I think:
+```console
+(gdb) p ne1
+$31 = 32
+```
+
+This will first check that the current thread should be handling this span of
+values (something like that) so we'll skip ahead using `until`:
+```c
+            for (int64_t i1 = 0; i1 < ne1; i1++) {
+                if (ir++ < ir0) continue;
+                if (ir   > ir1) break;
+```
+```console
+(gdb) until 14055
+ggml_compute_forward_rope_f32 (params=0x7ffeb6e90860, dst=0x7fffccaa37e0, forward=true) at ggml/src/ggml.c:14055
+14055	                if (!is_neox) {
+```
+
+The following will iterate over all the 128 embedding dimensions for the current
+token in the sequence:
+```c
+                if (!is_neox) {
+                    for (int64_t i0 = 0; i0 < n_dims; i0 += 2) {
+                        const float cos_theta = cache[i0 + 0];
+                        const float sin_theta = cache[i0 + 1];
+
+                        const float * const src = (float *)((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01 + i0*nb00);
+                              float * dst_data  = (float *)((char *)  dst->data + i3*nb3  + i2*nb2  + i1*nb1  + i0*nb0);
+
+                        const float x0 = src[0];
+                        const float x1 = src[1];
+
+                        dst_data[0] = x0*cos_theta - x1*sin_theta;
+                        dst_data[1] = x0*sin_theta + x1*cos_theta;
+                    }
+                } else {
+```
+
+```c
+const float * const src = (float *)((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01 + i0*nb00);
+```
+The cast to `char *` is enable pointer arithmetic. Lets remind ourselves what
+src0 is:
+```console
+(gdb) p *src0
+$43 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU,
+buffer = 0x555563d35770, ne = {128, 32, 6, 1}, 
+nb = {4, 512, 16384, 98304}, op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, 
+grad = 0x0, src = {0x7fffccaa3220, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+view_src = 0x7fffccaa3220, view_offs = 0, data = 0x7ffdf0231060, 
+name = "Qcur-0 (reshaped)", '\000' <repeats 46 times>, extra = 0x0}
+```
+And `i3` is the current batch. Notice that the `nb` values are used which are
+like stides into the tensor data. So what this is doing is it is getting setting
+a pointer to the correct position of the src0 tensor for the current batch, head
+and token in the sequence.
+And since we use pairs of values we extract the two values:
+```c
+    const float x0 = src[0];
+    const float x0 = src[0];
+```
+And then we perform the actual rotation:
+```c
+    dst_data[0] = x0*cos_theta - x1*sin_theta;
+    dst_data[1] = x0*sin_theta + x1*cos_theta;
+```
+After we have iterated over all the dimensions (128 in this case).
+
+The final for loop for when the input dimension ne0 is larger than the number
+of dimensions used for RoPE:
+```c
+                for (int64_t i0 = n_dims; i0 < ne0; i0 += 2) {
+                    const float * const src = (float *)((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01 + i0*nb00);
+                    float * dst_data  = (float *)((char *)  dst->data + i3*nb3  + i2*nb2  + i1*nb1  + i0*nb0);
+
+                    dst_data[0] = src[0];
+                    dst_data[1] = src[1];
+                }
+```
+But does the same thing as the `!is_neox` block but for the remaining
+dimensions.
+
+
+__wip__
+
 
 
 ```c
@@ -596,3 +722,5 @@ static void rope_yarn(
 }
 ```
 `theta_interp` corresponds to θ_d/s in the paper and `theta_extrap` corresponds to θ_d
+
+A standalone example can be found in [rope.c](../fundamentals/ggml/src/rope.c).
