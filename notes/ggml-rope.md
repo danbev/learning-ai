@@ -688,8 +688,8 @@ of dimensions used for RoPE:
                     dst_data[1] = src[1];
                 }
 ```
-But does the same thing as the `!is_neox` block but for the remaining
-dimensions.
+Notice that this actually does not perform a rotation but is simply copying the
+values from the src tensor to the dst tensor.
 
 In "standard" RoPE take the embedding input dimensions in pairs when we process
 them. So we will take the 128 dimensions and simple process them as pairs in
