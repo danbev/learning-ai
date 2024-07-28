@@ -457,7 +457,96 @@ We then scale the magnitude of the rotation:
     mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
 ```
 This is the "length scaling" trick referred to in the YaRN paper, in Equation
-22.
+22. This is something that they the authors observed that introducing a
+temperature `t` on the logits before the softmax function so they modify they
+scaled attention to:
+```
+        q^T_m k_n
+softmax(----------)
+          t√|D|
+```
+Recall that the scaling is usually √|D|.
+This temperature controls how "sharp" or "soft" the attention is. A high
+temperature will make the attention more uniform and a low temperature will make
+the attention more focused. When extending to longer sequences the attention
+patterns become diluted or less effective. For example, lets say we have an 
+article that is less than the max context length that the model was trainedonr,
+and when processing this article the model attention makes strong connections/
+focuses on certain tokens. But if we now extend the article beyond the max
+length the model was trained on the attention will be less focused and the
+connections Will be weaker. Recall that the attention score is calculated using:
+```
+        q^T_m k_n
+softmax(----------)
+          t√|D|
+```
+And recall that softmax normalizes the scores so that they sum to 1. With longer
+context this normalization is spread over more tokens. So the raw attention
+score (pre softmax) are not lower but because the normailzation is spread over
+more tokens the effect of them is diluted.
+```
+   [A B C D]
+
+Attention scores: [0.1, 0.7, 0.1, 0.1]
+
+B has the highest attention score, 0.7 and the model will focus on this token.
+
+   [A B C D E F G H I J]
+
+Attention scores: [0.05, 0.3, 0.05, 0.05, 0.1, 0.1, 0.1, 0.1, 0.05, 0.1]
+
+B still has the highest attention score but it is now 0.3.
+```
+So that makes sense but how does teh temperature `t` help?  
+Lets take the same example but now we introduce a temperature `t`:
+```
+   [A B C D]
+
+t = 1 (no scaling)
+Raw scores:       [2,      8,   3,      1]
+Attention scores: [0.04, 0.87, 0.08, 0.01]
+
+B: 0.87
+   [A B C D E F G H I J]
+
+t = 1 (no scaling)
+Raw scores        [2,      8,   3,     1,   2,    2,    1,      1]
+Attention scores: [0.03, 0.71, 0.05, 0.01, 0.03, 0.03, 0.01, 0.01]
+B: 0.71
+
+t = 1.3
+Raw scores        [2,     8,   3,     1,   2,    2,    1,      1]
+                  [/1.3, /1.3, /1.3, /1.3, /1.3, /1.3, /1.3, /1.3]
+Raw scaled        [1.54, 6.15, 2.31, 0.77, 1.54, 1.54, 0.77, 0.77]
+Attention scores: [0.05, 0.62, 0.09, 0.02, 0.05, 0.05, 0.02, 0.02]
+B: 0.62
+```
+The attention to B is still the highest, but it's not as extreme so the model
+can still pay more attention to other relevant tokens. And the new tokens get
+slightly higher attention scores enabling better long-range dependencies.
+
+
+As sequences get longer (s increases), the temperature t increases slightly.
+
+1.0f is the base value and it guarantees that the scaling factor is at least 1.
+0.1f is a constant from the paper and was found to work well in practice.
+1.0f / freq_scale is  equivalent to `√1/t` in the paper.
+
+If freq_scale is 1.0:
+```
+    mscale *= 1.0f + 0.1f * logf(1.0f / 1);
+    mscale *= 1.0f + 0.1f * logf(1.0f / 1);
+    mscale *= 1.0f + 0.1f * logf(1);
+    mscale *= 1.0f + 0.1f * 0;
+    mscale *= 1.0f + 0;
+    mscale *= 1.0f;
+```
+So in this case there will be no scaling.
+
+Instead of directly modifying the attention computation, they propose scaling
+the RoPE embeddings. This achieves the same effect as scaling the attention
+scores, but without changing the attention code.
+
 
 __wip__
 
