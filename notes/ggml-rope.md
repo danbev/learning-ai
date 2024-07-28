@@ -691,6 +691,22 @@ of dimensions used for RoPE:
 But does the same thing as the `!is_neox` block but for the remaining
 dimensions.
 
+In "standard" RoPE take the embedding input dimensions in pairs when we process
+them. So we will take the 128 dimensions and simple process them as pairs in
+order, (0,1), (2,3), (4,5), (6,7), ... (126,127).
+But in the case of NeoX we will also create pairs but diffrently:
+```
+n = n_dim
+
+0-n/2    =  (0,64)
+1-n/2+1  =  (1,65)
+2-n/2+2  =  (2,66)
+3-n/2+3  =  (3,67)
+...
+n/2-1    =  (63,127)
+```
+The NeoX approach can potentially offer better performance in some hardware
+architectures due to its memory access pattern.
 
 __wip__
 
