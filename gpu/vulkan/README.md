@@ -3,6 +3,9 @@
 
 ### Installation
 Install the Vulkan SDK.
+
+#### Fedora
+```console
 ```console
 $ sudo dnf install @development-tools glm-devel cmake libpng-devel wayland-devel \
 libpciaccess-devel libX11-devel libXpresent libxcb xcb-util libxcb-devel libXrandr-devel \
@@ -12,6 +15,14 @@ gcc-g++ wayland-protocols-devel ninja-build python3-jsonschema qt5-qtbase-devel
 $ sudo dnf install vulkan-tools
 $ sudo dnf install glfw-devel
 $ sudo dnf install libXi-devel libXxf86vm-devel
+```
+
+#### Ubuntu 22.04:
+```console
+$ wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+$ sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list http://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+$ sudo apt update
+$ sudo apt install vulkan-sdk
 ```
 
 ```console
