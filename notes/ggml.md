@@ -822,8 +822,10 @@ available for a backend which every backend must implement.
 Not all backends support async operations, for example the CPU backend does not
 and the same goes for the support of events.
 
+### `ggml_backend_buffer_type_t`
 Lets now take a closer look at the buffer type, `ggml_backend_buffer_type_t`
 which is the type returned from `get_default_buffer_type()` above.
+
 It is a typedef in `ggml/include/ggml/ggml-alloc.h`:
 ```c
     typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
@@ -839,7 +841,8 @@ And the definition can be found in `ggml/src/ggml-backend-impl.h`:
 Notice that a buffer type also has an interface and a context which is also a
 void pointer just like the context of a backend.
 
-So first we have an interface which describes the buffer, the buffer type:
+So first we have an interface which describes the buffer, the buffer type
+interface:
 ```c
     struct ggml_backend_buffer_type_i {
         const char* get_name(ggml_backend_buffer_type_t buft);
@@ -1290,3 +1293,436 @@ $43 = false
 
 _wip_
 
+#### `ggml_build_forward_impl`
+```c
+  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
+  ggml_build_forward_expand(c_graph, result);
+```
+
+```c
+static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor, bool expand) {
+    if (!expand) {
+        // TODO: this branch isn't accessible anymore, maybe move this to ggml_build_forward_expand
+        ggml_graph_clear(cgraph);
+    }
+
+    const int n0 = cgraph->n_nodes;
+    UNUSED(n0);
+
+    ggml_visit_parents(cgraph, tensor);
+
+    const int n_new = cgraph->n_nodes - n0;
+    GGML_PRINT_DEBUG("%s: visited %d new nodes\n", __func__, n_new);
+
+    if (n_new > 0) {
+        // the last added node should always be starting point
+        GGML_ASSERT(cgraph->nodes[cgraph->n_nodes - 1] == tensor);
+    }
+}
+```
+This will basically go through the passed in tensor and add it to the graph
+and then visit its parents (the src[]). These will then be added to the 
+cgraph and will have been also added to the hashset.
+
+```c
+size_t ggml_hash_find(const struct ggml_hash_set hash_set, struct ggml_tensor * key) {
+    size_t h = ggml_hash(key) % hash_set.size;                                       
+                                                                                     
+    // linear probing                                                                
+    size_t i = h;                                                                    
+    while (hash_set.keys[i] != NULL && hash_set.keys[i] != key) {                    
+        i = (i + 1) % hash_set.size;                                                 
+        if (i == h) {                                                                
+            // visited all hash table entries -> not found                           
+            return GGML_HASHTABLE_FULL;                                              
+        }                                                                            
+    }                                                                                
+    return i;                                                                        
+}               
+```
+This is using memory address of the tensor key and then using modulo to get it
+in the range/bounds of the hash_set.size.
+If we don't call `ggml_build_forward_expand` then the graph will not have any
+nodes or leafs.
+
+After we have created a cgraph and called `ggml_build_forward_expand` we can
+then call `ggml_graph_compute`:
+```c
+  int n_threads = 4;
+  ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
+```
+
+```
+enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+    struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads);
+
+    struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
+
+    cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
+
+    return ggml_graph_compute(cgraph, &cplan);
+}
+```
+So before we can compute we need to create a plan. This will loop over all the
+nodes in the cgraph
+```c
+struct ggml_cplan ggml_graph_plan(const struct ggml_cgraph * cgraph, int n_threads) {
+    if (n_threads <= 0) {
+        n_threads = GGML_DEFAULT_N_THREADS;
+    }
+
+    size_t work_size = 0;
+
+    struct ggml_cplan cplan;
+    memset(&cplan, 0, sizeof(struct ggml_cplan));
+
+    int max_tasks = 1;
+
+    // thread scheduling for the different operations + work buffer size estimation
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        struct ggml_tensor * node = cgraph->nodes[i];
+
+        const int n_tasks = ggml_get_n_tasks(node, n_threads);
+
+        max_tasks = MAX(max_tasks, n_tasks);
+
+        size_t cur = 0;
+
+        switch (node->op) {
+        ...
+```
+In this case we only have one:
+```console
+(gdb) p *node
+$45 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {3, 1, 1, 1}, nb = {4, 12, 12, 12}, 
+  op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6bff030, 0x7ffff6bff1c0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6bff490, name = "result", '\000' <repeats 57 times>, 
+  extra = 0x0}
+```
+And notice that the operation is of type `GGML_OP_MUL_MAT`.
+```
+        switch (node->op) {
+        ...
+            case GGML_OP_MUL_MAT:
+                {
+                    const enum ggml_type vec_dot_type = type_traits[node->src[0]->type].vec_dot_type;
+
+                    if (node->src[1]->type != vec_dot_type) {
+                        cur = ggml_row_size(vec_dot_type, ggml_nelements(node->src[1]));
+                    }
+                } break;
+```
+`type_traits` is an array of struct that has the following members:
+```console
+(gdb) ptype ggml_type_traits_t
+type = struct {
+    const char *type_name;
+    int blck_size;
+    size_t type_size;
+    _Bool is_quantized;
+    ggml_to_float_t to_float;
+    ggml_from_float_t from_float;
+    ggml_from_float_t from_float_reference;
+    ggml_vec_dot_t vec_dot;
+    enum ggml_type vec_dot_type;
+    int64_t nrows;
+}
+(gdb) p node->src[0]->type
+$49 = GGML_TYPE_F32
+
+(gdb) p type_traits[node->src[0]->type]
+$50 = {type_name = 0x5555555ea428 "f32", blck_size = 1, type_size = 4, is_quantized = false, to_float = 0x0, from_float = 0x0, 
+  from_float_reference = 0x0, vec_dot = 0x55555555a0ed <ggml_vec_dot_f32>, vec_dot_type = GGML_TYPE_F32, nrows = 1}
+(gdb) p type_traits[node->src[0]->type].vec_dot_type
+$51 = GGML_TYPE_F32
+```
+Notice that the above is checking the types of the parent/src nodes and if they
+are the same type, which is the case here, then it will not set `cur`.
+```c
+    cplan.n_threads = MIN(max_tasks, n_threads);
+    cplan.work_size = work_size;   // 0 
+    cplan.work_data = NULL;       
+
+    return cplan;
+```
+Back in `ggml_graph_compute_with_ctx` we  have created the cplan and will now
+create a new object of type `GGML_OBJECT_TYPE_WORK_BUFFER`.
+```c
+enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+    struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads);
+
+    struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
+
+    cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
+
+    return ggml_graph_compute(cgraph, &cplan);
+}
+```
+I've gone through `ggml_new_object` before so I won't go through it again.
+TODO: look into the context `mem_buffer` and how that works.
+So lets now take a look at `ggml_graph_compute`:
+```c
+enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+    GGML_ASSERT(cplan);
+    GGML_ASSERT(cplan->n_threads > 0);
+    GGML_ASSERT(cplan->work_size == 0 || cplan->work_data != NULL);
+
+    int n_threads = cplan->n_threads;
+
+    struct ggml_compute_state_shared state_shared = {
+        /*.cgraph                  =*/ cgraph,
+        /*.cgraph_plan             =*/ cplan,
+        /*.n_threads               =*/ n_threads,
+        /*.n_barrier               =*/ 0,
+        /*.n_barrier_passed        =*/ 0,
+        /*.abort_callback          =*/ NULL,
+        /*.abort_callback_data     =*/ NULL,
+        /*.current_chunk           =*/ 0,
+        /*.ec                      =*/ GGML_STATUS_SUCCESS,
+    };
+
+#ifdef GGML_USE_OPENMP
+    if (n_threads > 1) {
+        #pragma omp parallel num_threads(n_threads)
+        {
+            #pragma omp single
+            {
+                // update the number of threads from the actual number of threads that we got from OpenMP
+                n_threads = omp_get_num_threads();
+                state_shared.n_threads = n_threads;
+            }
+
+            struct ggml_compute_state worker = {
+                .thrd   = 0,
+                .ith    = omp_get_thread_num(),
+                .shared = &state_shared,
+            };
+            ggml_graph_compute_thread(&worker);
+        }
+    } else {
+        struct ggml_compute_state worker = {
+            .thrd   = 0,
+            .ith    = 0,
+            .shared = &state_shared,
+        };
+        ggml_graph_compute_thread(&worker);
+    }
+```
+```
+        #pragma omp parallel num_threads(n_threads)
+```
+This is an OpenMP directive that specifies that the following block of code
+should be executed in parallel by the threads. So this will start 4 threads in
+our case.
+The next OMP directive is `#pragma omp single` which specifies that the block
+should be executed by a single thread. So one of those four threads will execute
+the block of code that follows, which in this case just gets a thread
+
+If we set a breakpoint in the single block and the parallel block  we can
+inspect the threads that have been created:
+```console
+18704	        #pragma omp parallel num_threads(n_threads)
+(gdb) n
+[New Thread 0x7ffff6bfe640 (LWP 94880)]
+[New Thread 0x7ffff63fd640 (LWP 94881)]
+[New Thread 0x7ffff5bfc640 (LWP 94882)]
+[Switching to Thread 0x7ffff63fd640 (LWP 94881)]
+
+Thread 3 "matrix-mul" hit Breakpoint 2, ggml_graph_compute._omp_fn.0 () at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:18709
+18709	                n_threads = omp_get_num_threads();
+(gdb) info threads
+  Id   Target Id                                      Frame 
+  1    Thread 0x7ffff7e65c00 (LWP 80908) "matrix-mul" 0x00007ffff7e8b0ca in ?? () from /lib/x86_64-linux-gnu/libgomp.so.1
+  2    Thread 0x7ffff6bfe640 (LWP 94880) "matrix-mul" 0x00007ffff7e8b0ca in ?? () from /lib/x86_64-linux-gnu/libgomp.so.1
+* 3    Thread 0x7ffff63fd640 (LWP 94881) "matrix-mul" ggml_graph_compute._omp_fn.0 ()
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:18709
+  4    Thread 0x7ffff5bfc640 (LWP 94882) "matrix-mul" 0x00007ffff7e8b0ca in ?? () from /lib/x86_64-linux-gnu/libgomp.so.1
+
+(gdb) p n_threads
+$66 = 4
+```
+And we can switch between the threads using:
+```console
+(gdb) thread 1
+[Switching to thread 1 (Thread 0x7ffff7e65c00 (LWP 80908))]
+#0  0x00007ffff7e8b0ca in ?? () from /lib/x86_64-linux-gnu/libgomp.so.1
+```
+But lets follow thread 1 in this case:
+```c
+            struct ggml_compute_state worker = {
+                .thrd   = 0,
+                .ith    = omp_get_thread_num(),
+                .shared = &state_shared,
+            };
+            ggml_graph_compute_thread(&worker);
+```
+```console
+(gdb) thread 1
+(gdb) set scheduler-locking on
+```
+
+So we will call `ggml_graph_compute_thread` with the worker struct:
+```c
+static thread_ret_t ggml_graph_compute_thread(void * data) {
+    struct ggml_compute_state * state = (struct ggml_compute_state *) data;
+
+    const struct ggml_cgraph * cgraph = state->shared->cgraph;
+    const struct ggml_cplan  * cplan  = state->shared->cplan;
+
+    set_numa_thread_affinity(state->ith);
+
+    struct ggml_compute_params params = {
+        /*.ith   =*/ state->ith,
+        /*.nth   =*/ state->shared->n_threads,
+        /*.wsize =*/ cplan->work_size,
+        /*.wdata =*/ cplan->work_data,
+        /*.shared=*/ state->shared,
+    };
+
+    for (int node_n = 0; node_n < cgraph->n_nodes; node_n++) {
+        struct ggml_tensor * node = cgraph->nodes[node_n];
+
+        ggml_compute_forward(&params, node);
+
+        if (state->ith == 0 && cplan->abort_callback && cplan->abort_callback(cplan->abort_callback_data)) {
+            state->shared->ec = GGML_STATUS_ABORTED;
+        }
+
+        ggml_barrier(state->shared);
+
+        if (state->shared->ec != GGML_STATUS_SUCCESS) {
+            break;
+        }
+    }
+
+    return 0;
+}
+```
+So this is looping over all the nodes in the compute graph, which is only one
+in this case.
+```console
+(gdb) p *node
+$71 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {3, 1, 1, 1}, nb = {4, 12, 12, 12}, 
+  op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6bff030, 0x7ffff6bff1c0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6bff490, name = "result", '\000' <repeats 57 times>, 
+  extra = 0x0}
+```
+And then calling `ggml_compute_forward`:
+
+```c
+static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
+    GGML_ASSERT(params);
+
+    if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
+        return;
+    }
+
+    switch (tensor->op) {
+        ...
+        case GGML_OP_MUL_MAT:
+            {
+                ggml_compute_forward_mul_mat(params, tensor);
+            } break;
+        ...
+```
+
+```
+static void ggml_compute_forward_mul_mat(
+        const struct ggml_compute_params * params,
+              struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];
+    const struct ggml_tensor * src1 = dst->src[1];
+
+    GGML_TENSOR_BINARY_OP_LOCALS
+
+    const int ith = params->ith;  // index of thread
+    const int nth = params->nth;  // number of threads
+
+    const enum ggml_type type = src0->type;
+
+    enum ggml_type    const vec_dot_type          = type_traits[type].vec_dot_type;
+    ggml_from_float_t const from_float_to_vec_dot = type_traits[vec_dot_type].from_float;
+    int64_t           const vec_dot_num_rows      = type_traits[type].nrows;
+```
+So we have our two src tensors which are 'a' anb 'b'
+
+`GGML_TENSOR_BINARY_OP_LOCALS` expands local variables for the src tensors and
+are used later in the funcion:
+```c
+    const int64_t ne00 = (src0)->ne[0];
+    (void)(ne00);
+    const int64_t ne01 = (src0)->ne[1];
+    (void)(ne01);
+    const int64_t ne02 = (src0)->ne[2];
+    (void)(ne02);
+    const int64_t ne03 = (src0)->ne[3];
+    (void)(ne03);
+    const size_t nb00 = (src0)->nb[0];
+    (void)(nb00);
+    const size_t nb01 = (src0)->nb[1];
+    (void)(nb01);
+    const size_t nb02 = (src0)->nb[2]; (void)(nb02); const size_t nb03 = (src0)->nb[3]; (void)(nb03); const int64_t ne10 = (src1)->ne[0]; (void)(ne10); const int64_t ne11 = (src1)->ne[1]; (void)(ne11); const int64_t ne12 = (src1)->ne[2]; (void)(ne12); const int64_t ne13 = (src1)->ne[3]; (void)(ne13); const size_t nb10 = (src1)->nb[0]; (void)(nb10); const size_t nb11 = (src1)->nb[1]; (void)(nb11); const size_t nb12 = (src1)->nb[2]; (void)(nb12); const size_t nb13 = (src1)->nb[3]; (void)(nb13); const int64_t ne0 = (dst)->ne[0]; (void)(ne0); const int64_t ne1 = (dst)->ne[1]; (void)(ne1); const int64_t ne2 = (dst)->ne[2]; (void)(ne2); const int64_t ne3 = (dst)->ne[3]; (void)(ne3); const size_t nb0 = (dst)->nb[0]; (void)(nb0); const size_t nb1 = (dst)->nb[1]; (void)(nb1); const size_t nb2 = (dst)->nb[2]; (void)(nb2); const size_t nb3 = (dst)->nb[3]; (void)(nb3);
+```
+Next we have:
+```c
+    if (ith == 0) {
+        // Every thread starts at ith, so the first unprocessed chunk is nth.  This save a bit of coordination right at the start.
+        atomic_store(&params->shared->current_chunk, nth);
+    }
+
+    ggml_barrier(params->shared);
+```
+Now, ith is the index of the thread and this is checking that it is 0.
+The `atomic_store` functions is not compiled in on Linux and may be specific to
+Windows. TODO: figure out how this is done. 
+Then we have `ggml_barrier`:
+```c
+static void ggml_barrier(struct ggml_compute_state_shared * shared) {
+    if (shared->n_threads == 1) {
+        return;
+    }
+
+    #pragma omp barrier
+}
+```
+When a thread reaches this point in the code, it must wait until all other
+threads in the team reach the same point. Only when all threads have arrived at
+the barrier can they all proceed. 
+
+```
+(gdb) br 12209
+Breakpoint 4 at 0x5555555829d4: file /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c, line 12209.
+(gdb) set scheduler-locking off
+(gdb) continue 
+Continuing.
+[Switching to Thread 0x7ffff5bfc640 (LWP 94882)]
+
+Thread 4 "matrix-mul" hit Breakpoint 4, ggml_compute_forward_mul_mat (params=0x7ffff5bfbd20, dst=0x7ffff6bff340) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:12209
+12209	    ggml_barrier(params->shared);
+(gdb) info thread
+  Id   Target Id                                      Frame 
+  1    Thread 0x7ffff7e65c00 (LWP 80908) "matrix-mul" 0x00007ffff7e8b113 in ?? () from /lib/x86_64-linux-gnu/libgomp.so.1
+  2    Thread 0x7ffff6bfe640 (LWP 94880) "matrix-mul" ggml_compute_forward_mul_mat (params=0x7ffff6bfdd20, dst=0x7ffff6bff340)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:12209
+  3    Thread 0x7ffff63fd640 (LWP 94881) "matrix-mul" ggml_compute_forward_mul_mat (params=0x7ffff63fcd20, dst=0x7ffff6bff340)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:12209
+* 4    Thread 0x7ffff5bfc640 (LWP 94882) "matrix-mul" ggml_compute_forward_mul_mat (params=0x7ffff5bfbd20, dst=0x7ffff6bff340)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:12209
+```
+
+Now, the `ggml_compute_forward_mul_mat` function is inside of a omp parallel
+block so mulitple threads will be running this function.
+```c
+static void ggml_compute_forward_mul_mat(
+        const struct ggml_compute_params * params,
+              struct ggml_tensor * dst) {
+
+```
+So thread usage in GGML is using in a way that is kind of similar to how CUDA
+kernels are executed as well, the same function runs but by different threads.
+This enables compution on the same matrix but using different pieces of the
+data. Take matrix multiplication for example which performs the dot product.
+The dot product to the resulting output matrix, position 0,0 is the dot product
+of the first row of the first matrix and the first column of the second matrix.
+This can be handled by one thread.
