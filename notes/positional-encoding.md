@@ -197,6 +197,93 @@ We start with a sine function which is 2pi periodic.
 from lower to higher demensions. So the wave gets more and more straight out as
 we go from lower to higher demensions.
 
+### Evolution of Positional Encoding strategies
+* Original absolute positional encoding
+Difficult to have a model generalize to sequences of different lengths.
+
+* Relative positional encoding
+The short coming here is that the relative positions are updated each time a new
+token is added to the sequence which make implementing a kv-cache difficult.
+
+* Learned positional encoding
+
+* RoPE
+
+RoPE encoding:
+```
+[cos(nθ₀), sin(nθ₀), cos(nθ₁), sin(nθ₁), ...cos(nθ_(d/2)-1), sin(nθ_(d/2)-1)]
+
+n   = token position
+d   = embedding size        // context length
+θ_i = 10000θ^-2i/d          // rotation fequencies
+```
+Lets look at a few values for i (token sequence position)
+```
+i = 0 10000^(-1*0)/2048 = 1
+i = 1 10000^(-2*1)/2048 = 0.999755859375
+i = 2 10000^(-2*2)/2048 = 0.99951171875
+...
+i = 2046 10000^(-2*2046)/2048 = 0.000244140625
+i = 2047 10000^(-2*2047)/2048 = 0.0001220703125
+```
+With lower values for i the theta_i i closer to 1 which corresponds to a lower
+frequency since the changes in sine and cosine with respect to the position is
+smaller (longer wavelengths, fewer occilations).
+With higher values for i the theta_i is closer to 0 which corresponds
+to a higher frequency since the changes in sine and cosine with respect to the
+position is larger (shorter wavelenght, more occilations).
+
+We can expolate this to a larger context window by increasing d.
+
+* RoPE with Frequency Scaling
+```
+[cos(n * freq_scale * θ₀), sin(n * freq_scale * θ₀), cos(n * freq_scale * θ₁), sin(n * freq_scale * θ₁), ...]
+```
+
+* RoPE with Position Interpolation (PI)
+To handle the extended context window, we need to adjust (or interpolate) the
+positional encodings. This involves rescaling the rotation frequencies to fit
+the new context length. 
+
+`L` is the context window size which is the number of tokens the model can
+process at once. If we need/want to extend the context window we call this values
+L prime (L'). This extension ration defines as:
+```
+s = L'/L
+
+s = extension ratio
+```
+
+```
+β = θ^2/d              // base frequency scaling factor
+λ = s
+
+[cos(n/(λ(β)₀), sin(n/(λ(β)₀), cos(n/(λ(β)₁), sin(n/(λ(β)₁), ...]
+
+  n
+ -----
+ λ(β)₀
+
+n = token position
+```
+So the scaling factor s is the same for all values.
+
+* NTK Positional Encoding (Neural Tangent Kernel)
+Splits up the lower and highter dimensions and has a different scaling factor.
+So depending on where in the dimension is the scaling factor λ will be
+different, so λ^i.
+For lower dimensions the scaling factor is higher, and for higher dimensions the
+scaling factor is lower.
+
+* Yarn (Yet Another RoPE extentioN method)
+Is an extension of NTK which recall has to sections of the dimensions which it
+scaled differently. With Yarn we have 3 secions:
+```
+Low    frequencies: Position Interpolation
+Middle frequencies: NTK (So the lower/higher positions are scaled differently)
+High   frequencies: Extrapolation, λ=1
+```
+
 Since each position has a fixed encoding, positions beyond the training range
 would have encodings that the model has never seen, making it difficult for the
 model to interpret these positions accurately. This is something that
