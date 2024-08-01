@@ -5,17 +5,6 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
-double calculate_n_rot(double x, double base, int max_pos_emb, int n_dims) {
-    const double pi = M_PI;
-    // Calculate the exponent
-    double exponent = (2.0 * max_pos_emb) / n_dims;
-    // Calculate base raised to the power of the exponent
-    double base_to_power = pow(base, exponent);
-    // Calculate the final result
-    double n_rot = 2 * pi * x * base_to_power;
-    return n_rot;
-}
-
 int main(int argc, char **argv) {
   printf("GGML RoPE example\n");
 
@@ -56,7 +45,7 @@ int main(int argc, char **argv) {
           for (int k = 0; k < a->ne[0]; k++) {
               // TODO: make the value a random value.
               //float value = 1.0f + k;
-              float value = 8.3f + k;
+              float value = 0.0f + k;
               ggml_set_f32_nd(a, k, j, i, 0, value);
           }
       } 
