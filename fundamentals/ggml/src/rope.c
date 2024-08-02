@@ -43,8 +43,6 @@ int main(int argc, char **argv) {
       for (int j = 0; j < a->ne[1]; j++) {
           // Loop over the embedding dimensions (128)
           for (int k = 0; k < a->ne[0]; k++) {
-              // TODO: make the value a random value.
-              //float value = 1.0f + k;
               float value = 0.0f + k;
               ggml_set_f32_nd(a, k, j, i, 0, value);
           }
@@ -53,9 +51,11 @@ int main(int argc, char **argv) {
 
   // Print a few of the first dimensions so we can see that there is a rotation
   // being performed. In this case we are printing the first 10 embeddings for
-  // the 4th token.
+  // the 2nd token. I'm not using token 0 as this will have a cosine value of 10
+  // and since value of 0 which will not perform any rotations for the position
+  // embeddings for that dimension.
   for (int i = 0; i < 10; i++) {
-    printf("embedding for token 4, embedding dim %d: %f\n", i, ggml_get_f32_nd(a, i, 0, 4, 0));
+    printf("embedding for token 1, embedding dim %d: %f\n", i, ggml_get_f32_nd(a, i, 0, 1, 0));
   }
 
   // Set the positions manually (the b tensor parameter to ggml_rope_ext).
@@ -99,7 +99,6 @@ int main(int argc, char **argv) {
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, s);
 
-
   int n_threads = 4;
   enum ggml_status status = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
   if (status != GGML_STATUS_SUCCESS) {
@@ -113,7 +112,7 @@ int main(int argc, char **argv) {
   //printf("Rotation: %f\n", *(float *)((char *)  s->data + 73728));
 
   for (int i = 0; i < 10; i++) {
-    printf("embedding for token 4, embedding dim %d = %f\n", i, ggml_get_f32_nd(s, i, 0, 4, 0));
+    printf("embedding for token 1, embedding dim %d = %f\n", i, ggml_get_f32_nd(s, i, 0, 1, 0));
   }
 
   ggml_free(ctx);
