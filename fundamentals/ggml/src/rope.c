@@ -79,7 +79,8 @@ int main(int argc, char **argv) {
   float beta_fast = 32.0f;
   // This is a YaRN parameter which I think is named β in the YaRN paper.
   float beta_slow = 1.0f;
-  // RoPE Frequency factors are used with certan models like PHI. 
+  // RoPE Frequency factors are used with certan models like
+  // Phi-3-mini-128k-instruct (https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/blob/main/config.json#L27)
   struct ggml_tensor* freq_factors = NULL;
 
   struct ggml_tensor* s = ggml_rope_ext(ctx,
