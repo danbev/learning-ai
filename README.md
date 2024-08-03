@@ -5,7 +5,7 @@ This repository contains notes and code examples related to AI.
 
 * [AI/ML general](./notes/background.md)
 * [Embeddings](./notes/embeddings.md)
-* [Position Embeddings](./notes/position-embeddings.md)
+* [Position Embeddings](./notes/position-embeddings)
 * [Vector Databases](./notes/vector-databases.md)
 * [Transformers](./notes/transformers.md)
 * [Linear-regression](./notes/linear-regression.md)
