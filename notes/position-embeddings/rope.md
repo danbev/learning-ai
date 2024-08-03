@@ -695,4 +695,115 @@ extrapolated embeddings.
 
 
 ### LongRope (Long Range RoPE)
-Is an extension of RoPE that builds upon YaRN.
+Is an extension of RoPE that builds upon YaRN. In YaRN we have three groups or
+ranges of embedding dimensions that are scaled differently. Those ranges are
+configurable and set manually but picking values that work well in practice.
+LongRope introduces a way to search for the optimal ranges of embedding
+dimension scaling values. So each position embedding dimension will get its own
+rescaling factor which will be learned and not set manually. So these values
+would be a metadata value of the model (in config.json for example).
+
+If we take a look at the model configuration file (config.json) for
+[Phi-3-mini-128k-instruct](https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/blob/main/config.json#L27)
+we can see the following:
+```
+"rope_scaling": {
+    "long_factor": [
+      1.0700000524520874,
+      1.1200000047683716,
+      1.149999976158142,
+      1.4199999570846558,
+      1.5699999332427979,
+      1.7999999523162842,
+      2.129999876022339,
+      2.129999876022339,
+      3.009999990463257,
+      5.910000324249268,
+      6.950000286102295,
+      9.070000648498535,
+      9.930000305175781,
+      10.710000038146973,
+      11.130000114440918,
+      14.609999656677246,
+      ...
+      64.12435150146484,
+      64.15435028076172,
+      64.19435119628906,
+      64.24435424804688,
+      64.57435607910156,
+      64.69000244140625,
+      64.76000213623047
+    ],
+    "short_factor": [
+      1.1,
+      1.1,
+      1.1,
+      1.3000000000000003,
+      1.3500000000000003,
+      2.0500000000000007,
+      ...
+      2.799999999999998,
+      2.8999999999999977,
+      3.049999999999997
+    ],
+      "type": "longrope"
+  },
+```
+There are two lists and in total 96 values for position embedding rotation
+values.
+When a model like this is converted into GGUF format these two lists will become
+tensors in the .gguf file:
+```console
+$ ./inspect-model.sh models/Phi-3.1-mini-128k-instruct-Q2_K.gguf 
+INFO:gguf-dump:* Loading: models/Phi-3.1-mini-128k-instruct-Q2_K.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+* Dumping 43 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 197
+      3: UINT64     |        1 | GGUF.kv_count = 40
+      4: STRING     |        1 | general.architecture = 'phi3'
+      5: STRING     |        1 | general.type = 'model'
+      6: STRING     |        1 | general.name = 'Phi 3 Mini 128k Instruct'
+      7: STRING     |        1 | general.finetune = '128k-instruct'
+      8: STRING     |        1 | general.basename = 'Phi-3'
+      9: STRING     |        1 | general.size_label = 'mini'
+     10: STRING     |        1 | general.license = 'mit'
+     11: STRING     |        1 | general.license.link = 'https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/re'
+     12: [STRING]   |        3 | general.tags
+     13: [STRING]   |        1 | general.languages
+     14: UINT32     |        1 | phi3.context_length = 131072
+     15: UINT32     |        1 | phi3.rope.scaling.original_context_length = 4096
+     16: UINT32     |        1 | phi3.embedding_length = 3072
+     17: UINT32     |        1 | phi3.feed_forward_length = 8192
+     18: UINT32     |        1 | phi3.block_count = 32
+     19: UINT32     |        1 | phi3.attention.head_count = 32
+     20: UINT32     |        1 | phi3.attention.head_count_kv = 32
+     21: FLOAT32    |        1 | phi3.attention.layer_norm_rms_epsilon = 9.999999747378752e-06
+     22: UINT32     |        1 | phi3.rope.dimension_count = 96
+     23: FLOAT32    |        1 | phi3.rope.freq_base = 10000.0
+     24: UINT32     |        1 | general.file_type = 10
+     25: UINT32     |        1 | phi3.attention.sliding_window = 262144
+     26: FLOAT32    |        1 | phi3.rope.scaling.attn_factor = 1.190238118171692
+     27: STRING     |        1 | tokenizer.ggml.model = 'llama'
+     28: STRING     |        1 | tokenizer.ggml.pre = 'default'
+     29: [STRING]   |    32064 | tokenizer.ggml.tokens
+     30: [FLOAT32]  |    32064 | tokenizer.ggml.scores
+     31: [INT32]    |    32064 | tokenizer.ggml.token_type
+     32: UINT32     |        1 | tokenizer.ggml.bos_token_id = 1
+     33: UINT32     |        1 | tokenizer.ggml.eos_token_id = 32000
+     34: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 0
+     35: UINT32     |        1 | tokenizer.ggml.padding_token_id = 32000
+     36: BOOL       |        1 | tokenizer.ggml.add_bos_token = False
+     37: BOOL       |        1 | tokenizer.ggml.add_eos_token = False
+     38: STRING     |        1 | tokenizer.chat_template = "{% for message in messages %}{% if message['role'] == 'syste"
+     39: UINT32     |        1 | general.quantization_version = 2
+     40: STRING     |        1 | quantize.imatrix.file = '/models_out/Phi-3.1-mini-128k-instruct-GGUF/Phi-3.1-mini-128'
+     41: STRING     |        1 | quantize.imatrix.dataset = '/training_dir/calibration_datav3.txt'
+     42: INT32      |        1 | quantize.imatrix.entries_count = 128
+     43: INT32      |        1 | quantize.imatrix.chunks_count = 151
+* Dumping 197 tensor(s)
+      1:   98500608 |  3072, 32064,     1,     1 | Q2_K    | token_embd.weight
+    ...
+    196:         48 |    48,     1,     1,     1 | F32     | rope_factors_long.weight
+    197:         48 |    48,     1,     1,     1 | F32     | rope_factors_short.weight
+```
