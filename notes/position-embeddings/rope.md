@@ -560,6 +560,19 @@ y(r) = {0,      if r < α
         β - a
 ```
 
+NTK-by-parts:
+```
+f'w(x_m, m, Θ_d) = fw(x_m, g(m), h(Θ_d))
+
+                       Θ_d
+h(Θ_d) = (1 - y(r(d))) --- + y(r(d)) Θ_d
+                        s
+
+y     = gamma symbol
+Θ_d/s = the interpolated value.
+Θ_d   = the extrapolated value.
+```
+
 
 ### Theta calculation
 The values of theta are per embedding dimension and are calculated as follows:
@@ -679,3 +692,7 @@ Beyond 600 tokens, the model uses purely extrapolated embeddings for positional
 information.
 The parameters beta_fast and beta_slow control the blending of interpolated and
 extrapolated embeddings.
+
+
+### LongRope (Long Range RoPE)
+Is an extension of RoPE that builds upon YaRN.
