@@ -14,9 +14,8 @@ int main(int argc, char **argv) {
   };
   struct ggml_context* ctx = ggml_init(params);
 
-  // Simulate a sequence of 6 tokens with en embedding size of 4019 and a
-  // context length of 512. Keep in mind that this tensor is created to be
-  // used to calculate the coputation graph.
+  // Simulate a sequence of 6 tokens with en embedding size of 4096 and a
+  // context length of 512. 
   int n_ctx_orig = 4096;
   int embd_dim = 128;
   int n_head = 32;
