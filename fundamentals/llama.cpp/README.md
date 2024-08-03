@@ -1,5 +1,5 @@
-## LLama.ccp exploration/example project
-This project is an exploration of the LLama.cpp library. The goal it to have
+## Llama.cpp exploration/example project
+This project is an exploration of the Llama.cpp library. The goal it to have
 small isolated examples that can be run and debugged in isolation to help
 understand how the library works.
 
@@ -41,7 +41,7 @@ $ ctags -R --languages=C++ --c++-kinds=+p --fields=+iaS --extra=+q .
 ```
 
 #### Configuration
-This project uses a git submodule to include the LLama.cpp library. To
+This project uses a git submodule to include the Llama.cpp library. To
 add the submodule run (only the first time and I'm just adding this for
 documenation purposes):
 ```console
