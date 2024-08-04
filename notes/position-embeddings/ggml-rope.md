@@ -33,19 +33,6 @@ dimensional vector that contains the positions. And I think that `c` is a
 tensor that contains scaling factors but I've not gotten this far in my
 understanding of this yet, and in the example it NULL is passed in.
 
-* `n_dims` is, `d` in RoPE. TODO: link with rope.md document.
-* `mode` is ?
-* `n_ctx_orig` is the models original context that it was trained on, this might
-be used by PI and used to calculate 's' (s = L'/L) I think?
-* `freq_base` is the base frequency which is 10000 by default.
-* `freq_scale` TODO: what is this?
-* `ext_factor` might be the extrapolation factor but I'm not sure.
-* `attn_factor` TODO: what is this? 
-* `beta_fast` might be the scaling factor for YaRN and which should be used for
-scaling the higher frequencies.
-* `beta_slow` also related to YaRN and might be  used to scale the lower
-frequencies.
-
 So that will set up the context and the tensor operations for RoPE. Next we
 want to create a computation graph and run the forward pass:
 ```c
@@ -54,7 +41,7 @@ want to create a computation graph and run the forward pass:
   ggml_graph_compute_with_ctx(ctx, c_graph, 4);
 ```
 
-Now, we can set a breakpoint in `ggml_compute_forward_rope`:
+Lets set a breakpoint in `ggml_compute_forward_rope`:
 ```console
 (gdb) br ggml_compute_forward_rope
 Breakpoint 5 at 0x55555558acf8: file /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c, line 14061.
@@ -95,6 +82,7 @@ I need to read up on how this works but with some handwaving the
 `ggml_compute_params` is part of GGMLs multithreading and contains information
 about which thread and what part of the tensor this thread is working on.
 
+Lets take a look `src0`:
 ```console
 (gdb) p *dst->src[0]
 $9 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
@@ -105,7 +93,7 @@ op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
 src = {0x7ffff68ed030, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
 view_src = 0x7ffff68ed030, view_offs = 0, data = 0x7ffff68ed180, name = "a_reshaped", '\000' <repeats 53 times>, extra = 0x0}
 ```
-In our case the type of the src tensor is F32:
+In our case the type of the `src0` tensor is F32:
 ```c
         case GGML_TYPE_F32:
             {
@@ -124,14 +112,15 @@ static void ggml_compute_forward_rope_f32(
     const struct ggml_tensor * src2 = dst->src[2];
 ```
 
-Now `src0` is the tensor that is goint to be rotated and it will have a shape of
+Now `src0` is the tensor that is going to be rotated and it will have a shape of
 `{128, 32, sequence_length, 1}`. And `src1` is the tensor that contains the
 positions and it be a vector of the same size of the sequence length.
 
-And in this case we did not specify a `c` argument so `src2` is null.
+And in this case we did not specify a `c` argument (`freq_factors`) so `src2` is
+null.
 
-Next the parameters, that is the tensor operation parameters not the computation
-params:
+Next the parameters, that is the tensor `operation` parameters not the
+computation params:
 ```console
 (gdb) p dst.op_params
 $16 = {0, 128, 0, 0, 4096, 1176256512, 1065353216, 0, 1065353216, 1107296256, 0, 0, 0, 0, 0, 0}
@@ -596,7 +585,9 @@ token = 0, pos = 0
 Notice that the rampmix is 1.0 until it hits dimension 20, after which is
 becomes less than 1.0 and at dimension 46 it becomes 0.0. And notice that this
 corresponds to our `corr_dims` values.
-
+One thing that I noticed is that dimension 20 is actually dimension 21 as we
+are counting from 0. I'm not sure if this this important but perhaps this should
+be taken into account in the code?
 
 We then use the value of `ramp_mix`:
 ```c
