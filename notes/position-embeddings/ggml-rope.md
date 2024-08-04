@@ -177,9 +177,10 @@ by the make target `pre-ggml.c`):
     const size_t   nb2 = (dst)->nb[2]; (void)(nb2);
     const size_t   nb3 = (dst)->nb[3]; (void)(nb3);
 ```
-So this is simply extracting local variables from src0 and dst and the casts are
-to avoid warnings that the variables might not be used. Specifically it is
-creating local variables for the number of elements and the number the strides.
+So this is simply extracting local variables from `src0` and `dst` and the casts
+are to avoid warnings that the variables might not be used. Specifically it is
+creating local variables for the number of elements and the number the strides
+for the dimensions of the tensors.
 
 A little further down we have the following:
 ```c
@@ -223,7 +224,7 @@ GGML_CALL void ggml_rope_yarn_corr_dims(
     dims[1] = MIN(n_dims - 1, end);
 }
 ```
-
+Lets inspect the arguments passed to this function:
 ```console
 (gdb) s
 ggml_rope_yarn_corr_dims (n_dims=128,
@@ -234,30 +235,91 @@ ggml_rope_yarn_corr_dims (n_dims=128,
                           dims=0x7fffffffb220) at ggml/src/ggml.c:13941
 13941	    float start = floorf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_fast, freq_base));
 ```
+Notice that `beta_fast` is 32 and `beta_slow` is 1.
 
 Lets break this down a little and start by looking first call to
 `ggml_rope_yarn_corr_dim`:
 And this will first call `ggml_rope_yarn_corr_dim`:
 ```console
-(gdb) s
-ggml_rope_yarn_corr_dim (n_dims=128, n_ctx_orig=4096, n_rot=0, base=10000) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:13778
-13778	    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
+(gdb) f
+#0  ggml_rope_yarn_corr_dims (n_dims=128, n_ctx_orig=4096, freq_base=10000, beta_fast=32, beta_slow=1, dims=0x7ffff58e9c50)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:13801
+13801	    float start = floorf(ggml_rope_yarn_corr_dim(n_dims, n_ctx_orig, beta_fast, freq_base));
 ```
-Notice that we are passing in `beta_fast` as `n_rot`. This function has the
-following comment:
+Notice that we are passing in `beta_fast` as `n_rot` (number of rotations).
+
 ```c
 // Apparently solving `n_rot = 2pi * x * base^((2 * max_pos_emb) / n_dims)` for x, we get
 // `corr_dim(n_rot) = n_dims * log(max_pos_emb / (n_rot * 2pi)) / (2 * log(base))`
+static float ggml_rope_yarn_corr_dim(int n_dims, int n_ctx_orig, float n_rot, float base) {
+    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
+}
 ```
 This is calculating the dimension that would give us a certain number of
-rotations (n_rot) at the maxium position (n_ctx_orig).
-```console
-n_dims=128, n_ctx_orig=4096, n_rot=32, base=10000
-(gdb) p n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)3.14)) / (2 * logf(base))
-$10 = 20.9480038
+rotations (`n_rot`) at the maxium position (`n_ctx_orig`). In other words we
+are specifying the number of rotations and this function will return the
+dimension that will rotate that number of times.
+For more details about this please see
+[YaRN](rope.md#YaRN (Yet another RoPE ExtensioN method)). In the YaRN paper
+they have `α` and `β` which specify dimension boundries for the interpolation
+strategies, or the ranges. In GGML we have `beta_fast` and `beta_slow` which
+specify the number of rotations for the boundries which are then converted into
+dimensions by `ggml_rope_yarn_corr_dim`, and stored in `corr_dims`.
+
+The comment was little confusing to me but what I think it is saying is that
+this: 
 ```
+n_rot = 2Π * x * base^( (2 * n_ctx_orig) / n_dims )
+```
+This is using x which I think might be the dimension index. In ggml this
+calculated using the following formula:
+```
+                     n_ctx_orig
+dim = n_dims * log( ------------ ) / 2 * log(base)
+                     n_rot * 2Π
+```
+
+So, lets step into the functions:
+```console
+(gdb) s
+ggml_rope_yarn_corr_dim (n_dims=128, n_ctx_orig=4096, n_rot=32, base=10000) at /src/ggml.c:13778
+13778	    return n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)M_PI)) / (2 * logf(base));
+
+(gdb) p n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)3.14)) / (2 * logf(base))
+$1 = 20.9480038
+```
+
+```
+                   4096
+dim = 128 * log( -------- ) / 2 * log(10000)
+                 32 * 2Π
+
+                   4096
+dim = 128 * log( ----------- ) / 2 * log(10000)
+                 201.0619298
+
+dim = 128 * log( 20.37183272 ) / 2 * log(10000)
+                   
+dim = 128 * 3.014153198 / 2 * log(10000)
+
+dim = 128 * 3.014153198 / 2 * 9.210340372
+dim = 128 * 3.014153198 / 18.420680744
+dim = 128 * 0.163844
+dim = 20.9480038
+```
+
+```
+32 * 2Π ~ 201
+
+ [ start or new rotations                                                    ]
+ 0  201 402 604                                                             4096
+ |---|---|---|...                                                         ---|
+ 0   1   2   3                                                              19
+ [  rotations (~ 20 full rotations)                                          ]
+```
+
 The value `20.95` represents a specific dimension of the position embedding when
-the sequence length is at the maximum value (n_ctx_orig).
+the sequence length is at the maximum value (`n_ctx_orig`).
 
 So imagine we have a sequence length of 4096, what we are asking is that at what
 dimension does the position embedding rotate 32 times.
@@ -273,19 +335,17 @@ ggml_rope_yarn_corr_dim (n_dims=128, n_ctx_orig=4096, n_rot=1, base=10000) at gg
 (gdb) p n_dims * logf(n_ctx_orig / (n_rot * 2 * (float)3.14)) / (2 * logf(base))
 $11 = 45.0304031
 ```
-And similar to above here we are asking at which dimension the position rotates
-only once (slower frequence compared to the above).
+And similar to the above here we are asking at which dimension the position
+rotates only once (slower frequence compared to the above).
 And this value will be passed to ceilf so it will become 46.
 
 ```
 (gdb) p corr_dims 
 $17 = {20, 46}
 ```
-So the above will figurare out the range of dimensions for which interpolation
+So the above will figure out the range of dimensions for which interpolation
 extrapolation will be performed and used later when we iterate over all the
 token position embeddings.
-
-
 
 The following code will iterate over all the batches, which is 1 in this case.
 And then iterate over all the tokens in the sequence (ne2) which is my case is
@@ -395,7 +455,6 @@ be 0 since this is the first token in the sequence. This value is set as the
 initial value for the rotation angle `theta`. The code will iterate over the
 number of position embedding dimensions which is 128 in this case pairwise.
 
-
 We then call `rope_yarn`.
 ```c
 static void rope_yarn(
@@ -430,18 +489,18 @@ static float rope_yarn_ramp(const float low, const float high, const int i0) {
     return 1 - MIN(1, MAX(0, y));
 }
 ```
-Recall that we are iterating over all the position embedding dimensions which are
-128 in this case, but we do this in pairs. This is the reason for `i0/2` in the
-code above. So we are taking the current position (0) minus the value of low
+Recall that we are iterating over all the position embedding dimensions which
+are 128 in this case, but we do this in pairs. This is the reason for `i0/2` in
+the code above. So we are taking the current position (0) minus the value of low
 which is 20 in our case. Then we are taking the maximum of 0.001 and the
 difference between high and low which is 46 - 20 = 26. And we are then taking
 the ratio of these values:
 ```
 -20 / 26 = -0.769230769
 ```
-Now,  low represents the dimension where interpolation starts to transition to
-extrapolation and high is the dimension where the transition is complete. i0/2 is
-the current dimension pair we are calculating the gamma function for.
+Now, low represents the dimension where interpolation starts to transition to
+extrapolation and high is the dimension where the transition is complete. i0/2
+is the current dimension pair we are calculating the gamma function for.
 
 * When i0/2 < low y will be negative.
 * When i0/2  is between low and high y will be between 0 and 1.
@@ -462,6 +521,82 @@ So this will return:
 * For dimensions < low we return 1 (full interpolation)
 * For dimensions > high we return 0 (full extrapolation)
 * For dimensions between low and high we return a value between 0 and 1.
+
+Lets take a look at a few of these values;
+```
+corr_dims[0] = 20.000000, corr_dims[1] = 46.000000
+token = 0, pos = 0
+0  i0 = 0, theta = 0.000000, ramp_mix = 1.000000
+1  i0 = 2, theta = 0.000000, ramp_mix = 1.000000
+2  i0 = 4, theta = 0.000000, ramp_mix = 1.000000
+3  i0 = 6, theta = 0.000000, ramp_mix = 1.000000
+4  i0 = 8, theta = 0.000000, ramp_mix = 1.000000
+5  i0 = 10, theta = 0.000000, ramp_mix = 1.000000
+6  i0 = 12, theta = 0.000000, ramp_mix = 1.000000
+7  i0 = 14, theta = 0.000000, ramp_mix = 1.000000
+8  i0 = 16, theta = 0.000000, ramp_mix = 1.000000
+9  i0 = 18, theta = 0.000000, ramp_mix = 1.000000
+10 i0 = 20, theta = 0.000000, ramp_mix = 1.000000
+11 i0 = 22, theta = 0.000000, ramp_mix = 1.000000
+12 i0 = 24, theta = 0.000000, ramp_mix = 1.000000
+13 i0 = 26, theta = 0.000000, ramp_mix = 1.000000
+14 i0 = 28, theta = 0.000000, ramp_mix = 1.000000
+15 i0 = 30, theta = 0.000000, ramp_mix = 1.000000
+16 i0 = 32, theta = 0.000000, ramp_mix = 1.000000
+17 i0 = 34, theta = 0.000000, ramp_mix = 1.000000
+18 i0 = 36, theta = 0.000000, ramp_mix = 1.000000
+19 i0 = 38, theta = 0.000000, ramp_mix = 1.000000
+20 i0 = 40, theta = 0.000000, ramp_mix = 1.000000
+
+21 i0 = 42, theta = 0.000000, ramp_mix = 0.961538
+22 i0 = 44, theta = 0.000000, ramp_mix = 0.923077
+23 i0 = 46, theta = 0.000000, ramp_mix = 0.884615
+24 i0 = 48, theta = 0.000000, ramp_mix = 0.846154
+25 i0 = 50, theta = 0.000000, ramp_mix = 0.807692
+26 i0 = 52, theta = 0.000000, ramp_mix = 0.769231
+27 i0 = 54, theta = 0.000000, ramp_mix = 0.730769
+28 i0 = 56, theta = 0.000000, ramp_mix = 0.692308
+29 i0 = 58, theta = 0.000000, ramp_mix = 0.653846
+30 i0 = 60, theta = 0.000000, ramp_mix = 0.615385
+31 i0 = 62, theta = 0.000000, ramp_mix = 0.576923
+32 i0 = 64, theta = 0.000000, ramp_mix = 0.538462
+33 i0 = 66, theta = 0.000000, ramp_mix = 0.500000
+34 i0 = 68, theta = 0.000000, ramp_mix = 0.461538
+35 i0 = 70, theta = 0.000000, ramp_mix = 0.423077
+36 i0 = 72, theta = 0.000000, ramp_mix = 0.384615
+37 i0 = 74, theta = 0.000000, ramp_mix = 0.346154
+38 i0 = 76, theta = 0.000000, ramp_mix = 0.307692
+39 i0 = 78, theta = 0.000000, ramp_mix = 0.269231
+40 i0 = 80, theta = 0.000000, ramp_mix = 0.230769
+41 i0 = 82, theta = 0.000000, ramp_mix = 0.192308
+42 i0 = 84, theta = 0.000000, ramp_mix = 0.153846
+43 i0 = 86, theta = 0.000000, ramp_mix = 0.115385
+44 i0 = 88, theta = 0.000000, ramp_mix = 0.076923
+45 i0 = 90, theta = 0.000000, ramp_mix = 0.038462
+
+46 i0 = 92, theta = 0.000000, ramp_mix = 0.000000
+47 i0 = 94, theta = 0.000000, ramp_mix = 0.000000
+48 i0 = 96, theta = 0.000000, ramp_mix = 0.000000
+49 i0 = 98, theta = 0.000000, ramp_mix = 0.000000
+50 i0 = 100, theta = 0.000000, ramp_mix = 0.000000
+51 i0 = 102, theta = 0.000000, ramp_mix = 0.000000
+52 i0 = 104, theta = 0.000000, ramp_mix = 0.000000
+53 i0 = 106, theta = 0.000000, ramp_mix = 0.000000
+54 i0 = 108, theta = 0.000000, ramp_mix = 0.000000
+55 i0 = 110, theta = 0.000000, ramp_mix = 0.000000
+56 i0 = 112, theta = 0.000000, ramp_mix = 0.000000
+57 i0 = 114, theta = 0.000000, ramp_mix = 0.000000
+58 i0 = 116, theta = 0.000000, ramp_mix = 0.000000
+59 i0 = 118, theta = 0.000000, ramp_mix = 0.000000
+60 i0 = 120, theta = 0.000000, ramp_mix = 0.000000
+61 i0 = 122, theta = 0.000000, ramp_mix = 0.000000
+62 i0 = 124, theta = 0.000000, ramp_mix = 0.000000
+63 i0 = 126, theta = 0.000000, ramp_mix = 0.000000
+```
+Notice that the rampmix is 1.0 until it hits dimension 20, after which is
+becomes less than 1.0 and at dimension 46 it becomes 0.0. And notice that this
+corresponds to our `corr_dims` values.
+
 
 We then use the value of `ramp_mix`:
 ```c
