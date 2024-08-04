@@ -416,8 +416,8 @@ used above:
 f'w(x_m, m, Θ_d) = fw(x_m, g(m), h(Θ_d))
 ```
 So the function `fw` is parameterized by W (W for weights). You can think of
-this as a field/member of a struct/class that this function is also a member of.
-The other parameters as the input to the function. `x_m` is an embedding for a
+this as a field/member of a struct/class that this function (f) is also a member
+of. The other parameters as the input to the function. `x_m` is an embedding for a
 token in the sequence. `m` is that tokens position in the sequence. And 'Θ_d' is
 the set of angles for the dimensions of the embedding space.
 
@@ -427,12 +427,14 @@ g(m) = m/s
 h(Θ_d) = Θ_d
 
 s = L'/L
+L' = extended context length
+L  = original context length
 ```
 
 YaRN introduces a new parameter lambda (λ) which is defined as:
 ```
       2Π     
-λ_d = --- = 2Πb^(2d/|D|)
+λ_d = --- = 2Π b^(2d/|D|)
       Θ_d
 
 Θ_d = the rotation angle for the d-th dimension.
@@ -442,35 +444,36 @@ b   = the base frequency.
 The wavelength λ_d specifies how far along the sequence of input tokens we need
 to go before the positional embedding for a particular dimension repeats.
 
-'Θ_d' Each dimension in the embedding space has its own value for 'Θ_d'. For a
-given token at position 'm', the positional encoding for the d-th dimension is
-derived from m scaled by theta_d, 'm * Θ_d'.
+'Θ_d' Each dimension in the embedding space has its own value for 'Θ_d'.
 
-Lets try to understand  this a little better. Take the following table that
+Lets try to understand this a little better. Take the following table that
 tries to show the values for λ_d=4
 ```
-Token postiion      λ_d      Rotation Angle (radians)  Rotation angle (degrees)
-0                   4        0                         0
-1                   4        π/2                       90
-2                   4        π                         180
-3                   4        3π/2                      270
-4                   4        2π   (same as 0)          360 (same as 0)
-5                   4        5π/2 (same as π/2)        450 (same as 90)                     
-6                   4        3π   (same as π)          540 (same as 180)
-7                   4        7π/2 (same as 3π/2)       630 (same as 270)
-8                   4        4π   (same as 0)          720 (same as 0)
-9                   4        9π/2 (same as π/2)        810 (same as 90)
+Token postiion  λ_d      Rotation Angle (radians)  Rotation angle (degrees)
+0               4        0                         0
+1               4        π/2                       90
+2               4        π                         180
+3               4        3π/2                      270
+4               4        2π   (same as 0)          360 (same as 0)
+5               4        5π/2 (same as π/2)        450 (same as 90)                     
+6               4        3π   (same as π)          540 (same as 180)
+7               4        7π/2 (same as 3π/2)       630 (same as 270)
+8               4        4π   (same as 0)          720 (same as 0)
+9               4        9π/2 (same as π/2)        810 (same as 90)
 ```
 Notice that after a full cycle (2π) the rotation angle is reset to 0 so there
 are only 4 unique values for the rotation angle. Recall that sine/cosine are
-cycles (think of the unit circle) and going around the circle and landing only
-same place but going around multiple times we will have the same rotation angle.
+cycles (think of the unit circle) and go around more than a complete cycle we
+will land on the same positions (same angle rotation).
 
 So the model will only be able to distinguish between 4 different tokens
 positions for this dimension. Recall that Θ_d is the rotation angle for a
 specific dimension, and after 4 tokens the this rotation angle will repeat so
 at most the model will be able to distinguish between 4 tokens apart or something
 like that.
+
+And also notice that this dimension could be identified by asking for the
+dimension where the number of a full rotation is 4.
 
 The positional encoding allows the model to recognize patterns and relationships
 within each span of 4 tokens uniquely. However, beyond this span, the same
@@ -501,7 +504,6 @@ that can be rotated before the cycle repeats. So if we have a λ_d value of 4
 then the rotation angle will repeat every 4 tokens. There will be 4 unique
 rotations.
 
-
 ```
 Sequence: "Dan loves ice cream"
 
@@ -526,6 +528,7 @@ In PI and NTK-aware interpolation all RoPE demensions are scaled by the same
 factor. On thing that was observed is that for a given context lenght L there
 were dimensions that end up with a wavelength greater than the max context
 length seen during training (lambda_d > L).
+
 They also mention in the YaRN paper that when streching the RoPE dimensions
 by either a scale 's' or by changing the base frequency 'b' all tokens become
 closer to each other.
