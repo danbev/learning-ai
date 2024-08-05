@@ -500,6 +500,7 @@ This value is clamped and inverted  using:
     return 1 - MIN(1, MAX(0, y));
 ```
 So for our first dimension we will get:
+```
 -20 / 26 = -0.769230769
 1 - MIN(1, MAX(0, -0.769230769)) = 
 1 - MIN(1, -0.769230769) = 
