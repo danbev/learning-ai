@@ -585,9 +585,97 @@ token = 0, pos = 0
 Notice that the rampmix is 1.0 until it hits dimension 20, after which is
 becomes less than 1.0 and at dimension 46 it becomes 0.0. And notice that this
 corresponds to our `corr_dims` values.
-One thing that I noticed is that dimension 20 is actually dimension 21 as we
-are counting from 0. I'm not sure if this this important but perhaps this should
-be taken into account in the code?
+
+One thing that I noticed is that dimension in `corr_dims[0]/low` is 20 but the
+actually dimension where the range starts is 21. The dimension index start at
+zero. Perhaps low should be adjusted by subtracting one to acount for this:
+```c
+        float ramp_mix = rope_yarn_ramp(corr_dims[0] - 1, corr_dims[1], i0) * ext_factor;
+```
+This will produce the following output:
+```
+0  i0 = 0, theta = 0.000000, ramp_mix = 1.000000
+1  i0 = 2, theta = 0.000000, ramp_mix = 1.000000
+2  i0 = 4, theta = 0.000000, ramp_mix = 1.000000
+3  i0 = 6, theta = 0.000000, ramp_mix = 1.000000
+4  i0 = 8, theta = 0.000000, ramp_mix = 1.000000
+5  i0 = 10, theta = 0.000000, ramp_mix = 1.000000
+6  i0 = 12, theta = 0.000000, ramp_mix = 1.000000
+7  i0 = 14, theta = 0.000000, ramp_mix = 1.000000
+8  i0 = 16, theta = 0.000000, ramp_mix = 1.000000
+9  i0 = 18, theta = 0.000000, ramp_mix = 1.000000
+10 i0 = 20, theta = 0.000000, ramp_mix = 1.000000
+11 i0 = 22, theta = 0.000000, ramp_mix = 1.000000
+12 i0 = 24, theta = 0.000000, ramp_mix = 1.000000
+13 i0 = 26, theta = 0.000000, ramp_mix = 1.000000
+14 i0 = 28, theta = 0.000000, ramp_mix = 1.000000
+15 i0 = 30, theta = 0.000000, ramp_mix = 1.000000
+16 i0 = 32, theta = 0.000000, ramp_mix = 1.000000
+17 i0 = 34, theta = 0.000000, ramp_mix = 1.000000
+18 i0 = 36, theta = 0.000000, ramp_mix = 1.000000
+19 i0 = 38, theta = 0.000000, ramp_mix = 1.000000
+20 i0 = 40, theta = 0.000000, ramp_mix = 0.962963
+21 i0 = 42, theta = 0.000000, ramp_mix = 0.925926
+22 i0 = 44, theta = 0.000000, ramp_mix = 0.888889
+23 i0 = 46, theta = 0.000000, ramp_mix = 0.851852
+24 i0 = 48, theta = 0.000000, ramp_mix = 0.814815
+25 i0 = 50, theta = 0.000000, ramp_mix = 0.777778
+26 i0 = 52, theta = 0.000000, ramp_mix = 0.740741
+27 i0 = 54, theta = 0.000000, ramp_mix = 0.703704
+28 i0 = 56, theta = 0.000000, ramp_mix = 0.666667
+29 i0 = 58, theta = 0.000000, ramp_mix = 0.629630
+30 i0 = 60, theta = 0.000000, ramp_mix = 0.592593
+31 i0 = 62, theta = 0.000000, ramp_mix = 0.555556
+32 i0 = 64, theta = 0.000000, ramp_mix = 0.518519
+33 i0 = 66, theta = 0.000000, ramp_mix = 0.481481
+34 i0 = 68, theta = 0.000000, ramp_mix = 0.444444
+35 i0 = 70, theta = 0.000000, ramp_mix = 0.407407
+36 i0 = 72, theta = 0.000000, ramp_mix = 0.370370
+37 i0 = 74, theta = 0.000000, ramp_mix = 0.333333
+38 i0 = 76, theta = 0.000000, ramp_mix = 0.296296
+39 i0 = 78, theta = 0.000000, ramp_mix = 0.259259
+40 i0 = 80, theta = 0.000000, ramp_mix = 0.222222
+41 i0 = 82, theta = 0.000000, ramp_mix = 0.185185
+42 i0 = 84, theta = 0.000000, ramp_mix = 0.148148
+43 i0 = 86, theta = 0.000000, ramp_mix = 0.111111
+44 i0 = 88, theta = 0.000000, ramp_mix = 0.074074
+45 i0 = 90, theta = 0.000000, ramp_mix = 0.037037
+46 i0 = 92, theta = 0.000000, ramp_mix = 0.000000
+```
+
+In `ggml_rope_cache_init` we have the following for loop which will iterate over
+all the dimensions (128 in our case):
+```c
+static void ggml_rope_cache_init(
+     float theta_base, float freq_scale, const float * freq_factors, float corr_dims[2], int64_t ne0, float ext_factor, float mscale,
+     float * cache, float sin_sign, float theta_scale) {
+    // ref: https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py
+    float theta = theta_base;
+    for (int64_t i0 = 0; i0 < ne0; i0 += 2) {
+        const float ff = freq_factors ? freq_factors[i0/2] : 1.0f;
+        rope_yarn(
+            theta/ff, freq_scale, corr_dims, i0, ext_factor, mscale, &cache[i0 + 0], &cache[i0 + 1]
+        );
+        cache[i0 + 1] *= sin_sign;
+
+        theta *= theta_scale;
+    }
+}
+```
+And `i0` is passed to `rope_yarn`, which in turn will call `rope_yarn_ramp` and
+pass in `i0`:
+```c
+        float ramp_mix = rope_yarn_ramp(corr_dims[0], corr_dims[1], i0) * ext_factor;
+```
+Now, `rope_yarn_ramp` will take the `corr_dims` as `low` and `high`:
+```c
+static float rope_yarn_ramp(const float low, const float high, const int i0) {
+    const float y = (i0 / 2 - low) / MAX(0.001f, high - low);
+    return 1 - MIN(1, MAX(0, y));
+}
+```
+The dimensions are zero based so the first dimension is 0 and the last is 127,
+but the low and high values are 20 and 46.
 
 We then use the value of `ramp_mix`:
 ```c
