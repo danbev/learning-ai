@@ -1726,3 +1726,183 @@ data. Take matrix multiplication for example which performs the dot product.
 The dot product to the resulting output matrix, position 0,0 is the dot product
 of the first row of the first matrix and the first column of the second matrix.
 This can be handled by one thread.
+
+### Threading
+This section will look at how threading is used/implemented in GGML.
+
+Lets take any of the exploration examples in [ggml](../fundamentals/ggml) and
+and set a breakpoint in the `ggml_graph_compute_with_ctx` function. I'll use
+the `rope` example just because its the last one I worked on:
+```console
+$ gdb --args bin/rope
+(gdb) br ggml_graph_compute_with_ctx
+(gdb) r
+Breakpoint 1, ggml_graph_compute_with_ctx (ctx=0x55555568a808 <g_state+8>, cgraph=0x7ffff691d610, n_threads=4) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:18771
+18771	enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+```
+We can see that this functions takes a `ggml_context` which we have talked about
+previously, and also a computation graph, and the number of threads to use.
+```c
+enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+    struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads);
+
+    struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
+
+    cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
+
+    return ggml_graph_compute(cgraph, &cplan);
+}
+```
+TOOD: look into the context `mem_buffer` and how that works.
+
+First the construction of a `ggml_cplan` will happen, which is a struct that
+looks like this:
+```console
+(gdb) ptype struct ggml_cplan
+type = struct ggml_cplan {
+    size_t work_size;
+    uint8_t *work_data;
+    int n_threads;
+    ggml_abort_callback abort_callback;
+    void *abort_callback_data;
+}
+```
+We can see that is `n_threads` is not set then the default will be used which is
+currently 4.
+```c
+struct ggml_cplan ggml_graph_plan(const struct ggml_cgraph * cgraph, int n_threads) {
+    if (n_threads <= 0) {
+        n_threads = GGML_DEFAULT_N_THREADS;
+    }
+```
+This function will iterate over all the nodes in the compute graph which is
+2 in our case:
+```console
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        struct ggml_tensor * node = cgraph->nodes[i];
+        ...
+    }
+```
+```console
+(gdb) p cgraph->n_nodes
+$1 = 2
+```
+And notice that a node is just a tensor:
+```console
+(gdb) p *node
+$3 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {128, 32, 6, 1}, nb = {4, 512, 16384, 98304}, 
+op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff68ed030, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+0x0, 0x0, 0x0}, view_src = 0x7ffff68ed030, view_offs = 0, data = 0x7ffff68ed180, name = "a", '\000' <repeats 62 times>, extra = 0x0}
+```
+Following that we have this line:
+```c
+        const int n_tasks = ggml_get_n_tasks(node, n_threads);
+```
+Note that the operation of the tensor is `GGML_OP_RESHAPE`:
+```c
+static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+    int n_tasks = 0;
+
+    if (ggml_is_empty(node)) {
+        // no need to multi-thread a no-op
+        n_tasks = 1;
+        return n_tasks;
+    }
+
+    switch (node->op) {
+      ...
+        case GGML_OP_SCALE:
+        case GGML_OP_SET:
+        case GGML_OP_RESHAPE:
+        case GGML_OP_VIEW:
+        case GGML_OP_PERMUTE:
+        case GGML_OP_TRANSPOSE:
+        case GGML_OP_GET_ROWS_BACK:
+        case GGML_OP_DIAG:
+            {
+                n_tasks = 1;
+            } break;
+    }
+```
+So in this case `n_tasks` will be set to 1. And this will be returned. Reshape is
+actually a no-operation in the forward pass:
+```c
+static void ggml_compute_forward_reshape(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+    // NOP
+    UNUSED(params);
+    UNUSED(dst);
+}
+```
+
+Back in `ggml_graph_plan` there is a switch statement in the for loop over
+the nodes in the compute graph:
+```c
+        switch (node->op) {
+            ...
+            default:
+                break;
+```
+But for the current operation, `GGML_OP_RESHAPE` there is no special handling.
+
+For the second node which is the following:
+```console
+(gdb) p node->op
+$12 = GGML_OP_ROPE
+```
+For this operation `n_tasks` will be set to the number of threads:
+```c
+        case GGML_OP_ROPE:
+        case GGML_OP_ROPE_BACK:
+        case GGML_OP_ADD_REL_POS:
+            {
+                n_tasks = n_threads;
+            } break;
+```
+And this will then be returned.
+
+Again back in the for loop in `ggml_graph_plan` this time there is a case for
+`GGML_OP_ROPE`:
+```c
+    size_t work_size = 0;
+
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        ...
+        size_t cur = 0;
+
+        switch (node->op) {
+            ...
+            case GGML_OP_ROPE:
+                {
+                    cur = ggml_type_size(GGML_TYPE_F32) * node->ne[0] * n_tasks;
+                } break;
+        }
+    }
+
+    if (work_size > 0) {
+        work_size += CACHE_LINE_SIZE*(n_threads - 1);
+    }
+
+    cplan.n_threads = MIN(max_tasks, n_threads);
+    cplan.work_size = work_size;
+    cplan.work_data = NULL;
+
+    return cplan;
+```
+We can inspect the values for the calculation of `cur`:
+```console
+(gdb) p node->ne[0]
+$14 = 128
+(gdb) p ggml_type_size(GGML_TYPE_F32)
+$15 = 4
+(gdb) p ggml_type_size(GGML_TYPE_F32) * node->ne[0] * n_tasks
+$16 = 2048
+```
+So `work_size` will be set to 2048 in this case, which will later be extended
+to make sure that different threads are not writing to the same cache line
+(false sharing). The first thread does not need this spacing as it typically
+starts at the base address. This will allow each thread to operate on different
+cache lines.
+
+_wip_
