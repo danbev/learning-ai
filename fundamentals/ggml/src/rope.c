@@ -63,21 +63,30 @@ int main(int argc, char **argv) {
   }
 
   int mode = 0;    // rote type 0 = Normal
+
   // The RoPE base frequency
   //   ↓
   // (10000^(-2j/d).
   float freq_base = 10000.0f;
+
   // The RoPE frequency scale.
   float freq_scale = 1.0f;
+
   // TODO: What is this? It looks like this is mscale (magnituce scale)
   float attn_factor = 1.0f;
+
   // Extrapolation factor. If this is 0.0 then the beta_fast and beta_slow
   // are not used. 
   float ext_factor = 1.0f;
-  // This is a YaRN parameter which I think is named α in the YaRN paper.
+
+  // This is a YaRN parameter is named α (alpha) in the YaRN paper. This
+  // specifies that hen the number of rotations is 32 this is the position
+  // embedding dimension that should be used for the for 
   float beta_fast = 32.0f;
+
   // This is a YaRN parameter which I think is named β in the YaRN paper.
   float beta_slow = 1.0f;
+
   // LongRope Frequency factors (freq_factors/rope_scaling) are used with
   // certain models like Phi-3-mini-128k-instruct
   // (https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/blob/main/config.json#L27).
@@ -107,11 +116,6 @@ int main(int argc, char **argv) {
     return 1;
   }
   
-  struct ggml_tensor* r = ggml_reshape_2d(ctx, s, n_ctx_orig, n_tokens);
-
-  printf("embedding after rotation:\n");
-  //printf("Rotation: %f\n", *(float *)((char *)  s->data + 73728));
-
   for (int i = 0; i < 10; i++) {
     printf("embedding for token 1, embedding dim %d = %f\n", i, ggml_get_f32_nd(s, i, 0, 1, 0));
   }
