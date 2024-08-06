@@ -15,9 +15,9 @@ training as they can be parallelized, incontrast to RNNs which are sequential.
 
 But, the issue with transformers is that they don't scale to long sequences
 which is because the self attention mechanism is quadratic in the sequence
-length. Every token has to attend to every other token in a sequenc (n²). So if
+length. Every token has to attend to every other token in a sequence (n²). So if
 we have 40 tokens that means 1600 attention operations, which means more
-computation and this just increases the longer the input sequence it.
+computation and this just increases the longer the input sequence is.
 In this respect RNNs are more performant as they don't have the quadratic
 scaling issue that the self attention mechanism has (but do have other like
 slower training).
@@ -26,7 +26,7 @@ The core of Mamba is state space models (SSMs). Before we go further it might
 make sense to review [RNNs](./rnn.md) and [SSMs](./state-space-models.md).
 
 Selective state space models, which Mamaba is a type of, give us a linear
-recurrent network simliar to RRNs, but also have the fast training that we gets
+recurrent network simliar to RRNs, but also have the fast training that we get
 from transformers. So we get the best of both worlds.
 
 One major difference with state space models is that they have state which is
@@ -37,7 +37,7 @@ like RNNs do have state, but recall that they process the input sequentially.
 To understand how Mamba fits in I found it useful to compare it to how
 transformers look in an neural network:
 ```
-Residul          ↑
+Residual         ↑
      +---------> |
      |           |
      |   +-------------------+
@@ -62,7 +62,7 @@ Residul          ↑
 ```
 And then we have Mamba:
 ```
-Residul          ↑
+Residual         ↑
      +---------> |
      |           |
      |   +-------------------+
@@ -132,7 +132,7 @@ definition of a state space model. This makes sense if we think about it as
 this is not specific to neural networks or even computers. Think about an analog
 system, for example an IoT device that reads the temperature from a sensor
 connected to it. To process this signal it needs to be converted into digital
-form. A simliar thing needs to be done in this case as we can't use continous
+form. A simliar thing needs to be done in this case, as we can't use continous
 signals with computers, just like an IoT can't process an analog signal
 directly. So we need to convert into descrete time steps, similar to how an
 Analog-to-Digital Converter ([ADC]) would convert the signal into quantized
@@ -140,14 +140,14 @@ Analog-to-Digital Converter ([ADC]) would convert the signal into quantized
 
 [ADC]: https://github.com/danbev/learning-iot/tree/master?tab=readme-ov-file#analog-to-digital-converter-adc
 
-So instead of the using functions as shown above we concrete values we will
+So instead of the using functions as shown above with concrete values we will
 transform A and B into discrete values and the equations become:
 ```
      _       _ 
 hₜ = Ahₜ₋₁ + Bxₜ
 yₜ = Chₜ+ Dxₜ
 ```
-To get the A_hat and B_hat values a process called discretization is used.
+To get the `A_hat` and `B_hat` values a process called discretization is used.
 
 ### Discretization
 So we will first discretize the parameters A, and B of the state space model,
@@ -339,7 +339,7 @@ transform A and B into discrete values and the equations become:
 hₜ = Ahₜ₋₁ + Bxₜ
 yₜ = Chₜ+ Dxₜ
 ```
-Where A_hat and B_hat are:
+Where `A_hat` and `B_hat` are:
 ```
 A_hat = (I - Δ/2 A)⁻¹           (⁻¹ inverse bilinear transform)
 B_hat = (I - Δ/2 A)⁻¹ ΔB        (⁻¹ inverse bilinear transform)
