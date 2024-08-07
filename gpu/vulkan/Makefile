@@ -1,7 +1,7 @@
 #CFLAGS = -std=c++17 -O2
-LDFLAGS = -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi
+LDFLAGS = -lvulkan -ldl -lpthread -lX11 -lXrandr -lXi
 
-VULKAN_SDK_PATH = /home/danielbevenius/work/ai/vulkan/1.3.275.0/x86_64
+VULKAN_SDK_PATH = /home/danbev/work/ai/vulkan/1.3.283.0/x86_64
 DXC = $(VULKAN_SDK_PATH)/bin/dxc
 
 helloworld: src/helloworld.cpp

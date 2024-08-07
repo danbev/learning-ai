@@ -1,35 +1,47 @@
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
-
+#include <vulkan/vulkan.h>
 #include <iostream>
+#include <vector>
+#include <stdexcept>
 
 int main() {
-    glfwInit();
+    // Application info
+    VkApplicationInfo appInfo{};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.pApplicationName = "Vulkan App";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "No Engine";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_0;
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan Example window", nullptr, nullptr);
+    // Instance creation info
+    VkInstanceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
 
-    uint32_t extensionCount = 0;
-    vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+    // Specify extensions
+    std::vector<const char*> extensions = {
+        VK_KHR_SURFACE_EXTENSION_NAME
+    };
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    createInfo.ppEnabledExtensionNames = extensions.data();
 
-    std::cout << extensionCount << " extensions supported\n";
+    // No validation layers for this simple example
+    createInfo.enabledLayerCount = 0;
 
-    glm::mat4 matrix;
-    glm::vec4 vec;
-    auto test = matrix * vec;
+    // Create the Vulkan instance
+    VkInstance instance;
+    VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
 
-    while(!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create Vulkan instance!");
     }
 
-    glfwDestroyWindow(window);
+    std::cout << "Vulkan instance created successfully." << std::endl;
 
-    glfwTerminate();
+    // Use the Vulkan instance...
+
+    // Clean up
+    vkDestroyInstance(instance, nullptr);
 
     return 0;
 }
