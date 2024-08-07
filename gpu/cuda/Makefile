@@ -1,3 +1,5 @@
+minimal: src/minimal.cu
+	nvcc -o $@ $<
 
 hello-world: src/hello-world.cu
 	nvcc -lnppc -o $@ $<
@@ -17,4 +19,4 @@ array-add: src/array-add.cu
 
 .PHONY: clean
 clean:
-	${RM} hello-world threads inc hello-world.ptx
+	${RM} hello-world threads inc hello-world.ptx minimal
