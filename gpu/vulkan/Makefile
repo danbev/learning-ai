@@ -17,3 +17,7 @@ shader: src/shader.frag
 
 list-dev: src/list-dev.c
 	gcc $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+.PHONY: ctags
+ctags: 
+	ctags -R  ~/work/ai/vulkan/1.3.283.0/x86_64/include/ .
