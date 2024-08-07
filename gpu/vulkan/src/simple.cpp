@@ -53,10 +53,12 @@ VkPhysicalDevice pickPhysicalDevice(VkInstance instance) {
         throw std::runtime_error("failed to find GPUs with Vulkan support!");
     }
     std::vector<VkPhysicalDevice> devices(deviceCount);
+    std::cout << "Found " << deviceCount << " physical devices" << std::endl;
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
     return devices[0]; // Just pick the first device for simplicity
 }
 
+// Find a queue that can handle compute (has VK_QUEUE_COMPUTE_BIT set)
 uint32_t findComputeQueueFamily(VkPhysicalDevice device) {
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
@@ -110,6 +112,7 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
 
 VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device) {
     VkDescriptorSetLayoutBinding layoutBinding{};
+    // This matches the binding 0 in simple.glsl
     layoutBinding.binding = 0;
     layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     layoutBinding.descriptorCount = 1;
@@ -310,7 +313,9 @@ int main() {
         VkMemoryAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        allocInfo.memoryTypeIndex = findMemoryType(physicalDevice,
+            memRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         VkDeviceMemory bufferMemory;
         if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
@@ -350,9 +355,9 @@ int main() {
         std::cout << "Creating descriptor set..." << std::endl;
         VkDescriptorSet descriptorSet = createDescriptorSet(device, descriptorPool, descriptorSetLayout, buffer);
 
-        std::cout << "Recording command buffer..." << std::endl;
         // Recording refers to adding commands to a command buffer which can
         // later be submitted to a queue for execution.
+        std::cout << "Recording command buffer..." << std::endl;
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
