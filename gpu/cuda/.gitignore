@@ -4,3 +4,4 @@ threads
 inc
 array-add
 minimal
+wmma
