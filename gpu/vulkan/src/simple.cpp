@@ -27,15 +27,18 @@ VkInstance createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = "Simple Vulkan Compute App";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.applicationVersion = VK_MAKE_API_VERSION(1, 0, 0, 0);
+    // An engine is something like Unity, Unreal Engine, CryEngine, etc.
+    // Typically not set for machine learning applications.
     appInfo.pEngineName = "No Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.engineVersion = VK_MAKE_API_VERSION(1, 0, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
+    // This is an opaque pointer a Vulkan object
     VkInstance instance;
     if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
         throw std::runtime_error("failed to create instance!");
@@ -342,12 +345,14 @@ int main() {
         vkUnmapMemory(device, bufferMemory);
 
         std::cout << "Creating descriptor pool..." << std::endl;
-VkDescriptorPool descriptorPool = createDescriptorPool(device);
+        VkDescriptorPool descriptorPool = createDescriptorPool(device);
 
-std::cout << "Creating descriptor set..." << std::endl;
-VkDescriptorSet descriptorSet = createDescriptorSet(device, descriptorPool, descriptorSetLayout, buffer);
+        std::cout << "Creating descriptor set..." << std::endl;
+        VkDescriptorSet descriptorSet = createDescriptorSet(device, descriptorPool, descriptorSetLayout, buffer);
 
         std::cout << "Recording command buffer..." << std::endl;
+        // Recording refers to adding commands to a command buffer which can
+        // later be submitted to a queue for execution.
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
