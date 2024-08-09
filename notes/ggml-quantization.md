@@ -1,7 +1,7 @@
 ## GGML Quantization
 In broad terms this is about taking a floating point number like a single
-precision floating point number (32 bits) or a half precision floating point
-number (16 bits) and converting it to a fixed point number with a fixed number
+precision floating point number (32 bits), or a half precision floating point
+number (16 bits), and converting it to a fixed point number with a fixed number
 of bits. 
 
 
@@ -38,7 +38,7 @@ can only store positive values.
 In the coming sections we will look at types that are used in ggml and the all
 start with block_ and it was not clear to me what this meant and why blocks are
 used. Blocks are simply tensors that are divided into blocks of a certain size
-and then quantized individually. As we will see we have scaling factor when we
+and then quantized individually. As we will see we have a scaling factor when we
 quantize which is calculated based on the maximum value in the block. If just
 one or a few data points are extreme outliers (very high or very low compared to
 the rest of the data), they can disproportionately influence the scale factor.
@@ -69,7 +69,7 @@ delta = max_value / quantized range
 delta = max_value / 15                (1111b)
 ```
 
-`qs` is where are quantized values are stored. So we have a array of 16 elements
+`qs` is where the quantized values are stored. So we have a array of 16 elements
 (32/2=16), and notice the type is `uint8_t` which is 1 byte so each entry can
 hold 8 bits.
 
