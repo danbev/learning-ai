@@ -284,8 +284,8 @@ typedef struct {
     uint8_t qs[QK5_0 / 2]; // nibbles / quants
 } block_q5_0;
 ```
-Notice that `qa` is in fact the same size as for `block_q4_0` but we have an
-additional field `qh` which has an array of 5 (0-4). This is used to store the
+Notice that `qs` is in fact the same size as for `block_q4_0` but we have an
+additional field `qh` which has an array of 4 (0-4). This is used to store the
 5th bit of the quantized value.
 
 `qs` is where are quantized values are stored.
