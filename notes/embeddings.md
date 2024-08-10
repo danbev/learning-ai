@@ -99,7 +99,7 @@ actually processes to understand the text and generate responses or predictions.
 ### llama.cpp embeddings example
 This example can be used as follows:
 ```console
-$ gdb --args ./llama-embedding -m models/llama-2-7b-chat.Q4_K_M.gguf --no-warmup --pooling mean  -p "What is LoRA?
+$ gdb --args ./llama-embedding -m models/llama-2-7b-chat.Q4_K_M.gguf --no-warmup --pooling mean  -p "What is LoRA?"
 ```
 Now, recall that first the prompt is split into tokens, which each have an id
 from the model vocabulary.
@@ -409,3 +409,154 @@ void llama_embd_normalize(const float * inp, float * out, int n, int embd_norm) 
     }
 }
 ```
+
+There are also other options for the type of pooling which are:
+```console
+$ ./llama-embedding --help | grep pooling
+         --pooling {none,mean,cls,last}
+                                  pooling type for embeddings, use model default if unspecified
+```
+Let take a look at using `last` pooling. First we can see that in
+`append_pooling` there is a case clause for both `LLAMA_POOLING_TYPE_CLS` and
+`LLAMA_POOLING_TYPE_LAST`
+```c
+            case LLAMA_POOLING_TYPE_CLS:
+            case LLAMA_POOLING_TYPE_LAST:
+                {
+                    struct ggml_tensor * inp_cls = build_inp_cls();
+                    cur = ggml_get_rows(ctx0, inp, inp_cls);
+                } break;
+```
+And like `inp_mean` we have `inp_cls` tensor as a member of `llama_context`
+```c++
+struct llama_context {
+    ...
+    struct ggml_tensor * inp_cls;         // I32 [n_batch]
+};
+```
+And in `append_pooling` we have:
+```c++
+        switch (pooling_type) {
+            ...
+            case LLAMA_POOLING_TYPE_CLS:
+            case LLAMA_POOLING_TYPE_LAST:
+                {
+                    struct ggml_tensor * inp_cls = build_inp_cls();
+                    cur = ggml_get_rows(ctx0, inp, inp_cls);
+                } break;
+            ...
+```
+And `build_inp_cls` looks like this:
+```c++
+    struct ggml_tensor * build_inp_cls() {
+        lctx.inp_cls = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
+        cb(lctx.inp_cls, "inp_cls", -1);
+        ggml_set_input(lctx.inp_cls);
+        return lctx.inp_cls;
+    }
+```
+In `llama_decode_internal` will then have the following:
+```c++
+
+    if (cparams.embeddings && cparams.pooling_type == LLAMA_POOLING_TYPE_LAST) {
+        const int64_t n_tokens = batch.n_tokens;
+
+        GGML_ASSERT(lctx.inp_cls);
+        GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_cls->buffer));
+
+        uint32_t * data = (uint32_t *) lctx.inp_cls->data;
+        memset(lctx.inp_cls->data, 0, n_tokens * ggml_element_size(lctx.inp_cls));
+
+        std::vector<int> last_pos(n_tokens, -1);
+        std::vector<int> last_row(n_tokens, -1);
+
+        for (int i = 0; i < n_tokens; ++i) {
+            const llama_seq_id seq_id = batch.seq_id[i][0];
+            const llama_pos    pos    = batch.pos[i];
+
+            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == LAST");
+
+            if (pos >= last_pos[seq_id]) {
+                last_pos[seq_id] = pos;
+                last_row[seq_id] = i;
+            }
+        }
+
+        for (int i = 0; i < n_tokens; ++i) {
+            if (last_row[i] >= 0) {
+                data[i] = last_row[i];
+            }
+        }
+    }
+```
+```console
+(gdb) p *lctx.inp_cls
+$4 = {type = GGML_TYPE_I32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555aab7c0, ne = {6, 1, 1, 1}, nb = {
+    4, 24, 24, 24}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, grad = 0x0, src = {0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffe3b22e020, 
+  name = "inp_cls", '\000' <repeats 56 times>, extra = 0x0}
+```
+After the first for loop we have:
+```console
+(gdb) p last_pos
+$7 = std::vector of length 6, capacity 6 = {5, -1, -1, -1, -1, -1}
+(gdb) p last_row
+$6 = std::vector of length 6, capacity 6 = {5, -1, -1, -1, -1, -1}
+```
+We then loop over all the tokens in the sequence again and set the
+`data/lctx.inp_cls` to the last row index for that sequence:
+```c++
+        for (int i = 0; i < n_tokens; ++i) {
+            if (last_row[i] >= 0) {
+                data[i] = last_row[i];
+            }
+        }
+```
+So for `i=0`, `last_row[0]` is 5 so we set `data[0]` to 5. The rest are -1.
+```console
+(gdb) p data[0]
+$11 = 5
+
+gdb) p ((int*)lctx.inp_cls.data)[0]
+$16 = 5
+```
+Later in `embeddings.cpp` and the `batch_decode` function we have:
+```c++
+        // try to get sequence embeddings - supported only when pooling_type is not NONE
+        const float * embd = llama_get_embeddings_seq(ctx, batch.seq_id[i][0]);
+```
+
+So where mean pooling calculated the average of each dimension/feature for all
+tokens in a sequence, last pooling simple returnes the last tokens embeddings.
+```
+Token 1: [1.0, 2.0, 3.0, 4.0]
+Token 2: [2.0, 3.0, 4.0, 5.0]
+Token 3: [3.0, 4.0, 5.0, 6.0]
+
+Mean pooling:
+Dimension 1: (1.0 + 2.0 + 3.0) / 3 = 2.0
+Dimension 2: (2.0 + 3.0 + 4.0) / 3 = 3.0
+Dimension 3: (3.0 + 4.0 + 5.0) / 3 = 4.0
+Dimension 4: (4.0 + 5.0 + 6.0) / 3 = 5.0
+
+Result: [2.0, 3.0, 4.0, 5.0]
+
+Last pooling:
+
+Result: [3.0, 4.0, 5.0, 6.0]
+```
+I've been struggling to understand the usefulness of last pooling but I think I
+need to keep in mind that this embedding is the result of the attention
+mechanism so just because the last token in the sequence might "look" like it
+represent a subword/word/sentence it might not be the case. For example, lets 
+say we have the followign input sequence that we want to created token embeddings
+for: "I was skeptical at first, but in the end, I loved it!"
+The last token embedding might represent the `!` which I did not think would be
+useful but in this case the returned token embedding is a semantic
+representation of this token in the context of the entire sequence.
+The effectiveness of last pooling can vary depending on the specific
+architecture of the model. Some models might be better at encoding full-sequence
+information into the final token than others.
+s
+
+
