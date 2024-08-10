@@ -557,6 +557,14 @@ representation of this token in the context of the entire sequence.
 The effectiveness of last pooling can vary depending on the specific
 architecture of the model. Some models might be better at encoding full-sequence
 information into the final token than others.
-s
 
+And then we have the `CLS` (Classification) pooling which is the same as last
+pooling but it will only use the first token embedding in the sequence which is
+the special `cls` token embedding.
+This approach is inspired by models like BERT, which use a special [CLS] token
+at the beginning of each sequence. The idea is that during training, the model
+learns to encode sequence-level information into this first token.
+This method assumes that the first token can adequately represent the entire
+sequence, which may or may not be true depending on the model's architecture
+and training.
 
