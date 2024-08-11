@@ -27,14 +27,13 @@ input matrix `B`, the output matrix `C`, and the feedthrough matrix `D`.
 
 The formula for S4 models is:
 ```
-xₜ₊₁ = Axₜ + Buₜ
+hₜ₊₁ = Axₜ + Bxₜ
 yₜ = Cxₜ + Duₜ
 
-Xₜ₊₁ = is the state at time t+1
+hₜ₊₁ = is the state at time t+1
 A    = state transition matrix
-Xₜ   = is the state at time t
-B    = input matrix
-Uₜ   = input vector
+xₜ   = is the input at time t
+B    = input projection matrix
 C    = output matrix
 D    = feedthrough matrix
 ```
@@ -56,46 +55,46 @@ B = 1
 C = 2
 D = 1
 
-x₀ = 0     (hidden state similar to short-term memory IN RNN)
+h₀ = 0     (hidden state similar to short-term memory IN RNN)
 u = [2, 3, 1]
 
 We have the forumlas
-xₜ₊₁ = Axₜ + Buₜ
-yₜ = Cxₜ + Duₜ
+hₜ₊₁ = Ahₜ + Bxₜ
+yₜ = Chₜ + Dxₜ
 
 And we plug in our values:
-       A   x₀     B   u₁
-x₁ = (0.5 * 0) + (1 * 2) = 2
-x₁ = 2 ---+
+       A   h₀     B   x₁
+h₁ = (0.5 * 0) + (1 * 2) = 2
+h₁ = 2 ---+
           ↓
-      C   x₁    D   u₁
+      C   h₁    D   x₁
 y₁ = (2 * 2) + (1 * 2)   = 4
 y₁ = 4
 
-That was one forward pass. The hidden state (x₁) has been updated to 2 and
+That was one forward pass. The hidden state (h₁) has been updated to 2 and
 the output (y₁) is 4.
-And now we do it again with the new values, notice that x₁ is now 2 instead of
+And now we do it again with the new values, notice that h₁ is now 2 instead of
 0:
-      A    x₁    B    u₂
-x₂ = (0.5 * 2) + (1 * 3) = 4
-x₂ = 4 ---+
+      A    h₁    B    x₂
+h₂ = (0.5 * 2) + (1 * 3) = 4
+h₂ = 4 ---+
           ↓
-      C  x₂     D  u₃
+      C  h₂     D  x₃
 y₂ = (2 * 4) + (1 * 3)   = 11
 y₂ = 11
 
-      A    x₂     B  u₃
+      A    h₂     B  x₃
 x₃ = (0.5 * 4) + (1 * 1) = 3
 x₃ = 3 ---+
           ↓
-      C  x₃     D  u₃ 
+      C  h₃     D  x₃ 
 y₃ = (2 * 3) + (1 * 1)   = 7
 y₃ = 7
 ```
 Each input token updates the state of the system based on the previous state
 and the current input.
 
-x is similar to the hidden state in RNNs and allows information to be passed
+h is similar to the hidden state in RNNs and allows information to be passed
 from one step to the next. y is the output of the system at each time step.
 
 __wip__
