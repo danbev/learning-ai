@@ -660,3 +660,60 @@ We can visualize this as
            +---| A |---+
                +---+
 ```
+
+### Model Architecture
+Lets take a look at a mamba model by parsing a gguf file:
+```console
+$ ./inspect-model.sh models/mamba-2.8b-q3_k_m.gguf 
+INFO:gguf-dump:* Loading: models/mamba-2.8b-q3_k_m.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+* Dumping 25 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 642
+      3: UINT64     |        1 | GGUF.kv_count = 22
+      4: STRING     |        1 | general.architecture = 'mamba'
+      5: STRING     |        1 | general.name = 'mamba-2.8b-hf'
+      6: UINT32     |        1 | mamba.context_length = 1048576
+      7: UINT32     |        1 | mamba.embedding_length = 2560
+      8: UINT32     |        1 | mamba.feed_forward_length = 0
+      9: UINT32     |        1 | mamba.attention.head_count = 0
+     10: UINT32     |        1 | mamba.block_count = 64
+     11: UINT32     |        1 | mamba.ssm.conv_kernel = 4
+     12: UINT32     |        1 | mamba.ssm.inner_size = 5120
+     13: UINT32     |        1 | mamba.ssm.state_size = 16
+     14: UINT32     |        1 | mamba.ssm.time_step_rank = 160
+     15: FLOAT32    |        1 | mamba.attention.layer_norm_rms_epsilon = 9.999999747378752e-06
+     16: UINT32     |        1 | general.file_type = 12
+     17: STRING     |        1 | tokenizer.ggml.model = 'gpt2'
+     18: [STRING]   |    50280 | tokenizer.ggml.tokens
+     19: [INT32]    |    50280 | tokenizer.ggml.token_type
+     20: [STRING]   |    50009 | tokenizer.ggml.merges
+     21: UINT32     |        1 | tokenizer.ggml.bos_token_id = 0
+     22: UINT32     |        1 | tokenizer.ggml.eos_token_id = 0
+     23: UINT32     |        1 | tokenizer.ggml.unknown_token_id = 0
+     24: UINT32     |        1 | tokenizer.ggml.padding_token_id = 0
+     25: UINT32     |        1 | general.quantization_version = 2
+* Dumping 642 tensor(s)
+      1:  128716800 |  2560, 50280,     1,     1 | Q6_K    | token_embd.weight
+      2:      81920 |    16,  5120,     1,     1 | F32     | blk.0.ssm_a
+      3:       5120 |  5120,     1,     1,     1 | F32     | blk.0.ssm_d
+      4:       5120 |  5120,     1,     1,     1 | F32     | blk.0.ssm_conv1d.bias
+      5:      20480 |     4,  5120,     1,     1 | F32     | blk.0.ssm_conv1d.weight
+      6:       5120 |  5120,     1,     1,     1 | F32     | blk.0.ssm_dt.bias
+      7:     819200 |   160,  5120,     1,     1 | F32     | blk.0.ssm_dt.weight
+      8:   26214400 |  2560, 10240,     1,     1 | Q3_K    | blk.0.ssm_in.weight
+      9:   13107200 |  5120,  2560,     1,     1 | Q3_K    | blk.0.ssm_out.weight
+     10:     983040 |  5120,   192,     1,     1 | F32     | blk.0.ssm_x.weight
+     11:       2560 |  2560,     1,     1,     1 | F32     | blk.0.attn_norm.weight
+     12:      81920 |    16,  5120,     1,     1 | F32     | blk.1.ssm_a
+     13:       5120 |  5120,     1,     1,     1 | F32     | blk.1.ssm_d
+     14:       5120 |  5120,     1,     1,     1 | F32     | blk.1.ssm_conv1d.bias
+     15:      20480 |     4,  5120,     1,     1 | F32     | blk.1.ssm_conv1d.weight
+     16:       5120 |  5120,     1,     1,     1 | F32     | blk.1.ssm_dt.bias
+     17:     819200 |   160,  5120,     1,     1 | F32     | blk.1.ssm_dt.weight
+     18:   26214400 |  2560, 10240,     1,     1 | Q3_K    | blk.1.ssm_in.weight
+     19:   13107200 |  5120,  2560,     1,     1 | Q3_K    | blk.1.ssm_out.weight
+     20:     983040 |  5120,   192,     1,     1 | F32     | blk.1.ssm_x.weight
+     21:       2560 |  2560,     1,     1,     1 | F32     | blk.1.attn_norm.weight
+     ...
+```
