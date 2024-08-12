@@ -130,8 +130,8 @@ filter to perform the dot product with the input sequence:
    +--------------+
 ```
 In this case I think the A weight matrix can be thought of as analogous to a
-convolution filter in CNN. But this filter in SSN is applied accross time and to
-spacially, that is moving accross the height and width. The state X at any point
+convolution filter in CNN. But this filter in SSN is applied accross time and
+spacially, that is moving accross the height and width. The state h at any point
 in time is influenced by the previous state and the current input. This is
 similar to how a convolutional filter influences the output based on the input
 region that it covers.
