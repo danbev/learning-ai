@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
   ggml_set_i32_nd(b, 0, 0, 0, 0, 7);
   ggml_set_i32_nd(b, 1, 0, 0, 0, 8);
 
-  // Note that ggml_mul_mat() transposes the secod matrix b.
+  // Note that ggml_mul_mat() transposes the second matrix b.
   struct ggml_tensor* result = ggml_mul_mat(ctx, a, b);
   ggml_set_name(result, "result");
   /*
@@ -62,7 +62,12 @@ int main(int argc, char **argv) {
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, result);
-  ggml_graph_compute_with_ctx(ctx, c_graph, 4);
+  int n_threads = 4;
+  enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
+  if (st != GGML_STATUS_SUCCESS) {
+    printf("could not compute graph\n");
+    return 1;
+  }
 
   printf("result tensor type: %s\n", ggml_type_name(result->type));
   printf("result dim: %d\n", ggml_n_dims(result));
