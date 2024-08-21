@@ -45,7 +45,7 @@ struct llama_kv_cache {
 Recall that there is a KV-Cache per layer in the transformer architecture. And
 the cache is storing the output of the QK computation, and the output of the
 value computation. And notice that there is a vector of `ggml_tensor` pointer
-for key layer and one for the value layers. So for each layer there is a tensor
+for key and one for the value per layers. So for each layer there is a tensor
 which we will see later is a 1d tensor, or just a list of values. And each layer
 has a `ggml_context` and also a `ggml_backend_buffer_t`.
 
@@ -85,7 +85,6 @@ Now, lets create a watch point on `kv_self` so we can trace the interactions:
 Watchpoint 2: ctx.kv_self
 ```
 
-
 Further down in the code, the `kv_self` is initialized with:
 ```c++
         if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
@@ -109,8 +108,8 @@ static bool llama_kv_cache_init(
     const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa() + hparams.n_embd_k_s();
 }
 ```
-So the number/size of grouped query attention embeddings for the keys matrix will
-be
+So the number/size of grouped query attention embeddings for the keys matrix
+will be:
 ```c++
     uint32_t n_embd_k_gqa() const { // dimension of key embeddings across all k-v heads
         return n_embd_head_k * n_head_kv;
@@ -157,7 +156,7 @@ Next we have:
     cache.cells.resize(kv_size);
 ```
 The `kv_size` is the passed in and will be the size of the computation param
-`n_ctx` unless the model supports MAMBA.
+`n_ctx` unless the model supports Mamba.
 ```console
 (gdb) p kv_size
 $12 = 1024
@@ -180,6 +179,7 @@ the path that will be taken. But also notice that if this was not the case then
 the default buffer type would be `llama_default_buffer_type_cpu(true)` would be
 set as the key and the found 32.
 But for the offload case we iterate over the number of layers and count the
+number of different buffer types used:
 ```c++
     // count used buffer types
     std::map<ggml_backend_buffer_type_t, int> buft_layer_count;
@@ -197,7 +197,7 @@ After this the map looks like this:
 $25 = std::map with 1 element = {[0x555555978400 <ggml_backend_cpu_buffer_type>] = 32}
 ```
 Next for each of the entries in the `buft_layer_count` map we create a context
-for each buffer type, and in this case there is only one element, which has and
+for each buffer type, and in this case there is only one element, which has a
 count of 32:
 ```c++
     // create a context for each buffer type
@@ -251,6 +251,25 @@ $39 = 4096
 (gdb) p kv_size
 $40 = 1024
 ```
+And we can take a look at `k`:
+```console
+(gdb) p *k
+$3 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 8388608}, 
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
+flags = 0,
+grad = 0x0,
+src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+view_src = 0x0,
+view_offs = 0,
+data = 0x0,
+name = '\000' <repeats 63 times>, 
+extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+And recall that this will be done for each `n_layer`s in the model.
+
+
 Again, recall that the `ctx_map` only contains one entry.
 ```c++
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
@@ -383,7 +402,6 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
 ```
 And in `ggml-backend.c` we have:
 ```c
-```c
 GGML_CALL ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     return buft->iface.alloc_buffer(buft, size);
 }
@@ -432,3 +450,312 @@ GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
 }
 ```
 
+After this we will return to `llama_new_context_with_model`:
+```c++
+        if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
+            LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
+            llama_free(ctx);
+            return nullptr;
+        }
+```
+```c
+static bool llama_kv_cache_init(
+             struct llama_kv_cache & cache,
+               const llama_context * ctx,
+                         ggml_type   type_k,
+                         ggml_type   type_v,
+                          uint32_t   kv_size,
+                              bool   offload) {
+    const llama_model & model = ctx->model;
+    const llama_cparams & cparams = ctx->cparams;
+
+    const struct llama_hparams & hparams = model.hparams;
+
+    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa() + hparams.n_embd_k_s();
+    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa() + hparams.n_embd_v_s();
+```
+Now the number of embedding in the key matrix for grouped query attention (gqa)
+is:
+```console
+(gdb) p hparams.n_embd_k_gqa()
+$5 = 2048
+(gdb) p hparams.n_embd_k_s()
+$8 = 0
+```
+And `n_embd_k_s` is the number of embeddings in the rolling state
+embeddings, which is 0 in our case, this is used for SSM (like Mamba).
+```c
+    uint32_t n_embd_k_s() const { // dimension of the rolling state embeddings
+        // corresponds to Mamba's conv_states size
+        // TODO: maybe support other convolution strides than 1
+        // NOTE: since the first column of the conv_state is shifted out each time, it's not actually needed
+        return (ssm_d_conv > 0 ? ssm_d_conv - 1 : 0) * ssm_d_inner;
+    }
+```
+Next we have a few more local variables:
+```c
+    const int64_t  n_layer      = hparams.n_layer;
+    cache.has_shift = false;
+
+    cache.recurrent = model.arch == LLM_ARCH_MAMBA;
+    cache.v_trans   = !cparams.flash_attn;
+
+    cache.head = 0;
+    cache.size = kv_size;
+    cache.used = 0;
+
+    cache.type_k = type_k;
+    cache.type_v = type_v;
+
+    cache.cells.clear();
+    cache.cells.resize(kv_size);
+```
+A little further down we have the following
+```c
+    cache.k_l.reserve(n_layer);
+    cache.v_l.reserve(n_layer);
+
+    for (int i = 0; i < (int) n_layer; i++) {
+        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
+        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
+        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
+        ggml_format_name(k, "cache_k_l%d", i);
+        ggml_format_name(v, "cache_v_l%d", i);
+        cache.k_l.push_back(k);
+        cache.v_l.push_back(v);
+    }
+```
+For each layer in the current model we will create a new tensor for the keys
+with the size of 
+```console
+(gdb) p n_embd_k_gqa
+$5 = 2048
+(gdb) p kv_size
+$7 = 8192
+```
+`kv_size` is the number of tokens that the cache can hold, and each of these has
+an embedding size of 2048. Think of this as there being 8192 rows and 2048
+columns, but this is only a 1d list. 
+This tensors in the context will then be created in the backend and this
+function will return.
+
+Following this code there is some logging of the memory usage:
+```c++
+
+        {
+            size_t memory_size_k = 0;
+            size_t memory_size_v = 0;
+
+            for (auto & k : ctx->kv_self.k_l) {
+                memory_size_k += ggml_nbytes(k);
+            }
+
+            for (auto & v : ctx->kv_self.v_l) {
+                memory_size_v += ggml_nbytes(v);
+            }
+
+            LLAMA_LOG_INFO("%s: KV self size  = %7.2f MiB, K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
+                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f),
+                ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
+                ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
+        }
+```
+Next we have `llama_output_reserve` which is is called in a number of places,
+so what does it actually do?
+```c
+            // resized during inference when a batch uses more outputs
+            if (llama_output_reserve(*ctx, params.n_seq_max) < params.n_seq_max) {
+                LLAMA_LOG_ERROR("%s: failed to reserve initial output buffer\n", __func__);
+                llama_free(ctx);
+                return nullptr;
+            }
+```
+In this case the `n_seq_max` is 1:
+```console
+(gdb) p params.n_seq_max
+$14 = 1
+```
+```c
+            ctx->buf_compute_meta.resize(
+                ggml_tensor_overhead()*LLAMA_MAX_NODES + 
+                ggml_graph_overhead_custom(LLAMA_MAX_NODES, false));
+            ctx->sched = ggml_backend_sched_new(ctx->backends.data(),
+                backend_buft.data(),
+                ctx->backends.size(),
+                LLAMA_MAX_NODES,
+                pipeline_parallel);
+```
+What is a GGML Backend Schuduler?   
+
+
+Lets set a break point before `llama_decode` and see how this interacts with
+the kv-cache. In `llama_decode_internal` we find the following:
+```c
+        // non-causal masks do not use the KV cache
+        if (hparams.causal_attn) {
+            llama_kv_cache_update(&lctx);
+
+            // if we have enough unused cells before the current head ->
+            //   better to start searching from the beginning of the cache, hoping to fill it
+            if (kv_self.head > kv_self.used + 2*n_tokens) {
+                kv_self.head = 0;
+            }
+
+            if (!llama_kv_cache_find_slot(kv_self, u_batch)) {
+                return 1;
+            }
+
+            if (!kv_self.recurrent) {
+                // a heuristic, to avoid attending the full cache if it is not yet utilized
+                // after enough generations, the benefit from this heuristic disappears
+                // if we start defragmenting the cache, the benefit from this will be more important
+                const uint32_t pad = llama_kv_cache_get_padding(cparams);
+                kv_self.n = std::min(kv_self.size, std::max(pad, GGML_PAD(llama_kv_cache_cell_max(kv_self), pad)));
+                //kv_self.n = llama_kv_cache_cell_max(kv_self);
+            }
+        }
+``` 
+The first call is to `llama_kv_cache_update` which actually does not do anything
+is our case. But this checks the `has_shift` of the cache and would perform
+apply a shift of the keys if that had been set, which is done by the add/div
+functions( TODO: updated this with details).
+
+
+
+
+```c++
+
+static bool llama_kv_cache_find_slot(
+           struct llama_kv_cache & cache,
+        const struct llama_batch & batch) {
+    const uint32_t n_tokens = batch.n_tokens;
+
+    if (cache.recurrent) {
+        ...
+    }
+
+    while (true) {
+        if (cache.head + n_tokens > cache.size) {
+            ...
+        }
+
+        bool found = true;
+        for (uint32_t i = 0; i < n_tokens; i++) {
+            if (cache.cells[cache.head + i].pos >= 0) {
+                found = false;
+                cache.head += i + 1;
+                n_tested   += i + 1;
+                break;
+            }
+        }
+        if (found) {
+            break;
+        }
+        ...
+    }
+```
+Lets look what is happening in the for look, we know that `n_tokens` is 6 so we
+will iteratate 0-5 times.
+```console
+(gdb) p cache.cells[cache.head + i]
+$85 = {pos = -1, delta = 0, src = 0, seq_id = std::set with 0 elements}
+```
+So in our cache head is 0 and we are checking the first 6 cells in the cache to
+see if their position is greater than 0. `found` will therefor still be true
+and we will exit the loop:
+```c++
+    for (uint32_t i = 0; i < n_tokens; i++) {
+        cache.cells[cache.head + i].pos = batch.pos[i];
+
+        for (int32_t j = 0; j < batch.n_seq_id[i]; j++) {
+            cache.cells[cache.head + i].seq_id.insert(batch.seq_id[i][j]);
+        }
+    }
+
+    cache.used += n_tokens;
+
+    return true;
+```
+We will again iterate over our 6 tokens.
+```console
+(gdb) p cache.cells[0]
+$97 = {pos = 0, delta = 0, src = 0, seq_id = std::set with 0 elements}
+```
+We then also update the same cells sequence ids by looking at the number of
+sequence ids the batch has which is one in our case:
+```console
+(gdb) p batch.n_seq_id[0]
+$99 = 1
+(gdb) p batch.seq_id[0][0]
+$101 = 0
+```
+So we will set 
+```console
+(gdb) p cache.cells[0]
+$102 = {pos = 0, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+```
+So a cache cell contains the position of a token, and the sequence id(s).
+Note that cache.head is not modified here. So the next iteration we will have
+1=1 and the same will happen for that cache cell entry.
+```console
+(gdb) p cache.cells[0]
+$109 = {pos = 0, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+(gdb) p cache.cells[1]
+$110 = {pos = 1, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+(gdb) p cache.cells[2]
+$111 = {pos = 2, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+(gdb) p cache.cells[3]
+$112 = {pos = 3, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+(gdb) p cache.cells[4]
+$113 = {pos = 4, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+(gdb) p cache.cells[5]
+$114 = {pos = 5, delta = 0, src = 0, seq_id = std::set with 1 element = {[0] = 0}}
+```
+Finally we will update the `cache.used` to 6: and then return.
+
+
+The kv-cache is first updated in by the call to `llama_decode` which calls
+`llama_decode_internal` which calls `llama_kv_cache_find_slot` which will
+update the cache
+
+```console
+665	   if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval, n_past, 0))) {
+(gdb) p ctx.kv_self.used
+$47 = 0
+(gdb) tbreak llama_decode
+Temporary breakpoint 6 at 0x555555666b3d: file src/llama.cpp, line 19321.
+(gdb) continue 
+```
+```c++
+        if (hparams.causal_attn) {
+            llama_kv_cache_update(&lctx);
+
+            // if we have enough unused cells before the current head ->
+            //   better to start searching from the beginning of the cache, hoping to fill it
+            if (kv_self.head > kv_self.used + 2*n_tokens) {
+                kv_self.head = 0;
+            }
+
+            if (!llama_kv_cache_find_slot(kv_self, u_batch)) {
+                return 1;
+            }
+```
+Before we enter the `llama_kv_cache_find_slot` we can inspect the cache:
+```console
+(gdb) p cache.used
+$48 = 0
+```
+
+```
+    for (uint32_t i = 0; i < n_tokens; i++) {
+        cache.cells[cache.head + i].pos = batch.pos[i];
+
+        for (int32_t j = 0; j < batch.n_seq_id[i]; j++) {
+            cache.cells[cache.head + i].seq_id.insert(batch.seq_id[i][j]);
+        }
+    }
+
+    cache.used += n_tokens;
+```
+
+TODO: look closer as `llama_set_inputs` and how the kv-cache is used there.

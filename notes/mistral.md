@@ -5,7 +5,7 @@ https://mistral.ai/news/announcing-mistral-7b/
 It used Grouped Query Attention, and Sliding Window Attention.
 
 ### Grouped Query Attention
-TODO: Is this the same as explain in [transformer.md](transformer.md)?
+TODO: Is this the same as explain in [transformer.md](./transformer.md)?
 
 ### Sliding Window Attention (SWA)
 In the normal attention mechanism, the model attends to all tokens in the

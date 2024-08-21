@@ -717,3 +717,4 @@ INFO:gguf-dump:* Loading: models/mamba-2.8b-q3_k_m.gguf
      21:       2560 |  2560,     1,     1,     1 | F32     | blk.1.attn_norm.weight
      ...
 ```
+(wip)

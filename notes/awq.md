@@ -1,8 +1,8 @@
 ## Activation-aware Weight Quantization (AWQ) for Deep Neural Networks
 AWQ is a post training quantization method but quantizes the weights in a way
-that takes the data distribution into consideration. Like in quantization like
-I've used in llama.cpp (quantize example) it will perform quantization on all
-the weights.
+that takes the data distribution into consideration. Like in quantization I've
+used in llama.cpp (quantize example) it will perform quantization on all the
+weights.
 
 So weigths are the parameters of the nueral network and learned during training.
 We have inputs that are fed into the neural network, and they pass through

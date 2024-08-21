@@ -587,7 +587,7 @@ Notice that the rampmix is 1.0 until it hits dimension 20, after which is
 becomes less than 1.0 and at dimension 46 it becomes 0.0. And notice that this
 corresponds to our `corr_dims` values.
 
-One thing that I noticed is that dimension in `corr_dims[0]/low` is 20 but the
+One thing I noticed is that the dimension in `corr_dims[0]/low` is 20 but the
 actually dimension where the range starts is 21. The dimension index start at
 zero. Perhaps low should be adjusted by subtracting one to acount for this:
 ```c

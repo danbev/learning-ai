@@ -1,7 +1,7 @@
 ## Radeon Open Compute Platform (ROCm)
 Is an open-source software foundation for GPU computing optimized for AMD GPUs
-like Radeon RX Series (Gaming) for example Radeon RX 7900 XTX (pretty much allows
-of them start with Radeon.
+like Radeon RX Series (Gaming) for example Radeon RX 7900 XTX (pretty much all
+of them start with Radeon).
 
 It supports various programming languages and models, with notable support for
 HIP (Heterogeneous-compute Interface for Portability), which allows developers

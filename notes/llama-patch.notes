@@ -1,0 +1,6 @@
+Can we upstream this check?
+```c
+ 89 size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {             
+~   90     return buffer != NULL ? buffer->size : 0;                                   
+    91 }
+```
