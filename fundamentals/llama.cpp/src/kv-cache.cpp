@@ -34,10 +34,19 @@ int main(int argc, char** argv) {
         fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
         return 1;
     }
+    printf("llama_context created\n");
+    //struct llama_kv_cache kv_cache = ctx->kv_self;
 
     struct llama_kv_cache_view kv_view =  llama_kv_cache_view_init(ctx, 1);
     printf("kv_view n_cells: %d\n", kv_view.n_cells);
     printf("kv_view n_max_seq: %d\n", kv_view.n_seq_max);
+    printf("kv_view token_count: %d\n", kv_view.token_count);
+    printf("kv_view used_cells: %d\n", kv_view.used_cells);
+
+    struct llama_kv_cache_view_cell* cells = kv_view.cells;
+    for (int i = 0; i < kv_view.n_cells; i++) {
+        printf("cell[%d] pos: %d\n", i, cells[i].pos);
+    }
 
     llama_free(ctx);
     llama_free_model(model);

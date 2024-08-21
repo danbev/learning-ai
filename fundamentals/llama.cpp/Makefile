@@ -1,22 +1,22 @@
-CUDA_DIR = /usr/local/cuda-12.2/lib64
+CUDA_DIR = /usr/local/cuda-12.4/lib64
 
 # Make llama.cpp
 llama: 
 	cd llama.cpp && make -j8
 
 llama-cuda: 
-	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1
+	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1
 
 llama-vulkan:
-	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_VULKAN=1
+	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_VULKAN=1
 
 llama-kompute:
 	cd llama.cpp && rm -rf build && mkdir build && cd build \
-		&& cmake .. -DLLAMA_KOMPUTE=ON \
+		&& cmake .. -DGGML_KOMPUTE=ON \
 		&& make -j8
 
 llama-cuda-debug:
-	source ./cuda-env.sh && cd llama.cpp && make -j8 LLAMA_CUBLAS=1 LLAMA_DEBUG=1 DEBUG=1
+	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1 LLAMA_DEBUG=1 DEBUG=1
 
 # Use the following target with causion as it will probably mess up an
 # actual run of a specific program. Just use it for debugging/learning and
@@ -26,37 +26,61 @@ llama-debug:
 
 CXXFLAGS = -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ -fopenmp
 
-OBJS = llama.cpp/common.o \
-       llama.cpp/build-info.o \
-       llama.cpp/ggml.o \
-       llama.cpp/llama.o \
-       llama.cpp/train.o \
-       llama.cpp/ggml-alloc.o \
-       llama.cpp/ggml-quants.o \
-       llama.cpp/ggml-backend.o \
-       llama.cpp/unicode.o \
-       llama.cpp/unicode-data.o \
-       llama.cpp/sgemm.o \
-       llama.cpp/sampling.o \
-       llama.cpp/grammar-parser.o \
-       llama.cpp/json-schema-to-grammar.o
+OBJ = \
+	llama.cpp/src/llama.o \
+	llama.cpp/src/llama-vocab.o \
+	llama.cpp/src/llama-grammar.o \
+	llama.cpp/src/llama-sampling.o \
+	llama.cpp/src/unicode.o \
+	llama.cpp/src/unicode-data.o
+
+OBJ_COMMON = llama.cpp/common/common.o \
+	llama.cpp/common/console.o \
+	llama.cpp/common/ngram-cache.o \
+	llama.cpp/common/sampling.o \
+	llama.cpp/common/train.o \
+	llama.cpp/common/grammar-parser.o \
+	llama.cpp/common/build-info.o \
+	llama.cpp/common/json-schema-to-grammar.o
+
+OBJ_GGML += \
+	llama.cpp/ggml/src/ggml.o \
+	llama.cpp/ggml/src/ggml-alloc.o \
+	llama.cpp/ggml/src/ggml-backend.o \
+	llama.cpp/ggml/src/ggml-quants.o \
+	llama.cpp/ggml/src/ggml-aarch64.o \
+	llama.cpp/ggml/src/llamafile/sgemm.o
+
+#OBJ_GGML += llama.cpp/ggml/src/ggml-cuda.o
+#        OBJ_GGML += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/*.cu))
+
+#OBJ_CUDA_TMPL = $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-wmma*.cu))
+#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/mmq*.cu))
+#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu))
+#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu))
+#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-vec*f16-f16.cu))
+
+OBJ_GGML += $(OBJ_CUDA_TMPL)
 
 kv-cache: src/kv-cache.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
 
 simple-prompt: src/simple-prompt.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+	echo $(OBJ_GGML)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+
 
 run-simple-prompt: simple-prompt
 	./simple-prompt
 
-simple-prompt-cuda: OBJS += llama.cpp/ggml-cuda.o
+simple-prompt-cuda: OBJS += llama.cpp/ggml/src/ggml-cuda.o
 simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+simple-prompt-cuda: LIBS += -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
-run-simple-prompt-cuda: simple-prompt-vulkan
+run-simple-prompt-cuda: simple-prompt-cuda
 	./simple-prompt 0 33
 
-simple-prompt-vulkan: OBJS += llama.cpp/ggml-vulkan.o
+simple-prompt-vulkan: OBJS += llama.cpp/ggml/src/ggml-vulkan.o
 simple-prompt-vulkan: CXXFLAGS += -lvulkan
 simple-prompt-vulkan: simple-prompt
 
@@ -251,3 +275,6 @@ clean-lora-files:
 tokenize-file: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 tokenize-file: src/tokenize_file.cc
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+
+tokenize: src/tokenize.cpp
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)

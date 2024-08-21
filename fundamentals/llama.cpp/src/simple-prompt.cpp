@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
 
     model_params.main_gpu = main_gpu;
     model_params.n_gpu_layers = num_gpu_layers;
-    std::string model_path = "models/llama-2-13b-chat.Q4_0.gguf";
+    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
     // If the prompt provided is in the form of a question like it is here
@@ -181,15 +181,17 @@ int main(int argc, char** argv) {
         // We don't know that actual length of the token so we are using 
         // 8 here a "guess". If the token is longer than 8 bytes then we
         // will resize the result vector and call llama_token_to_piece again.
+        int lsplit = 0;
+        bool special = false;
         std::vector<char> piece(8, 0);
-        int n_tokens = llama_token_to_piece(model, new_token_id, piece.data(), piece.size(), false);
+        int n_tokens = llama_token_to_piece(model, new_token_id, piece.data(), piece.size(), lsplit, special);
         // llama_token_to_piece will return the negative length of the token if
         // it is longer that the passed in result.length. If that is the case
         // then we need to resize the result vector to the length of the token
         // and call llama_token_to_piece again.
         if (n_tokens < 0) {
             piece.resize(-n_tokens);
-            int new_len = llama_token_to_piece(model, new_token_id, piece.data(), piece.size(), false);
+            int new_len = llama_token_to_piece(model, new_token_id, piece.data(), piece.size(), lsplit, special);
         } else {
             piece.resize(n_tokens);
         }
