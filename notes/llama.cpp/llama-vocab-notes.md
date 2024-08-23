@@ -13,17 +13,7 @@ src\llama-vocab.cpp(1517,22): warning C4267: 'return': conversion from 'size_t' 
 ````
 
 
-```
-char src = 'A'; // 0x41
-// binary 01000001 
-uint8_t highbits = static_cast<uint8_t>(src) >> 4;
-// binary 01000001 
-              0100 = 4
-          
-lookup[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 };
-lookup[4] = 1
 
-```
 ```c
     void tokenize(const std::string & text, std::vector<llama_vocab::id> & output) {
         // split string into utf8 chars
@@ -421,3 +411,58 @@ Let's say we merge symbols "A" (index 1) and "B" (index 2) into "AB". The rev_me
 {"AB" : (1, 2)}
 This entry tells us that the symbol "AB" was formed by merging the symbols at indices 1 and 2.
 
+### unicode.cpp
+Recall that a unicode character can be 1-4 bytes long and that the first byte
+determines the number of bytes.
+```
+| Binary       | Hexadecimal | Meaning                                    |
+|--------------|-------------|--------------------------------------------|
+| 00000000     | 0x00-0x7F   | 1 byte character (ASCII compatible)        |
+| 11000000     | 0xC0-0xDF   | First byte of a 2-byte character           |
+| 11100000     | 0xE0-0xEF   | First byte of a 3-byte character           |
+| 11110000     | 0xF0-0xF7   | First byte of a 4-byte character           |
+```
+
+The following function returns the number of bytes in a utf8 character and does
+so using a lookup table:
+```c
+size_t unicode_len_utf8(char src) {
+    const size_t lookup[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 };
+    uint8_t highbits = static_cast<uint8_t>(src) >> 4;
+    return lookup[highbits];
+}
+```
+To visualize this lookup table consider the following:
+```
+index:  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+value:  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 
+
+Binary indices with values:
+0000 = 1
+0001 = 1
+0010 = 1
+0011 = 1
+0100 = 1
+0101 = 1
+0110 = 1
+0111 = 1
+1000 = 1
+1001 = 1
+1010 = 1
+1011 = 1
+1100 = 12
+1110 = 14
+1111 = 15
+```
+So the high order bits are shifted to become the most significant bits and then
+this is used as an index into the lookup table.
+
+For example:
+```
+char src = 'A'; // 0x41
+// binary 01000001 
+uint8_t highbits = static_cast<uint8_t>(src) >> 4;
+// 0100 = 4
+          
+lookup[4] = 1
+```
