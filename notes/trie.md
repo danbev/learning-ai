@@ -165,4 +165,24 @@ BASE[1] = 2 - 97 = -95
 BASE[0] = -98
 BASE[1] = -95
 ```
+
+The base array is used for navigating from one node to another node based on the
+input characters.
+
+base[current_node] gives us the base index/offset for navigating from the current
+node to its children. This is then used with an offset, another character in the
+input. The offset is the ASCII value of the character.
+
+So base[current_node] represents the offset in the array where the transistions
+from the current node start.
+```
+    0(root)
+       |
+    1(c)
+   /     \
+2(a)     3(o)
+ |         |
+4(t*)     5(w*)
+```
+
 _wip_
