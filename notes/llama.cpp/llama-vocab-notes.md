@@ -1,18 +1,7 @@
-### llama-vocab.cpp warnings
-
-Warning on master:
-```console`
-src\llama-vocab.cpp(138,26): warning C4244: 'return': conversion from 'long' to 'uint8_t', possible loss of data
-src\llama-vocab.cpp(211,1): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-src\llama-vocab.cpp(517,1): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-src\llama-vocab.cpp(557,1): warning C4267: '=': conversion from 'size_t' to 'llm_symbol::index', possible loss of data
-src\llama-vocab.cpp(560,1): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-src\llama-vocab.cpp(654,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-src\llama-vocab.cpp(654,1): warning C4267: 'initializing': conversion from 'size_t' to 'const int', possible loss of data
-src\llama-vocab.cpp(1517,22): warning C4267: 'return': conversion from 'size_t' to 'int32_t', possible loss of data
-````
+## llama-vocab.cpp notes
 
 
+#### tokenize walk through (BPE)
 
 ```c
     void tokenize(const std::string & text, std::vector<llama_vocab::id> & output) {
@@ -38,7 +27,7 @@ src\llama-vocab.cpp(1517,22): warning C4267: 'return': conversion from 'size_t' 
             symbols.emplace_back(sym);
         }
 ```
-And notice we are adding each llm_symbol created to the symbols vector:
+And notice we are adding each `llm_symbol` created to the symbols vector:
 ```c
     std::vector<llm_symbol> symbols;
 ```
@@ -52,15 +41,22 @@ struct llm_symbol {
     size_t n;
 };
 ```
-So a symbol entry has the index to the previous utf8 charater, and the next
+So a symbol entry has the index to the previous utf8 character, and the next
 utf8 character in the string. It also has a char* to the current utf8
 character and the size of the utf8 character.  The `prev` and `next`
 allow this struct to act like a doubly linked list.
 
-When tokenizing, especially with subword tokenization algorithms, you often need to merge adjacent symbols. With prev and next indices, you can easily merge symbols by updating these indices without moving data in memory.
-It allows for processing symbols in a non-contiguous manner. You can "remove" a symbol from the sequence by adjusting the prev and next pointers of its neighbors, without physically removing it from the array.
-If you need to remove a symbol during processing, you can do so by updating the prev and next indices of adjacent symbols, rather than shifting all subsequent elements in an array.
+When tokenizing, especially with subword tokenization algorithms, you often need
+to merge adjacent symbols. With prev and next indices, you can easily merge
+symbols by updating these indices without moving data in memory.
+It allows for processing symbols in a non-contiguous manner. You can "remove" a
+symbol from the sequence by adjusting the prev and next pointers of its
+neighbors, without physically removing it from the array.
+If you need to remove a symbol during processing, you can do so by updating the
+prev and next indices of adjacent symbols, rather than shifting all subsequent
+elements in an array.
 
+Take the string "hello" as an example:
 ```
 Index: 0    1    2    3    4
 Char:  H    e    l    l    o
@@ -69,8 +65,8 @@ n:     1    1    1    1    1
 prev:  -1   0    1    2    3
 next:  1    2    3    4    -1
 ```
-Now, lets say we are using BPE and the merging decides to merge `l` and `o`,
-the last two characters.
+Now, lets say we are using Byte Pair Encoding (BPE) and the merging decides to
+merge `l` and `o`, the last two characters.
 ```
 Index: 0    1    2    3    4
 Char:  H    e    l    lo   o
@@ -88,13 +84,13 @@ has not been updated at all.
             try_add_bigram(i - 1, i);
         }
 ```
-If symbols.size() is larger than INT_MAX (typically 2^31 - 1 or about 2.14
+If symbols.size() is larger than `INT_MAX` (typically 2^31 - 1 or about 2.14
 billion), this conversion could lead to overflow and undefined behavior.
 But I don't think it is reasonable that the symbols, that is the number of
 unicode character to tokenize exceeds this value.
 
-So at the point we have the utf8 characters from the input string to be
-tokenized which are stored as llm_symbol in the symbols vector. Now, we
+So at this point we have the utf8 characters from the input string to be
+tokenized which are stored as `llm_symbol` in the symbols vector. Now, we
 are going to iterate through them and call `try_add_bigram`:
 ```c
     void add_new_bigram(int left, int right) {
