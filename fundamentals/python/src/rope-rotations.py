@@ -60,4 +60,32 @@ plt.grid(True)
 plt.show()
 
 
+import numpy as np
+
+# Define thetas
+thetas = np.array([0.1, 0.2, 0.3, 0.4, 0.5])
+
+# Define tokens
+tokens = np.array([
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+    [3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+    [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+])
+
+# Apply rotation
+rotated_tokens = np.zeros_like(tokens)
+for p, token in enumerate(tokens):
+    for i in range(5):  # 5 pairs
+        theta_p = thetas[i] * p
+        cos_theta = np.cos(theta_p)
+        sin_theta = np.sin(theta_p)
+        idx = 2 * i
+        # Rotation matrix application
+        rotated_tokens[p, idx] = cos_theta * token[idx] - sin_theta * token[idx+1]
+        rotated_tokens[p, idx+1] = sin_theta * token[idx] + cos_theta * token[idx+1]
+
+# Print rotated embeddings
+print("Original Tokens:\n", tokens)
+print("Rotated Tokens:\n", rotated_tokens)
 
