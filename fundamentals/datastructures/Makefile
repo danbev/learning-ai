@@ -10,7 +10,7 @@ TARGETS := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES))
 all: $(TARGETS)
 
 $(TARGETS): % : $(SRCDIR)/%.c | bindir
-	$(CC) -o ${BINDIR}/$@ $<
+	$(CC) -g -o ${BINDIR}/$@ $<
 
 bindir: bin
 
