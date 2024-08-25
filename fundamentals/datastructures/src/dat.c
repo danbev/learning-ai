@@ -45,13 +45,14 @@ void insert(trie_dat* trie, const char* word) {
         int char_offset = word[i] - 'a';
 
         ensure_capacity(trie, cur_node);
+
         if (trie->base[cur_node] == 0) {
             // base[cur_node] is the offset for the current node in the
             // array. This is setting it to the current node in the trie which
             // is trie->size. We can think of this as setting this index/offset
-            // to the current node int tree. I thought this was strange that we
-            // use the size but perhaps we can think of it as the depth of the
-            // tree where we currently are. Like get go from
+            // to the current node in the tree. I thought this was strange that
+            // we use the size but perhaps we can think of it as the depth of
+            // the tree where we currently are. Like get go from
             // ROOT -> 'c' -> 'o" -> 'w'
             //    0 ->  1  ->  2  ->  3          (size)
             trie->base[cur_node] = trie->size;
@@ -61,6 +62,7 @@ void insert(trie_dat* trie, const char* word) {
         int t = trie->base[cur_node] + char_offset;
 
         ensure_capacity(trie, t);
+
         if (trie->check[t] == 0) {
             trie->check[t] = cur_node;
             trie->size++;
