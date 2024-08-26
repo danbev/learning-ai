@@ -352,5 +352,31 @@ Bits  10-30: BASE value or Value (21 bits)
 Bit      31: Sign bit for LCHECK or additional VALUE bit
 ```
 
+### XOR Compressed Double Array (XCDA)
+This is a way to compress the double array trie even further. The idea is to
+store the XOR of the BASE and CHECK values in a single array. This will reduce
+the memory footprint of the trie even further.
+
+The xor_array stores `base ^ check` for each node.
+To get base: `xor_array[current] ^ parent`
+To get check: `xor_array[next] ^ current`
+
+```
+Standard DAT:
+Index:   0    1    2    3    4    5    6
+base: [  1,   2,   3,   0,   5,   0,   0  ]
+check: [ -1,  0,   1,   2,   1,   4,   0  ]
+
+XOR-CDAT:
+Index:   0    1    2    3    4    5 
+xor_array: [ 1^-1, 2^0, 3^1, 0^2, 5^1, 0^4 ]
+
+Char mapping: a->1, b->2, c->3
+
+Search for "abc" in XOR-CDAT:
+1. For 'a': xor_array[0] ^ 0 = 1, xor_array[1] ^ 0 = 2
+2. For 'b': xor_array[1] ^ 1 = 3, xor_array[2] ^ 1 = 2
+3. For 'c': xor_array[2] ^ 2 = 1, xor_array[3] ^ 2 = 2 (end of word)
+```
 _wip_
 
