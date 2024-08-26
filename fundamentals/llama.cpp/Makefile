@@ -113,9 +113,13 @@ clean-llama:
 quantize-llama-model:
 	./llama.cpp/quantize models/llama-2-7b.gguf models/llama-2-7b-Q4.gguf Q4_1
 
-download-llama-7b-q4:
+download-llama-7b-q4: | models
 	cd models && \
 	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf
+
+.PHONY models:
+models:
+	mkdir -p models
 
 download-llama-2-13b-chat.Q4:
 	cd models && \
