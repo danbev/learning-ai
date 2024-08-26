@@ -83,6 +83,11 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n_tokens; i++) {
         fprintf(stdout, "%s ", token_to_piece(ctx, input_tokens[i], true).c_str());
     }
+    printf("\n");
+
+    char detokenized[1024];
+    int32_t ret = llama_detokenize(model, input_tokens.data(), n_tokens, detokenized, 1024, false, false);
+    printf("Detokenized: %s\n", detokenized);
 
     llama_free(ctx);
     llama_free_model(model);
