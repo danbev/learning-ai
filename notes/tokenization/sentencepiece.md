@@ -481,3 +481,196 @@ $34 = std::map with 9 elements = {
 ["▁W"] = {first = 0, second = 1},
 ["▁i"] = {first = 5, second = 6}}
 ```
+So after this the work_queue will be iterated over in the following loop:
+```c++
+        while (!work_queue.empty()) {
+            auto bigram = work_queue.top();
+            work_queue.pop();
+
+            auto & left_sym = symbols[bigram.left];
+            auto & right_sym = symbols[bigram.right];
+
+            // if one of the symbols already got merged, skip it.
+            if (left_sym.n == 0 || right_sym.n == 0 ||
+                left_sym.n + right_sym.n != bigram.size) {
+                continue;
+            }
+
+            // merge the right sym into the left one
+            left_sym.n += right_sym.n;
+            right_sym.n = 0;
+
+            //LLAMA_LOG_INFO("left = '%*s' size = %zu\n", (int) left_sym.n, left_sym.text, bigram.size);
+
+            // remove the right sym from the chain
+            left_sym.next = right_sym.next;
+            if (right_sym.next >= 0) {
+                symbols[right_sym.next].prev = bigram.left;
+            }
+
+            // find more substitutions
+            try_add_bigram(left_sym.prev, bigram.left);
+            try_add_bigram(bigram.left, left_sym.next);
+        }
+
+        for (int i = 0; i != -1; i = symbols[i].next) {
+            auto & symbol = symbols[i];
+            resegment(symbol, output);
+        }
+```
+First we get the top element from the work_queue using top and pop, and notice
+that the first element is:
+```console
+(gdb) p bigram
+$35 = {left = 3, right = 4, score = -12, size = 2}
+```
+And also notice that we are still using the symbols vector to get teh left and
+right symbols.
+```console
+(gdb) p left_sym
+$36 = (llm_symbol &) @0x555555a99cb8: {prev = 2, next = 4, text = 0x555555a9d835 "at▁is▁LoRA?", n = 1}
+(gdb) p right_sym
+$37 = (llm_symbol &) @0x555555a99cd0: {prev = 3, next = 5, text = 0x555555a9d836 "t▁is▁LoRA?", n = 1}
+```
+So we are going to merge the right symbol with the left symbol, which is done
+by increating the lenght of the left symbol and setting the length of the right
+symbol to 0:
+```c++
+            left_sym.n += right_sym.n;
+            right_sym.n = 0;
+```
+And we also need to remove the right symbol from the linked list:
+```c++
+            left_sym.next = right_sym.next;
+            // And the symbols after the old right need to point to our merged symbol.
+            if (right_sym.next >= 0) {
+                symbols[right_sym.next].prev = bigram.left;
+            }
+```
+So that merged the two symbols into one and removed the right symbol from the
+linked list. Then we have the following:
+```c++
+            // find more substitutions
+            try_add_bigram(left_sym.prev, bigram.left);
+            try_add_bigram(bigram.left, left_sym.next);
+```
+Now, after we have merged the left and right into the left symbol, that merge
+might not be able to generate new merges that were not there before this merge.
+So we look to the left of the newly merged symbol and try to find any bigram
+pair and if so add it to the work queue. And the same for the right which my now
+be possible to make a bigram. This is the above two lines of code are doing.
+
+After all the the work_queue has been emptied we will iterate over all the
+the symbols until we reach the end of the linked list:
+```
+        for (int i = 0; i != -1; i = symbols[i].next) {
+            auto & symbol = symbols[i];
+            resegment(symbol, output);
+        }
+```
+```console
+(gdb) p symbols
+$53 = std::vector of length 14, capacity 16 = {
+{prev = -1, next = 5, text = 0x555555a9d830 "▁What▁is▁LoRA?", n = 7},
+{prev = 0, next = 2, text = 0x555555a9d833 "What▁is▁LoRA?", n = 0},
+{prev = 0, next = 3, text = 0x555555a9d834 "hat▁is▁LoRA?", n = 0},
+{prev = 0, next = 5, text = 0x555555a9d835 "at▁is▁LoRA?", n = 0},
+{prev = 3, next = 5, text = 0x555555a9d836 "t▁is▁LoRA?", n = 0},
+{prev = 0, next = 8, text = 0x555555a9d837 "▁is▁LoRA?", n = 5},
+{prev = 5, next = 8, text = 0x555555a9d83a "is▁LoRA?", n = 0},
+{prev = 6, next = 8, text = 0x555555a9d83b "s▁LoRA?", n = 0},
+{prev = 5, next = 11, text = 0x555555a9d83c "▁LoRA?", n = 5},
+{prev = 8, next = 10, text = 0x555555a9d83f "LoRA?", n = 0},
+{prev = 8, next = 11, text = 0x555555a9d840 "oRA?", n = 0},
+{prev = 8, next = 13, text = 0x555555a9d841 "RA?", n = 2},
+{prev = 11, next = 13, text = 0x555555a9d842 "A?", n = 0},
+{prev = 11, next = -1, text = 0x555555a9d843 "?", n = 1}}
+```
+So our first symbol will be:
+```console
+(gdb) p symbol
+$55 = (llm_symbol &) @0x555555a99c70: {prev = -1, next = 5, text = 0x555555a9d830 "▁What▁is▁LoRA?", n = 7}
+```
+Which will be passed to resegment.
+At this stage our output vector looks like this:
+```console
+(gdb) p output
+$56 = std::vector of length 2, capacity 2 = {1, 1}
+```
+```c++
+    void resegment(llm_symbol & symbol, std::vector<llama_vocab::id> & output) {
+        auto text = std::string(symbol.text, symbol.n);
+        auto token = vocab.token_to_id.find(text);
+
+        // Do we need to support is_unused?
+        if (token != vocab.token_to_id.end()) {
+            output.push_back((*token).second);
+            return;
+        }
+
+        const auto p = rev_merge.find(text);
+
+        if (p == rev_merge.end()) {
+            // output any symbols that did not form tokens as bytes.
+            output.reserve(output.size() + symbol.n);
+            for (int j = 0; j < (int)symbol.n; ++j) {
+                llama_vocab::id token_id = llama_byte_to_token_impl(vocab, symbol.text[j]);
+                output.push_back(token_id);
+            }
+            return;
+        }
+
+        resegment(symbols[p->second.first],  output);
+        resegment(symbols[p->second.second], output);
+    }
+```
+So this first creates a string from the passed in symbol and then searches the
+vocab for this token. If it is found it is added to the output vector and we
+```console
+(gdb) p *token
+$59 = {first = "▁What", second = 1724}
+```
+If the token was found it the tokens (second) is added to the output vector.
+```console
+(gdb) p output
+$61 = std::vector of length 3, capacity 4 = {1, 1, 1724}
+```
+And if the token was not in the vocabulary it is looked up in the `rev_merge`
+map. If the token was not found in the `rev_merge`, recall that `try_add_bigram`
+searches the vocabulary for bigrams, and if it is not found there it is not
+added to the `rev_merge` map. In this case we iterate over the utf8 characters 
+in the symbol and add them to the output vector. This is done by calling
+`llama_byte_to_token_impl`:
+```c++
+llama_token llama_byte_to_token_impl(const llama_vocab & vocab, uint8_t ch) {
+    GGML_ASSERT(llama_vocab_get_type(vocab) != LLAMA_VOCAB_TYPE_NONE);
+    static const char * hex = "0123456789ABCDEF";
+    switch (llama_vocab_get_type(vocab)) {
+        case LLAMA_VOCAB_TYPE_SPM:
+        case LLAMA_VOCAB_TYPE_UGM: {
+            const char buf[7] = { '<', '0', 'x', hex[ch >> 4], hex[ch & 15], '>', 0 };
+            auto token = vocab.token_to_id.find(buf);
+            if (token != vocab.token_to_id.end()) {
+                return (*token).second;
+            }
+            // Try to fall back to just the byte as a string
+            const char buf2[2] = { (char)ch, 0 };
+            return vocab.token_to_id.at(buf2);
+        }
+        case LLAMA_VOCAB_TYPE_WPM:
+        case LLAMA_VOCAB_TYPE_BPE: {
+            return vocab.token_to_id.at(unicode_byte_to_utf8(ch));
+        }
+        default:
+            GGML_ABORT("fatal error");
+    }
+}
+```
+Notice that this is will perform another lookup in the vocabulary, but this time 
+it will look for the byte as a string (and not the symbol text). This is the
+byte fall back part of SPM. When the tokenizer encounters a sequence of
+characters that it can't match to any token in its vocabulary, it falls back to
+encoding each byte individually. And the vocabulary would have tokens for these
+bytes in the vocabulary.
+
+_wip_
