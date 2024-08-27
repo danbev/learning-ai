@@ -90,8 +90,10 @@ encounter this input:
 "Hello, こんにちは! 😊"
 ```
 Without byte fallback, the tokenizer might produce:
+```
 ["Hello", ",", " ", <UNK>, <UNK>, <UNK>, "!", <UNK>]
 ```
+
 With byte fallback:
 ```
 ["Hello", ",", " ", "<0xE3>", "<0x81>", "<0x93>", "<0xE3>", ...
