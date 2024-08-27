@@ -3,6 +3,7 @@ This repository contains notes and code examples related to AI.
 
 ### Notes
 
+* [Tokenizationl](./notes/tokenization/README.md)
 * [AI/ML general](./notes/background.md)
 * [Embeddings](./notes/embeddings.md)
 * [Position Embeddings](./notes/position-embeddings)
