@@ -7,6 +7,15 @@ model. There might be a configuration file in addition to this that specifies
 the type of tokenizing that the model uses, like Byte-Pair Encoding (BPE),
 WordPiece, SentencePiece, or Unigram, etc.
 
+#### Tokenization notes
+The following notes are individual walkthroughs of the tokenization process for
+different tokenization types in llama.cpp:
+
+* [Byte Pair Encoding (BPE)](./bpe.md)
+* [WordPiece](./wordpiece.md) TODO
+* [SentencePiece](./sentencepiece.md)
+* [Unigram](./unigram.md) TODO
+
 ### Tokenization in llama.cpp
 Llama.cpp supports the following types of tokenization:
 ```c
@@ -295,11 +304,3 @@ $56 = std::forward_list = {
 [1] = {type = FRAGMENT_BUFFER_VARIANT_TYPE_RAW_TEXT, token = -1, _dummy = "", raw_text = "<s>What is LoRA?</s>", offset = 3, length = 13},
 [2] = {type = FRAGMENT_BUFFER_VARIANT_TYPE_TOKEN, token = 2, _dummy = "", raw_text = "", offset = 0, length = 0}}
 ```
-#### Tokenization notes
-The following notes are individual walkthroughs of the tokenization process for
-different tokenization types in llama.cpp:
-
-* [Byte Pair Encoding (BPE)](./bpe.md)
-* [WordPiece](./wordpiece.md) TODO
-* [SentencePiece](./sentencepiece.md)
-* [Unigram](./unigram.md) TODO
