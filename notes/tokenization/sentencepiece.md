@@ -2,7 +2,9 @@
 This is tokenizer/detokenizer used a by a number of NLP libraries.
 by gglm for example.
 
-### Training
+SentencePiece can use different tokenization algorithms like BPE, Unigram.
+
+### Training using Byte Pair Encoding (BPE)
 This involves taking a text corpus. Lets take this simple one:
 ```
 The quick brown fox jumps over the lazy dog.
@@ -105,4 +107,377 @@ reversible. For example they might split up tokens so that is not possible
 know how to put them back together again. For example:
 ```
 "Hello world" -> "Hello" "world"
+```
+
+### SentencePiece in llama.cpp
+This section will set through [tokenize.cpp](../fundamentals/llama.cpp/tokenize.cpp)
+which be built and started using the following commands:
+```console
+$ cd ../fundamentals/llama.cpp/
+$ make tokenize
+$ gdb --args ./tokenize
+(gdb) br tokenize.cpp:58
+Breakpoint 1 at 0x168cf: file src/tokenize.cpp, line 58.
+```
+
+Now, in `llama_tokenize_internal` we have a switch statement on the
+`vocab.type` which in this case is:
+```console
+(gdb) p vocab.type
+$57 = LLAMA_VOCAB_TYPE_SPM
+```
+```c++
+                bool is_prev_special = true;  // prefix with space if first token
+
+                if (add_special && vocab.tokenizer_add_bos) {
+                    GGML_ASSERT(vocab.special_bos_id != -1);
+                    output.push_back(vocab.special_bos_id);
+                    is_prev_special = true;
+                }
+```
+I'm not sure why `is_prev_special` is set to true again here. But notice that
+this is adding the special token for the beginning of the sentence.
+```console
+(gdb) p vocab.special_bos_id
+$61 = 1
+(gdb) p vocab.id_to_token[vocab.special_bos_id]
+$62 = {text = "<s>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p output
+$63 = std::vector of length 1, capacity 1 = {1}
+```
+Next we iterate over all the fragments (see 'tokenizer_st_partition' above) and
+```c++
+                for (const auto & fragment : fragment_buffer) {
+```
+And in this case the `fragement_buffer` will contain the following:
+```console
+(gdb) p fragment_buffer
+$65 = std::forward_list = {
+[0] = {type = FRAGMENT_BUFFER_VARIANT_TYPE_TOKEN, token = 1, _dummy = "",
+      raw_text = "", offset = 0, length = 0},
+[1] = {type = FRAGMENT_BUFFER_VARIANT_TYPE_RAW_TEXT, token = -1, _dummy = "",
+      raw_text = "<s>What is LoRA?</s>", offset = 3, length = 13},
+[2] = {type = FRAGMENT_BUFFER_VARIANT_TYPE_TOKEN, token = 2, _dummy = "",
+      raw_text = "", offset = 0, length = 0}}
+```
+
+Next we check the type of the fragment which in this case is of type token as
+we can see above:
+```c++
+                    if (fragment.type == FRAGMENT_BUFFER_VARIANT_TYPE_RAW_TEXT) {
+                       ...
+                    } else { // if (fragment.type == FRAGMENT_BUFFER_VARIANT_TYPE_TOKEN)
+                        output.push_back(fragment.token);
+                        is_prev_special = true;
+                    }
+```
+So this token gets added to the output:
+```console
+(gdb) p output
+$66 = std::vector of length 2, capacity 2 = {1, 1}
+```
+Next iteration the fragment will be the raw string
+```console
+(gdb) p raw_text
+$68 = "What is LoRA?"
+```
+And notice that a space is added before the raw text:
+```c++
+                        // prefix with space if previous is special
+                        if (vocab.tokenizer_add_space_prefix && is_prev_special) {
+                            raw_text = " " + raw_text;
+                        }
+```
+Then a new `llm_tokenizer_spm` is created and the `tokenize` function is called:
+```c++
+
+                        llm_tokenizer_spm tokenizer(vocab);
+                        llama_escape_whitespace(raw_text);
+                        tokenizer.tokenize(raw_text, output);
+                        is_prev_special = false;
+```
+The above will create a new tokenizer object, and then replace all whitespace
+characters with a block underscore character `_`. I wonder what this function
+is called `llama_escape_whitespace` instead of something like
+`llama_replace_whitespace`.
+```console
+(gdb) p raw_text
+$69 = " What is LoRA?"
+(gdb) n
+1296	                        tokenizer.tokenize(raw_text, output);
+(gdb) p raw_text
+$70 = "▁What▁is▁LoRA?
+```
+```c++
+    void tokenize(const std::string & text, std::vector<llama_vocab::id> & output) {
+        // split string into utf8 chars
+        int index = 0;
+        size_t offs = 0;
+        while (offs < text.size()) {
+```
+Recall that `text.size()` return the number of bytes in the string, not the
+number of characters.
+```console
+(gdb) p text
+$72 = "▁What▁is▁LoRA?"
+(gdb) p text.size()
+$71 = 20
+```
+What will happen is that the string will be split into utf8 characters.
+```c++
+        int index = 0;
+        size_t offs = 0;
+        while (offs < text.size()) {
+            llm_symbol sym;
+            // Get length of utf8 character.
+            size_t len = unicode_len_utf8(text[offs]);
+            // Set the char* to the start of the utf8 character.
+            sym.text = text.c_str() + offs;
+            // Set the size of the utf8 character.
+            sym.n = std::min(len, text.size() - offs);
+            offs += sym.n;
+            // Update the linked list indices prev and next.
+            sym.prev = index - 1;
+            sym.next = offs == text.size() ? -1 : index + 1;
+            index++;
+            symbols.emplace_back(sym);
+        }
+```
+So each utf8 character is stored in a `llm_symbol` struct and then added to the
+`symbols` vector:
+```console
+(gdb) until 224
+llm_tokenizer_spm::tokenize (this=0x7fffffffd200, text="▁What▁is▁LoRA?", 
+    output=std::vector of length 2, capacity 2 = {...}) at src/llama-vocab.cpp:224
+224	        for (size_t i = 1; i < symbols.size(); ++i) {
+(gdb) p symbols
+$92 = std::vector of length 14, capacity 16 = {
+{prev = -1, next = 1,  text = 0x555555a9d830 "▁What▁is▁LoRA?", n = 3},
+{prev =  0, next = 2,  text = 0x555555a9d833 "What▁is▁LoRA?",  n = 1},
+{prev =  1, next = 3,  text = 0x555555a9d834 "hat▁is▁LoRA?",   n = 1},
+{prev =  2, next = 4,  text = 0x555555a9d835 "at▁is▁LoRA?",    n = 1},
+{prev =  3, next = 5,  text = 0x555555a9d836 "t▁is▁LoRA?",     n = 1},
+{prev =  4, next = 6,  text = 0x555555a9d837 "▁is▁LoRA?",      n = 3},
+{prev =  5, next = 7,  text = 0x555555a9d83a "is▁LoRA?",       n = 1},
+{prev =  6, next = 8,  text = 0x555555a9d83b "s▁LoRA?",        n = 1},
+{prev =  7, next = 9,  text = 0x555555a9d83c "▁LoRA?",         n = 3},
+{prev =  8, next = 10, text = 0x555555a9d83f "LoRA?",          n = 1},
+{prev =  9, next = 11, text = 0x555555a9d840 "oRA?",           n = 1},
+{prev = 10, next = 12, text = 0x555555a9d841 "RA?",            n = 1},
+{prev = 11, next = 13, text = 0x555555a9d842 "A?",             n = 1},
+{prev = 12, next = -1, text = 0x555555a9d843 "?",              n = 1}}
+```
+Notice that the `_` (block underscore) is 3 bytes long and the others are only
+one as they are the same in ascii which are only one byte in UTF8.
+
+```c
+struct llm_symbol {
+    using index = int;
+    index prev;
+    index next;
+    const char * text;
+    size_t n;
+};
+```
+So a symbol entry has the index to the previous utf8 character, and the next
+utf8 character in the string. It also has a char* to the current utf8
+character and the size of the utf8 character.  The `prev` and `next`
+allow this struct to act like a doubly linked list.
+
+When tokenizing, especially with subword tokenization algorithms, you often need
+to merge adjacent symbols. With prev and next indices, you can easily merge
+symbols by updating these indices without moving data in memory.
+It allows for processing symbols in a non-contiguous manner. You can "remove" a
+symbol from the sequence by adjusting the prev and next pointers of its
+neighbors, without physically removing it from the array.
+If you need to remove a symbol during processing, you can do so by updating the
+prev and next indices of adjacent symbols, rather than shifting all subsequent
+elements in an array.
+
+Take the string "hello" as an example:
+```
+Index: 0    1    2    3    4
+Char:  H    e    l    l    o
+text:  H    e    l    l    o
+n:     1    1    1    1    1
+prev:  -1   0    1    2    3
+next:  1    2    3    4    -1
+```
+Now, lets say we are using Byte Pair Encoding (BPE) and the merging decides to
+merge `l` and `o`, the last two characters.
+```
+Index: 0    1    2    3    4
+Char:  H    e    l    lo   o
+text:  H    e    l    lo   o
+n:     1    1    1    2    1
+prev:  -1   0    1    2    3
+next:  1    2    3    -1   -1
+```
+Notice that we have just manipulated `prev` and `next` and the actual string
+has not been updated at all.
+
+Next we will iterate over all the symbols added above:
+```c
+        // seed the work queue with all possible 2-character tokens.
+        for (size_t i = 1; i < symbols.size(); ++i) {
+            try_add_bigram(i - 1, i);
+        }
+```
+If symbols.size() is larger than `INT_MAX` (typically 2^31 - 1 or about 2.14
+billion), this conversion could lead to overflow and undefined behavior.
+But I don't think it is reasonable that the symbols, that is the number of
+utf8 character to tokenize exceeds this value.
+
+So at this point we have the utf8 characters from the input string to be
+tokenized which are stored as `llm_symbol` in the symbols vector. Now, we
+are going to iterate through them and call `try_add_bigram` which will try
+to add adjacent utf8 characters to the work queue.
+```c++
+    void try_add_bigram(int left, int right) {
+        if (left == -1 || right == -1) {
+            return;
+        }
+
+        const std::string text = std::string(symbols[left].text, symbols[left].n + symbols[right].n);
+        auto token = vocab.token_to_id.find(text);
+
+        if (token == vocab.token_to_id.end()) {
+            return;
+        }
+
+        if (static_cast<size_t>((*token).second) >= vocab.id_to_token.size()) {
+            return;
+        }
+
+        const auto & tok_data = vocab.id_to_token[(*token).second];
+
+        llm_bigram_spm bigram;
+        bigram.left  = left;
+        bigram.right = right;
+        bigram.score = tok_data.score;
+        bigram.size  = text.size();
+
+        work_queue.push(bigram);
+
+        // Do we need to support is_unused?
+        rev_merge[text] = std::make_pair(left, right);
+    }
+```
+Notice that the std::string constructor used here is the range constructor with
+a pointer to the start of the string and the count of characters to copy:
+```c++
+const std::string text = std::string(symbols[left].text, symbols[left].n + symbols[right].n);
+```
+```console
+(gdb) p symbols[left]
+$4 = {prev = -1, next = 1, text = 0x555555a9d830 "▁What▁is▁LoRA?", n = 3}
+
+(gdb) p symbols[right]
+$5 = {prev = 0, next = 2, text = 0x555555a9d833 "What▁is▁LoRA?", n = 1}
+
+(gdb) p symbols[right].n + symbols[left].n
+$7 = 4
+```
+So we are specifying that the pointer to the new string should be that of the
+left symbols char* (text member) and the `count.
+So text in in this case should be '_W' (recall that the underscore is a block
+underscore character and is 3 bytes long).
+```console
+(gdb) p unicode_len_utf8(text[0])
+$10 = 3
+(gdb) x/s &text[0]
+```
+This text will then be searched for in the models vocabulary. If it is not found
+this function just returns.
+In our case the iterator returned is:
+```console
+(gdb) p *token
+$15 = {first = "▁W", second = 399}
+```
+Second in this case is the token id for this bigram and we can check if it is
+in fact in the vocabulary:
+```console
+(gdb) p vocab.id_to_token[399]
+$17 = {text = "▁W", score = -140, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+Next we create a new `llm_bigram_spm` struct and add it to the work queue:
+```c++
+        llm_bigram_spm bigram;
+        bigram.left  = left;
+        bigram.right = right;
+        bigram.score = tok_data.score;
+        bigram.size  = text.size();
+
+        work_queue.push(bigram);
+```
+```console
+(gdb) p bigram
+$22 = {left = 0, right = 1, score = -140, size = 4}
+```
+Notice that only the indices, the score, and the size is stored and no pointer
+or token id.
+```c++
+    llm_bigram_spm::queue work_queue;
+```
+And queue is defines as follows in the `llm_bigram_spm` struct:
+```
+struct llm_bigram_spm {
+    struct comparator {
+        bool operator()(llm_bigram_spm & l, llm_bigram_spm & r) {
+            return (l.score < r.score) || (l.score == r.score && l.left > r.left);
+        }
+    };
+    using queue_storage = std::vector<llm_bigram_spm>;
+    using queue = std::priority_queue<llm_bigram_spm, queue_storage, comparator>;
+    llm_symbol::index left;
+    llm_symbol::index right;
+    float score;
+    size_t size;
+};
+```
+The last thing to happen in try_add_bigram is that the bigram is added to the
+`rev_merge` map:
+```c++
+        rev_merge[text] = std::make_pair(left, right);
+```
+`rev_merge` is defined as:
+```c++
+    std::map<std::string, std::pair<int, int>> rev_merge;
+```
+In our case we know that text is "_W" and left is 0 and right is 1:
+```console
+(gdb) p rev_merge
+$26 = std::map with 1 element = {["▁W"] = {first = 0, second = 1}}
+```
+
+The above might also be written as:
+```c++
+        rev_merge[text] = {left, right};
+```
+All the symbols will be added in the same way and afterwards the work_queue
+and rev_merge will look like this:
+```console
+(gdb) p work_queue
+$33 = std::priority_queue wrapping: std::vector of length 9, capacity 16 = {
+{left = 3, right = 4, score = -12, size = 2},
+{left = 0, right = 1, score = -140, size = 4},
+{left = 6, right = 7, score = -16, size = 2},
+{left = 9, right = 10, score = -3151, size = 2},
+{left = 5, right = 6, score = -215, size = 4},
+{left = 2, right = 3, score = -2091, size = 2},
+{left = 8, right = 9, score = -106, size = 4},
+{left = 1, right = 2, score = -8550, size = 2},
+{left = 11, right = 12, score = -4458, size = 2}}
+
+(gdb) p rev_merge
+$34 = std::map with 9 elements = {
+["Lo"] = {first = 9, second = 10},
+["RA"] = {first = 11, second = 12},
+["Wh"] = {first = 1, second = 2},
+["at"] = {first = 3, second = 4},
+["ha"] = {first = 2, second = 3},
+["is"] = {first = 6, second = 7},
+["▁L"] = {first = 8, second = 9},
+["▁W"] = {first = 0, second = 1},
+["▁i"] = {first = 5, second = 6}}
 ```
