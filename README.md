@@ -1,12 +1,11 @@
 ## Learning AI
 This repository contains notes and code examples related to AI.
 
-### Notes
+### Topics
 
 * [Tokenization](./notes/tokenization/README.md)
-* [AI/ML general](./notes/background.md)
-* [Embeddings](./notes/embeddings.md)
 * [Position Embeddings](./notes/position-embeddings)
+* [AI/ML general](./notes/background.md)
 * [Vector Databases](./notes/vector-databases.md)
 * [Transformers](./notes/transformers.md)
 * [Linear-regression](./notes/linear-regression.md)
