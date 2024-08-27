@@ -8,4 +8,6 @@ the type of tokenizing that the model uses, like Byte-Pair Encoding (BPE),
 WordPiece, SentencePiece, or Unigram, etc.
 
 * [Byte Pair Encoding (BPE)](./bpe.md)
+* [WordPiece](./wordpiece.md) TODO
 * [SentencePiece](./sentencepiece.md)
+* [Unigram](./unigram.md) TODO
