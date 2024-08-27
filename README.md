@@ -11,7 +11,7 @@ This repository contains notes and code examples related to AI.
 * [Linear-regression](./notes/linear-regression.md)
 * [Copilot notes](./notes/copilot.md)
 * [Rust AI/ML crates](./notes/rust.md)
-* [Symbols](./notes/symbols.md)
+* [GPUs](./gpu/README.md)
 
 ### Examples/Exploration code
 
