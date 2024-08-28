@@ -557,7 +557,7 @@ linked list. Then we have the following:
             try_add_bigram(bigram.left, left_sym.next);
 ```
 Now, after we have merged the left and right into the left symbol, that merge
-might not be able to generate new merges that were not there before this merge.
+might be able to generate new merges that were not there before this merge.
 So we look to the left of the newly merged symbol and try to find any bigram
 pair and if so add it to the work queue. And the same for the right which my now
 be possible to make a bigram. This is the above two lines of code are doing.
