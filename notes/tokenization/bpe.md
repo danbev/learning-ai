@@ -127,6 +127,28 @@ special handling for characters or numbers. It does not make any assumptions
 about word boundries or special characters and hence does not need any
 pre-processing. But for BPE there is this handling and some of the models have
 specific preprocessing steps that they have performed on their tokenization.
+For example, take the string "New York" which might be tokenized as:
+```
+["New", " ", "York"]
+```
+But what we want is a single token for "New York" and this is what the
+Another reason is that BPE is case sensitive which can increase the vocabulary
+size. So we might want to lowercase all the text before tokenization.
+Also punctuation can cause problems in BPE if not handled correctly. As an
+example if we have 'dog', 'dog!', 'dog?' all be single separate tokens this
+would be suboptimal. So we might want to remove punctuation before tokenization.
+So this regex acts like merging rules for the input text before tokenization.
+
+```
+"(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+
+p{L} = any kind of letter from any language
+p{N} = any kind of numeric character in any script
+\\s  = any whitespace character
+\\S  = any non-whitespace character
+```
+To play around with this regex there python script
+[llama3-pre-regex.py](../../fundamentals/tokenization/src/llama3-pre-regex.py).
 
 Next, if `add_special` is true 
 ```c++
@@ -154,13 +176,78 @@ Similar to the SPM we will iterate of the `fragment_buffer` and call tokenize.
 
         const auto word_collection = unicode_regex_split(text, regex_exprs);
 ```
-Notice that this is where the `regex_exprs` is used.
+Notice that this is where the `regex_exprs` is used. This will return a vector
+of strings where each entry is a token according to the rules in the regex.
+We are then iterating through this vector:
+```c++
+        for (auto & word : word_collection) {
+            work_queue = llm_bigram_bpe::queue();
+            symbols.clear();
 
+            int index = 0;
+            size_t offset = 0;
 
+            if (vocab.tokenizer_ignore_merges && vocab.token_to_id.find(word) != vocab.token_to_id.end()) {
+                symbols.emplace_back(llm_symbol{-1, -1, word.c_str(), word.size()});
+                offset = word.size();
+            }
+```
+Notice how the above is checking `tokenizer_ignore_merges` is set and if the
+word is in the vocabulary. If so we add the the symbol for it to theh symbols
+vector.
+
+After that we are going to create an `llm_symbol` for this word and add it
+to the symbols vector:
+```c++
+            while (offset < word.size()) {
+                llm_symbol sym;
+                size_t char_len = std::min(word.size() - offset, (size_t) unicode_len_utf8(word[offset]));
+                sym.text = word.c_str() + offset;
+                sym.n = char_len;
+                offset += sym.n;
+                sym.prev = index - 1;
+                sym.next = offset == word.size() ? -1 : index + 1;
+                index++;
+                symbols.emplace_back(sym);
+            }
+```
+We then iterate over all the symbols added above and add bigrams for each pair
+of symbols:
+```c++
+            for (size_t i = 1; i < symbols.size(); ++i) {
+                add_new_bigram(i - 1, i);
+            }
+```
 
 So, we called this only the integers -1 and 1 (the first time),
-so left will be -1 and right 1. Next it will extract the strings
-for each of these utf8 characters.
+so left will be -1 and right 1.
+``c++
+    void add_new_bigram(int left, int right) {
+        std::string left_token  = std::string(symbols[left].text,  symbols[left].n);
+        std::string right_token = std::string(symbols[right].text, symbols[right].n);
+
+        int rank_found = -1;
+
+        rank_found = vocab.find_bpe_rank(left_token, right_token);
+
+        if (rank_found < 0) {
+            return;
+        }
+
+        llm_bigram_bpe bigram;
+
+        bigram.left  = left;
+        bigram.right = right;
+        bigram.text  = left_token + right_token;
+        bigram.size  = left_token.size() + right_token.size();
+        bigram.rank  = rank_found;
+
+        work_queue.push(bigram);
+    }
+
+```
+Next it will extract the strings for each of these utf8 characters.
+
 Next we are checking if this pair of tokens (bigram) exists in our BPE
 vocabulary.
 The rank represents the priority or frequency of this bigram in the BPE merges.
@@ -239,7 +326,7 @@ Back in `add_new_bigram`
 
         work_queue.push(bigram);
 ```
-Recall that `left` and `right` are indexes not the strings.
+Recall that `left` and `right` are indexes no strings.
 ```c++
     llm_bigram_bpe::queue work_queue;
 
@@ -301,15 +388,12 @@ We can avoid this memory copy of the string using:
 
 Then we go through the `work_queue` until it is empty:
 ```c++
-// build token(s)
             while (!work_queue.empty()) {
-                auto bigram = std::move(const_cast<llm_bigram_bpe&>(work_queue.top()));
-                work_queue.pop();
+                auto bigram = work_queue.pop_move();
 
                 auto & left_symbol = symbols[bigram.left];
                 auto & right_symbol = symbols[bigram.right];
 
-                // 
                 if (left_symbol.n == 0 || right_symbol.n == 0) {
                     continue;
                 }
@@ -333,7 +417,11 @@ Then we go through the `work_queue` until it is empty:
                 add_new_bigram(bigram.left, left_symbol.next);  // right side of current symbol
             }
 ```
-The last two lines are adding 
+
+
+We will merge the right symbol into the left one and then remove the
+right symbol from the linked list:
+```
 [A] -> [B] -> [C] -> [D] -> [E]
 
 [A] -> [B] -> [C] -> [D] -> [E]
@@ -342,21 +430,33 @@ The last two lines are adding
     left   right
 
 [A] -> [BC] -> [D] -> [E]
+```
 
+Now, after we have merged the left and right into the left symbol, that merge
+might be able to generate new merges that were not there before this merge.
+So we look to the left of the newly merged symbol and try to find any bigram
+pair and if so add it to the work queue. And the same for the right which my now
+be possible to make a bigram. This is the above two lines of code are doing.
+
+```c++
 add_new_bigram(left_symbol.prev, bigram.left);  // left side of current symbol
+```
 This adds a bigram for the symbol before BC and BC itself.
 In our example, this would be A-BC.
 
+```c++
 add_new_bigram(bigram.left, left_symbol.next);  // right side of current symbol
+```
 This adds a bigram for BC and the symbol after it.
 In our example, this would be BC-D.
 
 [A] -> [BC] -> [D] -> [E]
 
-But two new bigrams have been added to the work queue for future consideration:
-
+And two new bigrams have been added to the work queue for future consideration:
+```c++
 A-BC
 BC-D
+```
 
 Before:
 [A] -> [B] -> [C] -> [D] -> [E]
@@ -372,13 +472,64 @@ After:
   New bigrams added
 ```
 
-_wip_
+After that (and still in the loop of the current word) we add the symbols
+to the `symbols_final` vector which maintains the correct order of tokens:
+```c++
+            // add the finished tokens to the final list keeping correct order for next and prev
+            for (auto & sym : symbols) {
+                if (sym.n > 0) {
+                    sym.prev = final_prev_index;
+                    sym.next = -1;
+                    if (final_prev_index != -1) {
+                        symbols_final[final_prev_index].next = symbols_final.size();
+                    }
+                    symbols_final.emplace_back(sym);
+                    final_prev_index = symbols_final.size() - 1;
+                }
+            }
+```
+```console
+(gdb) br llama-vocab.cpp:567
+(gdb) break llama-vocab.cpp:567 if raw_text == "What is LoRA?"
+```
+With all the symbols in `symbols_final` we set symbols to it and then iterate
+over all the symbols:
+```
+        symbols = symbols_final;
 
-### Token segmenter
-Above we described the training process which produced a `merges.txt` file.
-When we use this for tokenization we will have new text that we want to tokenize
-and we can now used the learned merges.txt file to tokenize the text.
-This time we can again split the text into characters and then we can look at
-each pair of characters and see if it is in the merges.txt file. If it is we
-replace it with the token that is on the right side of the rule in the
-merges.txt
+        if (!symbols.empty()) {
+            for (int i = 0; i != -1; i = symbols[i].next) {
+                auto & symbol = symbols[i];
+                if (symbol.n == 0) {
+                    continue;
+                }
+
+                const std::string str = std::string(symbol.text, symbol.n);
+                const auto token = vocab.token_to_id.find(str);
+
+                if (token == vocab.token_to_id.end()) {
+                    for (auto j = str.begin(); j != str.end(); ++j) {
+                        std::string byte_str(1, *j);
+                        auto token_multibyte = vocab.token_to_id.find(byte_str);
+                        if (token_multibyte != vocab.token_to_id.end()) {
+                            output.push_back(token_multibyte->second);
+                        }
+                    }
+                } else {
+                    output.push_back((*token).second);
+                }
+            }
+        }
+```
+We get the token as a string and then look it up in the vocabulary. If the token
+is in the vocabulary the id will be added to the output vector. If not we will
+try to lookup each byte of the token in the vocabulary and add its id to the
+output.
+
+Back in `llama_tokenize_internal`:
+```c++
+                if (add_special) {
+                    tokenizer.append_eos(output);
+                    tokenizer.check_double_bos_eos(output);
+                }
+```
