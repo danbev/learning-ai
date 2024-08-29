@@ -6,3 +6,4 @@
 * [Vulkan](./vulkan/README.md) Vulkan examples
 * [Kompute](./kompute/README.md) Kompute examples
 * [ROCm](./rocm/README.md) ROCm examples
+* [Metal](./metal) Metal examples
