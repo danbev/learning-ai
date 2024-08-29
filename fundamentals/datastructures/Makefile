@@ -20,3 +20,6 @@ bin:
 clean:
 	${RM} -rf $(BINDIR)
 
+
+bin/naive_trie: src/naive_trie.cpp
+	$(CXX) -g -o $@ $<
