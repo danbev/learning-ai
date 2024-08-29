@@ -489,8 +489,7 @@ to the `symbols_final` vector which maintains the correct order of tokens:
             }
 ```
 ```console
-(gdb) br llama-vocab.cpp:567
-(gdb) break llama-vocab.cpp:567 if raw_text == "What is LoRA?"
+(gdb) br llama-vocab.cpp:567 if raw_text.compare("What is LoRA?") == 0
 ```
 With all the symbols in `symbols_final` we set symbols to it and then iterate
 over all the symbols:
