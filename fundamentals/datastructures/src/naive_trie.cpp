@@ -52,6 +52,22 @@ struct naive_trie {
     int32_t value;
 };
 
+void print_trie(const naive_trie& node, std::string prefix = "") {
+    if (node.has_value) {
+        printf("Token: %s, Value: %d\n", prefix.c_str(), node.value);
+    }
+
+    for (const auto& [c, child] : node.children) {
+        if (isprint(c)) {
+            print_trie(child, prefix + c);
+        } else {
+            char hex[5];
+            snprintf(hex, sizeof(hex), "\\x%02X", static_cast<unsigned char>(c));
+            print_trie(child, prefix + hex);
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     printf("Naive Trie example!\n");
 
@@ -72,6 +88,10 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < tokens.size(); ++i) {
         root.insert(tokens[i].c_str(), tokens[i].length(), i);
     }
+
+    printf("Trie content:\n\n");
+    print_trie(root);
+    printf("\n");
 
     // Test the Trie with a normalized string of "What is LoRA?".
     std::string test_string = "▁What▁is▁LoRA?";
