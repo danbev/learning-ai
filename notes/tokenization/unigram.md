@@ -727,24 +727,53 @@ Lets take a closer look at this if block:
     }
 ```
 One thing to note here is that `current_best` is set outside of the while loop
-and if using the current value of `input_offset` which is 0:
+and is using the current value of `input_offset` which is 0:
 ```console
 (gdb) p tokenization_results[0]
 $247 = {token_id = 2, input_offset = 0, score_sum = 0}
 ```
-And we are taking that score and adding it to the token we found i the trie 
-score which is:
+This is the highest score for the character in position 0 (the first character which in this
+case is 0xe2).
+```
+tokenization_results
+index  char    value
+  0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
+```
+
+And we are taking that score and adding it to the token we found in the trie 
+score which is the following:
 ```console
 (gdb) p token_data
 $243 = (const llama_vocab::token_data &) @0x7ffff76c6088:
 {text = "▁", score = -2.01229286, attr = LLAMA_TOKEN_ATTR_NORMAL}
 ```
-Then we are getting a reference to the entry 3, the current value of
-`prefix_offset`:
+We are dealing with log probabilities to we are using addition and not multiplication.
+And recall that log probabilities are 0-negative infinity. The closer to 0 the more
+probable and the lower, more negative, the less probable.
+
+Then we saving a refenece in `challenger_score` pointing to  entry 3 in `tokenization_results`,
+the current value of `prefix_offset`:
 ```console
 (gdb) p tokenization_results[3]
 $250 = {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38}
 ```
+```
+tokenization_results
+index  char    value
+  0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
+  3    0x81    {token_id = 3, input_offset = 0, score_sum = -2.01229286}
+```
+```c++
+    if (challenger_score > current_champ.score_sum) {
+        struct best_tokenization challenger = { token_id, input_offset, (float) challenger_score };
+        current_champ = challenger;
+    }
+    if (-2.01229286 > -3.40282347e+38) {
+        struct best_tokenization challenger = { 3, 0, (float) -2.01229286 };
+        current_champ = challenger;
+    }
+```
 
 
+0xe2	0x96	0x81
 _wip_
