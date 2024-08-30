@@ -626,22 +626,26 @@ might have to step through this a few times to understand it.
 ```console
 (gdb) br llama-vocab.cpp:838 if normalized.compare("▁What▁is▁LoRA?") == 0
 ```
+
 We are going through the normalized string, character by character.
 So the normalized string is 20 codepoints as we have unicode characters what 
 where added as part of the normalization process. So this will loop from 0 to up
 20. But notice that `input_offset` gets incremented by the last line of the loop
 and is incremented by the number of codepoints in the current utf-8 character.
 
+So we will start with the first character/byte of the normalized string:
 ```
-"▁What▁is▁LoRA?"
- ↓
-"▁"   n_utf8_code_units=3
-=
+  "▁What▁is▁LoRA?"
+   ↓
+  "▁"   n_utf8_code_units=3
+
 ```
-Then we will access the the current character in the normalized string (notice
-that the post increment operator is used here so that happens afterwards):
+So we have the following values/variables:
 ```
-struct naive_trie * node  = token_matcher.traverse(normalized[prefix_offset++]);
+input_offset  = 0
+prefix_offset = input_offset (this gets updated in the loop)
+normalized[0] = 0xe2
+current_best = {token_id = 2, input_offset = 0, score_sum = 0} (tokenization_results[input_offset])
 ```
 So we are getting the first byte from normalized which is the first byte of the
 unicode character '▁':
@@ -651,6 +655,11 @@ So '▁' is represented as 3 bytes in utf-8. So the first byte is `0xe2` which
 0x555555bcaab0:	0xe2	0x96	0x81
 ```
 
+Notice that the post increment operator is used here so that happens afterwards):
+```
+struct naive_trie * node  = token_matcher.traverse(normalized[prefix_offset++]);
+```
+This will return a node if there is a node for the prefix '0xe2' in the trie:
 ```c++
     struct naive_trie * traverse(const char c) {
         auto res = children.find(c);
@@ -661,13 +670,6 @@ So '▁' is represented as 3 bytes in utf-8. So the first byte is `0xe2` which
         }
     }
 ```
-```console
-(gdb) p c
-$208 = -30 '\342'
-```
-And we are going to lookup this character in the map of `naive_trie`. Now, if
-the is an entry in the map this means that there is a path in the trie for this
-character and we return that node.
 
 So at this point `prefix_offset=1` and `input_len=20` and node is not NULL.
 Next we will enter the while loop:
@@ -732,37 +734,32 @@ and is using the current value of `input_offset` which is 0:
 (gdb) p tokenization_results[0]
 $247 = {token_id = 2, input_offset = 0, score_sum = 0}
 ```
-This is the highest score for the character in position 0 (the first character which in this
-case is 0xe2).
+This is the highest score for the character in position 0 (the first character
+which in this case is 0xe2).
 ```
 tokenization_results
 index  char    value
   0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
 ```
 
-And we are taking that score and adding it to the token we found in the trie 
-score which is the following:
+And we are taking that score and adding it to the token score we found in the
+trie score which is the following:
 ```console
 (gdb) p token_data
 $243 = (const llama_vocab::token_data &) @0x7ffff76c6088:
 {text = "▁", score = -2.01229286, attr = LLAMA_TOKEN_ATTR_NORMAL}
 ```
-We are dealing with log probabilities to we are using addition and not multiplication.
-And recall that log probabilities are 0-negative infinity. The closer to 0 the more
-probable and the lower, more negative, the less probable.
+We are dealing with log probabilities so we are using addition and not
+multiplication. And recall that log probabilities are 0-negative infinity. The
+closer to 0 the more probable and the lower, more negative, the less probable.
 
-Then we saving a refenece in `challenger_score` pointing to  entry 3 in `tokenization_results`,
-the current value of `prefix_offset`:
+Then we are saving a refenece in `challenger_score` pointing to  entry 3 in
+`tokenization_results`, the current value of `prefix_offset`:
 ```console
 (gdb) p tokenization_results[3]
 $250 = {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38}
 ```
-```
-tokenization_results
-index  char    value
-  0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
-  3    0x81    {token_id = 3, input_offset = 0, score_sum = -2.01229286}
-```
+
 ```c++
     if (challenger_score > current_champ.score_sum) {
         struct best_tokenization challenger = { token_id, input_offset, (float) challenger_score };
@@ -774,6 +771,224 @@ index  char    value
     }
 ```
 
+So this will create a new `best_tokenization` and set this to `current_champ`:
+```console
+(gdb) p tokenization_results[3]
+$259 = {token_id = 3, input_offset = 0, score_sum = -2.01229286}
+```
 
-0xe2	0x96	0x81
-_wip_
+After this the `tokenization_results` will look like this (only showing entires
+that have values):
+```
+tokenization_results
+index  char    value
+  0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
+  3    0x81    {token_id = 3, input_offset = 0, score_sum = -2.01229286}
+```
+Now it is important to understand that a terminal node can have children. The
+terminal node indicates that a complete token has been found but there can be
+children of this node. So we will continue to traverse the trie with the next
+character 'W':
+```console
+                node = node->traverse(normalized[prefix_offset++]);
+```
+This will return a node, and `prefix_offset` will be incremented to 4. 
+
+So we will entry the while loop again. And this node has a value (a token id)::
+```console
+(gdb) p node->value
+$267 = 549
+(gdb) p vocab.id_to_token[549]
+$269 = {text = "▁W", score = -8.92778587, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+At the point we are at `prefix_offset=4` and `input_offset=0` and the
+`current_best` is still the same as before, it is the current best for the
+`input_offset 0`. So this `tokenization_results[4]` will get updated with a
+new score:
+```
+tokenization_results
+index  char    value
+  0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
+  3    0x81    {token_id = 3, input_offset = 0, score_sum = -2.01229286}
+  4    '_W'    {token_id = 549, input_offset = 0, score_sum = -8.9277858734130859`}
+```
+
+And then we proceed to look up the 'h' character using the same node:
+```console
+                node = node->traverse(normalized[prefix_offset++]);
+```
+This will search the trie for the prefix 'h' and return it and afterwards
+increment the `prefix_offset` to 5. And we will entry the while loop again.
+
+This time the node does not have a value. So we will lookup `a` which is
+normalized[5]. Is does not have an value either so we will lookup `t` which is
+normalized[6]. This does have a value of 363:
+```console
+(gdb) p vocab.id_to_token[363]
+$290 = {text = "▁What", score = -8.48864937, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+So we will update the `tokenization_results` vector to:
+```
+tokenization_results
+index  char    value
+  0    0xe2    {token_id = 2, input_offset = 0, score_sum = 0}
+  3    0x81    {token_id = 3, input_offset = 0, score_sum = -2.01229286}
+  4    '_W'    {token_id = 549, input_offset = 0, score_sum = -8.9277858734130859`}
+  7    '_What' {token_id = 363, input_offset = 0, score_sum = -8.48864937}
+```
+The next character is '▁' for which traverse will return null. So this will
+break out of the while loop.
+```
+            input_offset += n_utf8_code_units;
+```
+This will set `input_offset` to 3. And this will then take us back to the
+for loop where we check that 3 is less than 20 so we continue.
+
+Iteration 2:
+```
+input_offset = 3
+prefix_offset = 3
+normalized[3] = W
+```
+
+We will save a reference to `tokenization_results[3]` in `current_best` which is:
+```console
+(gdb) p tokenization_results[3]
+$307 = {token_id = 3, input_offset = 0, score_sum = -2.01229286}
+```
+Which is the current score for the first three characters ("▁" token).
+
+Next we will lookup the 'W' character in the trie:
+```c++
+        node = token_matcher.traverse(normalized[prefix_offset++]);
+```
+And `prefix_offset` will be incremented to 4. node will have a value of 518:
+```console
+(gdb) p node->value
+$382 = 518
+(gdb) p vocab.id_to_token[518]
+$383 = {text = "W", score = -8.86957455, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+So here we are taking the current best score up until position 3 and adding
+the current token score.
+```c++
+    const double challenger_score = current_best.score_sum + token_score;
+```
+Can we think of this as the probability of '▁' followed by 'W' and saving this
+score.
+```
+challenger_score = current_best.score_sum + token_score
+                 = log(P('▁')) + log(P('W'))
+                 = log(P('▁') * P('W'))
+```
+After considering 'W', it will look at 'h', then 'a', then 't', potentially
+finding "What" as a token. It will compare the score of tokenizing as "▁" +
+"What" versus "▁" + "W" + "hat" (assuming these are all valid tokens), always
+keeping the best score.
+
+```
+(gdb) p tokenization_results 
+$390 = std::vector of length 21, capacity 21 = {
+0  {token_id = 2, input_offset = 0, score_sum = 0},                 "<unk>"
+1  {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38},   "<unk>"
+2  {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38},   "<unk>"
+3  {token_id = 3, input_offset = 0, score_sum = -2.01229286},       "_"
+4  {token_id = 549, input_offset = 0, score_sum = -8.92778587},     "_W"
+5  {token_id = 107, input_offset = 4, score_sum = -16.182106},      "h"
+6  {token_id = 1024, input_offset = 4, score_sum = -18.4571629},    "ha"
+7  {token_id = 363, input_offset = 0, score_sum = -8.48864937},      "_What"
+8  {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38},   "<unk>"
+9  {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38},   "<unk>"
+10 {token_id = 3, input_offset = 7, score_sum = -10.5009422},       "_"
+11 {token_id = 23, input_offset = 10, score_sum = -15.9708004},     "i"
+12 {token_id = 19, input_offset = 7, score_sum = -13.7720747},       "_is"
+13 {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38},    "<unk>"
+14 {token_id = 2, input_offset = 0, score_sum = -3.40282347e+38},    "<unk>"
+15 {token_id = 3, input_offset = 12, score_sum = -15.7843676},       "_"
+16 {token_id = 301, input_offset = 12, score_sum = -22.0731583},     "_L"
+17 {token_id = 1815, input_offset = 12, score_sum = -23.812809},     "_Lo"
+18 {token_id = 448, input_offset = 17, score_sum = -32.5351181},     "R"
+19 {token_id = 4763, input_offset = 17, score_sum = -34.7575912},     "RA"
+20 {token_id = 58, input_offset = 19, score_sum = -41.3434792}}       "?"
+```
+
+When we populate the output vector we will start at the end of
+`tokenization_results:
+```c++
+        // now backtrack from the end to gather token ids of the best tokenization
+        // merge sequences of consecutive unknown tokens into single unknown tokens
+        bool is_prev_unknown = false;
+        for (struct best_tokenization& tokenization = tokenization_results[input_len]; ;
+            tokenization = tokenization_results[tokenization.input_offset]) {
+
+            bool is_unknown = tokenization.token_id == vocab.special_unk_id;
+            if (!(is_prev_unknown && is_unknown)) {
+                output.push_back(tokenization.token_id);
+            }
+            if (tokenization.input_offset == 0) {
+                break;
+            }
+            is_prev_unknown = is_unknown;
+        }
+
+        // reverse the output since we added tokens starting from the end of the input
+        std::reverse(output.begin() + output_size, output.end());
+```
+Notice that the above loop will first add the token to the output vector and
+as long as the `input_offset` is not 0 it will continue. And also notice that
+the updating of tokenization is done by:
+```c++
+    tokenization = tokenization_results[tokenization.input_offset]) {
+```
+So this is setting the tokenization loop variable to the `input_offset` entry
+in the `tokenization_results` vector. So this will continue until we reach the
+beginning of the input.
+
+The final output vector will be:
+```console
+(gdb) p output
+$403 = std::vector of length 5, capacity 8 = {58, 4763, 1815, 19, 363}
+```
+But notice that this is:
+```
+{ 58,  4763, 1815,     19,   363   }
+{ "?", "RA", "_Lo", "_is", "_What" }
+```
+So this needs reversing to get the correct order.
+
+This method works because at each step of the forward pass (when filling
+tokenization_results), we've considered all possible tokenizations up to that
+point and kept the best one.
+
+1. Forward Pass Starting with "▁":
+   - You're correct that we start by processing the "▁" character (which is 3 bytes in UTF-8).
+   - We store the score for this token in `tokenization_results[3]`.
+
+2. Looking Ahead:
+   - Crucially, as you noted, we don't stop at just tokenizing "▁". We continue to explore longer prefixes that start with "▁".
+   - This is why we can find tokens like "▁What" even though we started by just looking at "▁".
+
+3. Processing Children in the Trie:
+   - You're spot on about processing the children in the trie. This is how the algorithm considers longer tokens.
+   - For example, after "▁", it will look at "▁W", then "▁Wh", then "▁Wha", and finally "▁What".
+
+4. Storing Scores:
+   - For each valid token found (like "▁", "▁W", "▁What"), we calculate a score.
+   - This score is the sum of the best score up to the start of this token plus the score of this token itself.
+   - We store this score in `tokenization_results` at the index corresponding to the end of this token.
+
+5. Comparison of Scores:
+   - If we find multiple valid tokenizations ending at the same point, we keep the one with the best score.
+   - For example, we might compare the score of tokenizing as "▁"+"What" versus "▁What" as a single token.
+
+6. Moving Forward:
+   - After we've explored all possibilities starting with the current `input_offset`, we move `input_offset` forward to the next unprocessed character.
+   - But thanks to the "looking ahead" you mentioned, we've already considered longer tokens, so we have scores for positions beyond the new `input_offset`.
+
+7. Continuation:
+   - This process continues for the entire input string. At each step, we're not just tokenizing the next character, but exploring all possible tokenizations starting from that point.
+
+This forward pass, with its look-ahead exploration, is what allows the later
+backtracking step to find the globally optimal tokenization. Each entry in
+`tokenization_results` represents the endpoint of the best tokenization up to
+that point, considering all explored possibilities.
