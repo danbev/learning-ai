@@ -14,7 +14,7 @@ different tokenization types in llama.cpp:
 * [Byte Pair Encoding (BPE)](./bpe.md)
 * [WordPiece](./wordpiece.md) TODO
 * [SentencePiece](./sentencepiece.md)
-* [Unigram](./unigram.md) TODO
+* [Unigram](./unigram.md)
 
 ### Tokenization in llama.cpp
 Llama.cpp supports the following types of tokenization:
