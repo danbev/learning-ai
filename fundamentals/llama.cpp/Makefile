@@ -1,5 +1,16 @@
 CUDA_DIR = /usr/local/cuda-12.4/lib64
 
+OS := $(shell uname -s)
+
+os:
+ifeq ($(OS),Linux)
+	@echo "This is a Linux system."
+else ifeq ($(OS),Darwin)
+	@echo "This is a macOS system."
+else
+	@echo "This is not a recognized system."
+endif
+
 # Make llama.cpp
 llama: 
 	cd llama.cpp && make -j8
@@ -16,7 +27,7 @@ llama-kompute:
 		&& make -j8
 
 llama-cuda-debug:
-	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1 LLAMA_DEBUG=1 DEBUG=1
+	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1 LLAMA_DEBUG=1 DEBUG=1 LLAMA_METAL=1
 
 # Use the following target with causion as it will probably mess up an
 # actual run of a specific program. Just use it for debugging/learning and
@@ -24,7 +35,11 @@ llama-cuda-debug:
 llama-debug: 
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
-CXXFLAGS = -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ -fopenmp
+CXXFLAGS = -std=c++11 -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ 
+#CXXFLAGS = -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ -fopenmp
+ifeq ($(OS),Darwin)
+CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
+endif
 
 OBJ = \
 	llama.cpp/src/llama.o \
@@ -45,11 +60,18 @@ OBJ_COMMON = llama.cpp/common/common.o \
 
 OBJ_GGML += \
 	llama.cpp/ggml/src/ggml.o \
+	llama.cpp/ggml/src/ggml-blas.o \
 	llama.cpp/ggml/src/ggml-alloc.o \
 	llama.cpp/ggml/src/ggml-backend.o \
 	llama.cpp/ggml/src/ggml-quants.o \
 	llama.cpp/ggml/src/ggml-aarch64.o \
 	llama.cpp/ggml/src/llamafile/sgemm.o
+
+ifeq ($(OS),Darwin)
+OBJ += \
+	llama.cpp/ggml/src/ggml-metal.o \
+	llama.cpp/ggml/src/ggml-metal-embed.o
+endif
 
 #OBJ_GGML += llama.cpp/ggml/src/ggml-cuda.o
 #        OBJ_GGML += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/*.cu))
@@ -63,7 +85,7 @@ OBJ_GGML += \
 OBJ_GGML += $(OBJ_CUDA_TMPL)
 
 kv-cache: src/kv-cache.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ)
 
 simple-prompt: src/simple-prompt.cpp
 	echo $(OBJ_GGML)
@@ -73,14 +95,14 @@ simple-prompt: src/simple-prompt.cpp
 run-simple-prompt: simple-prompt
 	./simple-prompt
 
-simple-prompt-cuda: OBJS += llama.cpp/ggml/src/ggml-cuda.o
-simple-prompt-cuda: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+simple-prompt-cuda: OBJ += llama.cpp/ggml/src/ggml-cuda.o
+simple-prompt-cuda: CXXFLAGS += -std=c++11 -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: LIBS += -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
 run-simple-prompt-cuda: simple-prompt-cuda
 	./simple-prompt 0 33
 
-simple-prompt-vulkan: OBJS += llama.cpp/ggml/src/ggml-vulkan.o
+simple-prompt-vulkan: OBJ += llama.cpp/ggml/src/ggml-vulkan.o
 simple-prompt-vulkan: CXXFLAGS += -lvulkan
 simple-prompt-vulkan: simple-prompt
 
@@ -104,7 +126,7 @@ update-llama:
 
 .PHONY clean:
 clean:
-	$(RM) -f simple-prompt finetune
+	$(RM) -f simple-prompt finetune tokenize
 
 .PHONY clean-llama:
 clean-llama:
@@ -116,6 +138,10 @@ quantize-llama-model:
 download-llama-7b-q4: | models
 	cd models && \
 	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf
+
+download-jina: | models
+	cd models && \
+	wget https://huggingface.co/djuna/jina-embeddings-v2-small-en-Q5_K_M-GGUF/resolve/main/jina-embeddings-v2-small-en-q5_k_m.gguf
 
 .PHONY models:
 models:
@@ -278,7 +304,9 @@ clean-lora-files:
 
 tokenize-file: CXXFLAGS += -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 tokenize-file: src/tokenize_file.cc
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJS)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ)
 
 tokenize: src/tokenize.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	#$(CXX) $(CXXFLAGS) -framework Metal -framework Foundation -framework MetalKit -framework Accelerate $^ -o $@ $(OBJ) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	echo $(OBJ)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ) $(OBJ_GGML) $(OBJ_COMMON) $(LIBS)
