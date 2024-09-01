@@ -304,5 +304,141 @@ $44 = std::vector of length 5, capacity 8 = {"awhat", "is", "lora", "?"}
 ```
 So we have no whitespace in the words vector and we have split the input string
 into words. This is the first step in the tokenization process.
+The words vector will then be returned.
+
+Next, in tokenize we will iterate over the words:
+```c++
+        // find the longest tokens that form the words
+        for (const std::string & word : words) {
+            // skip empty words
+            if (word.size() == 0) {
+                continue;
+            }
+
+            // prepend phantom space
+            const std::string word1 = "\xe2\x96\x81" + word;
+            const int n = word1.size();
+```
+Notice that this phantom space is a UTF-8 character that is 3 bytes long
+and is the "▁" character, U+2581 (LOWER ONE EIGHTH BLOCK) to signify the start
+of a word. We also saw this in the Unigram tokenizer:
+```c++
+    // escaped space symbol - U+2581 (Lower One Eighth Block)
+    const std::string escaped_space = "\xE2\x96\x81";
+```
+```console
+(gdb) p word1
+$23 = "▁awhat"
+```
+```c++
+            const int n = word1.size();
+
+            const size_t current_tokens = output.size();
+
+            // we're at the start of a new word
+            // move through character position in word
+            for (int i = 0; i < n; ++i) {
+                // loop through possible match length
+                bool match = false;
+                for (int j = std::min(n, i + vocab.max_token_len + 1); j > i; j--) {
+                    auto it = token_map.find(word1.substr(i, j - i));
+                    if (it != token_map.end()) {
+                        output.push_back(it->second);
+                        match = true;
+                        i = j - 1;
+                        break;
+                    }
+                }
+
+                if (!match) { // discard all
+                    output.resize(current_tokens);
+                    break;  // and discard next tokens
+                }
+            }
+
+            // we didn't find any matches for this word
+            if (current_tokens == output.size()) {
+                output.push_back(vocab.special_unk_id);
+            }
+        }
+```
+Notice that this is using `vocab.max_token_len` which is:
+```console
+(gdb) p vocab.max_token_len
+$29 = 21
+```
+So this models has a maximum length of 21 for a single token. So we use the min
+of this and the length of the word to search for a substring of the first words
+with the phantom space prepended.
+```console
+(gdb) p word1.substr(i, j-i)
+$28 = "▁awhat"
+```
+This will not be found in the token map to we continue the loop and shorten 
+the string searched for:
+```console
+(gdb) p word1.substr(i, j-i)
+$37 = "▁awha"
+(gdb) p word1.substr(i, j-i)
+$38 = "▁awh
+(gdb) p word1.substr(i, j-i)
+$39 = "▁aw"
+
+(gdb) p *it
+$41 = {first = "▁aw", second = 22091}
+(gdb) p vocab.id_to_token[22091]
+$42 = {text = "▁aw", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p output
+$43 = std::vector of length 1, capacity 1 = {101}
+(gdb) p vocab.id_to_token[101]
+$44 = {text = "[CLS]", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+
+(gdb) p output
+$45 = std::vector of length 2, capacity 2 = {101, 22091}
+```
+So notice it starts with the longest possible token to match and then shortens
+the string until it finds a match (longest match first approach). 
+
+The loop will continue with i incremented to become 4 ("▁aw"). And recall that
+word1 is "▁awhat" so the next substring will be "hat" which will be found and
+added to the output:
+```console
+(gdb) p *it
+$51 = {first = "hat", second = 12707}
+(gdb) p output
+$52 = std::vector of length 3, capacity 4 = {101, 22091, 12707}
+```
+We will then do the same thing for the next word "is":
+```
+(gdb) p output
+$61 = std::vector of length 4, capacity 4 = {101, 22091, 12707, 2003}
+```
+
+The final state out output will become:
+```console
+(gdb) p output
+$65 = std::vector of length 7, capacity 8 = {101, 22091, 12707, 2003, 8840, 2527, 1029}
+```
+And that is what tokenize will return. 
+
+Back in `llama_tokenize_internal` we then have:
+```c++
+                if (add_special) {
+                    GGML_ASSERT(vocab.special_sep_id != -1);
+                    output.push_back(vocab.special_sep_id);
+                }
+```
+Which in this case will add the special token `[SEP]`:
+```console
+(gdb) p vocab.id_to_token[vocab.special_sep_id]
+$64 = {text = "[SEP]", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+```
+
+So the final tokenized output will be:
+```console
+(gdb) p output
+$66 = std::vector of length 8, capacity 8 = {101, 22091, 12707, 2003, 8840, 2527, 1029, 102}
+```
 
 _wip_
