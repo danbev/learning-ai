@@ -36,8 +36,10 @@ llama-debug:
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
 CXXFLAGS = -std=c++11 -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ 
-#CXXFLAGS = -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ -fopenmp
-ifeq ($(OS),Darwin)
+
+ifeq ($(OS),Linux)
+CXXFLAGS += -fopenmp
+else ifeq ($(OS),Darwin)
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 endif
 
@@ -60,12 +62,15 @@ OBJ_COMMON = llama.cpp/common/common.o \
 
 OBJ_GGML += \
 	llama.cpp/ggml/src/ggml.o \
-	llama.cpp/ggml/src/ggml-blas.o \
 	llama.cpp/ggml/src/ggml-alloc.o \
 	llama.cpp/ggml/src/ggml-backend.o \
 	llama.cpp/ggml/src/ggml-quants.o \
 	llama.cpp/ggml/src/ggml-aarch64.o \
 	llama.cpp/ggml/src/llamafile/sgemm.o
+
+ifeq ($(OS),Darwin)
+OBJ_GGML += llama.cpp/ggml/src/ggml-blas.o
+endif
 
 ifeq ($(OS),Darwin)
 OBJ += \
