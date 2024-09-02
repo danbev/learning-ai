@@ -15,6 +15,7 @@ different tokenization types in llama.cpp:
 * [WordPiece](./wordpiece.md)
 * [SentencePiece](./sentencepiece.md)
 * [Unigram](./unigram.md)
+* [RWKV](./rwkv.md)
 
 ### Tokenization in llama.cpp
 Llama.cpp supports the following types of tokenization:
@@ -25,6 +26,7 @@ Llama.cpp supports the following types of tokenization:
         LLAMA_VOCAB_TYPE_BPE  = 2, // GPT-2 tokenizer based on byte-level BPE
         LLAMA_VOCAB_TYPE_WPM  = 3, // BERT tokenizer based on WordPiece
         LLAMA_VOCAB_TYPE_UGM  = 4, // T5 tokenizer based on Unigram
+        LLAMA_VOCAB_TYPE_RWKV = 5, // RWKV tokenizer based on greedy tokenization
     };
 ```
 
