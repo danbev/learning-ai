@@ -230,6 +230,9 @@ run-rwkv-tokenize:
 run-rwkv-simple-prompt:
 	./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
 
+debug-rwkv-simple-prompt:
+	gdb --args ./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
+
 inspect-rwkvf-model:
 	@. venv/bin/activate && \
 	llama.cpp/gguf-py/scripts/gguf_dump.py models/v6-Finch-1B6-HF.gguf && \
