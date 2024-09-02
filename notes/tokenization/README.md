@@ -12,7 +12,7 @@ The following notes are individual walkthroughs of the tokenization process for
 different tokenization types in llama.cpp:
 
 * [Byte Pair Encoding (BPE)](./bpe.md)
-* [WordPiece](./wordpiece.md) TODO
+* [WordPiece](./wordpiece.md)
 * [SentencePiece](./sentencepiece.md)
 * [Unigram](./unigram.md)
 
