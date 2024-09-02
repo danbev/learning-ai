@@ -11,6 +11,7 @@ int main(int argc, char** argv) {
     // parse the two optional integers named "main_gpu" and "n_gpu_layers" and set the default to zero if they are not provided.
     int main_gpu = 0;
     int num_gpu_layers = 0;
+    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
 
     if (argc > 1) {
         main_gpu = atoi(argv[1]);
@@ -18,10 +19,12 @@ int main(int argc, char** argv) {
     if (argc > 2) {
         num_gpu_layers = atoi(argv[2]);
     }
+    if (argc > 3) {
+        model_path = argv[3];
+    }
 
     model_params.main_gpu = main_gpu;
     model_params.n_gpu_layers = num_gpu_layers;
-    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
     // If the prompt provided is in the form of a question like it is here
