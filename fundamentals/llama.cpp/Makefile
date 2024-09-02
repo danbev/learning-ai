@@ -217,12 +217,15 @@ checkout-rwkv-model:
 	https://huggingface.co/RWKV/v6-Finch-1B6-HF/
 	cd v6-Finch-1B6-HF && git lfs pull
 
-convert-rwkvf-model:
+convert-rwkv-model:
 	@python3 -m venv venv
 	@. venv/bin/activate && \
 		pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt && \
 		python llama.cpp/convert_hf_to_gguf.py v6-Finch-1B6-HF \
 	        --outfile models/v6-Finch-1B6-HF.gguf --outtype f16
+
+run-rwkv-tokenize:
+	./tokenize models/v6-Finch-1B6-HF.gguf
 
 inspect-rwkvf-model:
 	@. venv/bin/activate && \
