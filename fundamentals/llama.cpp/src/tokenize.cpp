@@ -26,10 +26,17 @@ int main(int argc, char** argv) {
     llama_model_params model_params = llama_model_default_params();
 
     model_params.main_gpu = 0;
-    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
-    fprintf(stdout, "tokenize example using model: %s\n", model_path.c_str());
+    std::string model_path;
 
-    std::string prompt = "What is LoRA?";
+    if (argc > 1) {
+        model_path = argv[1];
+    } else {
+        fprintf(stdout, "No model path provided. Please specify a model to be used\n");
+    }
+
+    fprintf(stdout, "Using model: %s\n", model_path.c_str());
+
+    std::string prompt = "ÅWhat is LoRA?";
 
     llama_backend_init();
 
@@ -61,7 +68,7 @@ int main(int argc, char** argv) {
                               input_tokens.data(),
                               input_tokens.size(),
                               true,
-                              false);
+                              true);
     // llama_tokenize will return the negative length of the token if
     // it is longer that the passed in result.length. If that is the case
     // then we need to resize the result vector to the length of the token
