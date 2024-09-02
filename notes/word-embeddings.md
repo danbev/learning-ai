@@ -43,7 +43,7 @@ GloVe (Global Vectors for Word Representation) is another prediction-based
 embedding method.
 
 ### Contextualized Word Embeddings
-These are embeddings that are based on the context of the word, the is the
+These are embeddings that are based on the context of the word, that is the
 words surrounding the embedded word. And words closer to each other in meaning
 relationship will be closer to each other in the vector space.
 
