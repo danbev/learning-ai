@@ -188,6 +188,7 @@ checkout-llama-2-7b-chat-hf-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/
 
+
 convert-llama-2-7b-chat-hf-model:
 	@python3.11 -m venv venv
 	@. venv/bin/activate && \
@@ -209,6 +210,24 @@ quantize-llama-2-7b-chat-model-f16:
 quantize-llama-2-7b-chat-model-q8:
 	./llama.cpp/quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-Q8_0.gguf Q8_0
 	@ls -lh models/llama-2-7b-chat-Q8_0.gguf
+
+### rwkv targets
+checkout-rwkv-model:
+	git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/RWKV/v6-Finch-1B6-HF/
+	cd v6-Finch-1B6-HF && git lfs pull
+
+convert-rwkvf-model:
+	@python3 -m venv venv
+	@. venv/bin/activate && \
+		pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt && \
+		python llama.cpp/convert_hf_to_gguf.py v6-Finch-1B6-HF \
+	        --outfile models/v6-Finch-1B6-HF.gguf --outtype f16
+
+inspect-rwkvf-model:
+	@. venv/bin/activate && \
+	llama.cpp/gguf-py/scripts/gguf_dump.py models/v6-Finch-1B6-HF.gguf && \
+	deactivate
 
 ### Finetune targets
 finetune-llama-model: TYPE=llama
