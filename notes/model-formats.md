@@ -55,12 +55,12 @@ a single file compared to the TensorFlow format which is a directory.
 Checkpoints are stored with the `.ckpt` file extension and are used to save the
 state of the model and can be used to continue training from a certain point.
 
-This often used pickle to serialize the model and then save it to a file, which
-can serialize an object model to file and then load it back to memory later. Is
+This often uses pickle to serialize the model and then save it to a file, which
+can serialize an object model to file and then load it back to memory later. It
 is not recommended to use pickle to save and load models as it is not secure and
 can lead to security vulnerabilities, like arbitrary code execution. Instead
 [safetensors] is recommended, which was developed by Hugging Face. Safetensors
-an be used to serialize tensors in Python, and the resulting files can be easily
+can be used to serialize tensors in Python, and the resulting files can be easily
 loaded in other languages and platforms, including C++, Java, and JavaScript and
 provide a checksum mechanism to ensure that serialized tensors are not corrupted
 during storage or transfer.
