@@ -338,7 +338,7 @@ implementation. There seems to be many different ways to pack the arrays but
 I'll focus on the method used in llama.cpp.
 
 There is an example of Double Array Trie in
-[dat](../fundamentals/datastructures/sr/dat.c) which might help to take a look
+[dat](../fundamentals/datastructures/src/dat.c) which might help to take a look
 at to get an understanding of how a DAT works.
 
 So, instead of using two arrays for BASE and CHECK we will now have have a
@@ -378,5 +378,6 @@ Search for "abc" in XOR-CDAT:
 2. For 'b': xor_array[1] ^ 1 = 3, xor_array[2] ^ 1 = 2
 3. For 'c': xor_array[2] ^ 2 = 1, xor_array[3] ^ 2 = 2 (end of word)
 ```
+
 _wip_
 
