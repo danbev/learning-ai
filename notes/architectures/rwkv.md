@@ -13,7 +13,15 @@ which is a way to work around the memory limits of having the Q, K, and V
 matrices stored in memory, though it might mean more computation time as we
 have to compute then sequentially and not in parallel.
 
-Lets take a look at inference in this architectur:
+There are currently 6 versions of the RWKV model and this document will focus
+on v5 (Eagle) and v6 (Finch) which are the latest versions as of this writing
+and also the version that are implemented in llama.cpp.
+
+_I initially started this document reading the RWKV-4 paper which is why at the
+moment there are still notes that are based on that paper. This will be updated
+as I go through the new paper_.
+
+Lets take a look at inference in this architecture:
 ```
 input sequence   = ["Dan"        "loves"      "ice"         "cream"    ]
 input tokens     = [ 223         45,          1212            67       ]
@@ -23,32 +31,52 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
            |   input_embeddings   |
            +----------------------+
                       ↓
-           +----------------------+
-           |       LayerNorm      |
-           +----------------------+
                       |
                       +-----------------------------+
                       ↓                             |
+           +----------------------+                 |   
+           |       LayerNorm      |                 |
+           +----------------------+                 |
+                      ↓                             |
+           +--------------------------------------+ |
+           |               μ                      | |
+           | G = (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg| |
+           | R = (μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1)Wr| |
+           | K = (μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1)Wk| |
+           | V = (μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1)Wv  |
            +----------------------------------+     |
-           |               μ                  |     |
-           | R = μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1|     |
-           | K = μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1|     |
-           | V = μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1|     |
-           +----------------------------------+     |
-               |            |            |          |
-            +-----+      +-----+      +-----+       |       
-            |  R  |      |  K  |      |  V  |       |
-            +-----+      +-----+      +-----+       |
-               |            |            |          |  
-            +--------+   +------------------+       |
-            |Sigmoid |   |   WKV Operator   |       |
-            +--------+   +------------------+       |
-               |                  |                 |
-
+              |      |    |        |        |       |
+           +-----+ +----+ +--+  +-----+  +-----+    |       
+           |  G  | | R  | |w |  |  K  |  |  V  |    |
+           +-----+ +----+ +--+  +-----+  +-----+    |
+              |       |    |      |        |        |  
+            +-------+ |    | +------------------+   |
+            | SiLU  | |    +-|   WKV Operator   |   |
+            +-------+ |      +------------------+   |
+               |      |               |             |
+               |      +------------->(*)            |
+               |                      |             |
+               |           +----------------------+ |   
+               |           |       LayerNorm      | |
+               |           +----------------------+ |
+               |                      |             |
+               |                      |             |
+               |          +-----+     |             |
+               +----------|     |-----+             |
+                          +-----+                   |
+                             |                      |
+                          +-----+                   |
+                          | out |                   |
+                          +-----+                   |
+                             |                      |
+                            (*)---------------------+
 ``` 
 
 
-Interpolation 
+
+### Linear Interpolation (lerp) in Eagle (RWKV-5)
+This is pretty much the same as in RWKV-4 so I've kept my notes from that
+and I'll follow up with the notation used in the RWKV-5 paper after this.
 ```
 input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
 
@@ -80,6 +108,68 @@ If a value in these mu vectors is 1 then the current value of the token
 embeddings is used. And if it is 0 then the previous value of the token
 embedding would be used. And any value in between would be a linear
 interpolation between the two.
+
+In the RWKV-5 paper the notation is a little different:
+```
+lerp_ם(a, b) = a + (b -a ) ⊙  μ_ם
+
+a = x_t-1
+b = x_t
+
+lerp_ם(x_t-1, x_t) = x_t-1 + (x_t - xt_-1) ⊙  μ_ם
+                     x_t-1 + (x_t ⊙ µ□) - (x_t-1 ⊙ µ□)
+                     (x_t ⊙ µ□) + (x_t-1 ⊙ (1 - µ□))
+                     µ□ ⊙ x_t + (1 - µ□) ⊙ x_t-1
+
+ם = one of the μ vectors (g, r, k, v)
+```
+But it is really the same thing, just different notation. Also not that there
+is an matrix multiplication in the first equation which is specific for each
+μ vector (this can be seen in the diagram above).
+
+
+### Sigmoid
+The R vector is passed through the Sigmoid activation function which squashes
+the values between 0 and 1. This is important as it controls how much of the
+information is retained. So each value in this vector will be passed through
+the Sigmoind function.
+
+### LayerNorm x2 (Small Init Embeddings)
+This struck me as somewhat odd that there would be two LayerNorm operations
+after each other. But this seems like has to do with "Small Init Embeddings"
+which is mentioned in section 3.4 of the paper.
+
+A LayerNorm is defiend like this:
+```
+     
+        x - μ
+y = γ ( ------) + β
+          σ
+
+x = input
+μ = mean
+σ = standard deviation
+β = bias (learned)
+γ = scale (learned)
+```
+And having two will mean that both have different learnable parameters.
+The embedding values will be normalized twice, with each normalization
+potentially emphasizing different aspects of the input due to the separate
+learnable parameters.
+In llama.cpp there is a function named `llm_build_norm`:
+```c++
+static struct ggml_tensor * llm_build_norm(
+        struct ggml_context * ctx,
+         struct ggml_tensor * cur,
+        const llama_hparams & hparams,
+         struct ggml_tensor * mw,
+         struct ggml_tensor * mb,
+              llm_norm_type   type,
+         const llm_build_cb & cb,
+                        int   il) {
+```
+Where 'mw' is γ and 'mb' is β.
+
 
 
 ### WKV Operator
