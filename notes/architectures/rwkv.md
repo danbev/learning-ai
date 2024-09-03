@@ -13,6 +13,76 @@ which is a way to work around the memory limits of having the Q, K, and V
 matrices stored in memory, though it might mean more computation time as we
 have to compute then sequentially and not in parallel.
 
+Lets take a look at inference in this architectur:
+```
+input sequence   = ["Dan"        "loves"      "ice"         "cream"    ]
+input tokens     = [ 223         45,          1212            67       ]
+input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
+
+           +----------------------+
+           |   input_embeddings   |
+           +----------------------+
+                      ↓
+           +----------------------+
+           |       LayerNorm      |
+           +----------------------+
+                      |
+                      +-----------------------------+
+                      ↓                             |
+           +----------------------------------+     |
+           |               μ                  |     |
+           | R = μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1|     |
+           | K = μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1|     |
+           | V = μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1|     |
+           +----------------------------------+     |
+               |            |            |          |
+            +-----+      +-----+      +-----+       |       
+            |  R  |      |  K  |      |  V  |       |
+            +-----+      +-----+      +-----+       |
+               |            |            |          |  
+            +--------+   +------------------+       |
+            |Sigmoid |   |   WKV Operator   |       |
+            +--------+   +------------------+       |
+               |                  |                 |
+
+``` 
+
+
+Interpolation 
+```
+input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
+
+x_t   = [0.5, -0.3]
+x_t-1 = [ 0.0, 0.0] (first token so there is no previous token)
+μ_r   = [0.2, 0.9]
+
+Linear interpolation recap:
+result = t * a + (1 - t) * b
+
+The following is doing a linear interpolation between the current token and the
+previous token using the μ_r vector:
+R = μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1
+
+R = [0.2, 0.9] ⊙ [0.5, -0.3] + (1 - [0.2, 0.9]) ⊙ [0.0, 0.0]
+R = [0.1, -0.27] + (1 - [0.2, 0.9] ⊙ [0.0, 0.0]
+R = [0.1, -0.27] + [0.8, 0.1] ⊙ [0.0, 0.0]
+R = [0.1, -0.27] + 0
+R = [0.1, -0.27]
+
+μ_r   = learnable parameter vector.
+x_t   = current token embedding.
+x_t-1 = previous token embedding.
+⊙     = element-wise multiplication (Hadamard product).
+```
+The same operations are done for the K and V vectors but they have their own
+`μ_k` an `μ_v` vectors.
+If a value in these mu vectors is 1 then the current value of the token
+embeddings is used. And if it is 0 then the previous value of the token
+embedding would be used. And any value in between would be a linear
+interpolation between the two.
+
+
+### WKV Operator
 Now in RWKV instead of using the Q, K, and V matrices the formula looks like
 this:
 ```
