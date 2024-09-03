@@ -43,8 +43,8 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
            | G = (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg| |
            | R = (μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1)Wr| |
            | K = (μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1)Wk| |
-           | V = (μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1)Wv  |
-           +----------------------------------+     |
+           | V = (μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1)Wv| |
+           +--------------------------------------+ |
               |      |    |        |        |       |
            +-----+ +----+ +--+  +-----+  +-----+    |       
            |  G  | | R  | |w |  |  K  |  |  V  |    |
@@ -126,6 +126,76 @@ lerp_ם(x_t-1, x_t) = x_t-1 + (x_t - xt_-1) ⊙  μ_ם
 But it is really the same thing, just different notation. Also not that there
 is an matrix multiplication in the first equation which is specific for each
 μ vector (this can be seen in the diagram above).
+
+### Data-Dependent Linear Interpolation (ddlerp) in Finch (RWKV-6)
+Now this is a new concept in the RWKV-6 paper and it is used to calculate the
+receptance, key, and value vectors.
+There is a function named LoRA (Low Rank Adaptation) which I written about in
+[lora.md](../lora.md) and I was somewhat confused about its usage here. My
+understanding was that LoRA was used to reduce the dimensionality of matrices
+and I did not see how that would be applicable here. In the RWKV-6 paper it is
+not used for parameter reduction but instead for data-dependent linear shift
+mechanism. Is is called LoRA because of the similar structure of the LoRA update
+function:
+```
+
+lora□(x) = λ□ +tanh(xA□)B□
+
+lora(x) = λr + tanh(xAr) Br
+
+λr is a learnable vector
+Ar and Br are small learnable matrices
+x is the input
+
+
+lora□(x) = λ□ +tanh(xA□)B□
+ddlerp□(a,b) = a + (b − a) ⊙ lora□(a +(b − a) ⊙ µx)
+```
+Note that there is a µx vector which is trained and this is used for g, r, k,
+and v. And notice that the vectors and matrices in the lora function are
+specific to the current component (g, r, k, v).
+
+```
+input sequence   = ["Dan"        "loves"      "ice"         "cream"    ]
+input tokens     = [ 223         45,          1212            67       ]
+input embeddings = [ [0.5, -0.3], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
+
+Let's assume:
+D = 2 (embedding dimension)
+μr = [0.6, 0.7]
+λr = [0.1, 0.2]
+Ar = [[0.1, 0.2], [0.3, 0.4]]
+Br = [[0.5, 0.6], [0.7, 0.8]]
+
+For the second token "loves":
+
+a = x_t   = [0.7, 0.2]   (current embedding for "loves")
+b = x_t-1 = [0.5, -0.3]  (previous embedding for "Dan")
+
+Step 1: Calculate (b - a) ⊙ μr
+[0.5, -0.3] - [0.7, 0.2] = [-0.2, -0.5]
+[-0.2, -0.5] ⊙ [0.6, 0.7] = [-0.12, -0.35]
+
+Step 2: Add this to a
+[0.7, 0.2] + [-0.12, -0.35] = [0.58, -0.15]
+
+Step 3: Apply LoRA function
+x = [0.58, -0.15]
+tanh(xAr) = tanh([0.58*0.1 + (-0.15)*0.3, 0.58*0.2 + (-0.15)*0.4])
+           = tanh([0.013, 0.056])
+           ≈ [0.013, 0.056]
+
+tanh(xAr)Br = [0.013*0.5 + 0.056*0.7, 0.013*0.6 + 0.056*0.8]
+             = [0.0455, 0.0526]
+
+lora(x) = [0.1, 0.2] + [0.0455, 0.0526] = [0.1455, 0.2526]
+
+Step 4: Final ddlerp calculation
+ddlerpr(a, b) = [0.7, 0.2] + ([-0.2, -0.5] ⊙ [0.1455, 0.2526])
+              = [0.7, 0.2] + [-0.0291, -0.1263]
+              = [0.6709, 0.0737]
+```
+_wip_
 
 
 ### Sigmoid
