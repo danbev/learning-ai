@@ -250,7 +250,6 @@ feature is over time. And this is used to modulate (changes/controls) the key
 vector with the decay-adjusted weights, reflecting how the relationship between
 tokens changes based on their relative position and feature decay rates.
 
-
 In RWKV, we have the following important components:
 * R (Receptance) - A vector which is the receiver and integrator of past information.
 Similar to the hidden state in an RNN perhaps?
@@ -262,19 +261,19 @@ Ealier we mentioned that in the RWKV model they refer to features as channels
 which is good to keep in mind when we see component like channel-mixing, so we
 can think of it as feature-mixing.
 
-Lets take a look at the forumal for the R vector:
+Lets take a look at the formula for the R vector:
 ```
-r₁ = Wᵣ* (μᵣ⊙ xᵣ+ (1 - μᵣ) ⊙  xₜ-1)
+r_t = W_r * (μ_r ⊙ x_t + (1 - μ_r) ⊙  x_t-1)
 
 Where:
-xₜ   = current input token at time t
-xₜ-1 = previous input token at time t-1
-μᵣ   = (mu) scalar variables? that determines how much of the previous token to mix in
-        with the current token. This is a learned value.
-⊙    = element-wise multiplication
-1-μᵣ = scalar value which determines how much of the current token to mix in with
-       the previous token.
-Wᵣ   = Weight matrix for the R vector
+x_t   = current input token at time t
+x_-1  = previous input token at time t-1
+μ_r   = (mu) scalar variables? that determines how much of the previous token to
+        mix in with the current token. This is a learned value.
+⊙     = element-wise multiplication.
+1-μ_r = scalar value which determines how much of the current token to mix in
+        with the previous token.
+W_r   = Weight matrix for the R vector.
 ```
 Now, lets just keep in mind that xₜ and xₜ-1 are vectors of token embeddings and
 they are the same length the embedding length. And recall that each dimension in
