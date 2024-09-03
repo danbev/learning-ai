@@ -8,7 +8,7 @@ exponentially like it does with transformers). And there are no approximation
 techniques like in the Performer/Reformer/Linear Transformer (perhaps others)
 either instead this is exact.
 
-It is possible to [decompose attention](./transformer.md#decomposing-as-vector-operations)
+It is possible to [decompose attention](../transformer.md#decomposing-as-vector-operations)
 which is a way to work around the memory limits of having the Q, K, and V
 matrices stored in memory, though it might mean more computation time as we
 have to compute then sequentially and not in parallel.
@@ -16,19 +16,115 @@ have to compute then sequentially and not in parallel.
 Now in RWKV instead of using the Q, K, and V matrices the formula looks like
 this:
 ```
-                 Σ exp(Wₜᵢ+ kᵢ) . vᵢ
-Att+(W, K, V)ₜ = -----------------
-                 Σ exp(Wₜᵢ+ kᵢ)
+                 Σ exp(w_t_i+ k_i) . v_i
+Att+(W, K, V)_t = -----------------
+                 Σ exp(w_t_i+ k_i)
+
+t = current token (current time step of position of the token in the sequence).
+i = previous token (previous time step of position of the token in the sequence).
 ```
 Notice that we are still taking a weighted sum of the values, but we are using
-weights that are learned during training, and not the query values. The keys
+weights that are learned during training, and not the Query values. The keys
 are still the same as in the original attention mechanism and contain
-information about the current token, but the query is gone. And notice also that
+information about the current token, but the Query is gone. And notice also that
 the operation is addition and not multiplication before the exponentiation.
 
-So W is a learned matrix (actually not entirely true but we will see how this
-works shortly) and is the same for all calculations:
+And notice that this we can see the softmax operation in the forumula above:
 ```
+                 Σ exp(w_t_iᵢ+ k_i) 
+                 -----------------
+                 Σ exp(w_t_iᵢ+ k_i)
+```
+
+So `w` is a learned vector and is called a time decay factor which controls how
+quickly the influence of previous tokens decays.
+
+So each entry in this vector, which would have the same size as the models
+embedding dimensions/channels, would determine how important each feature is
+over time:
+```
+w_t_i = −(t − i) w
+
+t = current token (current time step of position of the token in the sequence).
+i = previous token (previous time step of position of the token in the sequence).
+w = learned decay vector where each entry is constraied to be non-negative.
+```
+So for each channel/feature in the embedding there is an entry in the `w`
+vector.
+```
+Token sequence length = 4
+Embedding dimension   = 2
+
+
+Lets say the learned w looks like this (remember that these values must be
+non-negative):
+
+   w = [0.2, 0.9]
+
+First token in the sequence (there is not previous token for this entry)
+w_0_0 = -(0 - 0) * 0.2 = 0
+w_0_1 = -(0 - 0) * 0.9 = 0
+
+w_1_0 = -(1 - 0) * 0.2 = -0.2
+w_1_1 = -(1 - 0) * 0.9 = -0.9
+
+w_2_0 = -(2 - 0) * 0.2 = -0.4
+w_2_1 = -(2 - 0) * 0.9 = -1.8
+
+w_3_0 = -(3 - 0) * 0.2 = -0.6
+w_3_1 = -(3 - 0) * 0.9 = -2.7
+```
+Now we need to keep in mind that these values will then be added to the
+respective key vectors for each token in the sequence.
+```
+    Σ exp(w_t_i + k_i)
+    -----------------
+    Σ exp(w_t_i + k_i)
+```
+So this is summing over all the tokens in the sequence. And notice that we
+are adding the `w_t_i` values to the `k_i` values. Lets just make explicit with
+the above example:
+```
+          0           1           2               3
+   x = ["Dan",      "loves"    , "ice"      , "cream"]
+   k = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
+
+   w_t_i + k_i
+
+Learned w vector:
+w = [0.2, 0.9]
+
+Key vectors:
+k_0 = [0.5, -0.3]  (for "Dan")
+k_1 = [0.7, 0.2]   (for "loves")
+k_2 = [-0.1, 0.8]  (for "ice")
+k_3 = [0.3, -0.5]  (for "cream")
+
+Calculations for w_t_i + k_i:
+
+For t = 0 ("Dan"):
+w_0_0 + k_0 = [-(0-0)*0.2 + 0.5, -(0-0)*0.9 - 0.3] = [0.5, -0.3]
+
+For t = 1 ("loves"):
+w_1_0 + k_0 = [-(1-0)*0.2 + 0.5, -(1-0)*0.9 - 0.3] = [0.3, -1.2]
+w_1_1 + k_1 = [-(1-1)*0.2 + 0.7, -(1-1)*0.9 + 0.2] = [0.7, 0.2]
+
+For t = 2 ("ice"):
+w_2_0 + k_0 = [-(2-0)*0.2 + 0.5, -(2-0)*0.9 - 0.3] = [0.1, -2.1]
+w_2_1 + k_1 = [-(2-1)*0.2 + 0.7, -(2-1)*0.9 + 0.2] = [0.5, -0.7]
+w_2_2 + k_2 = [-(2-2)*0.2 - 0.1, -(2-2)*0.9 + 0.8] = [-0.1, 0.8]
+
+For t = 3 ("cream"):
+w_3_0 + k_0 = [-(3-0)*0.2 + 0.5, -(3-0)*0.9 - 0.3] = [-0.1, -3.0]
+w_3_1 + k_1 = [-(3-1)*0.2 + 0.7, -(3-1)*0.9 + 0.2] = [0.3, -1.6]
+w_3_2 + k_2 = [-(3-2)*0.2 - 0.1, -(3-2)*0.9 + 0.8] = [-0.3, -0.1]
+w_3_3 + k_3 = [-(3-3)*0.2 + 0.3, -(3-3)*0.9 - 0.5] = [0.3, -0.5]
+```
+Notice that we have different decay values for each feature in the embedding.
+
+```
+     Time decay matrix
+
          T
   +---+---+----+----+
   |   |   |    |    | 3
@@ -43,7 +139,7 @@ works shortly) and is the same for all calculations:
 ```
 So we might read this as token 2 will interact with token 3 with a weight of 8.
 Since we are adding this with Kᵢwe are also mixing in some information about the
- current token.
+current token.
 
 How this actually works is that we have a `vector` w which is learned, and it
 tells how much the past matters for each dimension.
@@ -316,3 +412,45 @@ Note that we don't have the V vector here, and I am not sure why that is?
 The model performs computations using linear projections of inputs, essentially
 transforming the inputs into a space where they can be more effectively analyzed
 and combined. 
+
+### llama.cpp RWKV implementation
+
+```console
+$ cd fundamentals/llama.cpp
+$ make simple-prompt
+$ run-rwkv-simple-prompt:
+```
+
+Lets take an input sequence of the string "Dan loves ice cream" and let the
+current token be `x_t`. We calculate the K vector for the current token, and we
+do the same for the value vector.
+
+So for each token in the sequence we would:
+```
+K_t = W_K * x_t
+V_t = W_V * x_t
+
+W_K = Weight matrix for the K vector
+W_V = Weight matrix for the V vector
+t   = current token
+```
+The Receptance (R) vector is calculated using the following formula:
+```
+R_t = W_r * σ(W_R * x_t + B_R)
+
+σ   = Sigmoid activation function
+W_r = Weight matrix for the R vector
+x_t = current token
+B_R = Bias vector for the R vector
+```
+The sigmoid will ensure that the values in the R vector are between 0 and 1.
+This is important as it controls how much of the previous information is
+retained. 
+The is also something called a time decay factor which is called `w` and is a
+learned vector which controls how quickly the influence of previous tokens
+decays.
+
+The WKV operations (Weighted Key Value) looks something like this:
+```
+output = WKV(K_t, V_t, R_t, state_t-1)
+```
