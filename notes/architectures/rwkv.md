@@ -36,7 +36,7 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
            +----------------------+
                       |
                       +-----------------------------+
-                      ↓                             |
+Time mixing           ↓                             |
            +----------------------+                 |   
            |       LayerNorm      |                 |
            +----------------------+                 |
@@ -72,7 +72,35 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
                           | out |                   |
                           +-----+                   |
                              |                      |
-                            (*)---------------------+
+                            (+)---------------------+
+                             |
+                             +----------------------+
+Channel mixing               |                      |
+                 +----------------------+           |
+                 |       LayerNorm      |           |
+                 +----------------------+           |
+                             |
+           +--------------------------------------+ |
+           |               μ'                     | |
+           | G'= (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg| |
+           +--------------------------------------+ |
+                 |                   |              |
+            +------+            +-------------+     |
+            |  G'  |            |  MLP        |     |
+            +------+            +-------------+     |
+                 |                   |              |
+            +-------+                |              |
+            |Sigmoid|                |              |
+            +-------+                |              |
+                 |                   |              |
+                 |     +------+      |              |
+                 +-----|      |------+              |
+                       +------+                     |
+                          |                         |
+                         (+)------------------------+
+                          |
+                          |
+
 ``` 
 
 ### Linear Interpolation (lerp) in Eagle (RWKV-5)
@@ -124,7 +152,7 @@ lerp_ם(x_t-1, x_t) = x_t-1 + (x_t - xt_-1) ⊙  μ_ם
 
 ם = one of the μ vectors (g, r, k, v)
 ```
-But it is really the same thing, just different notation. Also not that there
+But it is really the same thing, just different notation. Also note that there
 is an matrix multiplication in the first equation which is specific for each
 μ vector (this can be seen in the diagram above).
 
@@ -197,7 +225,7 @@ ddlerpr(a, b) = [0.7, 0.2] + ([-0.2, -0.5] ⊙ [0.1455, 0.2526])
               = [0.6709, 0.0737]
 ```
 
-### Eagle (RWKV-5) WKV Operator (Time mixing)
+### Eagle (RWKV-5) Time mixing
 The forumla given in the paper looks like this:
 ```
 □t = lerp□(xt ,xt−1) W□, 
@@ -291,22 +319,23 @@ So both the left and right hand produce 2x2 vectors which are then added:
    [ 0.07  0.14]    [0.012 0.036]   [0.082 0.176]
 ```
 
-```
-                                  t-1
-wkv_t = diag(u) * K_t^T * v_t  +   Σ  diag(w)^t-1-i * K_i^T * v_i 
-                                  i=1
-```
-
-
-_wip_
-
+The output will be the result of all the heads concatenated together and then
+multipled by `W_o`.
 ```
 o_t = concat( SiLU(g_t) ⊙ LayerNorm(r_t * wkv_t)) W_o
-
-
-The concat operation is here to show that we are dealing with multiple heads.
 ```
+Now the result from wkv operation above (`wkv_t`) will be multiplied by the
+retention vector (`r_t`) which is calculated in the previous step. This is a
+learned parameter and is used to control how much of the information is retained
+from the previous time step. This is then passed through the LayerNorm function
+and then multipled, element wise, by the result of the SiLU activation function
+applied to the `g_t` vector. And like we mentioned above this done for all heads
+which are then concatenated together and multipled by `W_o`.
 
+### Eagle (RWKV-5) Channel mixing)
+TODO:
+
+_wip_
 
 
 ### WKV Operator
@@ -463,30 +492,11 @@ static struct ggml_tensor * llm_build_norm(
 Where 'mw' is γ and 'mb' is β.
 
 
-
-```
-     Time decay matrix
-
-         T
-  +---+---+----+----+
-  |   |   |    |    | 3
-  +---+---+----+----+
-  |   |   |    | 8  | 2
-  +---+---+----+----+
-  |   |   |    |    | 1
-  +---+---+----+----+
-  |   |   |    |    | 0
-  +---+---+----+----+
-   0    1   2    3
-```
-So we might read this as token 2 will interact with token 3 with a weight of 8.
-Since we are adding this with Kᵢwe are also mixing in some information about the
-current token.
-
+### Time decay vector
 How this actually works is that we have a `vector` w which is learned, and it
 tells how much the past matters for each dimension.
 
-Each dimension in the W vector represents a feature, also called a channel in 
+Each dimension in the w vector represents a feature, also called a channel in 
 contexts like image processing. In image processing and image can have multiple
 channels, like red, green, and blue for color images. These represent different
 types of information (features) of the image. CNN documents/papers would
@@ -520,7 +530,6 @@ wt,i = -(t - i)w
 ```
 The `(t - i)` part is calculating the relative position of the two tokens. It
 tells use how far back the the sequence token i is from the current token t.
-
 
 So, for our example above we would perhaps have something like the following,
 and lets say we are currently looking at t=1, i=3 (column).
@@ -639,7 +648,7 @@ token vector with the previous token vector. This is then multiplied by the
 learned weight matrix Wᵣ to produce the R vector.
 
 One thing that confused my a little was the usage of element-wise multiplication
-symbol ⊙, because if μᵣ is a scalare then that would be the same thing but I
+symbol ⊙, because if μᵣ is a scalar then that would be the same thing but I
 think this is done for clarity and to make it more general.
 
 In the time-mixing stage we also have:
@@ -736,11 +745,9 @@ exp((-9)w + kᵢ ⊙ vᵢ + exp(u+kₜ) ⊙ vₜ)
 And `w` is a vector so this will scale each value in the vector by -9. And that
 will then be added to the kₜvector.
 
-__wip__
-
 ### Channel-mixing
 Now, this is about mixing information from different features (channels) within
-a a single token. So this is dealing with our features/channels (the different
+a single token. So this is dealing with our features/channels (the different
 dimensions in the token embedding vector). 
 
 ```
@@ -749,49 +756,15 @@ k'₁ = Wₖ* (μ'ₖ⊙ xᵣ+ (1 - μ'ₖ) ⊙  xₜ-1)
 ```
 Note that we don't have the V vector here, and I am not sure why that is?
 
-
 The model performs computations using linear projections of inputs, essentially
 transforming the inputs into a space where they can be more effectively analyzed
 and combined. 
 
 ### llama.cpp RWKV implementation
+The version implemented in llama.cpp is RWKV-6 (Finch).
 
 ```console
 $ cd fundamentals/llama.cpp
 $ make simple-prompt
 $ run-rwkv-simple-prompt:
-```
-
-Lets take an input sequence of the string "Dan loves ice cream" and let the
-current token be `x_t`. We calculate the K vector for the current token, and we
-do the same for the value vector.
-
-So for each token in the sequence we would:
-```
-K_t = W_K * x_t
-V_t = W_V * x_t
-
-W_K = Weight matrix for the K vector
-W_V = Weight matrix for the V vector
-t   = current token
-```
-The Receptance (R) vector is calculated using the following formula:
-```
-R_t = W_r * σ(W_R * x_t + B_R)
-
-σ   = Sigmoid activation function
-W_r = Weight matrix for the R vector
-x_t = current token
-B_R = Bias vector for the R vector
-```
-The sigmoid will ensure that the values in the R vector are between 0 and 1.
-This is important as it controls how much of the previous information is
-retained. 
-The is also something called a time decay factor which is called `w` and is a
-learned vector which controls how quickly the influence of previous tokens
-decays.
-
-The WKV operations (Weighted Key Value) looks something like this:
-```
-output = WKV(K_t, V_t, R_t, state_t-1)
 ```
