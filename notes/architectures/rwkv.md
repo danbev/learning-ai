@@ -65,13 +65,15 @@ Time mixing           ↓                             |
                |                      |             |
                |                      |             |
                |          +-----+     |             |
-               +----------| *Wo |-----+             |
+               +----------| (*) |-----+             |
                           +-----+                   |
                              |                      |
+                             ↓                      |
                           +-----+                   |
                           | out |                   |
                           +-----+                   |
                              |                      |
+                             ↓                      |
                             (+)---------------------+
                              |
                              +----------------------+
@@ -79,11 +81,14 @@ Channel mixing               |                      |
                  +----------------------+           |
                  |       LayerNorm      |           |
                  +----------------------+           |
-                             |
-           +--------------------------------------+ |
-           |               μ'                     | |
-           | G'= (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg| |
-           +--------------------------------------+ |
+                             |                      |
+           +---------------------------------------+|
+           |               μ'                      ||
+           | G'= (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg'||
+           | R'= (μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1)Wr'||
+           | K'= (μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1)Wk'||
+           | V'= (μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1)Wv'||
+           +---------------------------------------+|
                  |                   |              |
             +------+            +-------------+     |
             |  G'  |            |  MLP        |     |
@@ -94,13 +99,15 @@ Channel mixing               |                      |
             +-------+                |              |
                  |                   |              |
                  |     +------+      |              |
-                 +-----|      |------+              |
+                 +-----| (*)  |------+              |
                        +------+                     |
                           |                         |
                          (+)------------------------+
                           |
-                          |
+                          ↓
+                     (next layer)
 
+(*) = Element wise multiplication (Hadamard product)
 ``` 
 
 ### Linear Interpolation (lerp) in Eagle (RWKV-5)
@@ -333,9 +340,45 @@ applied to the `g_t` vector. And like we mentioned above this done for all heads
 which are then concatenated together and multipled by `W_o`.
 
 ### Eagle (RWKV-5) Channel mixing)
-TODO:
+Like the time mixing this also starts with a LayerNorm operation and then the
+mu (μ) operations similar to the time mixing:
+```
+G'= (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg'
+R'= (μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1)Wr'
+K'= (μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1)Wk'
+V'= (μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1)Wv'
+```
+G' is passed to through the sigmoid activation function and R', K', and V' are
+passed to the MLP function. This is a feed-forward neurual network but a little
+different than the ones I've seen before. The ones I've seen usually have an
+expension operation, followed by a non-linear function, and then a contraction
+operation. In RWKV this is a little different:
+```
+k'  = lerp_k(x_t', x_t_' -1 ) W_k'   (performed by the mu (μ) operation)
+k'' = ReLU(k')^2
+v' = k'' W_v'
+```
+ReLU is max(0, x) and squared ReLU is max(0, x)^2. 
+My understanding is that the dimension of k' is the same as the embedding
+dimension divded by the number of heads.
+Now, what we are doing here is that we are taking the current tokens keys and
+applying a linear interpolation between the current and previous token producing
+k'. These are then passed through ReLU^2 and the result of this is then
+multiplied by the `W_v'` matrix to produce v'.
 
-_wip_
+The last operations in the channel mixing are element-wise multiplation between
+the sigmoid output of G' and the output of the MLP function (v'):
+```
+(σ(G') ⊙ v')
+```
+And the output of this is then passed to the next layer.
+
+I'm confused about the names of these, time mixing, and channel mixing. It seems
+to me that channel mixing, or dimension mixing, is done in both of these.
+Actually this is not so different from the transformer where we have the
+self attention which attends to all the tokens in the sequence (time mixing) and
+then we have the feed-forward neural network which is applied to each token
+independently (channel mixing).
 
 
 ### WKV Operator
