@@ -31,6 +31,9 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
            |   input_embeddings   |
            +----------------------+
                       ↓
+           +----------------------+
+           |       LayerNorm      |
+           +----------------------+
                       |
                       +-----------------------------+
                       ↓                             |
@@ -62,7 +65,7 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
                |                      |             |
                |                      |             |
                |          +-----+     |             |
-               +----------|     |-----+             |
+               +----------| *Wo |-----+             |
                           +-----+                   |
                              |                      |
                           +-----+                   |
@@ -71,8 +74,6 @@ input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
                              |                      |
                             (*)---------------------+
 ``` 
-
-
 
 ### Linear Interpolation (lerp) in Eagle (RWKV-5)
 This is pretty much the same as in RWKV-4 so I've kept my notes from that
@@ -137,8 +138,8 @@ and I did not see how that would be applicable here. In the RWKV-6 paper it is
 not used for parameter reduction but instead for data-dependent linear shift
 mechanism. Is is called LoRA because of the similar structure of the LoRA update
 function:
-```
 
+```
 lora□(x) = λ□ +tanh(xA□)B□
 
 lora(x) = λr + tanh(xAr) Br
@@ -147,7 +148,6 @@ lora(x) = λr + tanh(xAr) Br
 Ar and Br are small learnable matrices
 x is the input
 
-
 lora□(x) = λ□ +tanh(xA□)B□
 ddlerp□(a,b) = a + (b − a) ⊙ lora□(a +(b − a) ⊙ µx)
 ```
@@ -155,6 +155,7 @@ Note that there is a µx vector which is trained and this is used for g, r, k,
 and v. And notice that the vectors and matrices in the lora function are
 specific to the current component (g, r, k, v).
 
+For example:
 ```
 input sequence   = ["Dan"        "loves"      "ice"         "cream"    ]
 input tokens     = [ 223         45,          1212            67       ]
@@ -195,50 +196,116 @@ ddlerpr(a, b) = [0.7, 0.2] + ([-0.2, -0.5] ⊙ [0.1455, 0.2526])
               = [0.7, 0.2] + [-0.0291, -0.1263]
               = [0.6709, 0.0737]
 ```
+
+### Eagle (RWKV-5) WKV Operator (Time mixing)
+The forumla given in the paper looks like this:
+```
+□t = lerp□(xt ,xt−1) W□, 
+
+□  = ∈ {r ,k, v, g }
+Example:
+r_t = lerp_r(xt ,xt−1) W_r 
+
+This is represented by the μ "box" in the diagram above.
+
+w = exp(−exp(ω))
+This is represented by the w "box" in the diagram above.
+
+                                 t-1
+wkv_t = diag(u) * K_t^T * v_t +   Σ  diag(w)^t-1-i * K_i^T * v_i 
+                                 i=1
+
+```
+The diag function is creating a diagonal matrix from a vector. And the u vector
+is a learned parameter that is part of the Weighted Key Value (WKV) computation.
+The "time-first" u is initialized to
+```
+r0(1 − i/(D−1)) + 0.1((i + 1) mod 3)
+```
+This is represented by the WKV Operator "box" in the diagram above.
+So, `diag(u)` will create a matrix where the diagonal is the u vector and the
+rest of the matrix is zeros. This matrix will be multipled by the transpose of
+the K matrix which contains key values after the linear interpolation. And
+that will then be multiplied by the V matrix which contains the values after
+the linear interpolation also.
+
+To this we add the sum all the past tokens up to the current token but not
+includig the current token (t-1):
+```
+ t-1
+  Σ  diag(w)^t-1-i * K_i^T * v_i 
+ i=1
+```
+`K_i^T * v_i` is the key and value product for that token.
+`diag(w)^t-1-i` is the decay factor applied to that token. Notice that tokens in
+the past will have a larger exponent value which will make the decay factor
+resulting in more decay for those tokens.
+
+Alright I don't quite understand what the above formula is doing and I need to
+break this down a little so let walk through this with an example.
+```
+Embedding dim  : 4
+Attention heads: 2 (each head will deal with 4/2 = 2 dimensions)
+
+Left hand term: diag(u) * K_t^T * v_t
+u       = [0.9 0.7]
+diag(u) = [ 0.9 0.0]
+          [ 0.0 0.7]
+
+K_t     = [0.3, 0.5]  (row vector)
+K_t^T   = [0.3]
+          [0.5]
+
+v_t     = [0.2 0.4]   (row vector)
+
+So lets start with computing K_t^T * v_t:
+   [0.3] [0.2 0.4] = [0.06 0.12]
+   [0.5]             [ 0.1  0.2] 
+
+
+The we multiply this with diag(u):
+   [ 0.9 0.0] [0.06 0.12] = [0.054 0.108]
+   [ 0.0 0.7] [ 0.1  0.2]   [ 0.07  0.14]
+
+
+w       = [0.8, 0.6] (decay factor)
+k_t-1   = [0.4, 0.2] (key vector from previous step (t-1))
+k_t-1^T = [0.4]
+          [0.2]
+v_t-1   = [0.1, 0.3]  (value vector from previous time step (t-1))
+
+diag(w) = [0.8 0.0]
+          [0.0 0.6]
+
+We start with computing K_t-1^T * v_t-1:
+[0.4] [0.1 0.3] = [0.04 0.12]
+[0.2]             [0.02 0.06]
+
+Then we multiply this with diag(w):
+[0.8 0.0] [0.04 0.12] = [0.032 0.096]
+[0.0 0.6] [0.02 0.06]   [0.012 0.036]
+
+So both the left and right hand produce 2x2 vectors which are then added:
+
+   [0.054 0.108]  + [0.032 0.096] = [0.086 0.204]
+   [ 0.07  0.14]    [0.012 0.036]   [0.082 0.176]
+```
+
+```
+                                  t-1
+wkv_t = diag(u) * K_t^T * v_t  +   Σ  diag(w)^t-1-i * K_i^T * v_i 
+                                  i=1
+```
+
+
 _wip_
 
-
-### Sigmoid
-The R vector is passed through the Sigmoid activation function which squashes
-the values between 0 and 1. This is important as it controls how much of the
-information is retained. So each value in this vector will be passed through
-the Sigmoind function.
-
-### LayerNorm x2 (Small Init Embeddings)
-This struck me as somewhat odd that there would be two LayerNorm operations
-after each other. But this seems like has to do with "Small Init Embeddings"
-which is mentioned in section 3.4 of the paper.
-
-A LayerNorm is defiend like this:
 ```
-     
-        x - μ
-y = γ ( ------) + β
-          σ
+o_t = concat( SiLU(g_t) ⊙ LayerNorm(r_t * wkv_t)) W_o
 
-x = input
-μ = mean
-σ = standard deviation
-β = bias (learned)
-γ = scale (learned)
+
+The concat operation is here to show that we are dealing with multiple heads.
 ```
-And having two will mean that both have different learnable parameters.
-The embedding values will be normalized twice, with each normalization
-potentially emphasizing different aspects of the input due to the separate
-learnable parameters.
-In llama.cpp there is a function named `llm_build_norm`:
-```c++
-static struct ggml_tensor * llm_build_norm(
-        struct ggml_context * ctx,
-         struct ggml_tensor * cur,
-        const llama_hparams & hparams,
-         struct ggml_tensor * mw,
-         struct ggml_tensor * mb,
-              llm_norm_type   type,
-         const llm_build_cb & cb,
-                        int   il) {
-```
-Where 'mw' is γ and 'mb' is β.
 
 
 
@@ -351,6 +418,51 @@ w_3_2 + k_2 = [-(3-2)*0.2 - 0.1, -(3-2)*0.9 + 0.8] = [-0.3, -0.1]
 w_3_3 + k_3 = [-(3-3)*0.2 + 0.3, -(3-3)*0.9 - 0.5] = [0.3, -0.5]
 ```
 Notice that we have different decay values for each feature in the embedding.
+
+
+### Sigmoid
+The R vector is passed through the Sigmoid activation function which squashes
+the values between 0 and 1. This is important as it controls how much of the
+information is retained. So each value in this vector will be passed through
+the Sigmoind function.
+
+### LayerNorm x2 (Small Init Embeddings)
+This struck me as somewhat odd that there would be two LayerNorm operations
+after each other. But this seems like has to do with "Small Init Embeddings"
+which is mentioned in section 3.4 of the paper.
+
+A LayerNorm is defiend like this:
+```
+     
+        x - μ
+y = γ ( ------) + β
+          σ
+
+x = input
+μ = mean
+σ = standard deviation
+β = bias (learned)
+γ = scale (learned)
+```
+And having two will mean that both have different learnable parameters.
+The embedding values will be normalized twice, with each normalization
+potentially emphasizing different aspects of the input due to the separate
+learnable parameters.
+In llama.cpp there is a function named `llm_build_norm`:
+```c++
+static struct ggml_tensor * llm_build_norm(
+        struct ggml_context * ctx,
+         struct ggml_tensor * cur,
+        const llama_hparams & hparams,
+         struct ggml_tensor * mw,
+         struct ggml_tensor * mb,
+              llm_norm_type   type,
+         const llm_build_cb & cb,
+                        int   il) {
+```
+Where 'mw' is γ and 'mb' is β.
+
+
 
 ```
      Time decay matrix
