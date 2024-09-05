@@ -710,14 +710,48 @@ $16 = 10
 ```
 Now if we create a 1d view of this tensor using:
 ```c
-  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 5 * ggml_type_size(x->type));
+  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, (5-1) * ggml_type_size(x->type));
 ```
 Where the first int argument is the number of elements and the second integer is
 the offset in bytes. Notice that we have take into account the size for the
-elements stored.
+elements stored. Keep in mind that the index is zero based so the offset should
+reflect this too.
+
+So if our x tensor is:
+```console
+x[0]: 1.000000
+x[1]: 2.000000
+x[2]: 3.000000
+x[3]: 4.000000
+x[4]: 5.000000
+x[5]: 6.000000
+x[6]: 7.000000
+x[7]: 8.000000
+x[8]: 9.000000
+x[9]: 10.000000
+```
+Then the view would be:
+```console
+view[0]: 5.000000
+view[1]: 6.000000
+view[2]: 7.000000
+view[3]: 8.000000
+view[4]: 9.000000
+```
+The element type in this case if 4. And what we are saying above is that we
+want a view of 5 elements starting at the offset 16:
+```
+ 0     4    8   12   16   20   24   28   32   36 
+ [0    1    2    3    4    5    6    7    8    9]
+ [1    2    3    4    5    6    7    8    9   10]
+
+```
+
+
 ```c
     struct ggml_tensor * result = ggml_view_impl(ctx, a, 1, &ne0, offset);
 ```
+
 ```c
 static struct ggml_tensor * ggml_view_impl(
         struct ggml_context * ctx,

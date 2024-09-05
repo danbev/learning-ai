@@ -32,6 +32,7 @@ int main(int argc, char **argv) {
 
   printf("x tensor dimensions: %d\n", ggml_n_dims(x));
   printf("x tensor elements: %ld\n", ggml_nelements(x));
+  printf("x tensor type size: %ld\n", ggml_type_size(x->type));
   printf("x.ne: %ld\n", x->ne[0]);
 
   struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, 0 * ggml_type_size(x->type));
@@ -43,7 +44,7 @@ int main(int argc, char **argv) {
     printf("view[%d]: %f\n", i, ggml_get_f32_1d(view, i));
   }
 
-  view = ggml_view_1d(ctx, x, 5, 5 * ggml_type_size(x->type));
+  view = ggml_view_1d(ctx, x, 5, (5-1) * ggml_type_size(x->type));
 
   ggml_print_objects(ctx);
 
