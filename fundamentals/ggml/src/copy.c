@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, result);
+  //ggml_build_forward_expand(c_graph, c);
   int n_threads = 4;
   enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
   if (st != GGML_STATUS_SUCCESS) {
@@ -44,10 +45,21 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-
   printf("copyied tensor a to b:\n");
   for (int i = 0; i < ggml_nelements(b); i++) {
     printf("b[%d]: %f\n", i, ggml_get_f32_1d(b, i));
+  }
+
+  struct ggml_tensor* c = ggml_view_1d(ctx, b, 2, 0);
+  printf("c (view of b):\n");
+  for (int i = 0; i < ggml_nelements(c); i++) {
+    printf("c[%d]: %f\n", i, ggml_get_f32_1d(c, i));
+  }
+
+  struct ggml_tensor* d = ggml_view_1d(ctx, b, 0, 1000);
+  printf("d (view of b): n_elements: %ld\n", ggml_nelements(d));
+  for (int i = 0; i < ggml_nelements(d); i++) {
+    printf("d[%d]: %f\n", i, ggml_get_f32_1d(d, i));
   }
 
   ggml_free(ctx);
