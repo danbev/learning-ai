@@ -25,8 +25,8 @@ int main(int argc, char **argv) {
   printf("reshaped_1d tensor dimensions: %d\n", ggml_n_dims(reshaped_1d));
   printf("reshaped_1d tensor elements: %ld\n", ggml_nelements(reshaped_1d));
   printf("reshaped_1d tensor name: %s\n", reshaped_1d->name);
-
-  // The following will reshape a 2d tensor to a 1d tensor.
+  //
+  // The following will reshape a 1d tensor to a 2d tensor.
   struct ggml_tensor* reshaped_2d = ggml_reshape_2d(ctx, x, 5, 2);
   printf("reshaped_2d tensor type: %s\n", ggml_type_name(reshaped_2d->type));
   printf("reshaped_2d tensor dimensions: %d\n", ggml_n_dims(reshaped_2d));
