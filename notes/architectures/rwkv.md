@@ -944,6 +944,98 @@ we have 5 groups ('r', 'w', 'k', 'v', 'g') which each are componsed for 1 row
 with 32 columns. When going throught this I kind of lost track of the fact that
 this we are processing one token at a time (at least at inference time)
 
+Next we have:
+```c++
+    xxx = ggml_cont(ctx, ggml_permute(ctx, xxx, 0, 1, 3, 2));
+```
+The `ggml_permute` function is "saying" that we want to use 0 as the first
+dimension (same as it currently is), 1 as the second dimension (same as it
+currently is), and swap the 2 and 3 dimensions.
+```console
+(gdb) p ggml_permute(ctx, xxx, 0, 1, 3, 2)
+$61 = (ggml_tensor *) 0x55555644f570
+(gdb) p *$61
+$62 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {32, 1, 512, 5}, nb = {4, 128, 640, 128},
+  op = GGML_OP_PERMUTE, op_params = {0, 1, 3, 2, 0 <repeats 12 times>}, flags = 0, grad = 0x0, src = {0x55555644f400, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x55555644f290, view_offs = 0, data = 0x0,
+  name = " (reshaped) (permuted)", '\000' <repeats 41 times>, extra = 0x0}
+```
+And following that we have a matrix multipliction::
+```c++
+    xxx = ggml_mul_mat(
+        ctx,
+        ggml_reshape_4d(
+            ctx,
+            layer->time_mix_w2,
+            layer->time_mix_w2->ne[0], layer->time_mix_w2->ne[1], 1, 5
+        ),
+        xxx
+    );
+```
+In a simliar manner to above the tensor `layer->time_mix_w2` also contains the
+learned weights for all 5 components. I think this represents the `B` matrix in
+paper:
+```
+lora□(x) = λ□  + tanh(xA□) B□
+```
+```console
+(gdb) p *layer->time_mix_w2
+$68 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU,
+buffer = 0x555556e40520,
+ne = {32, 2048, 5, 1}, nb = {4, 128, 262144, 1310720},
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0,
+grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x7fff468afda0,
+name = "blk.0.time_mix_w2.weight", '\000' <repeats 39 times>, extra = 0x0}
+```
+So this will be multipled by xxx which is the output of the previous tanh
+operation for all 5 components. And in the same way this is performing the
+matrix multiplication of B for all components.
+
+And finally after doing all of the above calculations we can compute, or rather
+create compute nodes, for the components:
+```c++
+    struct ggml_tensor *mw = ggml_view_2d(ctx, xxx, n_embed, n_tokens, xxx->nb[1], 0);
+    struct ggml_tensor *mk = ggml_view_2d(ctx, xxx, n_embed, n_tokens, xxx->nb[1], n_embed * n_tokens * sizeof(float));
+    struct ggml_tensor *mv = ggml_view_2d(ctx, xxx, n_embed, n_tokens, xxx->nb[1], n_embed * n_tokens * 2 * sizeof(float));
+    struct ggml_tensor *mr = ggml_view_2d(ctx, xxx, n_embed, n_tokens, xxx->nb[1], n_embed * n_tokens * 3 * sizeof(float));
+    struct ggml_tensor *mg = ggml_view_2d(ctx, xxx, n_embed, n_tokens, xxx->nb[1], n_embed * n_tokens * 4 * sizeof(float));
+```
+And notice that these are views and not new tensors so there is no copying being
+done here.
+
+After this we have:
+```c++
+    struct ggml_tensor * xw = ggml_add(
+        ctx,
+        ggml_mul(
+            ctx,
+            ggml_add(ctx, mw, layer->time_mix_lerp_w),
+            sx
+        ),
+        cur
+    );
+```
+Now, this is implementing the last part of the `ddlerp_w` functio, and at this
+stage `mv` is a view into the lora part of the computation for the w component.
+And we also have `sw` which is the difference between the current and previous
+input sequences.
+So this is the last part of the `ddlerp_w` function, and notice that we first
+have an addition of the `mw` and `layer->time_mix_lerp_w`, then multiply this
+by `sx` and finally add `cur` to this:
+:
+```
+ddlerp_w(a,b) = a + (b − a) ⊙ (lora_w(a + (b − a) ⊙ µx) + µw)
+
+a                      = cur
+(b - a)                = sx
+mw                     = lora_w(a + (b − a) ⊙ µx)
+layer->time_mix_lerp_w = µw
+
+ddlerp_w(cur,b) = cur + sx ⊙ (mw + layer->time_mix_lerp_w)
+```
+So this is what the above is computing.
+
 _wip_
 
 ```console
