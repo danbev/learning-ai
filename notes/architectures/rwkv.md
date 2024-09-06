@@ -385,7 +385,8 @@ section. When reading the paper I was a little confused because I was using
 the Figure 1 from the paper as a reference for the diagram above. But when going
 throught the llama.cpp implementation I noticed that there the G' matrix is not
 present. It seems like this might be a mistake in the paper, so I'll update
-the digram to reflect this.
+the digram to reflect this. It is stated [here](https://www.rwkv.com/) that there
+was a mistake in the paper so the below is correct.
 ```
 r_t'  = lerp_r(x_t', x_t_' -1 ) W_r'   
 k_t'  = lerp_k(x_t', x_t_' -1 ) W_k'
@@ -1440,30 +1441,20 @@ then used for the lerp of xk and xr.
 
 Following that we are doing a matrix multiplication of `rx` with the learned
 tensor `layer->channel_mix_receptance` and passing that through a sigmoid.
-Now, in the paper in the "Channel Mixing" block they have a G' which is passed
-through a sigmoid function which is then multipled elementwise with the output
-of the MLP/Feed-forward network.
-My understanding of this above code is that it is performing the lerp operations
-of k' and r' which are represeneted by the μ' box in the diagram in Figure 1.
-But in the section 4.1.3 Channel Mixing they have the following notes about
-the lerp:
-```
-
-```
 
 In the channel mixing we have:
 ```
-k'  = lerp_k(x_t', x_t_' -1 ) W_k'
-k'' = ReLU(k')^2
-v' = k'' W_v'
-
-(σ(G') ⊙ v')
+r_t'  = lerp_r(x_t', x_t_' -1 ) W_r'    // xr
+k_t'  = lerp_k(x_t', x_t_' -1 ) W_k'    // xk
+v_t'  = ReLU(k')^2 W_v'                 // k
+o_t'  = σ(r_t') ⊙ v_t')                 // sigmoid(r) * k
 ```
-Somewhat simliar to what we saw before in the time mixing function we are first
-computing the difference between the current and previous tensors:
+Hopefully this makes sense with the above comments but the code is pretty much
+following the paper apart from the incorrect "Channel Mixing" block in Figure 1
+which caused my a bit of confusion. I've updated the diagram in this document
+to reflect the correct nodes/operations of the channel mixing block.
 
-
-
+So that with that we are done with the `llm_build_rwkv6_channel_mix` function.
 
 _wip_
 
