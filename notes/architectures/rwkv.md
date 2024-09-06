@@ -354,9 +354,10 @@ different than the ones I've seen before. The ones I've seen usually have an
 expension operation, followed by a non-linear function, and then a contraction
 operation. In RWKV this is a little different:
 ```
-k'  = lerp_k(x_t', x_t_' -1 ) W_k'   (performed by the mu (μ) operation)
-k'' = ReLU(k')^2
-v' = k'' W_v'
+r_t'  = lerp_r(x_t', x_t_' -1 ) W_r'   
+k_t'  = lerp_k(x_t', x_t_' -1 ) W_k'
+v_t'  = ReLU(k')^2 W_v'
+o_t'  = σ(r_t') ⊙ v_t')
 ```
 ReLU is max(0, x) and squared ReLU is max(0, x)^2. 
 My understanding is that the dimension of k' is the same as the embedding
@@ -369,7 +370,7 @@ multiplied by the `W_v'` matrix to produce v'.
 The last operations in the channel mixing are element-wise multiplation between
 the sigmoid output of G' and the output of the MLP function (v'):
 ```
-(σ(G') ⊙ v')
+o_t'  = σ(r_t') ⊙ v_t')
 ```
 And the output of this is then passed to the next layer.
 
@@ -597,6 +598,7 @@ Lets take a look at the first tensor view:
 $70 = 0
 (gdb) p n_seqs * n_state * ggml_element_size(states)
 $72 = 16384
+```
 ```
 ggml_view_1d(ctx, states, 0, 16384)
 ```
@@ -1159,6 +1161,291 @@ And then calling the `ggml_rwkv_wkv` function with them:
 ```c++
     struct ggml_tensor * wkv_output = ggml_rwkv_wkv(ctx, k, v, r, layer->time_mix_first, w, *wkv_state);
 ```
+```c++
+struct ggml_tensor * ggml_rwkv_wkv(
+        struct ggml_context * ctx,
+        struct ggml_tensor * k,
+        struct ggml_tensor * v,
+        struct ggml_tensor * r,
+        struct ggml_tensor * tf,           // time_mix_first
+        struct ggml_tensor * td,           // w (time decay)
+        struct ggml_tensor * state) {
+
+    const int64_t S = k->ne[0];
+    const int64_t H = k->ne[2];
+    const int64_t n_tokens = k->ne[3];
+    const int64_t n_seqs = state->ne[1];
+```
+```
+(gdb) p S
+$88 = 64
+(gdb) p H
+$89 = 32
+(gdb) p n_tokens
+$90 = 512
+(gdb) p n_seqs
+$93 = 1
+```
+This function contains a lot of asserts which I'm going to skip over. The part
+that I'm most interested in is the following:
+```c++
+    // concat output and new_state
+    const int64_t ne[4] = { S * H, n_tokens + S * n_seqs, 1, 1 };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op   = GGML_OP_RWKV_WKV;
+    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
+    result->src[0] = k;
+    result->src[1] = v;
+    result->src[2] = r;
+    result->src[3] = tf;            // time first (u
+    result->src[4] = td;            // time decay
+    result->src[5] = state;
+
+    return result;
+```
+First we are defining the dimensions for a new tensor which will have 4
+dimenions:
+```
+    const int64_t ne[4] = { S * H, n_tokens + S * n_seqs, 1, 1 };
+```
+```console
+(gdb) p ne
+$97 = {2048, 576, 1, 1}
+```
+And then we are creating the tensor and setting the src's for it.
+
+
+Lets remind ourselves of the `wkv_t` formula in the paper:
+```
+                                 t-1
+wkv_t = diag(u) * K_t^T * v_t +   Σ  diag(w)^t-1-i * K_i^T * v_i 
+                                 i=1
+```
+`K_t` (current) and `K_i` (previous timesteps) are represented by k and likwise
+for v. And `u` is represented by `tf` (time first) and `w` by `td` (time decay).
+State state is for the summation part of the formula for previous tokens and
+recall that all that is happening at this stage is that a compuation graph is
+being built and that later when this tensor operation is executed the actual
+values will be available to use by it.
+
+This tensor looks like this:
+```console
+(gdb) p *wkv_output
+$106 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {2048, 576, 1, 1}, nb = {4, 8192, 4718592, 4718592},
+op = GGML_OP_RWKV_WKV, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x555556453060, 0x5555564531d0, 0x555556453340, 0x555556d3a160,
+0x555556452ef0, 0x55555644db90, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0}
+```
+Back in `llm_build_rwkv6_time_mix` this tensor, named `wkv_output`, is then
+used to create a view tensor and set the current tensor to this view:
+```c++
+    cur = ggml_view_1d(ctx, wkv_output, n_embed * n_tokens, 0);
+```
+```console
+(gdb) p *cur
+$108 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {1048576, 1, 1, 1}, nb = {4, 4194304, 4194304, 4194304}, op = GGML_OP_VIEW,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x5555564534b0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x5555564534b0, view_offs = 0, data = 0x0,
+name = " (view)", '\000' <repeats 56 times>, extra = 0x0}
+```
+And we also update the `wkv_state` tensor:
+```c++
+    *wkv_state = ggml_view_1d(ctx, wkv_output, n_embed * head_size * n_seqs, n_embed * n_tokens * sizeof(float));
+```
+```console
+(gdb) p **wkv_state
+$110 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {131072, 1, 1, 1}, nb = {4, 524288, 524288, 524288}, op = GGML_OP_VIEW,
+op_params = {4194304, 0 <repeats 15 times>}, flags = 0, grad = 0x0, src = {0x5555564534b0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x5555564534b0, view_offs = 4194304, data = 0x0,
+name = " (view)", '\000' <repeats 56 times>, extra = 0x0}
+```
+After the wkv operation we have a LayerNorm operation
+```
+    cur = ggml_reshape_3d(ctx, cur, n_embed / head_count, head_count, n_tokens);
+    cur = ggml_norm(ctx, cur, 64e-5f);
+```
+The reshaping will be to:
+```console
+(gdb) p *cur
+$111 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {64, 32, 512, 1}, nb = {4, 256, 8192, 4194304},
+  op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556453620, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0}, view_src = 0x5555564534b0, view_offs = 0, data = 0x0,
+  name = " (view) (reshaped)", '\000' <repeats 45 times>, extra = 0x0}
+```
+Next we have a reshape operation what will bring the current tensor back into
+the shape 2048 columns and 512 rows:
+```c++
+    cur = ggml_reshape_2d(ctx, cur, n_embed, n_tokens);
+```
+Think of this as 512 tokens with their embeddings of size 2048: 
+```console
+(gdb) p *cur
+$112 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {2048, 512, 1, 1}, nb = {4, 8192, 4194304,
+    4194304}, op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556453a70, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x555556453a70, view_offs = 0, data = 0x0,
+  name = " (reshaped)", '\000' <repeats 52 times>, extra = 0x0}
+```
+
+The next part I was not able to map back to the paper but might be a custom
+normalization operation:
+```c++
+    cur = ggml_add(ctx, ggml_mul(ctx, cur, layer->time_mix_ln), layer->time_mix_ln_b);
+```
+Here we are first scaling the current tensor by `layer->time_mix_ln`
+(layer normalization) and then adding `layer->time_mix_ln_b`
+(layer normalization bias) to it. This is a way to normalize the tensor.
+```console
+(gdb) p *layer->time_mix_ln
+$114 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555556e40520, ne = {2048, 1, 1, 1}, nb = {4, 8192, 8192,
+    8192}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7fff49273da0,
+  name = "blk.0.time_mix_ln.weight", '\000' <repeats 39 times>, extra = 0x0}
+```
+This is something that seems to be common in implementation of papers but won't
+be mentioned in the paper itself.
+
+Next we have the multiplication of the current tensor with g, which recall
+was passed through the SiLU activation function:
+```c++
+    cur = ggml_mul(ctx, cur, g);
+    cur = llm_build_lora_mm(lctx, ctx, layer->time_mix_output, cur);
+```
+And then the final element wise multiplication with the `time_mix_output` matrix
+which I think is the `W_o` in:
+```
+o_t = concat( SiLU(g_t) ⊙ LayerNorm(r_t * wkv_t)) W_o
+```
+The current tensor will then be reshaped and returned:
+```c++
+    return ggml_reshape_3d(ctx, cur, n_embed, n_seq_tokens, n_seqs);
+```
+So that lands us back in `build_rwkv6`:
+```c++
+    ggml_build_forward_expand(gf, cur);
+```
+This is simply adding the current tensor operation to the graph, so all the
+operations that we have done so far will be added into the compute graph.
+
+Next we copyt the updated `wkv_states` and add them to the computation graph:
+```c++
+            ggml_build_forward_expand(
+                gf,
+                ggml_cpy(
+                    ctx0,
+                    wkv_states,
+                    ggml_view_1d(
+                        ctx0,
+                        kv_self.v_l[il],
+                        hparams.n_embd_v_s() * n_seqs,
+                        hparams.n_embd_v_s() * kv_head * ggml_element_size(kv_self.v_l[il])
+                    )
+                )
+            );
+```
+```console
+(gdb) p *ggml_view_1d(ctx0, kv_self.v_l[il], hparams.n_embd_v_s() * n_seqs, hparams.n_embd_v_s() * kv_head * ggml_element_size(kv_self.v_l[il]))
+$119 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {131072, 1, 1, 1}, nb = {4, 524288, 524288,
+    524288}, op = GGML_OP_VIEW, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556e5f5d0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x555556e5f5d0, view_offs = 0, data = 0x7fff35a04020,
+  name = "cache_v_l0 (view)", '\000' <repeats 46 times>, extra = 0x0}
+```
+
+Next we have a normalization for the feed-forward network which is the same
+as the channel mixing block in the paper so the lower block in the diagram
+above.
+```c++
+   struct ggml_tensor * x_norm_ffn = llm_build_norm(ctx0, cur, hparams,
+       layer->attn_norm_2, layer->attn_norm_2_b, LLM_NORM, cb, il);
+```
+This is somewhat confusing that the `layer->attn_norm_2` and
+`layer->attn_norm_2_b` and "attention" is not really happening in the channel
+mixing block (this is dealing with the feed-forward network). Lets move on and
+see if this makes more sense later on or if I need to revise this.
+
+Following that we have:
+```c++
+            x_prev = ggml_concat(
+                ctx0,
+                ffn_shift,
+                ggml_view_3d(ctx0, x_norm_ffn, n_embd, n_seq_tokens - 1, n_seqs, x_norm_ffn->nb[1], x_norm_ffn->nb[2], 0),
+                1
+            );
+            cur = ggml_add(ctx0, cur, llm_build_rwkv6_channel_mix(lctx, ctx0, layer, x_norm_ffn, x_prev));
+            ggml_build_forward_expand(gf, cur);
+```
+So this is concatenating the `ffn_shift` tensor with a view of the `x_norm_ffn`.
+Notice that the view is `n_seq_tokens - 1` which is 511 in our case.
+So this is creating a 3d view of:
+```console
+(gdb) p *x_norm_ffn
+$125 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {2048, 512, 1, 1}, nb = {4, 8192, 4194304, 4194304},
+op = GGML_OP_ADD, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x555556454d20, 0x555556d39470, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>,
+extra = 0x0}
+```
+The first dimension will have a size of 2048 (x), the second dimension will have
+511. The stride for the first dimension will be 8192 and for the second dimension
+it will be 4194304. `ffn_shift` contains the shifted information from the
+previous timestep.
+
+And then we are adding the result of the `llm_build_rwkv6_channel_mix` to the
+current tensor and adding this to the computation graph.
+Now, lets look closer at the `llm_build_rwkv6_channel_mix` function:
+```c++
+static struct ggml_tensor * llm_build_rwkv6_channel_mix(
+        struct llama_context & lctx,
+        struct ggml_context * ctx,
+        const struct llama_layer * layer,
+        struct ggml_tensor * cur,
+        struct ggml_tensor * x_prev) {
+    struct ggml_tensor * sx = ggml_sub(ctx, x_prev, cur);
+    struct ggml_tensor * xk = ggml_add(ctx, ggml_mul(ctx, sx, layer->channel_mix_lerp_k), cur);
+    struct ggml_tensor * xr = ggml_add(ctx, ggml_mul(ctx, sx, layer->channel_mix_lerp_r), cur);
+
+    struct ggml_tensor * r = ggml_sigmoid(ctx, llm_build_lora_mm(lctx, ctx, layer->channel_mix_receptance, xr));
+    struct ggml_tensor * k = ggml_sqr(
+        ctx,
+        ggml_relu(
+            ctx,
+            llm_build_lora_mm(lctx, ctx, layer->channel_mix_key, xk)
+        )
+    );
+
+    return ggml_mul(ctx, r, llm_build_lora_mm(lctx, ctx, layer->channel_mix_value, k));
+}
+```
+Where cur is the normalization tensor, and `x_prev` is the previous input
+sequence and this simlar to what we saw in time mixing block. This `sx` is
+then used for the lerp of xk and xr.
+
+Following that we are doing a matrix multiplication of `rx` with the learned
+tensor `layer->channel_mix_receptance` and passing that through a sigmoid.
+Now, in the paper in the "Channel Mixing" block they have a G' which is passed
+through a sigmoid function which is then multipled elementwise with the output
+of the MLP/Feed-forward network.
+My understanding of this above code is that it is performing the lerp operations
+of k' and r' which are represeneted by the μ' box in the diagram in Figure 1.
+
+In the channel mixing we have:
+```
+k'  = lerp_k(x_t', x_t_' -1 ) W_k'
+k'' = ReLU(k')^2
+v' = k'' W_v'
+
+(σ(G') ⊙ v')
+```
+Somewhat simliar to what we saw before in the time mixing function we are first
+computing the difference between the current and previous tensors:
+
+
 
 
 _wip_
