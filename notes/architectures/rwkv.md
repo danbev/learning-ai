@@ -84,19 +84,17 @@ Channel mixing               |                      |
                              |                      |
            +---------------------------------------+|
            |               μ'                      ||
-           | G'= (μ_g ⊙ x_t + (1 - μ_g) ⊙ x_t-1)Wg'||
            | R'= (μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1)Wr'||
            | K'= (μ_k ⊙ x_t + (1 - μ_k) ⊙ x_t-1)Wk'||
-           | V'= (μ_v ⊙ x_t + (1 - μ_v) ⊙ x_t-1)Wv'||
            +---------------------------------------+|
                  |                   |              |
             +------+            +-------------+     |
-            |  G'  |            |  MLP        |     |
+            |  R'   |           |    K'       |     |
             +------+            +-------------+     |
                  |                   |              |
-            +-------+                |              |
-            |Sigmoid|                |              |
-            +-------+                |              |
+            +-------+           +-------------+     |
+            |Sigmoid|           | ReLU^2      |     |
+            +-------+           +-------------+     |
                  |                   |              |
                  |     +------+      |              |
                  +-----| (*)  |------+              |
@@ -367,7 +365,7 @@ applying a linear interpolation between the current and previous token producing
 k'. These are then passed through ReLU^2 and the result of this is then
 multiplied by the `W_v'` matrix to produce v'.
 
-The last operations in the channel mixing are element-wise multiplation between
+The last operations in the channel mixing are element-wise multiplication between
 the sigmoid output of G' and the output of the MLP function (v'):
 ```
 o_t'  = σ(r_t') ⊙ v_t')
@@ -380,6 +378,20 @@ Actually this is not so different from the transformer where we have the
 self attention which attends to all the tokens in the sequence (time mixing) and
 then we have the feed-forward neural network which is applied to each token
 independently (channel mixing).
+
+### Finch (RWKV-6) Channel mixing)
+This is pretty much the same as in Eagle (RWKV-5) but I'm still keeping this
+section. When reading the paper I was a little confused because I was using
+the Figure 1 from the paper as a reference for the diagram above. But when going
+throught the llama.cpp implementation I noticed that there the G' matrix is not
+present. It seems like this might be a mistake in the paper, so I'll update
+the digram to reflect this.
+```
+r_t'  = lerp_r(x_t', x_t_' -1 ) W_r'   
+k_t'  = lerp_k(x_t', x_t_' -1 ) W_k'
+v_t'  = ReLU(k')^2 W_v'
+o_t'  = σ(r_t') ⊙ v_t')
+```
 
 ### llama.cpp RWKV implementation
 Now, lets take a look at the implementation of the RWKV model in llama.cpp.   
@@ -1433,6 +1445,11 @@ through a sigmoid function which is then multipled elementwise with the output
 of the MLP/Feed-forward network.
 My understanding of this above code is that it is performing the lerp operations
 of k' and r' which are represeneted by the μ' box in the diagram in Figure 1.
+But in the section 4.1.3 Channel Mixing they have the following notes about
+the lerp:
+```
+
+```
 
 In the channel mixing we have:
 ```
