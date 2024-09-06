@@ -1455,6 +1455,119 @@ which caused my a bit of confusion. I've updated the diagram in this document
 to reflect the correct nodes/operations of the channel mixing block.
 
 So that with that we are done with the `llm_build_rwkv6_channel_mix` function.
+```
+    cur = ggml_add(ctx0, cur, llm_build_rwkv6_channel_mix(lctx, ctx0, layer, x_norm_ffn, x_prev));
+    ggml_build_forward_expand(gf, cur);
+```
+So `cur` will be the last operation from the channel mixing functions and then
+we are adding this to the computation graph.
+Next we have:
+```c++
+    struct ggml_tensor * last_norm_att = ggml_view_3d(ctx0, x_norm_att,
+        n_embd, 1, n_seqs, x_norm_att->nb[1], x_norm_att->nb[2],
+        (n_seq_tokens-1)*n_embd*ggml_element_size(x_norm_att));
+
+    struct ggml_tensor * last_norm_ffn = ggml_view_3d(ctx0, x_norm_ffn,
+        n_embd, 1, n_seqs, x_norm_ffn->nb[1], x_norm_ffn->nb[2],
+        (n_seq_tokens-1)*n_embd*ggml_element_size(x_norm_ffn));
+
+    token_shift = ggml_concat(ctx0, last_norm_att, last_norm_ffn, 1);
+```
+Now, this is creatings views of the last tokens normalized represnetations from
+both the time mixing and channel mixing blocks. These are then concatenated
+together. I think this is part of the passing of information from the previous
+layer to the next. SO `token_shift` will contain the state of the last token
+after it has passed through the time and channel mixing blocks.
+
+Then we are copying the `token_shift` tensor into `kv_self.k_l[il]`:
+```c++
+            ggml_build_forward_expand(
+                gf,
+                ggml_cpy(
+                    ctx0,
+                    ggml_view_1d(ctx0, token_shift, n_embd * n_seqs * 2, 0),
+                    ggml_view_1d(ctx0, kv_self.k_l[il], hparams.n_embd_k_s() * n_seqs, hparams.n_embd_k_s() * kv_head * ggml_element_size(kv_self.k_l[il]))
+                )
+            );
+```
+So I think on the next iteration the last state of the tokens can be accessed
+using `kv_self.k_l[il]`.
+
+Next we have:
+```
+            if (hparams.rescale_every_n_layers != 0 && (il + 1) % hparams.rescale_every_n_layers == 0) {
+                cur = ggml_scale(ctx0, cur, 0.5F);
+            }
+```
+```console
+(gdb) p hparams.rescale_every_n_layers
+$140 = 6
+```
+`cur` has the what was returned from the channel mixing block and scaling is
+basically multiplying the values in the tensor by 0.5. So this called layer
+rescaling or "gradient rescaling" which helps mitigate the problem of exploding
+or vanishing gradients during training. It can also help with numerical
+stability.  So we are halving the values in the tensor.
+
+Following the scaling we have:
+```c++
+            cur = lctx.cvec.apply_to(ctx0, cur, il);
+```
+This is related to control vectors if any are present the apply_to function
+would be run for the current tensor. 
+```c++
+    struct ggml_tensor * apply_to(struct ggml_context * ctx, struct ggml_tensor * cur, int  il) const {
+        ggml_tensor * layer_dir = tensor_for(il);
+        if (layer_dir != nullptr) {
+            cur = ggml_add(ctx, cur, layer_dir);
+        }
+        return cur;
+    }
+
+```
+TODO: Make an example with control vectors to see how this works.
+After that we set the name of the current tensor and then set inpL to it and
+contine with the next layer.
+```c++
+            cb(cur, "l_out", il);
+
+            // input for next layer
+            inpL = cur;
+```
+So that was how the RWKV layer operations are built up. The rest of the function
+looks like this:
+```c++
+        cur = inpL;
+        struct ggml_tensor * inp_out_ids = build_inp_out_ids();
+        cur = ggml_reshape_2d(ctx0, cur, n_embd, n_tokens);
+        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+
+        cur = llm_build_norm(ctx0, cur, hparams, model.output_norm, model.output_norm_b, LLM_NORM, cb, -1);
+        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
+
+        cb(cur, "result_output", -1);
+        ggml_build_forward_expand(gf, cur);
+
+        return gf;
+```
+
+The following is creating a new 1d tensor of size 512 and setting in to the
+`lctx.inp_out_ids` tensor:
+```c++
+    struct ggml_tensor * build_inp_out_ids() {
+        lctx.inp_out_ids = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_outputs);
+        cb(lctx.inp_out_ids, "inp_out_ids", -1);
+        ggml_set_input(lctx.inp_out_ids);
+        return lctx.inp_out_ids;
+    }
+```
+This is then reshaped to 2d or 2048 columns and 512 rows.
+We also have a normalization layer and then the output layer is added to the
+computation graph.
+And with that we are done in `llm.build_rwkv6`. I'll probably need to got
+through this a few more times but I think I have an initial understanding of how
+the RWKV layer is implemented in llama.cpp.
+
 
 _wip_
 
