@@ -893,7 +893,7 @@ B□ ∈ R 32×D
 ```
 This is implementing part of the lora function from the paper. `x` would be
 `xxx` in our case (which is `a + (b-a) ⊙ µx`). So what we are doing it computing
-the part that is common for `lora_r`, `lora_w`, `lora_k`, `lora_v`, and `loar_g`.
+the part that is common for `lora_r`, `lora_w`, `lora_k`, `lora_v`, and `lora_g`.
 And `layer->time_mix_w1` is the `A` matrix in the `lora` function. So this is
 ```
 (gdb) p *layer->time_mix_w1
@@ -1016,7 +1016,7 @@ After this we have:
         cur
     );
 ```
-Now, this is implementing the last part of the `ddlerp_w` functio, and at this
+Now, this is implementing the last part of the `ddlerp_w` function, and at this
 stage `mv` is a view into the lora part of the computation for the w component.
 And we also have `sw` which is the difference between the current and previous
 input sequences.
@@ -1035,6 +1035,131 @@ layer->time_mix_lerp_w = µw
 ddlerp_w(cur,b) = cur + sx ⊙ (mw + layer->time_mix_lerp_w)
 ```
 So this is what the above is computing.
+And we will have something similar for `xk`, `xv`, `xr`, and `xg`.
+
+Next, we are calling `llm_build_lora_mm` which will be the `lora_r` and
+creating the r tensor. We pass in `xr` from above.:
+```c++
+    struct ggml_tensor * r = ggml_reshape_4d(ctx,
+        llm_build_lora_mm(lctx, ctx, layer->time_mix_receptance, xr),
+        head_size,
+        1,
+        head_count,
+        n_tokens);
+```
+So we are passing in `xr` which is:
+```console
+(gdb) p *xr
+$75 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {2048, 512, 1, 1}, nb = {4, 8192, 4194304, 4194304},
+op = GGML_OP_ADD, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x5555564510c0, 0x55555644ecd0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0}
+```
+And `layer->time_mix_receptance` I think is the `W_r` matrix:
+```
+lerp□(xt ,xt−1) W□,
+lerp_r(xt ,xt−1) Wr,
+```
+And in our case we have already computed the ddlerp part which is in the tensor
+`xr` so this becomes:
+```
+xr * W_r
+```
+We can inspect the `layer->time_mix_receptance` tensor:
+```console
+(gdb) p *layer->time_mix_receptance
+$76 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555556e40520,
+ne = {2048, 2048, 1, 1}, nb = {2, 4096, 8388608, 8388608},
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
+flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x7fff46a73da0, name = "blk.0.time_mix_receptance.weight", '\000' <repeats 31 times>, extra = 0x0}
+```
+These are passed to `llm_build_lora_mm`:
+```c++
+// do mat_mul, while optionally apply lora
+static struct ggml_tensor * llm_build_lora_mm(
+        struct llama_context & lctx,
+         struct ggml_context * ctx0,
+          struct ggml_tensor * w,
+          struct ggml_tensor * cur) {
+    struct ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
+```
+So we can see that we are multiplying the `W_r` matrix with the `xr` tensor.
+In this case there are no lora adapters applied so the res is just returned.
+
+The same is then done for `k` and `v`:
+```c++
+    struct ggml_tensor * k = ggml_reshape_4d(ctx, llm_build_lora_mm(lctx, ctx, layer->time_mix_key,        xk), 1,         head_size, head_count, n_tokens);
+    struct ggml_tensor * v = ggml_reshape_4d(ctx, llm_build_lora_mm(lctx, ctx, layer->time_mix_value,      xv), head_size, 1,         head_count, n_tokens);
+```
+The shape/sizes of `layer->time_mix_key` and `layer->time_mix_value` are the
+same as `layer->time_mix_receptance`.
+
+Recall from the diagram above that th `g` is passed through a `SiLU` activation
+function (Sigmoid-weighted Linear Unit):
+```
+silu(x) = x * sigmoid(x)
+```
+And notice that before the `g` tensor is passed through the `SiLU` activation
+we also multiply by `gt/layer->time_mix_gate`:
+```c++
+    struct ggml_tensor * g = ggml_silu(
+        ctx,
+        llm_build_lora_mm(lctx, ctx, layer->time_mix_gate, xg)
+    );
+```
+In Finch we also have `w` which is passed to the `wkv` box in the diagram above.
+And in the paper we have:
+```
+w_t = exp(− exp(d_t))
+
+d_t = lora_d(ddlerp_d(x_t, x_t−1))
+```
+The following code is computing `w_t` I think but with some optimizations. We
+have `d_t` in `xw` which we are multiplying with `layer->time_mix_decay_w1` and
+then passing that through a `tanh` activation function:
+```c++
+    struct ggml_tensor * w = ggml_mul_mat(
+        ctx,
+        layer->time_mix_decay_w2,
+        ggml_tanh(
+            ctx,
+            ggml_mul_mat(ctx, layer->time_mix_decay_w1, xw)
+        )
+    );
+    w = ggml_add(ctx, w, ggml_reshape_1d(ctx, layer->time_mix_decay, n_embed));
+    w = ggml_exp(ctx, ggml_neg(ctx, ggml_exp(ctx, w)));
+    w = ggml_reshape_4d(ctx, w, 1, head_size, head_count, n_tokens);
+```
+So first the tanh operation is created in the computation graph taking the
+`xw` tensor as input. Then this is multipled by `layer->time_mix_decay_w1`
+(Note that `layer->time_mix_decay_w2` is used in the surrounding multiplication
+operation but not in the tanh operation):
+```console
+(gdb) p *layer->time_mix_decay_w1
+$83 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555556e40520,
+ne = {2048, 64, 1, 1}, nb = {2, 4096, 262144, 262144},
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7fff469f1da0,
+name = "blk.0.time_mix_decay_w1.weight", '\000' <repeats 33 times>, extra = 0x0}
+```
+So we have a two-layer neural network here (the `time_mix_decay_w1` and
+`time_mix_decay_w2`) with the tanh activation function in between. And then we
+add the `layer->time_mix_decay` bias to the result of the tanh operation.
+This might just be something that they found worked well in pratice.
+
+Next we are transposing the `w`, `k`, and `v` tensors:
+```c++
+    k = ggml_transpose(ctx, k);
+    v = ggml_transpose(ctx, v);
+    r = ggml_transpose(ctx, r);
+```
+And then calling the `ggml_rwkv_wkv` function with them:
+```c++
+    struct ggml_tensor * wkv_output = ggml_rwkv_wkv(ctx, k, v, r, layer->time_mix_first, w, *wkv_state);
+```
+
 
 _wip_
 
