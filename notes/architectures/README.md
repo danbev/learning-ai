@@ -1,5 +1,6 @@
 ## Architectures
 
+* [Transformer](./transformers.md)
 * [RNN](./rnn.md)
 * [LSTM](./lstm.md)
 * [SSM](./state-space-models.md)
