@@ -44,7 +44,8 @@ int main(int argc, char **argv) {
     printf("view[%d]: %f\n", i, ggml_get_f32_1d(view, i));
   }
 
-  view = ggml_view_1d(ctx, x, 5, (5-1) * ggml_type_size(x->type));
+  //view = ggml_view_1d(ctx, x, 5, (5-1) * ggml_type_size(x->type));
+  view = ggml_view_1d(ctx, x, 0, (5-1) * ggml_type_size(x->type));
 
   ggml_print_objects(ctx);
 
@@ -52,6 +53,58 @@ int main(int argc, char **argv) {
     printf("view[%d]: %f\n", i, ggml_get_f32_1d(view, i));
   }
 
+  // this is the stride to move to the next row.
+  size_t nb1 = 8;
+  size_t offset = 0;
+  struct ggml_tensor* view_2d = ggml_view_2d(ctx, x, 2, 3, nb1, offset);
+  printf("view_2d tensor rows: %ld\n", ggml_nrows(view_2d));
+  printf("view_2d tensor elements: %ld\n", ggml_nelements(view_2d));
+
+  printf("%f\n", ((float*) view_2d->data)[0]);
+  printf("%f\n", ((float*) view_2d->data)[1]);
+  printf("%f\n", ((float*) view_2d->data)[2]);
+  printf("%f\n", ((float*) view_2d->data)[3]);
+  printf("%f\n", ((float*) view_2d->data)[4]);
+  printf("%f\n", ((float*) view_2d->data)[5]);
+
+  printf("view_2d get using nd x:\n");
+  printf("%f\n", ggml_get_f32_nd(view_2d, 0, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 1, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 2, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 3, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 4, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 5, 0, 0, 0));
+
+  printf("view_2d get using nd y:\n");
+  printf("%f\n", ggml_get_f32_nd(view_2d, 0, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 1, 0, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 0, 1, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 1, 1, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 0, 2, 0, 0));
+  printf("%f\n", ggml_get_f32_nd(view_2d, 1, 2, 0, 0));
+
+  printf("nb[0]=%ld\n", view_2d->nb[0]);
+  printf("nb[1]=%ld\n", view_2d->nb[1]);
+  printf("nb[2]=%ld\n", view_2d->nb[2]);
+  printf("nb[3]=%ld\n", view_2d->nb[3]);
+
+  printf("view_2d get using raw first dim only:\n");
+  printf("%f\n", *(float*) ((char *) view_2d->data + 0 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 1 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 2 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 3 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 4 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 5 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+
+  printf("view_2d get using raw2:\n");
+  printf("%f\n", *(float*) ((char *) view_2d->data + 0 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 1 * view_2d->nb[0] + 0 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 0 * view_2d->nb[0] + 1 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 1 * view_2d->nb[0] + 1 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 0 * view_2d->nb[0] + 2 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+  printf("%f\n", *(float*) ((char *) view_2d->data + 1 * view_2d->nb[0] + 2 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
+
   ggml_free(ctx);
+
   return 0;
 }
