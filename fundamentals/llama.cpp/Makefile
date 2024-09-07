@@ -193,7 +193,7 @@ convert-llama-2-7b-chat-hf-model:
 	@python3.11 -m venv venv
 	@. venv/bin/activate && \
 		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
-		python3.11 llama.cpp/convert-hf-to-gguf.py Llama-2-7b-chat-hf \
+		python3.11 llama.cpp/convert-hf-to-gguf.py  Llama-2-7b-chat-hf \
 	        --outfile models/llama-2-7b-hf-chat.gguf --outtype f16
 
 convert-llama-2-7b-chat-model:
@@ -231,7 +231,11 @@ run-rwkv-simple-prompt:
 	./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
 
 debug-rwkv-simple-prompt:
+ifeq ($(OS),Linux)
 	gdb --args ./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
+else
+	lldb ./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
+endif
 
 inspect-rwkvf-model:
 	@. venv/bin/activate && \
