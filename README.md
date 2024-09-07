@@ -4,6 +4,7 @@ This repository contains notes and code examples related to AI.
 ### Topics
 
 * [Tokenization](./notes/tokenization/README.md)
+* [Architectures](./notes/architectures/README.md)
 * [Position Embeddings](./notes/position-embeddings)
 * [Transformers](./notes/transformers.md)
 * [GPUs](./gpu/README.md)
