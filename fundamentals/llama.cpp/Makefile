@@ -215,7 +215,7 @@ quantize-llama-2-7b-chat-model-q8:
 checkout-rwkv-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/RWKV/v6-Finch-1B6-HF/
-	cd v6-Finch-1B6-HF && git lfs pull
+	cd v6-Finch-1B6-HF && git lfs install && git lfs pull
 
 convert-rwkv-model:
 	@python3 -m venv venv
