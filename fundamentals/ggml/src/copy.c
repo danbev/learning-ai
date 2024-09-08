@@ -57,10 +57,19 @@ int main(int argc, char **argv) {
   }
 
   struct ggml_tensor* d = ggml_view_1d(ctx, b, 0, 1000);
-  printf("d (view of b): n_elements: %ld\n", ggml_nelements(d));
+  printf("d (view of b): n_elements: %lld\n", ggml_nelements(d));
   for (int i = 0; i < ggml_nelements(d); i++) {
     printf("d[%d]: %f\n", i, ggml_get_f32_1d(d, i));
   }
+
+  struct ggml_tensor* empty = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 0);
+  printf("empty: n_elements: %lld\n", ggml_nelements(empty));
+
+  struct ggml_tensor* ev1 = ggml_view_1d(ctx, empty, 0, 1000);
+  struct ggml_tensor* ev2 = ggml_view_1d(ctx, empty, 0, 1000);
+
+  struct ggml_tensor* r = ggml_cpy(ctx, ev1, ev2);
+  printf("result: n_elements: %lld\n", ggml_nelements(r));
 
   ggml_free(ctx);
   return 0;
