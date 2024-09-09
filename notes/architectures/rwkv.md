@@ -111,18 +111,35 @@ Channel mixing               |                      |
 ### Linear Interpolation (lerp) in Eagle (RWKV-5)
 This is pretty much the same as in RWKV-4 so I've kept my notes from that
 and I'll follow up with the notation used in the RWKV-5 paper after this.
-```
-input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
 
-x_t   = [0.5, -0.3]
-x_t-1 = [ 0.0, 0.0] (first token so there is no previous token)
-μ_r   = [0.2, 0.9]
+This is what the `μ` box in the diagram above is doing.
 
 Linear interpolation recap:
+```
 result = t * a + (1 - t) * b
 
-The following is doing a linear interpolation between the current token and the
-previous token using the μ_r vector:
+t     = current token
+1 - t = previous token
+a     = current token decay factor
+b     = previous token decay factor
+
+Examples:
+a = 1, b = 0
+result = t * 1 + (1 - t) * 0
+result = t 
+This means that the current token is used and the previous token is ignored.
+
+a = 0, b = 1
+result = t * 0 + (1 - t) * 1
+result = (1 - t)
+This means that the current token is ignored and the previous token is used.
+
+And any value in between will be a linear interpolation between the two.
+```
+
+In the paper this is defined as (showing only one component R but the same
+is done for G, K, and V as well):
+```
 R = μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1
 
 R = [0.2, 0.9] ⊙ [0.5, -0.3] + (1 - [0.2, 0.9]) ⊙ [0.0, 0.0]
@@ -135,6 +152,26 @@ R = [0.1, -0.27]
 x_t   = current token embedding.
 x_t-1 = previous token embedding.
 ⊙     = element-wise multiplication (Hadamard product).
+```
+
+```
+input embeddings = [ [0.5, -03], [0.7, 0.2], [-0.1, 0.8], [ 0.3, -0.5] ]
+
+x_t   = [0.5, -0.3]
+x_t-1 = [ 0.0, 0.0] (first token so there is no previous token)
+μ_r   = [0.2, 0.9]
+
+
+The following is doing a linear interpolation between the current token and the
+previous token using the μ_r vector:
+R = μ_r ⊙ x_t + (1 - μ_r) ⊙ x_t-1
+
+R = [0.2, 0.9] ⊙ [0.5, -0.3] + (1 - [0.2, 0.9]) ⊙ [0.0, 0.0]
+R = [0.1, -0.27] + (1 - [0.2, 0.9] ⊙ [0.0, 0.0]
+R = [0.1, -0.27] + [0.8, 0.1] ⊙ [0.0, 0.0]
+R = [0.1, -0.27] + 0
+R = [0.1, -0.27]
+
 ```
 The same operations are done for the K and V vectors but they have their own
 `μ_k` an `μ_v` vectors.
@@ -155,7 +192,7 @@ lerp_ם(x_t-1, x_t) = x_t-1 + (x_t - xt_-1) ⊙  μ_ם
                      (x_t ⊙ µ□) + (x_t-1 ⊙ (1 - µ□))
                      µ□ ⊙ x_t + (1 - µ□) ⊙ x_t-1
 
-ם = one of the μ vectors (g, r, k, v)
+ם = one of g, r, k, or v
 ```
 But it is really the same thing, just different notation. Also note that there
 is an matrix multiplication in the first equation which is specific for each
@@ -164,7 +201,7 @@ is an matrix multiplication in the first equation which is specific for each
 ### Data-Dependent Linear Interpolation (ddlerp) in Finch (RWKV-6)
 Now this is a new concept in the RWKV-6 paper and it is used to calculate the
 receptance, key, and value vectors.
-There is a function named LoRA (Low Rank Adaptation) which I written about in
+There is a function named LoRA (Low Rank Adaptation) which I've written about in
 [lora.md](../lora.md) and I was somewhat confused about its usage here. My
 understanding was that LoRA was used to reduce the dimensionality of matrices
 and I did not see how that would be applicable here. In the RWKV-6 paper it is
@@ -236,6 +273,8 @@ The forumla given in the paper looks like this:
 □t = lerp□(xt ,xt−1) W□, 
 
 □  = ∈ {r ,k, v, g }
+
+
 Example:
 r_t = lerp_r(xt ,xt−1) W_r 
 
@@ -274,8 +313,7 @@ includig the current token (t-1):
 the past will have a larger exponent value which will make the decay factor
 resulting in more decay for those tokens.
 
-Alright I don't quite understand what the above formula is doing and I need to
-break this down a little so let walk through this with an example.
+Alright lets break this down a little so let walk through this with an example.
 ```
 Embedding dim  : 4
 Attention heads: 2 (each head will deal with 4/2 = 2 dimensions)
@@ -374,16 +412,16 @@ And the output of this is then passed to the next layer.
 
 I'm confused about the names of these, time mixing, and channel mixing. It seems
 to me that channel mixing, or dimension mixing, is done in both of these.
-Actually this is not so different from the transformer where we have the
+_Actually this is not so different from the transformer where we have the
 self attention which attends to all the tokens in the sequence (time mixing) and
 then we have the feed-forward neural network which is applied to each token
-independently (channel mixing).
+independently (channel mixing)_.
 
 ### Finch (RWKV-6) Channel mixing)
 This is pretty much the same as in Eagle (RWKV-5) but I'm still keeping this
 section. When reading the paper I was a little confused because I was using
 the Figure 1 from the paper as a reference for the diagram above. But when going
-throught the llama.cpp implementation I noticed that there the G' matrix is not
+throught the llama.cpp implementation I noticed that the G' matrix is not
 present. It seems like this might be a mistake in the paper, so I'll update
 the digram to reflect this. It is stated [here](https://www.rwkv.com/) that there
 was a mistake in the paper so the below is correct.
@@ -395,7 +433,7 @@ o_t'  = σ(r_t') ⊙ v_t')
 ```
 
 ### llama.cpp RWKV implementation
-Now, lets take a look at the implementation of the RWKV model in llama.cpp.   
+Now, lets take a look at the implementation of the RWKV 6 model in llama.cpp.   
 
 The following example can be used start debugging and stepping through the
 implementation. This requires a converted model which can be done using the
@@ -405,13 +443,14 @@ $ cd fundamentals/llama.cpp
 $ make checkout-rwkv-model
 $ make convert-rwkv-model
 ```
+
 And then we can build and start a debugging session using:
 ```console
 $ cd fundamentals/llama.cpp
-$ make simple-prompt
-$ run-rwkv-simple-prompt:
-$ make debug-rwkv-simple-prompt
+$ make simple-prompt-multi
+$ make debug-rwkv-simple-prompt-multi
 ```
+
 Now, lets stick a break point in:
 ```console
 (gdb) br build_rwkv6()
@@ -425,29 +464,31 @@ Breakpoint 2 at 0x5555556dc649: file src/llama.cpp, line 15073.
         const int64_t n_seq_tokens = batch.n_seq_tokens;
         const int64_t n_tokens = batch.n_tokens;
 ```
+One thing to note is that a computation graph is also built as part of the
+`llama_new_context_with_model` so just `(gdb) continue` after the first
+breakpoint so that we are in the function that we are interested in with the
+correct batch as well.
+
 Lets inspect these values to get an idea of the size of the input:
 ```console
 (gdb) p n_seqs
-$21 = 1
+$21 = 2
+
 (gdb) p n_seq_tokens 
-$22 = 512
+$22 = 4
+
 (gdb) p n_tokens
-$23 = 512
-(gdb) p this
-$25 = (llm_build_context * const) 0x7fffffffbf70
+$23 = 8
+
 (gdb) p *this
-$26 = {model = @0x555555ac1e50, lctx = @0x555555cd03e0,
-hparams = @0x555555ac1e80, cparams = @0x555555cd03e8, 
-batch = @0x7fffffffc1b0, kv_self = @0x555555cd18d0, n_embd = 2048,
-n_layer = 24, n_rot = 0, n_ctx = 1024, n_head = 0, n_head_kv = 0,
-n_embd_head_k = 0, n_embd_k_gqa = 0, n_embd_head_v = 0, n_embd_v_gqa = 0,
-n_expert = 0, n_expert_used = 0, freq_base = 10000, freq_scale = 1,
-ext_factor = 0, attn_factor = 1, beta_fast = 32, beta_slow = 1,
-norm_eps = 9.99999975e-06, norm_rms_eps = 0, n_tokens = 512, n_kv = 1,
-n_outputs = 512, n_outputs_enc = 512, kv_head = 0, n_ctx_orig = 1048576,
-flash_attn = false, pooling_type = LLAMA_POOLING_TYPE_NONE,
-rope_type = LLAMA_ROPE_TYPE_NONE, 
+$9 = {model = @0x555555ac1e70, lctx = @0x555555cd0470, hparams = @0x555555ac1ea0, cparams = @0x555555cd0478,
+  batch = @0x7fffffffd470, kv_self = @0x555555cd1960, n_embd = 2048, n_layer = 24, n_rot = 0, n_ctx = 1024, n_head = 0,
+  n_head_kv = 0, n_embd_head_k = 0, n_embd_k_gqa = 0, n_embd_head_v = 0, n_embd_v_gqa = 0, n_expert = 0, n_expert_used = 0,
+  freq_base = 10000, freq_scale = 1, ext_factor = 0, attn_factor = 1, beta_fast = 32, beta_slow = 1, norm_eps = 9.99999975e-06,
+  norm_rms_eps = 0, n_tokens = 8, n_kv = 2, n_outputs = 0, n_outputs_enc = 0, kv_head = 0, n_ctx_orig = 1048576, flash_attn = false,
+  pooling_type = LLAMA_POOLING_TYPE_NONE, rope_type = LLAMA_ROPE_TYPE_NONE
 ```
+
 Following that we have:
 ```c++
         struct ggml_tensor * state_copy = build_inp_s_copy();
@@ -461,14 +502,19 @@ And `build_inp_s_copy` is defined as:
         return lctx.inp_s_copy;
     }
 ```
-And we can see that `n_kv` is 1. So this is creating a new 1 dimensional tensor
-which can hold one element. This function is also use by the Mamba
-implementation (just in case that gives some clues later). I'll get back to this
-once we see how it is used later.
+And we can see that `n_kv` is 2. So this is creating a new 1 dimensional tensor
+which can hold two element of type `GGML_TYPE_I32`.  I'll get back to this once
+we see how it is used later but this tensor will be used to store information
+about which token states should be copied (used) for the current
+processing/decoding.
+
 Then we have:
 ```c++
         struct ggml_tensor * state_mask = build_inp_s_mask();
 ```
+And `inp_s_mask` is created in the same way as `inp_s_copy` we saw above but
+with an important difference in that this is a 2d tensor of type
+`GGML_TYPE_F32` as opposed to the 1d tensor of type `GGML_TYPE_I32`:
 ```c++
     struct ggml_tensor * build_inp_s_mask() {
         lctx.inp_s_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 1, n_kv);
@@ -477,12 +523,15 @@ Then we have:
         return lctx.inp_s_mask;
     }
 ```
-Notice that this is creating a 2d tensor with 1 column and one row. So this
-is also something related to state.
+Notice that this is creating a 2d tensor with 1 column and the number of
+sequences as the number of rows. Notice again that this is a F32 tensor and
+it has multiple rows (one for each sequence).
+
 Next we build up the input embedding tensor:
 ```
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
 ```
+
 ```c++
 static struct ggml_tensor * llm_build_inp_embd(
         struct ggml_context * ctx,
@@ -513,9 +562,9 @@ static struct ggml_tensor * llm_build_inp_embd(
 }
 ```
 In this case we have batch.tokens so the above will create a 1d tensor with the
-with a size of 512. Note that this will be assigned to `lctx.inp_tokens`.
+with a size of 8. Note that this will be assigned to `lctx.inp_tokens`.
 Then `inpL` will get set to `ggml_get_rows` which is an operation that will
-extract the rows from `tok_embed` that are specified by the `lctx.inp_tokens`.
+extract the _rows_ from `tok_embed` that are specified by the `lctx.inp_tokens`.
 So at inference time the number of tokens in the `lctx.inp_tokens` that are
 populatetd will be returned from this operation. But keep in mind that at this
 stage we are only building up the computation graph and not actually running
@@ -541,116 +590,367 @@ And below we can see the usage of both `state_copy` and `state_mask`:
                     gf, kv_self.k_l[il], state_copy, state_mask,
                     hparams.n_embd_k_s(), kv_self.size, kv_head, n_kv, n_seqs);
 ```
-Here we are passing in `kv_self_k_l[0]` as s which is a tensor in a vector of
-size 24:
+`kv_self.k_l` is a vector of tensors in `kv_self`:
 ```++
 std::vector<struct ggml_tensor *> k_l; // per layer
 ```
-
 ```console
-(gdb) s
-llm_build_copy_mask_state (ctx=0x555555a68b88 <g_state+200>, graph=0x55555640b580, s=0x555556e5f460, state_copy=0x55555644bed0, 
-    state_mask=0x55555644c040, n_state=4096, kv_size=1, kv_head=0, n_kv=1,
-    n_seqs=1) at src/llama.cpp:9229
-9229	    struct ggml_tensor * states = ggml_reshape_2d(ctx, s, n_state, kv_size);
+(gdb) p kv_self.k_l.size()
+$14 = 24
 ```
-So we are reshaping the tensor `s` which looks like this:
+
+Each of these tensors (one for each layer) will contain two pieces of
+information:
+```
+0                          2047                                 4095
+[   att_shift                  |          ffn_shift                ]
+   "Time mixing"                        "Channel mixing"
+```
+So the `token_shift` tensor contains two pieces of information. The first is the
+`att_shift`. The second is the `ff_shift`.
+
+* `att_shift` is the last tokens normalized output from the time mixing (from
+   the previous layer).
+
+* `ff_shift` is the last tokens normalized output from the channel mixing
+   (from the previous layer).
+
+```c++
+static struct ggml_tensor * llm_build_copy_mask_state(
+        struct ggml_context * ctx,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * s,             // kv_self.k_l[il]
+         struct ggml_tensor * state_copy,    // inp_s_copy
+         struct ggml_tensor * state_mask,    // inp_s_mask
+                    int32_t   n_state,       // embd * 2 (2048 * 2 = 4096)
+                    int32_t   kv_size,
+                    int32_t   kv_head,
+                    int32_t   n_kv,
+                    int32_t   n_seqs) {
+    struct ggml_tensor * states = ggml_reshape_2d(ctx, s, n_state, kv_size);
+```
+So `s` is `kv_self.k_l[il]` which is the tensor for the currently processed
+layer and this is a 1d tensor. And `n_state` is the number of states 4096 (note
+that this is 2048 for the result of time mixing process and 2048 for the channel
+mixing process). The `kv_size` is 2 and `n_kv` is 2 depending on the number of
+sequences. In this case `n_seqs` is also 2 (again this would be different for
+a single sequence or multiple).
+
+```c++
+    struct ggml_tensor * states = ggml_reshape_2d(ctx, s, n_state, kv_size);
+```
+So we are reshaping the 1d tensor `s` (which is `kv_self.k_l[il]`) from:
 ```console
 (gdb) p *s
-$59 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cd4f70,
-ne = {4096, 1, 1, 1}, nb = {4, 16384, 16384, 16384}, op = GGML_OP_NONE,
-op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
-0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7fff35a00020,
+$16 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cd5000,
+ne = {8192, 1, 1, 1}, nb = {4, 32768, 32768, 32768},
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7fff34e00020,
 name = "cache_k_l0", '\000' <repeats 53 times>, extra = 0x0}
 ```
-And `n_state` is specifying the number of element that will go into the first
-dimension (x-axis) and `kv_size` is specifying the number of elements that will
-go into the second dimension (y-axis). 
-```
-states tensor:
-
-           n_state = 4096
- 0 [0....................4095]     kv_size = 1
-```
+Into a 2d tensor. Since we have two sequences in this case `kv_size` will be 2,
+and `n_state` is
+4096. So this will create a new tensor 4096x2 (4096 columns and 2 rows).
 ```console
 (gdb) p *states
-$60 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
-ne = {4096, 1, 1, 1}, nb = {4, 16384, 16384, 16384}, op = GGML_OP_RESHAPE,
-op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556e5f460, 0x0, 0x0, 0x0, 0x0, 0x0,
-0x0, 0x0, 0x0, 0x0}, view_src = 0x555556e5f460, view_offs = 0, data = 0x7fff35a00020,
+$118 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4096, 2, 1, 1}, nb = {4, 16384, 32768, 32768},
+op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556e5f530, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x555556e5f530, view_offs = 0, data = 0x7fff34e00020,
 name = "cache_k_l0 (reshaped)", '\000' <repeats 42 times>, extra = 0x0}
 ```
-Next we have the following which is getting rows from states and `state_copy`
-is specifying which rows to get:
+We can visualize the reshaped states tensor as:
+```
+states:
+
+        n_state = 4096
+ 0 [0....................4095]     kv_size = 2
+ 1 [0....................4095]     
+```
+
+Next we have the following which is getting rows from the states tensor where
+`state_copy` is specifying which rows to get:
 ```c++
     states = ggml_get_rows(ctx, states, state_copy);
 ```
-TODO: What is happening here?
+Recall that state copy is a copy of the `llama_context.inp_s_copy` tensor. And
+this tensor holds information about which states should be used by the current
+processing/decoding. Now I need to remind myself that what is happening here
+is just building up the computation graph and not actually running any
+computation so this tensor does not contains any actual values at this point.
 
-Next we have:
+It currently looks like the following and if we recall from about it is a 1d
+tensor with with an number of elements equal to the sequence length (2 in this
+case):
+```console
+(gdb) p *state_copy
+$22 = {type = GGML_TYPE_I32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {2, 1, 1, 1}, nb = {4, 8, 8, 8}, op = GGML_OP_NONE,
+op_params = {0 <repeats 16 times>}, flags = 1, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x0, name = "inp_s_copy", '\000' <repeats 53 times>, extra = 0x0}
+```
+Now, what this is doing is that `copy_state` will contain the indices of the
+rows from the states tensor that should be used for the current processing.
+One thing to keep in mind is that this is copying/moving rows and the shape of
+states remains the same. The states that are specified in the `state_copy`
+tensor will be copied to the top of the states tensor. 
+
+To see how this works we need to take a look at the `llama_set_inputs` function
+which is called after the `build_rwkv6` function but before `llama_decode`.
+
+In `llama_set_input`s we have the following:
+```cpp
+    if (kv_self.recurrent) {
+        const int64_t n_kv = kv_self.n;
+        ...
+
+        if (lctx.inp_s_copy) {
+            GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_s_copy->buffer));
+
+            int32_t * data = (int32_t *) lctx.inp_s_copy->data;
+
+            // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+            for (uint32_t i = 0; i < n_kv; ++i) {
+                const uint32_t  cell_id = i + kv_self.head;
+                llama_kv_cell & kv_cell = lctx.kv_self.cells[cell_id];
+
+                // prevent out-of-bound sources
+                if (kv_cell.src < 0 || (uint32_t) kv_cell.src >= kv_self.size) {
+                    kv_cell.src = cell_id;
+                }
+
+                data[i] = kv_cell.src;
+
+                // ensure copy only happens once
+                if (kv_cell.src != (int32_t) cell_id) {
+                    kv_cell.src = cell_id;
+                }
+            }
+        }
+```
+Notice that the above will get a pointer to the data of the `inp_s_copy` tensor
+and also notice that the type int32. Then we will iterate of the number or
+key-value entries which is 2 in our case. The first `cell_id` will be 0.
+```console
+(gdb) p cell_id
+$31 = 0
+(gdb) p kv_self.cells[0]
+(gdb) p kv_cell
+$41 = (llama_kv_cell &) @0x555555cd6ed0: {pos = 3, delta = 0, src = 0, tail = 0, seq_id = std::set with 1 element = {[0] = 0}}
+```
+So we are going to set the first element in `inp_s_copy` to 0 to the value
+of the `kv_cell.src` which is 0. This means that later in the `ggml_get_rows`
+operation the 0/first row of the `states` tensor will be copied.
+
+Notice that the `src` field is used with recurrent models like RWKV-6:
+```c++
+struct llama_kv_cell {
+    llama_pos pos   = -1;
+    llama_pos delta = 0;
+    int32_t   src   = -1; // used by recurrent state models to copy states
+```
+A `src` value of less than 0 means that this cell is new or does not have any
+valid state information. If it is greater then 0 then it indicates that this
+cell has valid, perviously computed state information.
+
+TODO: I'm not sure about what the last if statement is doing yet.
+
+In our case `n_kv` is 2 so we will go through this loop once more, this time
+the `cell_id` will be set to 1.
+```console
+(gdb) p kv_cell
+$47 = (llama_kv_cell &) @0x555555cd6f10: {pos = 7, delta = 0, src = 1, tail = 1, seq_id = std::set with 1 element = {[0] = 1}}
+```
+Notice that the value of `src` i 1 for this entry so the second element in
+`inp_s_copy` will be set to 1. This means that the second row of the `states`
+tensor will be copied.
+Now, that still leaves one question which is now did the `kv_cell.src` get set
+to their respective values?  
+I'll return to this question shortly but need to go through some other things
+before that namely the `state_mask`.
+
+Next, back in `llm_build_copy_mask_state` we have:
 ```c++
     // clear states of sequences which are starting at the beginning of this batch
     // FIXME: zero-out NANs?
     states = ggml_mul(ctx, states, state_mask);
 ```
-So we are multiplying the `states` tensor with the `state_mask` tensor.
-TODO: What is happening here?
+So we are multiplying the `states` tensor (4096x2) with the `state_mask` (1x2)
+tensor. Simliar to the `inp_s_copy` tensor we are only building the computation
+graph at this point so the `state_mask` tensor does not contain any actual
+values at this point. `inp_s_mask` is also populated in the `llama_set_inputs`:
+```c++
+        if (lctx.inp_s_mask) {
+            GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_s_mask->buffer));
+            float * data = (float *) lctx.inp_s_mask->data;
 
+            // clear unused states
+            for (int i = 0; i < n_kv; ++i) {
+                uint32_t        cell_id = i + kv_self.head;
+                llama_kv_cell & kv_cell = lctx.kv_self.cells[cell_id];
+
+                data[i] = (float) (kv_cell.src >= 0);
+
+                // only clear once
+                if (kv_cell.src < 0) {
+                    kv_cell.src = cell_id;
+                }
+            }
+        }
+```
+TODO: I'm not sure why `cell_id` is not const like it is in the `inp_s_copy` case.
+
+Recall that this tensor if of type F32 and we are getting a pointer to this
+tensors data. And we are going to iterate over all the key-value entries which
+is 2 in our case. The first `cell_id` will be 0 because `kv_self.head` is 0.:
+```console
+(gdb) p cell_id
+$59 = 0
+
+(gdb) p kv_cell
+$60 = (llama_kv_cell &) @0x555555cd6ed0:
+{pos = 3, delta = 0, src = -1, tail = 0, seq_id = std::set with 1 element = {[0] = 0}}
+```
+Now, notice that `src` field is actually `-1` now which was not the case for
+the `inp_s_copy` block. The `inp_s_mask` block actually comes before
+`inp_s_copy` but I wanted to follow the order in the computation building
+functions. We can also see that the sequence id is 0.
+
+If the `src` field contains a valid previously computed state then we set that
+entry in `inp_s_mask` to 1, and if it does not then we set it to 0:
+```c++
+                data[i] = (float) (kv_cell.src >= 0);
+```
+In this case `data[0] = 0` because `kv_cell.src` is `-1`.
+
+And the last if statement will update `kv_cell.src` to 0 since it is currently
+-1 (less than 0).
+The second time through the loop `cell_id` will be 1 and `kv_cell` will look
+like this:
+```console
+(gdb) p kv_cell
+$70 = (llama_kv_cell &) @0x555555cd6f10:
+{pos = 7, delta = 0, src = -1, tail = 1, seq_id = std::set with 1 element = {[0] = 1}}
+```
+The same thing will happen here and we are setting `data[1] = 0` because
+`kv_cell.src` is `-1`. And the last if statement will update `kv_cell.src` to 1.
+
+So after this loop has completed the state of `inp_s_mask` will look like this:
+```console
+(gdb) p data[0]
+$75 = 0
+(gdb) p data[1]
+$76 = 0
+```
+So if we "jump" back to the `llm_build_copy_mask_state` function and look at the
+following line again:
+```c++
+    states = ggml_mul(ctx, states, state_mask);
+```
+So we are multiplying the `states` tensor (4096x2) with the `state_mask` (1x2)
+tensor. And we know that `state_mask` has two elements which are both 0.
+```
+0 [0....................4095]  [0]
+1 [0....................4095]  [0]   
+```
+So this is in fact clearning out the states. But we need to keep in mind that
+this is the first time we process the tokens so there are no prior states, so
+clearing seems reasonable.
+
+Now, for future decoding these previous states might be populated and used in
+which case the mask would clear the states that are not required for this
+current processing.
+
+Following that we have:
 ```c++
     // copy states which won't be changed further (between n_seqs and n_rs)
     ggml_build_forward_expand(graph,
         ggml_cpy(ctx,
-            ggml_view_1d(ctx, states, n_state*(n_kv - n_seqs), n_seqs*n_state*ggml_element_size(states)),
+            ggml_view_1d(ctx, states, n_state*(n_kv - n_seqs),            n_seqs *n_state*ggml_element_size(states)),
             ggml_view_1d(ctx, s     , n_state*(n_kv - n_seqs), (kv_head + n_seqs)*n_state*ggml_element_size(s))));
 ```
-So this is defining/creating a tensor which is a copy operation of two tensors.
-And recall that states is a 2d tensor with 1 row and 4096 columns.
-Lets take a look at the first tensor view:
-```console
-(gdb) p n_state * (n_kv - n_seqs)
-$70 = 0
-(gdb) p n_seqs * n_state * ggml_element_size(states)
-$72 = 16384
-```
-```
-ggml_view_1d(ctx, states, 0, 16384)
-```
-This looks strange to me since the first argument is 0 this would be a tensor
-with 0 elements:
-```console
-(gdb) p *ggml_view_1d(ctx, states, n_state*(n_kv - n_seqs), n_seqs*n_state*ggml_element_size(states))
-$74 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {0, 1, 1, 1}, nb = {4, 0, 0, 0}, op = GGML_OP_VIEW,
-  op_params = {16384, 0 <repeats 15 times>}, flags = 0, grad = 0x0, src = {0x55555644cbc0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-    0x0}, view_src = 0x55555644cbc0, view_offs = 16384, data = 0x0, name = " (view)", '\000' <repeats 56 times>, extra = 0x0}
-```
-And this is the source of the copy operation that is being defined.
-And the destination is `s`
-```console
-(gdb) p (kv_head + n_seqs) * n_state * ggml_element_size(s)
-$84 = 16384
-```
+So this is using `n_state` which is 2048, `n_kv`, and `n_seqs=2`.
+Now, I'd like to detour to see how `n_kv` is actually set. For this we have to
+look back into `llm_build_graph`:
 ```c++
-    ggml_view_1d(ctx, states, 0, 16384)
-    ggml_view_1d(ctx, s     , 0, 16384)
+    struct llm_build_context llm(lctx, batch, cb, worst_case);
+
+    const llm_build_cb & cb,
+                  bool   worst_case) :
+        ...
+        n_kv             (worst_case ? kv_self.size : kv_self.n),
+        ...
 ```
+Now, if `ctx_params.n_seq_max = 6` and `worst_case=true` then we would have
+`n_seqs = 2` and `n_kv = 6`. This would give us the following argument values
+for the source and destination views in the above copy:
+```
+ne0 = n_state * (n_kv - n_seqs)
+ne0 =   4096  *    6  - 2
+ne0 =   4096  *    4
+ne0 =   4096  *    4
+ne0 =   16384 
+
+offset = n_seqs * n_state * ggml_element_size(states)
+offset =   2    *  4096   *  4
+offset =   2    *  4096   *  4
+offset =   32768
+
+src: ggml_view_1d(ctx, states, 16384, 32768)
+```
+And for the destination view we have the same number of elements:
+```
+ne0 = n_state * (n_kv - n_seqs)
+ne0 = 4096    *    6  -  2 
+ne0 = 4096    *    4
+ne0 = 16384
+
+offset = (kv_head + n_seqs) * n_state * ggml_element_size(s)
+       =     0    +  2      *   4096  *    4
+       =          2         *   4096  *    4
+       = 32768
+
+src : ggml_view_1d(ctx, states, 16384, 32768)
+dest: ggml_view_1d(ctx, s     , 16384, 32768)
+```
+Now, recall that states tensor has been rearranged by `ggml_get_rows` and this
+is copying 16384 elements, 4 token states of 4096 each, starting at
+offset 32768 which is (2 * 4096 * 4), so we are skipping the first two token
+states which is because the current batch has two sequences:
+```console
+(gdb) up
+#1  0x00005555556dcd95 in llm_build_context::build_rwkv6 (this=0x7fffffffd200) at src/llama.cpp:15098
+15098	            struct ggml_tensor * token_shift = llm_build_copy_mask_state(ctx0,
+(gdb) p batch
+$23 = (const llama_ubatch &) @0x7fffffffd470: {equal_seqs = true, n_tokens = 8, n_seq_tokens = 4, n_seqs = 2,
+  token = 0x555557483270, embd = 0x0, pos = 0x555555be05a0, n_seq_id = 0x555557483660, seq_id = 0x555556e5c510,
+  output = 0x555556e5c5d0 ""}
+```
+So this is saying copy 16384 elements but skip the token states (2) that are
+going take part in the current/upcoming decode processing. And copy these
+elements to the original `s` tensor which recall is `kv_self.k_l[il]` also
+skipping the first two tensor states. So we will 
+
+Again remember that this is only building up the computation graph and
+`kv_self.k_l` might get updates elsewhere and this copying would ensure that
+all the token states that are not used for the next processing are preserved.
+
 Next we are creating a 2d view of the states tensor:
 ```
     // the part of the states that will be used and modified
     return ggml_view_2d(ctx, states, n_state, n_seqs, states->nb[1], 0);
-    return ggml_view_2d(ctx, states, 4096, 1, 16384, 0);
+    return ggml_view_2d(ctx, states, 4096, 2, 16384, 0);
 ```
-So this will create a 1 row and 4096 column tensor: 
-```console
-(gdb) p *$97
-$99 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
-ne = {4096, 1, 1, 1}, nb = {4, 16384, 16384, 16384}, op = GGML_OP_VIEW,
-op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
-src = {0x55555644cbc0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-view_src = 0x55555644cbc0, view_offs = 0, data = 0x0, name = "node_2 (view)",
-'\000' <repeats 50 times>, extra = 0x0}
-```
-TODO: Revisit this section and in particular the view operations where the
-element size is 0.
+
+`kv_self.k_l[i]` is a way of passing information from one layer to the next, and
+is not so different from what the KV cache does if we think about it. The KV
+cache stores calculations from the previous layer and then makes them available
+to the following layers. Here are enabling the state to be passed to the next
+layer.
+
+After `llm_build_copy_mask_state` the  `token_shift` tensor will contain the
+attention shift and feed-forward shift from the previous layer that correspond
+to the sequence/sequences that are currently being processed.
 
 So that was the `token_shift` tensor. Next we have the `wkv_states` tensor:
 ```c++
@@ -694,16 +994,7 @@ $105 = 131072
 (gdb) p kv_size
 $106 = 1
 ```
-So this is reshaping this 1d tensor into a 2d tensor with 1 row and 131072
-columns/dimensions. 
-And again we are creating views with element size zero which I really don't
-understand at this point.
-```console
-(gdb) p n_state * (n_kv - n_seqs)
-$111 = 0
-(gdb) p (kv_head + n_seqs) *  n_state * ggml_element_size(s)
-$112 = 524288
-```
+And this will create the same operations that we saw earlier.
 
 After this `cur` reshaped from 2048 columns x 512 rows to 1 batch(?), 512 rows
 and 2048 columns:
@@ -1473,10 +1764,10 @@ Next we have:
 
     token_shift = ggml_concat(ctx0, last_norm_att, last_norm_ffn, 1);
 ```
-Now, this is creatings views of the last tokens normalized represnetations from
+Now, this is creatings views of the last tokens normalized representations from
 both the time mixing and channel mixing blocks. These are then concatenated
 together. I think this is part of the passing of information from the previous
-layer to the next. SO `token_shift` will contain the state of the last token
+layer to the next. So `token_shift` will contain the state of the last token
 after it has passed through the time and channel mixing blocks.
 
 Then we are copying the `token_shift` tensor into `kv_self.k_l[il]`:
@@ -1564,10 +1855,33 @@ The following is creating a new 1d tensor of size 512 and setting in to the
 This is then reshaped to 2d or 2048 columns and 512 rows.
 We also have a normalization layer and then the output layer is added to the
 computation graph.
+
 And with that we are done in `llm.build_rwkv6`. I'll probably need to got
 through this a few more times but I think I have an initial understanding of how
 the RWKV layer is implemented in llama.cpp.
 
+Now the above just went through building the computation graph but we have not
+executed any of the nodes yet. Lets set a break point in `ggml_graph_comput`
+and see if we can following the execution:
+```console
+(gdb) br ggml_graph_compute
+
+Breakpoint 5, ggml_graph_compute (cgraph=0x555555cd4198, cplan=0x7fffffffd220) at ggml/src/ggml.c:20091
+20091   enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+    (gdb) bt
+#0  ggml_graph_compute (cgraph=0x555555cd4198, cplan=0x7fffffffd220) at ggml/src/ggml.c:20091
+#1  0x00005555555c395f in ggml_backend_cpu_graph_compute (backend=0x555555d08ba0, cgraph=0x555555cd4198)
+        at ggml/src/ggml-backend.c:817
+#2  0x00005555555c27d4 in ggml_backend_graph_compute_async (backend=0x555555d08ba0, cgraph=0x555555cd4198)
+            at ggml/src/ggml-backend.c:282
+#3  0x00005555555c742e in ggml_backend_sched_compute_splits (sched=0x555555cd5c10) at ggml/src/ggml-backend.c:1806
+#4  0x00005555555c806c in ggml_backend_sched_graph_compute_async (sched=0x555555cd5c10, graph=0x55555640b580)
+                at ggml/src/ggml-backend.c:1994
+#5  0x000055555567fe44 in llama_graph_compute (lctx=..., gf=0x55555640b580, n_threads=4, threadpool=0x0) at src/llama.cpp:16022
+#6  0x0000555555680835 in llama_decode_internal (lctx=..., batch_all=...) at src/llama.cpp:16197
+#7  0x000055555568ee33 in llama_decode (ctx=0x555555cd03e0, batch=...) at src/llama.cpp:20006
+#8  0x000055555556abdb in main (argc=4, argv=0x7fffffffda98) at src/simple-prompt.cpp:130
+```
 
 _wip_
 
