@@ -929,7 +929,18 @@ $23 = (const llama_ubatch &) @0x7fffffffd470: {equal_seqs = true, n_tokens = 8, 
 So this is saying copy 16384 elements but skip the token states (2) that are
 going take part in the current/upcoming decode processing. And copy these
 elements to the original `s` tensor which recall is `kv_self.k_l[il]` also
-skipping the first two tensor states. So we will 
+skipping the first two tensor states.
+The comment for this operation is:
+```c++
+    // copy states which won't be changed further (between n_seqs and n_rs)
+    ggml_build_forward_expand(graph,
+        ggml_cpy(ctx,
+            ggml_view_1d(ctx, states, n_state*(n_kv - n_seqs), n_seqs*n_state*ggml_element_size(states)),
+            ggml_view_1d(ctx, s,      n_state*(n_kv - n_seqs), (kv_head + n_seqs)*n_state*ggml_element_size(s))));
+```
+Perhaps this should instead be that we want to copy the states that are not
+going to be used in the upcoming processing, which are the tokens states from
+`n_seqs` up to the number of possible states `n_kv`.
 
 Again remember that this is only building up the computation graph and
 `kv_self.k_l` might get updates elsewhere and this copying would ensure that
