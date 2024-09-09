@@ -96,6 +96,10 @@ simple-prompt: src/simple-prompt.cpp
 	echo $(OBJ_GGML)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
 
+simple-prompt-multi: src/simple-prompt-multi.cpp
+	echo $(OBJ_GGML)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+
 
 run-simple-prompt: simple-prompt
 	./simple-prompt
@@ -235,6 +239,13 @@ ifeq ($(OS),Linux)
 	gdb --args ./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
 else
 	lldb ./simple-prompt 0 0 models/v6-Finch-1B6-HF.gguf
+endif
+
+debug-rwkv-simple-prompt-multi:
+ifeq ($(OS),Linux)
+	gdb --args ./simple-prompt-multi 0 0 models/v6-Finch-1B6-HF.gguf
+else
+	lldb ./simple-prompt-multi 0 20 models/v6-Finch-1B6-HF.gguf
 endif
 
 inspect-rwkvf-model:
