@@ -32,10 +32,10 @@ int main(int argc, char **argv) {
   }
   printf("\n");
 
-  struct ggml_tensor* ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 2);
-  ggml_set_i32_1d(ids, 0, 0);
-  ggml_set_i32_1d(ids, 1, 1);
-  states = ggml_get_rows(ctx, states, ids);
+  struct ggml_tensor* state_copy = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 3);
+  ggml_set_i32_1d(state_copy, 0, 0);
+  ggml_set_i32_1d(state_copy, 1, 1);
+  states = ggml_get_rows(ctx, states, state_copy);
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, states);
@@ -55,8 +55,9 @@ int main(int argc, char **argv) {
   printf("%d\n", ggml_get_i32_nd(states, 1, 0, 0, 0));
   printf("%d\n", ggml_get_i32_nd(states, 2, 0, 0, 0));
   printf("%d\n", ggml_get_i32_nd(states, 3, 0, 0, 0));
-  // The following does not print 5 which suggests that states has been changed
+  // The following will print out 1
   printf("%d\n", ggml_get_i32_nd(states, 4, 0, 0, 0));
+  printf("%d\n", ggml_get_i32_nd(states, 5, 0, 0, 0));
 
   ggml_free(ctx);
   return 0;
