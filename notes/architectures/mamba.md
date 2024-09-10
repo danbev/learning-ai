@@ -10,7 +10,7 @@ One of the authors is Tri Dao, was also involved in the developement of
 hardware.
 
 Transformers are effecient at training as they can be parallelized, incontrast
-to RNNs which are sequential which makes large models a slow process.
+to RNNs which are sequential which makes training large models a slow process.
 
 But, the issue with transformers is that they don't scale to long sequences
 which is because the self attention mechanism is quadratic in the sequence
@@ -103,7 +103,7 @@ Residual         ↑
      |           |
      +-----------+
                  |
-
+                 ↑
 ```
 And then we have Mamba:
 ```
@@ -128,6 +128,7 @@ Residual         ↑
      |           |
      +-----------+
                  |
+                 ↑
 
       SSNN (Selective State Neural Network)
 ```
@@ -135,7 +136,7 @@ So we can think of this as if we are swapping out the core layer but other
 things stay pretty much the same.
 
 ### Selective State Space Models
-Selective State Space is a type of state space and a state space is defined
+Selective State Space is a type of state space, and a state space is defined
 by two funcions:
 ```
 h'(t) = Ah(t) + Bx(t)     (state equation)
@@ -151,6 +152,7 @@ C ∈ Rⁿ×¹ is the output matrix
 Now, the current state of the system is give in `h(t)`. And the matrix A can
 be thought of as rules that dictates how the state of the system should evolve
 independently of the input.
+
 Lets say we have the following sequence of inputs:
 ```
 "Dan loves icecream"
@@ -178,10 +180,10 @@ this is not specific to neural networks or even computers. Think about an analog
 system, for example an IoT device that reads the temperature from a sensor
 connected to it. To process this signal it needs to be converted into digital
 form. A simliar thing needs to be done in this case, as we can't use continous
-signals with computers, just like an IoT can't process an analog signal
+signals with computers, just like an IoT device can't process an analog signal
 directly. So we need to convert into descrete time steps, similar to how an
 Analog-to-Digital Converter ([ADC]) would convert the signal into quantized
- values. This step is called discretization in the state space model.
+values. This step is called discretization in the state space model.
 
 [ADC]: https://github.com/danbev/learning-iot/tree/master?tab=readme-ov-file#analog-to-digital-converter-adc
 
@@ -256,7 +258,7 @@ Z-plane.
 Lets take the following point in the S-plane, S = -1 +2j with a sampling
 period of T = 1, and see how it is represented in the Z-plane:
 
-![image](./bilinear.png)
+![image](../images/bilinear.png)
 
 So if we have a continuous time system represented by the variable S and we want
 to convert it to a discrete time system represented equalivant variable z, we
