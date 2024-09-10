@@ -25,13 +25,14 @@ disadvantages like slower training).
 The core of Mamba is state space models (SSMs). Before we go further it might
 make sense to review [RNNs](./rnn.md) and [SSMs](./state-space-models.md).
 
+Paper: [Mamba: Linear-Time Sequence Modeling with Selective State Space](https://arxiv.org/pdf/2312.00752)
+
 Selective state space models, which Mamaba is a type of, give us a linear
 recurrent network simliar to RRNs, but also have the fast training that we get
 from transformers. So we get the best of both worlds.
 
 ```
-      _          _
-h_t = Ah_{t-1} + Bx_t
+h_t = Āh_{t-1} + B̂x_t
 
 Where:
 A_bar = is the state transition matrix.
@@ -194,7 +195,7 @@ transform A and B into discrete values and the equations become:
 hₜ = Ahₜ₋₁ + Bxₜ
 yₜ = Chₜ+ Dxₜ
 ```
-To get the `A_hat` and `B_hat` values a process called discretization is used.
+To get the `Â` and `B̂` values a process called discretization is used.
 
 ### Discretization
 So we will first discretize the parameters A, and B of the state space model,
@@ -386,9 +387,9 @@ transform A and B into discrete values and the equations become:
 hₜ = Ahₜ₋₁ + Bxₜ
 yₜ = Chₜ+ Dxₜ
 ```
-Where `A_hat` and `B_hat` are:
+Where `Â` and `B_hat` are:
 ```
-A_hat = (I - Δ/2 A)⁻¹           (⁻¹ inverse bilinear transform)
+Â = (I - Δ/2 A)⁻¹           (⁻¹ inverse bilinear transform)
 B_hat = (I - Δ/2 A)⁻¹ ΔB        (⁻¹ inverse bilinear transform)
 
 Δ = the time step, for example if we sample every minute then Δ = 1
@@ -397,9 +398,38 @@ A = the state transition matrix
 B = the input matrix
 ```
 
+So we first tranform the continuous parameters Δ, A, and B into discrete
+parameters `Â`, and `B_hat`. This is done using forumlas:
+```
+Â = f_A(Δ, A)
+B_hat = f_B(Δ, A, B)
+```
+Where `f_A` and `f_B` are the descretization functions/rules and can vary as I
+understand it. The paper for example uses the Zero-Order Hold (ZOH) method.
+
+Lets take a look at an example a recurrent computation of a descrete system:
+```
+h_0 = B_hat * x_0             // No Â * h_t-1 as this is the first time step
+y_0 = C * h_0
+
+h_1 = Â * h_0 + B_hat * x_1
+y_1 = C * h_1
+
+h_2 = Â * h_1 + B_hat * x_2
+y_2 = C * h_2
+```
+Like me mentioned earlier this is great for inference as we only need to compute
+on token at a time and the memory and computation is constant regardless of the
+length of the input sequence. 
+But at training we have the complete sequence already and having to go through
+this sequencially is slow (escpecially compared to transformers which can take
+large sequences in parallel).
+
 So at this point we have seen a continuous time system (the original form), and
 a discrete time (the one where we discretized the parameters A and B). But there
 is also a third form namely a convolutional representation.
+
+### Convolutional Representation
 
 So this was really confusing to me. I think of an SSM as an RNN which processes
 input/token sequentially. With a convolutional representation we have
@@ -410,135 +440,190 @@ I think the answer is that the causual convolution where the filter is only
 applied to past values. During training the model does have access to the
 complete sequence but during inference it does not.
 
-
-So it is that the system state is a representation of the past values and it can
-then be seen as the filter is moving across those past values. So the filter in
-this case are A and B matrices.
+Recurrent formulation:
 ```
-       +--------------+
-       | 0| 0| 0| 0| 0|
-       +--------------+ h(t = 0)  (initial state)
-       | 0| 0| 0| 0| 0|
-       +--------------+
-       | 0| 0| 0| 0| 0|
-       +--------------+
+hₜ = Ahₜ₋₁ + Bxₜ                               (state)
+yₜ = Chₜ                                       (output
 
-
-        +--------------+
-        | 0| 0| 0| 0| 0|
-        +--------------+ h(t = 0)  (initial state)
-        | 0| 0| 0| 0| 0|
-        +--------------+
-        | 0| 0| 0| 0| 0|
-        +--------------+
-"Dan"   |  |  |  |  |  |
-t = 1   +--------------+             
-        [  A/B Filter  ]  ---->    +--------------+
-                                   |1 | 1| 1| 1| 1|
-                                   +--------------+ h(t = 1) (Updated state incorporating "Dan")
-                                   |1 | 1| 1| 1| 1|
-                                   +--------------+
-                                   |1 | 1| 1| 1| 1|
-                                   +--------------+
-
-                        +--------------+
-                        | 1| 1| 1| 1| 1|
-                        +--------------+ h(t = 1) (Updated state incorporating "Dan")
-                        | 1| 1| 1| 1| 1|
-                        +--------------+
-                        | 1| 1| 1| 1| 1|
-                        +--------------+
-               "loves"  |  |  |  |  |  |
-               t = 2    +--------------+             
-                        [  A/B Filter  ]  ---->    +--------------+
-                                                   | 2| 2| 2| 2| 2|
-                                                   +--------------+ h(t = 2)
-                                                   | 2| 2| 2| 2| 2|
-                                                   +--------------+
-                                                   | 2| 2| 2| 2| 2|
-                                                   +--------------+
-
-                                        +--------------+
-                                        | 2| 2| 2| 2| 2|
-                                        +--------------+ 
-                                        | 2| 2| 2| 2| 2|
-                                        +--------------+
-                                        | 2| 2| 2| 2| 2|
-                                        +--------------+
-                                 "ice"  |  |  |  |  |  |
-                                 t = 3  +--------------+
-                                        [  A/B Filter  ] ---->    +--------------+
-                                                                  | 3| 3| 3| 3| 3|
-                                                                  +--------------+ h(t = 3)
-                                                                  | 3| 3| 3| 3| 3|
-                                                                  +--------------+
-                                                                  | 3| 3| 3| 3| 3|
-                                                                  +--------------+
-
-                                                        +--------------+
-                                                        | 3| 3| 3| 3| 3|
-                                                        +--------------+ 
-                                                        | 3| 3| 3| 3| 3|
-                                                        +--------------+
-                                                        | 3| 3| 3| 3| 3|
-                                                        +--------------+
-                                               "cream"  |  |  |  |  |  |
-                                               t = 4    +--------------+
-                                                        [  A/B Filter  ]  ---->    +--------------+
-                                                                                   | 4| 4| 4| 4| 4|
-                                                                                   +--------------+ h(t = 4)
-                                                                                   | 4| 4| 4| 4| 4|
-                                                                                   +--------------+
-                                                                                   | 4| 4| 4| 4| 4|
-                                                                                   +--------------+
+h_0 = B_hat * x_0                              (state at timestep 0)
+y_0 = C * h_0                                  (output at timestep 0)
 ```
-What I'm trying to convey here is that the filter is moving across the input
-and at each timestep, it is computing the weighted sums of the past state and
-the current input. As move input comes in the filter is "moved" across to the
-next input.
+Now we can rewrite the output as:
+```
+y_0 = C * h_0
+    = C * B_hat * x_0            (h_0 = B_hat * x_0)
+```
+And we can then compute h1:
+```
+h_0 = B_hat * x_0
+    = C * h_0
+    = C * (B_hat * x_0)
+
+h_1 = Â * h_0 + B_hat * x_1
+               |
+               +---+
+                   ↓
+h_1 = Â * (B_hat * x_0) + B_hat * x_1
+y_1 = = C * h_1
+    = C(Â (B_hat * x_0)                                __       _
+    = C * Â * B_hat * x_0 + C * B_hat * x_1          (CABx_0 + CBx_1)
+
+h_2 = Â * h_1 + B_hat * x_2
+    = Â(Â * B_hat * x_0 + B_hat * x_1) + B_hat * x_2
+    = Â^2 * B_hat * x_0 + Â * B_hat * x_1 + B_hat * x_2
+y_2 = C * h_2
+    = C(Â^2 * B_hat * x_0 + Â * B_hat * x_1 + B_hat * x_2)
+    = C(Â^2 * B_hat * x_0) + C(Â * B_hat * x_1) + C(B_hat * x_2)
+```
+Now there is a pattern that emerges here is:
+```
+y_k = CÂ^k * B_hat * x_0 + CÂ^(k-1) * B_hat * x_1 + ... + C * B_hat * x_k
+```
+Now if we extract/split the input from the cooefficients we get:
+```
+K = Kernel (convoluational filter)
+
+K_hat = (CB_hat, CÂ * B_hat, CÂ^2 * B_hat, ..., CÂ^(k-1) * B_hat)
+```
+So these are like the cofficients of the filter. If we arrange these into a
+matrix we get:
+```
+K_hat = [CB_hat, CÂ * B_hat, CÂ^2 * B_hat, ..., CÂ^(k-1) * B_hat]
+```
+We can then calculate the output y using:
+```
+y = K_hat * x
+```
+Now, in the example above K has the same size of the input sequence lenght which
+seems wrong as this is what we wanted to avoid. But this is only an alternative
+way of representing the state space model which we can take advantage of during
+training of models. We can parallelize the computation of the convolution.
+
+In practice the kernel size K is fixed which might be something like 4.
 
 ```
-Initial State:
-+--------------+
-|  h(0)        |  (Initial state of the system, could be zeros or a predefined state)
-+--------------+
+Kernel (inverted):
+ +------------------------------------+
+ |  CÂ³B̂   |  CÂ²B̂   |  CÂB̂   |  CB̂   |
+ +------------------------------------+
 
-Step 1: Process "Dan"
-+--------------+    +--------------+
-|  h(0)        |    |  "Dan"       |  (New input is added as a row)
-+--------------+    +--------------+
-     |                     |
-     +------- A/B Filter --------> +--------------+
-                                   |  h(1)        |  (Updated state incorporating "Dan")
-                                   +--------------+
+Input:
+ +--------------------------------------------------------------+
+ |  pad    |  pad    |  pad   |   x₀  |  x₁    |  x₂    |  x₃   |
+ +--------------------------------------------------------------+
 
-Step 2: Process "loves"
-+--------------+    +--------------+
-|  h(1)        |    |  "loves"     |  (New input is added to the updated state)
-+--------------+    +--------------+
-     |                     |
-     +------- A/B Filter --------> +--------------+
-                                   |  h(2)        |  (Updated state incorporating "loves")
-                                   +--------------+
+pad = 0
 
-Step 3: Process "ice"
-+--------------+    +--------------+
-|  h(2)        |    |  "ice"       |  (Continuing the process)
-+--------------+    +--------------+
-     |                     |
-     +------- A/B Filter --------> +--------------+
-                                   |  h(3)        |  (State updated with "ice")
-                                   +--------------+
+Process
 
-Step 4: Process "cream"
-+--------------+    +--------------+
-|  h(3)        |    |  "cream"     |  (Adding "cream" to the sequence)
-+--------------+    +--------------+
-     |                     |
-     +------- A/B Filter --------> +--------------+
-                                   |  h(4)        |  (Final updated state with "cream")
-                                   +--------------+
+ +------------------------------------+
+ |  CÂ³B̂   |  CÂ²B̂   |  CÂB̂   |  CB̂   |
+ +------------------------------------+
+     ↓         ↓         ↓        ↓
+ +--------------------------------------------------------------+
+ |  pad    |  pad    |  pad   |   x₀  |  x₁    |  x₂    |  x₃   |
+ +--------------------------------------------------------------+
+     |        |         |        |
+     +----------------------------
+     ↓ 
+ +------------------------------------+
+ |  y₀     |         |        |       |
+ +------------------------------------+
+    y₀ = CB̂x₀ (all padding values are zero so they don't contribute)
 ```
+And notice that `y₀` is the same as we calculated above for y₀.
+
+Next, we slide the kernal forward one step:
+```
+           +------------------------------------+
+           |  CÂ³B̂   |  CÂ²B̂   |  CÂB̂   |  CB̂   |
+           +------------------------------------+
+              ↓         ↓         ↓        ↓
+ +--------------------------------------------------------------+
+ |  pad    |  pad    |  pad   |   x₀  |  x₁    |  x₂    |  x₃   |
+ +--------------------------------------------------------------+
+              |        |         |        |
+              +----------------------------
+              ↓ 
+ +------------------------------------+
+ |  y₀     |  y₁     |        |       |
+ +------------------------------------+
+              y₁ = CÂB̂x₀ + CB̂x₁
+
+```
+And this can continue until we have processed the entire input sequence. Now
+this look pretty sequential if we present it like this but if we look at how
+we defined the coofficients of the kernel above.
+For example we have our input and the kernel:
+```
+Input Sequence (x):
++----+----+----+----+
+| x₀ | x₁ | x₂ | x₃ |
++----+----+----+----+
+
+Kernel (K̂):
++-----+-----+-----+-----+
+| CB̂  | CÂB̂ | CÂ²B̂| CÂ³B̂|
++-----+-----+-----+-----+
+```
+We can create a matrix of the input sequence like this:
+```
+Input Matrix (X):
++----+----+----+----+
+| x₀ | 0  | 0  | 0  |            (t = 0)
++----+----+----+----+         
+| x₁ | x₀ | 0  | 0  |            (t = 1)
++----+----+----+----+
+| x₂ | x₁ | x₀ | 0  |            (t = 2)   
++----+----+----+----+
+| x₃ | x₂ | x₁ | x₀ |            (t = 3)
++----+----+----+----+
+```
+
+And we can construct a the kernel matrix (a vector here for clarity) by
+transposing the kernel:
+```
+Kernel Matrix (K̂ᵀ):
++-----+
+| CB̂  |
++-----+
+| CÂB̂ |
++-----+
+| CÂ²B̂|
++-----+
+| CÂ³B̂|
++-----+
+```
+We can then perform the above convolution using a single matrix operation:
+```
++----+----+----+----+   +-----+   +----+
+| x₀ | 0  | 0  | 0  |   | CB̂  |   | y₀ |
++----+----+----+----+   +-----+   +----+
+| x₁ | x₀ | 0  | 0  | × | CÂB̂ | = | y₁ |
++----+----+----+----+   +-----+   +----+
+| x₂ | x₁ | x₀ | 0  |   | CÂ²B̂|   | y₂ |
++----+----+----+----+   +-----+   +----+
+| x₃ | x₂ | x₁ | x₀ |   | CÂ³B̂|   | y₃ |
++----+----+----+----+   +-----+   +----+
+
+Output (y) = X × K̂ᵀ
+```
+
+In practice the kernel would be a matrix and not a vector like we used above.
+Notice that in the forumalation of the ssm we have:
+```
+h_t = Ah_{t-1} + Bx_t
+y_t = Ch_t
+```
+Where A, B, and C are the SSM coefficients.
+If we look a Mamba model it may have a Kernel matrix of shape (4, 5120) which
+is (kernel size, ssm_state_size).
+The kernel matrix is a learned compact representation that encodes the necessary
+information for the State Space Model (SSM) computation. Each row in this matrix
+can be thought of as a compressed representation of the SSM coefficients for a
+specific time step. So each row in the kernel is a vector, similar to how each
+row in the input embedding matrix is a vector, the row represents a tokens and
+the vector is the embedding for that token.
 
 One thing to keep in mind is that the state h is intended to capture the history
 of the sequence x. How this is done depends on the transformation matrices A
@@ -547,7 +632,6 @@ information. The model prioritizes more recent information. Just to draw a
 parallel to transformers, the self-attention mechanism can take the entire
 sequence into account but it this can become very computationally expensive
 as the sequence becomes very long.
-
 
 So that is what is called the state space model, but we have not touched upon
 the selective part of this yet. This is where S4 (structured state space )comes
@@ -585,7 +669,7 @@ I'm using x as the state space where above I used h(t), and also using u as the
 input. I've seen both of these ways of naming). The idea is to design a state
 the can capture the inputs entire history.
 
-One question that was "asked" was, "using the current state, x_t, can we
+One question that was "asked" was, "using the current state, `x_t`, can we
 reconstruct the history of inputs?"
 
 HiPPO operator:
