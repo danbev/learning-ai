@@ -253,6 +253,25 @@ inspect-rwkvf-model:
 	llama.cpp/gguf-py/scripts/gguf_dump.py models/v6-Finch-1B6-HF.gguf && \
 	deactivate
 
+### Mamba targets
+download-mamba-model:
+	cd models && \
+	wget https://huggingface.co/devingulliver/mamba-gguf/resolve/main/mamba-1.4b/mamba-1.4b-f16.gguf
+
+inspect-mamba-model:
+	@. venv/bin/activate && \
+	llama.cpp/gguf-py/scripts/gguf_dump.py models/mamba-1.4b-f16.gguf && \
+	deactivate
+
+debug-mamba-simple-prompt-multi:
+ifeq ($(OS),Linux)
+	gdb --args ./simple-prompt-multi 0 0 models/mamba-1.4b-f16.gguf
+else
+	lldb ./simple-prompt-multi 0 20 models/mamba-1.4b-f16.gguf
+endif
+
+
+
 ### Finetune targets
 finetune-llama-model: TYPE=llama
 finetune-llama-model: TRAIN_DATA=data/assistent-training2.txt
