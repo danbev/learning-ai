@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
     ctx_params.n_threads = 4;
     ctx_params.n_threads_batch = 4;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
-    ctx_params.n_seq_max = 2;
+    ctx_params.n_seq_max = 6;
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
