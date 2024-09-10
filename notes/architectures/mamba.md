@@ -560,7 +560,7 @@ of HiPPO (History Preserving Operator?), and finally structured matrices.
 
 The HiPPO operator looks like this and is a special variant, well actually it
 specifies a way to construct the A and B matrices in a way that ensures that
-a model can retain a high-resulution of past inputs.
+a model can retain a high-resolution of past inputs.
 ```
 x' = Ax + Bu
 ```
@@ -572,7 +572,7 @@ algorithms.
 
 HiPPO aims to optimize A to ensure that older inputs are gradually and smoothly
 "compressed" into the model's state, without being abruptly forgotten. So A is
-the transition from h(t) to h(t+1) and not that this is not dependent on the
+the transition from h(t) to h(t+1) and note that this is not dependent on the
 current input token (u or x, whatever the name of the thing following B is).
 
 Similarly, the HiPPO approach influences the design of matrix B, which governs
@@ -651,8 +651,8 @@ row 1  [ 1, 2, 0, 0, 0]
 row 2  [ 1, 2, 3, 0, 0]
 row 3  [ 1, 2, 3, 4, 0]
 row 4  [ 1, 2, 3, 4, 5]
+```
 
-__wip__
 We can visualize this as
 ```
     +---+      +---+       +---+
