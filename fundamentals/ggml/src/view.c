@@ -104,6 +104,16 @@ int main(int argc, char **argv) {
   printf("%f\n", *(float*) ((char *) view_2d->data + 0 * view_2d->nb[0] + 2 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
   printf("%f\n", *(float*) ((char *) view_2d->data + 1 * view_2d->nb[0] + 2 * view_2d->nb[1] + 0 * view_2d->nb[2] + 0 * view_2d->nb[3]));
 
+  struct ggml_tensor* zero = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 0);
+  struct ggml_tensor* zero_view = ggml_view_1d(ctx, zero, 0, 1024);
+  printf("zero_view tensor rows: %ld\n", ggml_nrows(zero_view));
+  printf("zero_view tensor elements: %ld\n", ggml_nelements(zero_view));
+  struct ggml_tensor* zero_view2 = ggml_view_1d(ctx, zero, 0, 1024);
+  struct ggml_tensor* result = ggml_cpy(ctx, zero_view, zero_view2);
+  printf("result tensor rows: %ld\n", ggml_nrows(result));
+  printf("result tensor elements: %ld\n", ggml_nelements(result));
+  //ggml_set_f32_1d(zero, 0, 1); // this will cause a segfault.
+
   ggml_free(ctx);
 
   return 0;
