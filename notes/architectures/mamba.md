@@ -31,6 +31,47 @@ Selective state space models, which Mamaba is a type of, give us a linear
 recurrent network simliar to RRNs, but also have the fast training that we get
 from transformers. So we get the best of both worlds.
 
+### Mamba block diagram
+```
+        input
+          |
+          |-----------------------------+
+          ↓                             |
+     +-----------+                +------------+
+    / projection  \              /  projection  \
+   +---------------+            +----------------+
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   | convolution   |                   |
+   +---------------+                   |
+          |                            |
+          ↓                            ↓
+   +---------------+            +----------------+
+   |     Silu      |            |    Silu        |
+   +---------------+            +----------------+
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   |     SSM       |                   |
+   +---------------+                   |
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   | activation    |←------------------+
+   +---------------+
+          |
+          ↓
+   +---------------+
+    \  projection /
+     +-----------+
+          |
+          ↓
+       output
+```
+
+### State Space Models
+
 ```
 h_t = Āh_{t-1} + B̂x_t
 
@@ -634,13 +675,15 @@ sequence into account but it this can become very computationally expensive
 as the sequence becomes very long.
 
 So that is what is called the state space model, but we have not touched upon
-the selective part of this yet. This is where S4 (structured state space )comes
-in and it is defined as:
+the structured or selective parts of this yet. This is where S4 (structured state
+space )comes in and it is defined as:
 ```
 S4 = SSM + HiPPO + Structured Matrices
 ```
 So we have SSM which is what we discussed above, then we have the addition
 of HiPPO (History Preserving Operator?), and finally structured matrices.
+Structured in this case means that the A matric has a rigid specific structure
+which is intended to capture the long-term dependencies in the sequence.
 
 The HiPPO operator looks like this and is a special variant, well actually it
 specifies a way to construct the A and B matrices in a way that ensures that
@@ -737,6 +780,17 @@ row 3  [ 1, 2, 3, 4, 0]
 row 4  [ 1, 2, 3, 4, 5]
 ```
 
+Now with this we have structured state space models (S4) but the matrices A and
+B are the same for all time steps, all inputs. This means that if we try to
+get the model to learn a specific pattern in the input sequence it will be
+difficult as it does not take the input into consideration, it cannot do content
+aware resoning (the parameters A, B, C and D are the same for all time steps).
+
+This is where selective state space models come in. The idea is to have a
+
+_wip_
+
+
 We can visualize this as
 ```
     +---+      +---+       +---+
@@ -819,6 +873,182 @@ INFO:gguf-dump:* Loading: models/mamba-1.4b-f16.gguf
     482:       2048 |  2048,     1,     1,     1 | F32     | output_norm.weight
 ```
 
+### Overview of forward pass
+```
+           ↑
+           |
+          (X)---------------------+
+           |                      |
+       +------------+             |
+       |  SSM       |             |
+       +------------+             |
+           |                      |
+       +------------+       +------------+
+       | SilU/Swish |       | SilU/Swish |
+       +------------+       +------------+
+           |                      |
+           |                      |
+       +------------+             |
+       | Conv       |             |
+       +------------+             |
+            |                     |
+            |                     |
+       ------------          ------------
+       \          /          \          /
+        ----------            ----------
+            ↑                     ↑
+```
+
+
+The input embedding in Mamba goes through a projection from the input embedding
+space to the state space. The input tokens will have an embedding that the  
+model uses, for example 2048. The input vector will go through a linear project
+to the inner space dimension (`d_inner`)
+That is the input projection, next comes the selective scan.
+
+The selective scan (input mixig) is a convolutional operation that is applied
+to the input sequence. The input to this is the projected vector for the first
+step. This step will apply a chunk wise linear transformation to the input
+sequence.
+
+#### Exploration
+```console
+$ make debug-mamba-simple-prompt-multi
+gdb --args ./simple-prompt-multi 0 0 models/mamba-1.4b-f16.gguf
+(gdb) br build_mamba
+```
+
+```c++
+    struct ggml_cgraph * build_mamba() {
+        struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
+
+        struct ggml_tensor * cur;
+        struct ggml_tensor * inpL;
+
+        // {n_embd, n_tokens}
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+
+        struct ggml_tensor * state_copy = build_inp_s_copy();
+        struct ggml_tensor * state_mask = build_inp_s_mask();
+        for (int il = 0; il < n_layer; ++il) {
+           ...
+```
+Notice that similar to RWKV we are creating a `state_copy` tensor and a 
+`state_mask` tensor. The model in this case has 48 layers so we will iterate
+over them.
+
+For each layer we will have a normalization.
+```c++
+            // norm
+            cur = llm_build_norm(ctx0, inpL, hparams,
+                    model.layers[il].attn_norm, NULL,
+                    LLM_NORM_RMS, cb, il);
+            cb(cur, "attn_norm", il);
+
+            cur = llm_build_mamba(ctx0, lctx, batch, gf, cur,
+                    state_copy, state_mask,
+                    kv_head, n_kv, cb, il);
+```
+
+When a model is loaded by `llama_model_load` that function will call:
+```c++
+        try {
+            llm_load_hparams(ml, model);
+        } catch(const std::exception & e) {
+            throw std::runtime_error("error loading model hyperparameters: " + std::string(e.what()));
+        }
+```
+The `llm_load_hparams` function will load the hyperparameters from the model
+passed in. This is how `hparams` is populated. `llm_load_hparams` has a switch
+statement and a case for Mamba:
+```
+        case LLM_ARCH_MAMBA:
+            {
+                ml.get_key(LLM_KV_SSM_CONV_KERNEL,    hparams.ssm_d_conv);
+                ml.get_key(LLM_KV_SSM_INNER_SIZE,     hparams.ssm_d_inner);
+                ml.get_key(LLM_KV_SSM_STATE_SIZE,     hparams.ssm_d_state);
+                ml.get_key(LLM_KV_SSM_TIME_STEP_RANK, hparams.ssm_dt_rank);
+                ml.get_key(LLM_KV_SSM_DT_B_C_RMS, hparams.ssm_dt_b_c_rms, false);
+
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+
+                switch (hparams.n_layer) {
+                    case 24:
+                        switch (hparams.n_embd) {
+                            case 768: model.type = e_model::MODEL_SMALL; break;
+                            default: model.type = e_model::MODEL_UNKNOWN;
+                        } break;
+                    case 48:
+                        switch (hparams.n_embd) {
+                            case 1024: model.type = e_model::MODEL_MEDIUM; break;
+                            case 1536: model.type = e_model::MODEL_LARGE; break;
+                            case 2048: model.type = e_model::MODEL_XL; break;
+                            default: model.type = e_model::MODEL_UNKNOWN;
+                        } break;
+                    case 64:
+                        switch (hparams.n_embd) {
+                            case 2560: model.type = e_model::MODEL_3B; break;
+                            default: model.type = e_model::MODEL_UNKNOWN;
+                        } break;
+                    default: model.type = e_model::MODEL_UNKNOWN;
+                }
+            } break;
+```
+These are the hyperparameters specific to the Mamba model:
+```c++
+struct llama_hparams {
+    // for State Space Models
+    uint32_t ssm_d_conv  = 0;
+    uint32_t ssm_d_inner = 0;
+    uint32_t ssm_d_state = 0;
+    uint32_t ssm_dt_rank = 0;
+    bool ssm_dt_b_c_rms = false;
+```
+
+```c++
+static struct ggml_tensor * llm_build_mamba(
+        struct ggml_context * ctx,
+       struct llama_context & lctx,
+         const llama_ubatch & batch,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * cur,
+         struct ggml_tensor * state_copy,
+         struct ggml_tensor * state_mask,
+                    int32_t   kv_head,
+                    int32_t   n_kv,
+         const llm_build_cb & cb,
+                    int       il) {
+    const llama_model    & model   = lctx.model;
+    const llama_hparams  & hparams = model.hparams;
+    const llama_kv_cache & kv      = lctx.kv_self;
+    const int64_t d_conv  = hparams.ssm_d_conv;
+    const int64_t d_inner = hparams.ssm_d_inner;
+    const int64_t d_state = hparams.ssm_d_state;
+    const int64_t dt_rank = hparams.ssm_dt_rank;
+    const int64_t n_seqs  = batch.n_seqs;
+```
+Lets inspect these variables, starting with the size of the convolution kernel
+```console
+(gdb) p d_conv
+$21 = 4
+(gdb) p d_inner
+$22 = 4096
+(gdb) p d_state
+$23 = 16
+(gdb) p dt_rank
+$24 = 128
+```
+
+```c++
+    struct ggml_tensor * conv_states_all = kv.k_l[il];
+    struct ggml_tensor * ssm_states_all  = kv.v_l[il];
+
+    // (ab)using the KV cache to store the states
+    struct ggml_tensor * conv = llm_build_copy_mask_state(ctx,
+            graph, conv_states_all, state_copy, state_mask,
+            hparams.n_embd_k_s(), kv.size, kv_head, n_kv, n_seqs);
+```
+Again, simliar to what we went through with RWKV we are copying the state and
 
 
 (wip)
