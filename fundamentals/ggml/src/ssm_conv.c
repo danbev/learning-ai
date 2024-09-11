@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, result);
 
-  int n_threads = 4;
+  int n_threads = 1;
   enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
   if (st != GGML_STATUS_SUCCESS) {
     printf("could not compute graph\n");
