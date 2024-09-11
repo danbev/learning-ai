@@ -927,6 +927,32 @@ in a sense). This is what enables the capturing of local neighbors information.
 And notice that the kernel slides one position to the right at a time which
 means the length of the output will be the same as the input.
 
+Now, we also need to consider passing to ensure that the output length is
+correct. What I means is that consider the following input sequence of 4 tokens:
+```
+Input: [A, B, C, D]
+Kernal size: 3
+
+Step 1: [A B C] -> y_0
+Step 2: [B C D] -> y_1
+```
+There are no more steps to take and the output length has gone from 4 to 2. We
+can fix this by adding padding to the beginning of the input (for causual
+models):
+```
+Input: [0, 0, A, B, C, D]
+Kernal size: 3
+Step 1: [0 0 A] -> y_0
+Step 2: [0 A B] -> y_1
+Step 3: [A B C] -> y_2
+Step 4: [B C D] -> y_3
+```
+How do we know how much padding to add? Well, the padding size is equal to the
+kernel size minus 1. We need d_conv total elements for the first computation
+plus the "real" input value for the first step. This is the reason for the minus
+one.
+
+
 
 ### Mamba in llama.cpp
 This section will take a look at how Mamba in implemented in llama.cpp.
