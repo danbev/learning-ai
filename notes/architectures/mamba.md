@@ -801,6 +801,133 @@ We can visualize this as
                +---+
 ```
 
+### Convolution layer
+In the block diagram above we first have a projection followed by a convolution:
+```
+        input
+          |
+          |-----------------------------+
+          ↓                             |
+     +-----------+                +------------+
+    / projection  \              /  projection  \
+   +---------------+            +----------------+
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   | convolution   |                   |
+   +---------------+                   |
+          |                            |
+          ↓                            ↓
+```
+So the input consits of a sequence of tokens embeddings. The projection layer
+simply performs a linear transformation of the input embeddings to a higher
+dimensions. This higher dimension is specified as `d_inner` I think.
+
+Next we have the convolution layer. Now if we recall how a SSM works we have
+the internal state which captures information about past tokens. But we also
+want to be able to take the current tokens into accout and their interactions
+with each other. So the convoluation is about capturing local interactions
+efficiently.
+So we start with the token embeddings, and the we project them to a higher
+dimension and it is this higher dimension that the convolution is applied to.
+
+```
+Input sequence: "Dan loves icecream", That might be tokenized in to
+Tokens        : [2223, 25, 883, 10033]
+embeddings    :
+                 2223 : [1 2 3 4 5 6 7 8]
+                   25 : [9 8 7 6 5 4 3 2]
+                  883 : [1 2 3 4 5 6 7 8]
+                10033 : [9 8 7 6 5 4 3 2]
+```
+Now, the projection will take the embeddings vectors/matrix as input and
+increase the dimensions of these vectors. This is done using a learned matrix.
+The size of this matrix would be (embedding_size, projection_size). So if we
+wanted the increase the dimensions by 8 we would use (8, 16).
+```
+                 2223 : [1 2 3 4 5 6 7 8 ... 15 16]
+                   25 : [9 8 7 6 5 4 3 2 ... 15 16]
+                  883 : [1 2 3 4 5 6 7 8 ... 15 16]
+                10033 : [9 8 7 6 5 4 3 2 ... 15 16]
+```
+This would then be the input to the convolution operation. Now, remember that
+the convolution is about capturing local interactions. So we have a kernel
+matrix that is applied to the input. The kernel matrix is a learned matrix. So
+will have a matrix of size (kernel_size, projection_size):
+```
+(kernel_size, projection_size) = (3, 16)
+(    3         ,           16)
+       
+        0       1     2
+ 0   [w_0_0  w_0_1  w_0_1 ]
+     [w_1_2  w_2_2  w_3_2 ]
+     [w_1_3  w_2_3  w_3_3 ]
+     [ ...    ...   ...   ]
+15   [w_1_16 w_2_16 w_3_16]
+```
+This filter will be applied to each projected token embeddings the number of
+elements in the token embeddings equal to the kernel size, 3 in our case. 
+
+```
+Step 1 (first 3 positions):
+
+ Input           Kernel           Output
+ [1 2 3]   [w_0_0  w_0_1  w_0_2 ]   [y_0] 
+ [9 8 7]   [w_1_0  w_1_1  w_1_2 ]   [y_1]
+ [1 2 3]   [w_2_0  w_2_1  w_2_2 ]   [y_2]
+ [9 8 7]   [w_3_0  w_3_1  w_3_2 ]   [y_3]
+           [w_4_0  w_4_1  w_4_2 ]   [y_4]
+           [w_5_0  w_5_1  w_5_2 ]   [y_5]
+           [w_6_0  w_6_1  w_6_2 ]   [y_6]
+           [w_7_0  w_7_1  w_7_2 ]   [y_7]
+           [w_8_0  w_8_1  w_8_2 ]   [y_8]
+           [w_9_0  w_9_1  w_9_2 ]   [y_9]
+           [w_10_0 w_10_1 w_10_2]   [y_10]
+           [w_11_0 w_11_1 w_11_2]   [y_11]
+           [w_12_0 w_12_1 w_12_2]   [y_12]
+           [w_13_0 w_13_1 w_13_2]   [y_13]
+           [w_14_0 w_14_1 w_14_2]   [y_14]
+           [w_15_0 w_15_1 w_15_2]   [y_15]
+
+y_i = Σ(Input_j[0:3] ⊙ Kernel[i][0:3]) for j = 1 to 4
+
+So for y0:
+y_0 = ((1 * w_0_0) + (2 * w_0_1) + (3 * w_0_2)) +
+      ((9 * w_0_0) + (8 * w_0_1) + (7 * w_0_2)) +
+      ((1 * w_0_0) + (2 * w_0_1) + (3 * w_0_2)) +
+      ((9 * w_0_0) + (8 * w_0_1) + (7 * w_0_2))
+
+Step 2 (kernel slides one positions to the right):
+
+ Input           Kernel           Output
+ [2 3 4]   [w_0_0  w_0_1  w_0_2 ]   [y_0] 
+ [8 7 6]   [w_1_0  w_1_1  w_1_2 ]   [y_1]
+ [2 3 4]   [w_2_0  w_2_1  w_2_2 ]   [y_2]
+ [8 7 6]   [w_3_0  w_3_1  w_3_2 ]   [y_3]
+           [w_4_0  w_4_1  w_4_2 ]   [y_4]
+           [w_5_0  w_5_1  w_5_2 ]   [y_5]
+           [w_6_0  w_6_1  w_6_2 ]   [y_6]
+           [w_7_0  w_7_1  w_7_2 ]   [y_7]
+           [w_8_0  w_8_1  w_8_2 ]   [y_8]
+           [w_9_0  w_9_1  w_9_2 ]   [y_9]
+           [w_10_0 w_10_1 w_10_2]   [y_10]
+           [w_11_0 w_11_1 w_11_2]   [y_11]
+           [w_12_0 w_12_1 w_12_2]   [y_12]
+           [w_13_0 w_13_1 w_13_2]   [y_13]
+           [w_14_0 w_14_1 w_14_2]   [y_14]
+           [w_15_0 w_15_1 w_15_2]   [y_15]
+
+The process continues until the kernel has been applied to all the tokens in the
+input sequence.
+```
+So what we have done here is that we have taken three features from from the
+projected input embeddings and applied the kernel to them. This gives as a
+weighed sum of these features for accross all the tokens (mixing them together
+in a sense). This is what enables the capturing of local neighbors information.
+And notice that the kernel slides one position to the right at a time which
+means the length of the output will be the same as the input.
+
+
 ### Mamba in llama.cpp
 This section will take a look at how Mamba in implemented in llama.cpp.
 
