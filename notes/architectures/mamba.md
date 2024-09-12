@@ -956,7 +956,6 @@ one.
 To better understand how the convolution works there is a standalone example
 in [ssm_conv.c](../../fundamentals/ggml/src/ssm_conv.c).
 
-
 ### Mamba in llama.cpp
 This section will take a look at how Mamba in implemented in llama.cpp.
 
@@ -1033,6 +1032,11 @@ INFO:gguf-dump:* Loading: models/mamba-1.4b-f16.gguf
 ```
         input
           |
+          ↓
+   +---------------+
+   |     Norm      |
+   +---------------+
+          |
           |-----------------------------+
           ↓                             |
      +-----------+                +------------+
@@ -1081,10 +1085,23 @@ sequence.
 
 #### Exploration
 ```console
-$ make debug-mamba-simple-prompt-multi
-gdb --args ./simple-prompt-multi 0 0 models/mamba-1.4b-f16.gguf
+$ make debug-mamba-simple-prompt
+gdb --args ./simple-promt 0 0 models/mamba-1.4b-f16.gguf
 (gdb) br build_mamba
 ```
+
+This is a very basic example and will create a batch with one sequence and it
+will contains the tokens for the current prompt:
+```c++
+    std::string prompt = "What is LoRA?";
+```
+Note that I started this example using `simple-prompt-multi` which uses to
+sequences but I later changed this back as I think at least for the first
+iteration through the code it will be easer to understand with just one
+sequence. But the multi sequence version will be used when we want to understand
+the usage of the kv-cache, similar to what we did with RWKV. But there might
+be inaccurate comments below with code/debugging output that is not correct but
+I'll hopefully fix them all eventually.
 
 ```c++
     struct ggml_cgraph * build_mamba() {
@@ -1100,6 +1117,31 @@ gdb --args ./simple-prompt-multi 0 0 models/mamba-1.4b-f16.gguf
         struct ggml_tensor * state_mask = build_inp_s_mask();
         for (int il = 0; il < n_layer; ++il) {
            ...
+```
+
+```console
+(gdb) p batch
+$1 = (const llama_ubatch &) @0x7fffffffd4f0:
+{equal_seqs = true, n_tokens = 5, n_seq_tokens = 5, n_seqs = 1,
+token = 0x555555ac8610, embd = 0x0, pos = 0x555555ac8630,
+n_seq_id = 0x555555ac8650, seq_id = 0x555555ac7ce0, output = 0x555555ac8670 ""}
+```
+So if we inspect `inpL` we see that shape is:
+```console
+(gdb) p *inpL
+$2 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {2048, 5, 1, 1}, nb = {4, 8192, 40960, 40960},
+op = GGML_OP_GET_ROWS, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556726700, 0x7fff4ae40980, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0,
+name = "inp_embd", '\000' <repeats 55 times>,
+extra = 0x0}
+```
+So the `inpL` tensor is storing 5 token embeddings representing our prompt.
+
+We can inspect the embedding size using:
+```console
+(gdb) p lctx.model.hparams.n_embd
+$75 = 2048
 ```
 Notice that similar to RWKV we are creating a `state_copy` tensor and a 
 `state_mask` tensor. The model in this case has 48 layers so we will iterate
@@ -1117,8 +1159,31 @@ For each layer we will have a normalization.
                     state_copy, state_mask,
                     kv_head, n_kv, cb, il);
 ```
-
-When a model is loaded by `llama_model_load` that function will call:
+And then we have the Mamba layer:
+```c++
+static struct ggml_tensor * llm_build_mamba(
+        struct ggml_context * ctx,
+       struct llama_context & lctx,
+         const llama_ubatch & batch,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * cur,
+         struct ggml_tensor * state_copy,
+         struct ggml_tensor * state_mask,
+                    int32_t   kv_head,
+                    int32_t   n_kv,
+         const llm_build_cb & cb,
+                    int       il) {
+    const llama_model    & model   = lctx.model;
+    const llama_hparams  & hparams = model.hparams;
+    const llama_kv_cache & kv      = lctx.kv_self;
+    const int64_t d_conv  = hparams.ssm_d_conv;
+    const int64_t d_inner = hparams.ssm_d_inner;
+    const int64_t d_state = hparams.ssm_d_state;
+    const int64_t dt_rank = hparams.ssm_dt_rank;
+    const int64_t n_seqs  = batch.n_seqs;
+```
+Just a note about `model.hparams`. When a model is loaded by `llama_model_load`
+that function will call:
 ```c++
         try {
             llm_load_hparams(ml, model);
@@ -1173,6 +1238,7 @@ struct llama_hparams {
     bool ssm_dt_b_c_rms = false;
 ```
 
+So back to `llm_build_mamba`:
 ```c++
 static struct ggml_tensor * llm_build_mamba(
         struct ggml_context * ctx,
@@ -1195,7 +1261,7 @@ static struct ggml_tensor * llm_build_mamba(
     const int64_t dt_rank = hparams.ssm_dt_rank;
     const int64_t n_seqs  = batch.n_seqs;
 ```
-Lets inspect these variables, starting with the size of the convolution kernel
+Lets inspect these variables:
 ```console
 (gdb) p d_conv
 $21 = 4
@@ -1203,10 +1269,13 @@ $21 = 4
 $22 = 4096
 (gdb) p d_state
 $23 = 16
-(gdb) p dt_rank
-$24 = 128
 ```
+`d_conv` is the size of the kernel that will be used in the convolution.
+`d_inner` is the size of the inner space, what the projection layer projected
+the input embeddings to (from the input embedding dimension
+`lctx.model.hparams.n_embd model.n`).
 
+Next we have:
 ```c++
     struct ggml_tensor * conv_states_all = kv.k_l[il];
     struct ggml_tensor * ssm_states_all  = kv.v_l[il];
@@ -1217,6 +1286,176 @@ $24 = 128
             hparams.n_embd_k_s(), kv.size, kv_head, n_kv, n_seqs);
 ```
 Again, simliar to what we went through with RWKV we are calling
-`llm_build_copy_mask_state`.
+`llm_build_copy_mask_state` and passing in `kv.k_l[i]`. This will return a
+tensor with the following size:
+```console
+(gdb) p *conv
+gdb) p *conv
+$10 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {12288, 1, 1, 1}, nb = {4, 49152, 49152, 49152},
+op = GGML_OP_VIEW, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7fff4ae41500, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0}, view_src = 0x7fff4ae41500, view_offs = 0, data = 0x0, name = "node_2 (view)", '\000' <repeats 50 times>,
+extra = 0x0}
+```
+This will then get reshaped from a 2d tensor to a 3d tensor:
+```c++
+    conv = ggml_reshape_3d(ctx, conv, d_conv - 1, d_inner, n_seqs);
+```
+Notice that this making the x dimension `d_conv - 1` which is something we also
+did in the padding section above. That will result in a tensor like this:
+```console
+(gdb) p *conv
+$11 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {3, 4096, 1, 1}, nb = {4, 12, 49152, 49152}, op = GGML_OP_RESHAPE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7fff4ae41ac0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x7fff4ae41500, view_offs = 0, data = 0x0,
+name = "node_2 (view) (reshaped)", '\000' <repeats 39 times>, extra = 0x0}
+```
+And we can visualize the sequence:
+```
+ 0   0       2
+     [       ]
+        ...
+        ...
+        ...
+        ...
+        ...
+4095 [       ]
+```
+I'll get back to the `conv` tensor shortly and I'd also like to address what
+this is storing in the cache as that is not clear to me yet.
+TOOD: revisit and explain what is being cached.
+
+Next we do setup the `ssm` tensor by calling `llm_build_copy_mask_state` and the
+reshape it:
+```c++
+    struct ggml_tensor * ssm = llm_build_copy_mask_state(ctx,
+            graph, ssm_states_all, state_copy, state_mask,
+            hparams.n_embd_v_s(), kv.size, kv_head, n_kv, n_seqs);
+```
+But this tensor will have a different shape:
+```console
+(gdb) p *ssm
+$12 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {65536, 1, 1, 1}, nb = {4, 262144, 262144, 262144}, op = GGML_OP_VIEW,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x7fff4ae42080, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x7fff4ae42080, view_offs = 0, data = 0x0, name = "node_8 (view)", '\000' <repeats 50 times>,
+extra = 0x0}
+```
+And this will be reshaped into 16x4096x1:
+```c++
+    ssm = ggml_reshape_3d(ctx, ssm, d_state, d_inner, n_seqs);
+```
+```console
+(gdb) p *ssm
+$13 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {16, 4096, 1, 1}, nb = {4, 64, 262144, 262144}, op = GGML_OP_RESHAPE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7fff4ae42640, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x7fff4ae42080, view_offs = 0, data = 0x0,
+name = "node_8 (view) (reshaped)", '\000' <repeats 39 times>, extra = 0x0}
+```
+
+After that `cur` will be reshaped from 2048x5 to 2048x5x1:
+```c++
+    cur = ggml_reshape_3d(ctx, cur, cur->ne[0], n_seq_tokens, n_seqs);
+```
+```console
+(gdb) p *cur
+$17 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {2048, 5, 1, 1}, nb = {4, 8192, 40960, 40960}, op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7fff4ae410b0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x7fff4ae410b0, view_offs = 0, data = 0x0,
+name = "attn_norm-0 (reshaped)", '\000' <repeats 41 times>, extra = 0x0}
+```
+
+Next we are going to multiply the reshaped `cur` with `model.layers[i].ssm_in`
+```c++
+    struct ggml_tensor * xz = llm_build_lora_mm(lctx, ctx, model.layers[il].ssm_in, cur);
+```
+Is this the projection perhaps?
+```console
+(gdb) p *xz
+$18 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {8192, 5, 1, 1}, nb = {4, 32768, 163840, 163840}, op = GGML_OP_MUL_MAT,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0,
+src = {0x555556726cc0, 0x7fff4ae42920, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0}
+```
+I think this is the projection. Next a view of xz:
+```c++
+    //                                             4096        5         1        32768      163840
+    struct ggml_tensor * x = ggml_view_3d(ctx, xz, d_inner, xz->ne[1], xz->ne[2], xz->nb[1], xz->nb[2], 0);
+```
+This is the first half of sx. And then we take the second have by specyfing the
+same sizes but changing the offset to be `d_inner*ggml_element_size(xz)`:
+```c++
+    struct ggml_tensor * z = ggml_view_3d(ctx, xz, d_inner, xz->ne[1], xz->ne[2], xz->nb[1], xz->nb[2], d_inner*ggml_element_size(xz));
+```
+So at this point we are at the projection layer of a Mamba block (refering to
+the diagram we have above).
+
+Next, we have the convolution:
+```c++
+    // conv
+    {
+        // => {d_conv - 1 + n_seq_tokens, d_inner, n_seqs}
+        struct ggml_tensor * conv_x = ggml_concat(ctx, conv, ggml_transpose(ctx, x), 0);
+```
+We can inspect the transposed x tensor:
+```console
+(gdb) p *ggml_transpose(ctx, x)
+$25 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {5, 4096, 1, 1}, nb = {32768, 4, 163840, 163840}, op = GGML_OP_TRANSPOSE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7fff4ae42c00, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x7fff4ae42a90, view_offs = 0, data = 0x0,
+name = " (view) (transposed)", '\000' <repeats 43 times>, extra = 0x0}
+```
+And we are using concat and specifying the first dimension so this will..
+```console
+(gdb) p *conv_x
+$27 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {8, 4096, 1, 1}, nb = {4, 32, 131072, 131072}, op = GGML_OP_CONCAT,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7fff4ae41c30, 0x7fff4ae43050, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0}
+```
+
+TOOD: Revisit the following when using multiple sequences.
+```c++
+        // copy last (d_conv - 1) columns back into the state cache
+        struct ggml_tensor * last_conv = ggml_view_3d(ctx, conv_x, d_conv - 1, d_inner, n_seqs, conv_x->nb[1], conv_x->nb[2], n_seq_tokens*(conv_x->nb[0]));
+
+        ggml_build_forward_expand(graph,
+            ggml_cpy(ctx, last_conv,
+                ggml_view_1d(ctx, conv_states_all,
+                    (d_conv - 1)*(d_inner)*(n_seqs),
+                    kv_head*(d_conv - 1)*(d_inner)*ggml_element_size(conv_states_all))));
+```
+
+Next we have the convolution operation creation (recall that we are only
+building up the computation graph at this stage and the actual operation will
+happen during decoding later):
+
+So the tensor that we want to apply the convolution to is `conv_x` and the
+kernel is defined by `model.layers[il].ssm_conv1d`:
+```c++
+    x = ggml_ssm_conv(ctx, conv_x, model.layers[il].ssm_conv1d);
+```
+
+```console
+(gdb) p *model.layers[il].ssm_conv1d
+$32 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555556717cb0,
+ne = {4, 4096, 1, 1}, nb = {4, 16, 65536, 65536}, op = GGML_OP_NONE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7fff58666420,
+name = "blk.0.ssm_conv1d.weight", '\000' <repeats 40 times>, extra = 0x0}
+```
+The a bias is added:
+```c++
+        x = ggml_add(ctx, x, model.layers[il].ssm_conv1d_b);
+```
+And then we have the Silu:
+```c++
+        x = ggml_silu(ctx, x);
+```
 
 (wip)
