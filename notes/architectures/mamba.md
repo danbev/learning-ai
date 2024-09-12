@@ -819,16 +819,16 @@ In the block diagram above we first have a projection followed by a convolution:
           |                            |
           ↓                            ↓
 ```
-So the input consits of a sequence of tokens embeddings. The projection layer
+So the input consists of a sequence of tokens embeddings. The projection layer
 simply performs a linear transformation of the input embeddings to a higher
-dimensions. This higher dimension is specified as `d_inner` I think.
+dimensions. This higher dimension is specified as `d_inner`.
 
 Next we have the convolution layer. Now if we recall how a SSM works we have
 the internal state which captures information about past tokens. But we also
-want to be able to take the current tokens into accout and their interactions
+want to be able to take the current tokens into account and their interactions
 with each other. So the convoluation is about capturing local interactions
 efficiently.
-So we start with the token embeddings, and the we project them to a higher
+So we start with the token embeddings, and then we project them to a higher
 dimension and it is this higher dimension that the convolution is applied to.
 
 ```
@@ -927,6 +927,7 @@ in a sense). This is what enables the capturing of local neighbors information.
 And notice that the kernel slides one position to the right at a time which
 means the length of the output will be the same as the input.
 
+#### Padding
 Now, we also need to consider passing to ensure that the output length is
 correct. What I means is that consider the following input sequence of 4 tokens:
 ```
@@ -952,6 +953,8 @@ kernel size minus 1. We need d_conv total elements for the first computation
 plus the "real" input value for the first step. This is the reason for the minus
 one.
 
+To better understand how the convolution works there is a standalone example
+in [ssm_conv.c](../../fundamentals/ggml/src/ssm_conv.c).
 
 
 ### Mamba in llama.cpp
@@ -1028,30 +1031,42 @@ INFO:gguf-dump:* Loading: models/mamba-1.4b-f16.gguf
 
 ### Overview of forward pass
 ```
-           ↑
-           |
-          (X)---------------------+
-           |                      |
-       +------------+             |
-       |  SSM       |             |
-       +------------+             |
-           |                      |
-       +------------+       +------------+
-       | SilU/Swish |       | SilU/Swish |
-       +------------+       +------------+
-           |                      |
-           |                      |
-       +------------+             |
-       | Conv       |             |
-       +------------+             |
-            |                     |
-            |                     |
-       ------------          ------------
-       \          /          \          /
-        ----------            ----------
-            ↑                     ↑
+        input
+          |
+          |-----------------------------+
+          ↓                             |
+     +-----------+                +------------+
+    / projection  \              /  projection  \
+   +---------------+            +----------------+
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   | convolution   |                   |
+   +---------------+                   |
+          |                            |
+          ↓                            ↓
+   +---------------+            +----------------+
+   |     Silu      |            |    Silu        |
+   +---------------+            +----------------+
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   |     SSM       |                   |
+   +---------------+                   |
+          |                            |
+          ↓                            |
+   +---------------+                   |
+   | activation    |←------------------+
+   +---------------+
+          |
+          ↓
+   +---------------+
+    \  projection /
+     +-----------+
+          |
+          ↓
+       output
 ```
-
 
 The input embedding in Mamba goes through a projection from the input embedding
 space to the state space. The input tokens will have an embedding that the  
@@ -1059,7 +1074,7 @@ model uses, for example 2048. The input vector will go through a linear project
 to the inner space dimension (`d_inner`)
 That is the input projection, next comes the selective scan.
 
-The selective scan (input mixig) is a convolutional operation that is applied
+The selective scan (input mixix) is a convolutional operation that is applied
 to the input sequence. The input to this is the projected vector for the first
 step. This step will apply a chunk wise linear transformation to the input
 sequence.
@@ -1201,7 +1216,7 @@ $24 = 128
             graph, conv_states_all, state_copy, state_mask,
             hparams.n_embd_k_s(), kv.size, kv_head, n_kv, n_seqs);
 ```
-Again, simliar to what we went through with RWKV we are copying the state and
-
+Again, simliar to what we went through with RWKV we are calling
+`llm_build_copy_mask_state`.
 
 (wip)
