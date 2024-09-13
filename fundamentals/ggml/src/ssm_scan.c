@@ -27,7 +27,10 @@ int main(int argc, char **argv) {
   // input embedding dimension: 8 
   // state dimension: 16
   // s is the output of the input->projection->convolution->silu
-  struct ggml_tensor* s = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 16);
+  int d_state = 16;
+  int d_inner = 8;
+  int seq_len = 4;
+  struct ggml_tensor* s = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state , d_inner);
   ggml_set_name(s, "s");
   ggml_set_zero(s);
   printf("s nelements: %lld:\n", ggml_nelements(s));
@@ -38,21 +41,21 @@ int main(int argc, char **argv) {
 
   // x is the token embeddings for the input sequence which consists of 4 tokens
   // of dimension 8.
-  struct ggml_tensor* x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 4);
+  struct ggml_tensor* x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
   ggml_set_name(s, "x");
   ggml_set_f32_nd(x, 0, 0, 0, 0, 1.0f);
 
   // dt is the delta and we have one delta value per token.
-  struct ggml_tensor* dt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 4);
+  struct ggml_tensor* dt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
 
   // A is the learned state transition matrix.
-  struct ggml_tensor * A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 16, 16);
+  struct ggml_tensor * A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 16, d_inner);
 
   // B is the dynamic (not here but in a real Mamba model) input transition matrix.
-  struct ggml_tensor * B = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 16);
+  struct ggml_tensor * B = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
 
   // C is the output transition matrix.
-  struct ggml_tensor * C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 16);
+  struct ggml_tensor * C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
 
   struct ggml_tensor* r = ggml_ssm_scan(ctx, s, x, dt, A, B, C);
 
