@@ -1,13 +1,24 @@
 CC = gcc
 CXX = g++
-CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -fopenmp
+CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable
 LDFLAGS = -Lggml/build/src/
-CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF
+CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DGGML_BLAS=OFF
 
 CUDA_DIR = /usr/local/cuda-12.2/lib64
 CUDA_FLAGS :=
 
 VULKAN_FLAGS :=
+
+OS := $(shell uname -s)
+
+os:
+ifeq ($(OS),Linux)
+	@echo "This is a Linux system."
+else ifeq ($(OS),Darwin)
+	@echo "This is a macOS system."
+else
+	@echo "This is not a recognized system."
+endif
 
 SRCDIR = src
 BINDIR = bin
@@ -17,6 +28,12 @@ SOURCES_CPP := $(wildcard $(SRCDIR)/*.cpp)
 TARGETS_C := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES_C))
 TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 
+ifeq ($(OS),Linux)
+CFLAGS += -fopenmp
+else ifeq ($(OS),Darwin)
+CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
+endif
+
 .PHONY: all clean
 
 all: $(TARGETS_C)
@@ -25,7 +42,7 @@ ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
 $(TARGETS_C): % : $(SRCDIR)/%.c | bindir
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
-	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
+	-Wl,-force_load,ggml/build/src/libggml.a \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
 $(TARGETS_CPP): % : $(SRCDIR)/%.cpp | bindir
