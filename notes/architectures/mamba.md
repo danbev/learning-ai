@@ -786,13 +786,18 @@ get the model to learn a specific pattern in the input sequence it will be
 difficult as it does not take the input into consideration, it cannot do content
 aware resoning (the parameters A, B, C and D are the same for all time steps).
 So an SSM will treat all inputs equally.
-
-But if the SSM processes each token at a time, why would it not be able to
-handle the selective copy task? If we ask it to copy all nouns it would process
-each token one by one and would have integrated the tokens into its hidden state
-(compressed history) and I would have though would be able to recall these.
-This is not how it works and an vanilla SSM processes each token in the same
-way whether it is a noun or a verb or whatever.
+But what does this really mean. Like my initial thought was that if I wanted the model
+to selectively copy something from an input sequence then I did not seen an issue with
+that. My reasoning was that the tokens in the sequence are processed one by one, so
+tokens earlier in the sequence would have been integrated into the hidden state by
+the time the following sequence tokens are processed, so in my mind it should/could be
+able to recall these. No the issue is not that the information is not there but it is
+more an issue of how accessible/usable it is. As more tokens are processed the earlier
+tokens get more and more compressed and mixed with newer tokens. And there is not direct
+addressing like there is in the tranformers with the self-attention mechanism.
+So the information is there but the S4 model lacks the ability to identify which part of
+the hidden state corresponds to the asked for information and use that in a targeted way
+for the current token.
 
 The fixed nature of the model means it can't selectively choose which
 information to retain or discard from its hidden state. It compresses all
@@ -919,6 +924,24 @@ each forward pass. And not that this is not an element wise exponentiation but
 a matrix exponentiation as this preserves the structure of the matrix (like
 eigenvalues and eigenvectors).
 So while A is a learned parameter it is adapted for each input token.
+
+Now Δ is a dynamic parameter as we saw and this is called the scale factor or
+delta. So recall that the original state space model is defined for a continous
+time system. The descretize function is used to convert the continous time
+system into a discrete time system. I think we can imaging this as a graph/curve
+as the continous time system and then we have to sample this curve at specific
+points to get the descrete time system. The delta is how ofter we sample the
+curve. So sample often we will get more information close by in the input sequence
+and if we have a larger sampling value we will get less information close by.
+
+![Mamba Delta Sampling Image](../images/mamba-delta-sampling.svg)
+
+And because the delta is dynamic it can be adjusted for each `token`, even if the
+function sΔ(x) takes the entire input sequence it still produces a Δ value for each
+token/position in the sequence.
+I think token as for example if we have a token that represents somehing like "then" it
+might be important and a smaller delta might be appropraite to capture the nerby tokens.
+
 
 And lastly we have the SSM function has the parameters A, B, and C matrices and
 takes as input the sequence of tokens:

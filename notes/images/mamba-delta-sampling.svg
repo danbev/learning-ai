@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <!-- Background -->
+  <rect width="400" height="300" fill="#f0f0f0"/>
+  
+  <!-- Axes -->
+  <line x1="50" y1="250" x2="350" y2="250" stroke="black" stroke-width="2"/>
+  <line x1="50" y1="50" x2="50" y2="250" stroke="black" stroke-width="2"/>
+  
+  <!-- Continuous curve -->
+  <path d="M50 200 Q100 100 150 180 T250 120 T350 200" fill="none" stroke="blue" stroke-width="2"/>
+  
+  <!-- Small delta sampling -->
+  <circle cx="50" cy="200" r="3" fill="red"/>
+  <circle cx="75" cy="150" r="3" fill="red"/>
+  <circle cx="100" cy="120" r="3" fill="red"/>
+  <circle cx="125" cy="150" r="3" fill="red"/>
+  <circle cx="150" cy="180" r="3" fill="red"/>
+  
+  <!-- Large delta sampling -->
+  <circle cx="50" cy="200" r="3" fill="green"/>
+  <circle cx="150" cy="180" r="3" fill="green"/>
+  <circle cx="250" cy="120" r="3" fill="green"/>
+  <circle cx="350" cy="200" r="3" fill="green"/>
+  
+  <!-- Labels -->
+  <text x="200" y="280" text-anchor="middle" font-size="14">Time</text>
+  <text x="30" y="150" text-anchor="middle" font-size="14" transform="rotate(-90 30 150)">State</text>
+  <text x="200" y="30" text-anchor="middle" font-size="16" font-weight="bold">Continuous vs Discrete Sampling</text>
+  <text x="370" y="100" text-anchor="start" font-size="12" fill="blue">Continuous</text>
+  <text x="370" y="120" text-anchor="start" font-size="12" fill="red">Small Δ</text>
+  <text x="370" y="140" text-anchor="start" font-size="12" fill="green">Large Δ</text>
+</svg>
