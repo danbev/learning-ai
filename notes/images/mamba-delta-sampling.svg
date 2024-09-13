@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
   <!-- Background -->
-  <rect width="400" height="300" fill="#f0f0f0"/>
+  <rect width="400" height="400" fill="#f0f0f0"/>
   
   <!-- Axes -->
   <line x1="50" y1="250" x2="350" y2="250" stroke="black" stroke-width="2"/>
@@ -23,10 +23,17 @@
   <circle cx="350" cy="200" r="3" fill="green"/>
   
   <!-- Labels -->
-  <text x="200" y="280" text-anchor="middle" font-size="14">Time</text>
-  <text x="30" y="150" text-anchor="middle" font-size="14" transform="rotate(-90 30 150)">State</text>
-  <text x="200" y="30" text-anchor="middle" font-size="16" font-weight="bold">Continuous vs Discrete Sampling</text>
-  <text x="370" y="100" text-anchor="start" font-size="12" fill="blue">Continuous</text>
-  <text x="370" y="120" text-anchor="start" font-size="12" fill="red">Small Δ</text>
-  <text x="370" y="140" text-anchor="start" font-size="12" fill="green">Large Δ</text>
+  <text x="200" y="280" text-anchor="middle" font-size="16">Time</text>
+  <text x="30" y="150" text-anchor="middle" font-size="16" transform="rotate(-90 30 150)">State</text>
+  <text x="200" y="30" text-anchor="middle" font-size="18" font-weight="bold">Continuous vs Discrete Sampling</text>
+  
+  <!-- Legend (moved below the graph) -->
+  <line x1="50" y1="300" x2="80" y2="300" stroke="blue" stroke-width="2"/>
+  <text x="85" y="305" text-anchor="start" font-size="14">Continuous</text>
+  
+  <circle cx="65" cy="330" r="3" fill="red"/>
+  <text x="85" y="335" text-anchor="start" font-size="14">Small Δ (frequent sampling)</text>
+  
+  <circle cx="65" cy="360" r="3" fill="green"/>
+  <text x="85" y="365" text-anchor="start" font-size="14">Large Δ (infrequent sampling)</text>
 </svg>
