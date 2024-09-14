@@ -50,6 +50,11 @@ int main(int argc, char **argv) {
   ggml_set_f32_nd(x, 0, 0, 0, 0, 1.0f);
 
   // dt is the delta and we have one delta value per token.
+  //           d_inner
+  // token 0 [0  ...  7]
+  // token 1 [0  ...  7]     seq_len
+  // token 2 [0  ...  7]
+  // token 3 [0  ...  7]
   struct ggml_tensor* dt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
   ggml_set_name(dt, "delta");
 
