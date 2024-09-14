@@ -12,24 +12,23 @@ int main(int argc, char **argv) {
     .mem_buffer = NULL,
   };
   struct ggml_context* ctx = ggml_init(params);
-
-  /*
-    GGML_API struct ggml_tensor * ggml_ssm_scan(
-            struct ggml_context * ctx,
-            struct ggml_tensor  * s,
-            struct ggml_tensor  * x,
-            struct ggml_tensor  * dt,
-            struct ggml_tensor  * A,
-            struct ggml_tensor  * B,
-            struct ggml_tensor  * C);
-   */
-  // sequence lenght: 4
-  // input embedding dimension: 8 
-  // state dimension: 16
-  // s is the output of the input->projection->convolution->silu
-  int d_state = 16;
+  // d_inner is the dimension of the inner layer (after the projection layer).
   int d_inner = 8;
+  // seq_len is the length of the input sequence.
   int seq_len = 4;
+  // d_state is the dimension of the state vector
+  int d_state = 16;
+
+  // s is the output of the input->projection->convolution->silu and is what will be scanned.
+  //           d_state
+  //       0 [0  ...  7]
+  //       1 [0  ...  7]     d_inner
+  //       2 [0  ...  7]
+  //       3 [0  ...  7]
+  //       4 [0  ...  7]
+  //       5 [0  ...  7]
+  //       6 [0  ...  7]
+  //       7 [0  ...  7]
   struct ggml_tensor* s = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state , d_inner);
   ggml_set_name(s, "s");
   ggml_set_zero(s);
@@ -41,23 +40,53 @@ int main(int argc, char **argv) {
 
   // x is the token embeddings for the input sequence which consists of 4 tokens
   // of dimension 8.
+  //           d_inner
+  // token 0 [0  ...  7]
+  // token 1 [0  ...  7]     seq_len
+  // token 2 [0  ...  7]
+  // token 3 [0  ...  7]
   struct ggml_tensor* x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
-  ggml_set_name(s, "x");
+  ggml_set_name(x, "x");
   ggml_set_f32_nd(x, 0, 0, 0, 0, 1.0f);
 
   // dt is the delta and we have one delta value per token.
   struct ggml_tensor* dt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
+  ggml_set_name(dt, "delta");
 
   // A is the learned state transition matrix.
-  struct ggml_tensor * A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 16, d_inner);
+  //           d_state
+  //       0 [0  ...  7]
+  //       1 [0  ...  7]     d_inner
+  //       2 [0  ...  7]
+  //       3 [0  ...  7]
+  //       4 [0  ...  7]
+  //       5 [0  ...  7]
+  //       6 [0  ...  7]
+  //       7 [0  ...  7]
+  struct ggml_tensor* A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, d_inner);
+  ggml_set_name(A, "A");
 
   // B is the dynamic (not here but in a real Mamba model) input transition matrix.
-  struct ggml_tensor * B = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
+  //           d_state
+  // token 0 [0  ...  7]
+  // token 1 [0  ...  7]     seq_len
+  // token 2 [0  ...  7]
+  // token 3 [0  ...  7]
+  struct ggml_tensor* B = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
+  ggml_set_name(B, "B");
 
   // C is the output transition matrix.
-  struct ggml_tensor * C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
+  //           d_state
+  // token 0 [0  ...  7]
+  // token 1 [0  ...  7]     seq_len
+  // token 2 [0  ...  7]
+  // token 3 [0  ...  7]
+  struct ggml_tensor* C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
+  ggml_set_name(C, "C");
 
+  // r is the result of the scan operation.
   struct ggml_tensor* r = ggml_ssm_scan(ctx, s, x, dt, A, B, C);
+  ggml_set_name(r, "result");
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, r);
