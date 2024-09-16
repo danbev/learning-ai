@@ -70,6 +70,85 @@ from transformers. So we get the best of both worlds.
        output
 ```
 
+### Continous State Space in Mamba
+The continuous state space can be viewed simliar to an embedding space. So the
+state space is a high-dimensional vector space where each dimension might
+represent some abstract feature or concept. The state at any given point in time
+is a point/vector in this space.
+
+We might be able to think of the current state, the point/vector, as the last
+token's position in this space. And if the next token is "simliar" perhaps
+semantically we might only transform/move the state a little, but if they are
+not very simliar we might move the point further.
+For example, if the we processed the token representing "cat" followed by a
+token representing "kitten" we might only move a little as the context is not
+changing very much. But if there is a token representing "microbe" we might move
+further as this is a different context.
+
+We can think of the current state as a point/vector representing the model's
+understanding up to and including the last processed token.
+
+So the current state of the system is a vector that has a point somewhere in
+this space. The A matrix is a transformation that moves this vector to a new
+point in the space. It suggests a direction the this point would naturally drift.
+The B matrix determines how new input tokens influence the states position.
+
+This is where delta comes in where it can control how much the state is
+transformed.
+
+Now, we need to keep in mind that we are dealing with an underlying continious
+system, and A represents this continious-time dynamics. This might be described
+a a differential equation like:
+```
+  dx
+  -- = A x(t)
+  dt
+
+x(t) = state at time t
+A    = state transition matrix
+```
+This describes how the state evolves over time without any input. So A is this
+State transition matrix which describes how the system would evolve natrually
+over time if there was not input to the system.
+In Mamba we have a discrete system so we are approximating this continous system
+with a discrete one:
+```
+x[t+1] = exp(Δ * A) * x[t]
+
+x(t) = state at time t
+A    = state transition matrix
+Δ    = time step
+```
+Notice that there is still no input here.
+The B matrix allows the input to influence the state transition.
+```
+Δ * B * u[t]
+
+u[k] = input at time t
+Δ    = time step
+B    = input matrix
+```
+The `exp(Δ * A) * x[t]` part evolves the current state as if no input occurred.
+The `Δ * B * u[t]` part adds the effect of the current input.
+The combination of these two parts is the new state after processing the
+current token:
+```
+x[t+1] = exp(Δ * A) * x[t] + Δ * B * u[t]
+```
+And again the delta is dynamic and can be adjusted for each token and can
+control the step size (smaller steps to stay within the current context, larger
+to perhaps move to a different context).
+
+
+And lastly we have the SSM function has the parameters A, B, and C matrices and
+takes as input the sequence of tokens:
+
+```
+y = SSM(A, B, C,)(x)
+```
+Now, even though SSM takes the whole sequence of input tokens (B, L, D) it
+operates on each token independently. 
+
 ### State Space Models
 
 ```
@@ -766,84 +845,6 @@ Now Δ is a dynamic parameter as we saw and this is called the scale factor or
 delta. So recall that the original state space model is defined for a continous
 time system.
 
-### Continous State Space in Mamba
-The continuous state space can be viewed simliar to an embedding space. So the
-state space is a high-dimensional vector space where each dimension might
-represent some abstract feature or concept. The state at any given point in time
-is a point/vector in this space.
-
-We might be able to think of the current state, the point/vector, as the last
-token's position in this space. And if the next token is "simliar" perhaps
-semantically we might only transform/move the state a little, but if they are
-not very simliar we might move the point further.
-For example, if the we processed the token representing "cat" followed by a
-token representing "kitten" we might only move a little as the context is not
-changing very much. But if there is a token representing "microbe" we might move
-further as this is a different context.
-
-We can think of the current state as a point/vector representing the model's
-understanding up to and including the last processed token.
-
-So the current state of the system is a vector that has a point somewhere in
-this space. The A matrix is a transformation that moves this vector to a new
-point in the space. It suggests a direction the this point would naturally drift.
-The B matrix determines how new input tokens influence the states position.
-
-This is where delta comes in where it can control how much the state is
-transformed.
-
-Now, we need to keep in mind that we are dealing with an underlying continious
-system, and A represents this continious-time dynamics. This might be described
-a a differential equation like:
-```
-  dx
-  -- = A x(t)
-  dt
-
-x(t) = state at time t
-A    = state transition matrix
-```
-This describes how the state evolves over time without any input. So A is this
-State transition matrix which describes how the system would evolve natrually
-over time if there was not input to the system.
-In Mamba we have a discrete system so we are approximating this continous system
-with a discrete one:
-```
-x[t+1] = exp(Δ * A) * x[t]
-
-x(t) = state at time t
-A    = state transition matrix
-Δ    = time step
-```
-Notice that there is still no input here.
-The B matrix allows the input to influence the state transition.
-```
-Δ * B * u[t]
-
-u[k] = input at time t
-Δ    = time step
-B    = input matrix
-```
-The `exp(Δ * A) * x[t]` part evolves the current state as if no input occurred.
-The `Δ * B * u[t]` part adds the effect of the current input.
-The combination of these two parts is the new state after processing the
-current token:
-```
-x[t+1] = exp(Δ * A) * x[t] + Δ * B * u[t]
-```
-And again the delta is dynamic and can be adjusted for each token and can
-control the step size (smaller steps to stay within the current context, larger
-to perhaps move to a different context).
-
-
-And lastly we have the SSM function has the parameters A, B, and C matrices and
-takes as input the sequence of tokens:
-
-```
-y = SSM(A, B, C,)(x)
-```
-Now, even though SSM takes the whole sequence of input tokens (B, L, D) it
-operates on each token independently. 
 
 _wip_
 
