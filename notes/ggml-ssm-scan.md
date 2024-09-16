@@ -43,6 +43,9 @@ enables us to ignore the threading code.
 (lldb) p n_s
 (const int64_t) 1
 ```
+Perhaps `nc` stands for number of channels?
+
+
 The main loop will loop over all the sequences, which in our case is only 1:
 ```c
     for (int i3 = 0; i3 < n_s; ++i3) {
@@ -255,3 +258,16 @@ Next we will iteratate over the `d_state` (16 in our case):
 ```c
                     float state = (s0[i] * expf(dt_soft_plus * A[i])) + (B[i0] * x_dt);
 ```
+So we have `s0[i]` which is the previous state value. 
+`dt_soft_plus` is the delta value, A[i] is the A tensor value, `B[i0]` is the B tensor value.
+`x_dt` is the input value mixed with the delta value. 
+
+```
+x[k] = Δ(Δt) x[k-1] + Δt * B * u[k]
+y[k] = C * x[k]
+
+Where Δ(Δt) = exp(A * Δt) is the state transition matrix.
+```
+So this is pretty similar. 
+_wip_
+
