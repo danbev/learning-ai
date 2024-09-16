@@ -30,8 +30,10 @@ TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 
 ifeq ($(OS),Linux)
 CFLAGS += -fopenmp
+WHOLE_ARCHIVE = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
+WHOLE_ARCHIVE = -Wl,-force_load,ggml/build/src/libggml.a
 endif
 
 .PHONY: all clean
@@ -42,12 +44,12 @@ ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
 $(TARGETS_C): % : $(SRCDIR)/%.c | bindir
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
-	-Wl,-force_load,ggml/build/src/libggml.a \
+	$(WHOLE_ARCHIVE) \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
 $(TARGETS_CPP): % : $(SRCDIR)/%.cpp | bindir
 	$(CXX) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
-	-Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive \
+	$(WHOLE_ARCHIVE) \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
 .PHONY: pre-quants
