@@ -229,6 +229,10 @@ values. This step is called discretization in the state space model.
 
 [ADC]: https://github.com/danbev/learning-iot/tree/master?tab=readme-ov-file#analog-to-digital-converter-adc
 
+But we don't have a continous signal in this case but in this case we can think
+of the inner state space as continous. Like a continous space that represents
+a rich, unintrupted representation of information.
+
 So instead of the using functions as shown above with concrete values we will
 transform A and B into discrete values and the equations become:
 ```
@@ -237,6 +241,15 @@ hₜ = Ahₜ₋₁ + Bxₜ
 yₜ = Chₜ+ Dxₜ
 ```
 To get the `Â` and `B̂` values a process called discretization is used.
+This is like sampling from the continous space to get discrete values. And we
+can control how often we sample using a parameter Δ which is the interval we
+want to sample. This delta is adaptive and can be adjusted depending on the
+current input token. If we think of this as the distance between points we are
+sampling we might want to increase this distance depending on the current token
+being processed. If the token represents a word like "then" we might want to use
+a shorter distance so that we sample more often to capture the context. And if
+the token represents a word that is not as important like "the" we might want to
+use a larger distance so that we sample less often.
 
 ### Discretization
 So we will first discretize the parameters A, and B of the state space model,
