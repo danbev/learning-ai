@@ -241,15 +241,6 @@ hₜ = Ahₜ₋₁ + Bxₜ
 yₜ = Chₜ+ Dxₜ
 ```
 To get the `Â` and `B̂` values a process called discretization is used.
-This is like sampling from the continous space to get discrete values. And we
-can control how often we sample using a parameter Δ which is the interval we
-want to sample. This delta is adaptive and can be adjusted depending on the
-current input token. If we think of this as the distance between points we are
-sampling we might want to increase this distance depending on the current token
-being processed. If the token represents a word like "then" we might want to use
-a shorter distance so that we sample more often to capture the context. And if
-the token represents a word that is not as important like "the" we might want to
-use a larger distance so that we sample less often.
 
 ### Discretization
 For some background on this we can think of the internal state of the system
