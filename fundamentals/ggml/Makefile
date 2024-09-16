@@ -2,23 +2,19 @@ CC = gcc
 CXX = g++
 CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable
 LDFLAGS = -Lggml/build/src/
+
+OS := $(shell uname -s)
+
+ifeq ($(OS),Linux)
+CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF
+else ifeq ($(OS),Darwin)
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DGGML_BLAS=OFF
+endif
 
 CUDA_DIR = /usr/local/cuda-12.2/lib64
 CUDA_FLAGS :=
 
 VULKAN_FLAGS :=
-
-OS := $(shell uname -s)
-
-os:
-ifeq ($(OS),Linux)
-	@echo "This is a Linux system."
-else ifeq ($(OS),Darwin)
-	@echo "This is a macOS system."
-else
-	@echo "This is not a recognized system."
-endif
 
 SRCDIR = src
 BINDIR = bin
