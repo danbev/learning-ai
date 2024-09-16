@@ -110,6 +110,22 @@ A    = state transition matrix
 This describes how the state evolves over time without any input. So A is this
 State transition matrix which describes how the system would evolve natrually
 over time if there was not input to the system.
+So that is the countinous system which is a differential equation and
+the solution to this is:
+```
+x(t) = e^(At) * x(0)
+
+x(t)   = state at time t, typically a vector.
+x(0)   = initial state at time 0.
+e^(At) = matrix exponential of A * t. This captures the cumulative effect of
+         the state transition matrix A over time t. Think of this an compounding
+         the effect of A over time (line componding interest) and.
+```
+Think of this an compounding the effect of A over time (line componding
+interest from 0 to time t) and multiplying this by the initial state gives us
+the state at time t. It's like compounding the effect of A continuously from 0
+to t. Kind of like transforming the inital state by A for a duration of t.
+
 In Mamba we have a discrete system so we are approximating this continous system
 with a discrete one:
 ```
@@ -139,12 +155,17 @@ And again the delta is dynamic and can be adjusted for each token and can
 control the step size (smaller steps to stay within the current context, larger
 to perhaps move to a different context).
 
+We also have the C matrix which is the ouput matrix and this is like a
+projection/transformation from the state space back to a space suitable for
+the next layer (or the output of the model). And C is also generated based on
+the current input token so it is dynamic. This can allow the model to reduce
+noise or irrelevant information so that it is not passed to the next layer.
 
-And lastly we have the SSM function has the parameters A, B, and C matrices and
-takes as input the sequence of tokens:
-
+And lastly we have the SSM function which has the parameters A_bar, B_bar (these
+have been discretized), and C matrices and takes as input the sequence of
+tokens:
 ```
-y = SSM(A, B, C,)(x)
+y = SSM(A_bar, B_bar, C,)(x)
 ```
 Now, even though SSM takes the whole sequence of input tokens (B, L, D) it
 operates on each token independently. 
@@ -911,10 +932,10 @@ wanted the increase the dimensions by 8 we would use (8, 16).
 This would then be the input to the convolution operation. Now, remember that
 the convolution is about capturing local interactions. So we have a kernel
 matrix that is applied to the input. The kernel matrix is a learned matrix. So
-will have a matrix of size (kernel_size, projection_size):
+it will have a matrix of size (kernel_size, projection_size):
 ```
 (kernel_size, projection_size) = (3, 16)
-(    3         ,           16)
+(    3      ,       16       )
        
         0       1     2
  0   [w_0_0  w_0_1  w_0_1 ]
@@ -980,8 +1001,8 @@ input sequence.
 ```
 So what we have done here is that we have taken three features from from the
 projected input embeddings and applied the kernel to them. This gives as a
-weighed sum of these features for accross all the tokens (mixing them together
-in a sense). This is what enables the capturing of local neighbors information.
+weighed sum of these features accross all the tokens (mixing them together in a
+sense). This is what enables the capturing of local neighbors information.
 And notice that the kernel slides one position to the right at a time which
 means the length of the output will be the same as the input.
 
