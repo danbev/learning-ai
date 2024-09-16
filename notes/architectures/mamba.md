@@ -252,187 +252,18 @@ the token represents a word that is not as important like "the" we might want to
 use a larger distance so that we sample less often.
 
 ### Discretization
+For some background on this we can think of the internal state of the system
+as a continous space of information. When we process tokens there are in a
+descrete values. The A (state transition), B (input transition), and C
+(output transition) matrices operate in the continuous space.
+
+
 So we will first discretize the parameters A, and B of the state space model,
 which means that we will convert them from continuous values to discrete values.
 
 I think there are multiple methods/ways to do this but the paper mentions
-the bilinear (Tustin's) transform method which is a method for converting a
-continous time system into a discrete time system. It provides a way of
-approximating the behaviour of a continuous time system with a discrete time
-system.
-
-The S-domain is the continuous time domain and the Z-domain is the discrete
-time domain.
-The S-plane is used in continuous systems and can be visualized as a x-y plane
-but for complex numbers. The x-axis is the real part of the complex number,
-and the y-axis is the imaginary part of the complex number: 
-```
-Imaginary
-part         ↑
-             |
-             |
-             |
-             |
-             +------------------→ Real part
-
-
-S = σ + jω
-
-σ = real part which represents the decay or growth rate
-ω = imaginary part which represents the oscillation rate, 0 = no oscillation
-j = √-1 (imaginary unit)
-```
-
-And then we have the Z-plane which is used in discrete systems and can be
-visualized as a x-y plane but for complex numbers. The x-axis is the real part
-of the complex number, and the y-axis is the imaginary part of the complex just
-like in the S-plane:
-```
-Imaginary
-part         ↑
-             |
-             |
-             |
-             |
-             +------------------→ Real part
-
-z = re^(jθ)
-
-re = magnitude
-e = Euler's number
-θ = phase angle
-j = √-1 (imaginary unit)
-```
-The Z-plane is often represented in polar coordinates because discrete-time
-signals are inherently periodic due to sampling.
-
-So the bilinear transform is taking a point (or points I guess, but lets use one
-point for this example) in the S-plane and representing it as a point in the
-Z-plane.
-
-Lets take the following point in the S-plane, S = -1 +2j with a sampling
-period of T = 1, and see how it is represented in the Z-plane:
-
-![image](../images/bilinear.png)
-
-So if we have a continuous time system represented by the variable S and we want
-to convert it to a discrete time system represented equalivant variable z, we
-use the inverse of the bilinear transform:
-```
-    2   (z - 1)
-S = - * -------
-    T   (z + 1)
-
-We multiply both sides by the reciprical of 2/T which is T/2:
-T       T   2   (z - 1)
-- * S = - * - * -------
-2       2   T   (z + 1)
-
-Now, cross multiply to get rid of fractions:
-        TS
-(z + 1) -- = z - 1
-        2
-
-Rearrange the left side:
-Ts
--- (z + 1) = z - 1
-2
-
-Expand the left side:
-TS       TS
--- * z + -- = z - 1
-2        2
-
-Move Z to the left side:
-TS                TS
--- * Z - Z = -1 - --
-2                 2
-
-  TS              TS
-Z(-- - 1) = -1  - --
-   2               2
-
-Solve for Z by dividing both sides by (TS/2 - 1):
-    -1 - (TS/2)
-Z = -----------
-    TS/2 - 1
-
-    -2 - TS
-Z = -------
-    TS - 2
-
-    -(TS + 2)
-Z = ---------
-     TS - 2
-
-      TS + 2
-Z = - ------
-      TS - 2
-
-```
-And in our example above we had S=-1+2j and T=1 so we can plug those values in
-(recall that j is the imaginary unit √-1):
-```
-      TS + 2
-Z = - ------
-      TS - 2
-
-      1(-1+2j) + 2
-Z = - ------------
-      1(-1+2j) - 2
-
-T times S is 1 (-1+2j) so we can replace TS with -1+2j:
-      -1+2j + 2
-Z = - ------------
-      -1+2j - 2
-
-Then we can add 2 to the real part of the numerator and denominator:
-       1 + 2j
-Z = - -------
-      -3 + 2j
-
-Multiple by the complex conjugate of the denominator (-3-2j):
-      (1 + 2j)  (-3 - 2j)
-Z = - -----------------
-      (-3 + 2j) (-3 - 2j)
-
-      -3 - 2j - 6j - 4j²
-Z = - -----------------
-        9 - 4j²
-
-Replace j² with -1:
-      -3 - 2j - 6j - 4(-1)
-Z = - -----------------
-       9 - 4(-1)
-
-      -3 - 2j - 6j + 4
-Z = - -----------------
-       9 + 4
-
-      -3 - 8j + 4
-Z = - -----------
-       13
-
-Separate the real and imaginary parts:
-      1 - 8j
-Z = - -------
-       13
-
-       1    8j
-Z = - --- - --
-      13    13
-
-       1    8j
-Z = - --- + --
-      13    13
-
--1/13 = -0.07692307692307693 which is the real part (or x-axis above)
-8/13j = 0.6153846153846154j which is the imaginary part (or y-axis above)
-```
-
-When we apply the bilinear transform to the state space model we are
-recalculating how the system's state should be updated in descrete time
-intervales instead of continuous time intervals.
+the zero-order hold transform method which is a method for converting a
+descrite time signal to continous time signal (the inner space). 
 
 So instead of the using functions as shown above we concrete values we will
 transform A and B into discrete values and the equations become:
@@ -452,7 +283,7 @@ A = the state transition matrix
 B = the input matrix
 ```
 
-So we first tranform the continuous parameters Δ, A, and B into discrete
+So we first transform the continuous parameters Δ, A, and B into discrete
 parameters `Â`, and `B_hat`. This is done using forumlas:
 ```
 Â = f_A(Δ, A)
@@ -472,8 +303,9 @@ y_1 = C * h_1
 h_2 = Â * h_1 + B_hat * x_2
 y_2 = C * h_2
 ```
+
 Like me mentioned earlier this is great for inference as we only need to compute
-on token at a time and the memory and computation is constant regardless of the
+one token at a time and the memory and computation is constant regardless of the
 length of the input sequence. 
 But at training we have the complete sequence already and having to go through
 this sequencially is slow (escpecially compared to transformers which can take
@@ -800,25 +632,26 @@ difficult as it does not take the input into consideration, it cannot do content
 aware resoning (the parameters A, B, C and D are the same for all time steps).
 So an SSM will treat all inputs equally.
 But what does this really mean. Like my initial thought was that if I wanted the model
-to selectively copy something from an input sequence then I did not seen an issue with
-that. My reasoning was that the tokens in the sequence are processed one by one, so
-tokens earlier in the sequence would have been integrated into the hidden state by
-the time the following sequence tokens are processed, so in my mind it should/could be
-able to recall these. No the issue is not that the information is not there but it is
-more an issue of how accessible/usable it is. As more tokens are processed the earlier
-tokens get more and more compressed and mixed with newer tokens. And there is not direct
+to selectively copy something from an input sequence then did not seen an
+issue with doing that. My reasoning was that the tokens in the sequence are
+processed one by one, so tokens earlier in the sequence would have been
+integrated into the hidden state by the time the following sequence tokens are
+processed, so in my mind it should/could be able to recall these. Now the issue
+is not that the information is not there but it is more an issue of how
+accessible/usable it is. As more tokens are processed the earlier tokens get
+more and more compressed and mixed with newer tokens. And there is no direct
 addressing like there is in the tranformers with the self-attention mechanism.
-So the information is there but the S4 model lacks the ability to identify which part of
-the hidden state corresponds to the asked for information and use that in a targeted way
-for the current token.
+So the information is there but the S4 model lacks the ability to identify which
+part of the hidden state corresponds to the asked for information and use that
+in a targeted way for the current token.
 
 The fixed nature of the model means it can't selectively choose which
 information to retain or discard from its hidden state. It compresses all
 information uniformly, potentially losing important distinctions between
 different types of tokens
 
-This is where selective state space models come in. We want to selectively add
-the data that will make up the state. Do accopmlish this we need to parameters
+This is where _selective_ state space models come in. We want to selectively add
+the data that will make up the state. To accopmlish this we need to parameters
 that depend on the input. In the S4 model the matrices A, B, and C are static
 and have a fixed size.  The SSM processes inputs sequentially, one step at a
 time so even if B is multiplied by the input vector.
@@ -902,7 +735,7 @@ token independently. So this is mapping the tokens to different points in the
 N-dimensional space.
 For C this is the same but a different matrix and vector.
 
-For the delta values the are generated by:
+For the delta (Δ) values they are generated by:
 ```
 sΔ(𝑥) = Broadcast_D (Linear_1 (𝑥))
 
@@ -924,36 +757,92 @@ Broadcast_D = takes the output of Linear_1 and it to D dimensions
 And Δ is then passed to the descretize function along with the A and B matrices.
 Now, one thing that confused me a litle was that I read that A is a static
 learned parameter in contrast to B and C which we can see are dynamically
-generated by the functions above. But the descretize function does A and returns
-an updated/adapted version of it with sequence specific modifications.
+generated by the functions above. But the descretize function takes A and
+returns an updated/adapted version of it with sequence specific modifications.
 This might look like:
 ```
 A_discrete = exp(Δ * A)   (e^ΔA)
 
 exp = matrix exponentiation
 ```
-The discretize function creates a temporary, input-specific version of A for
-each forward pass. And not that this is not an element wise exponentiation but
+The discretize function creates input-specific state transition matrix each
+forward pass. And note that this is not an element wise exponentiation but
 a matrix exponentiation as this preserves the structure of the matrix (like
 eigenvalues and eigenvectors).
 So while A is a learned parameter it is adapted for each input token.
 
 Now Δ is a dynamic parameter as we saw and this is called the scale factor or
 delta. So recall that the original state space model is defined for a continous
-time system. The descretize function is used to convert the continous time
-system into a discrete time system. I think we can imaging this as a graph/curve
-as the continous time system and then we have to sample this curve at specific
-points to get the descrete time system. The delta is how ofter we sample the
-curve. So sample often we will get more information close by in the input sequence
-and if we have a larger sampling value we will get less information close by.
+time system.
 
-![Mamba Delta Sampling Image](../images/mamba-delta-sampling.svg)
+### Continous State Space in Mamba
+The continuous state space can be viewed simliar to an embedding space. So the
+state space is a high-dimensional vector space where each dimension might
+represent some abstract feature or concept. The state at any given point in time
+is a point/vector in this space.
 
-And because the delta is dynamic it can be adjusted for each `token`, even if the
-function sΔ(x) takes the entire input sequence it still produces a Δ value for each
-token/position in the sequence.
-I think token as for example if we have a token that represents somehing like "then" it
-might be important and a smaller delta might be appropraite to capture the nerby tokens.
+We might be able to think of the current state, the point/vector, as the last
+token's position in this space. And if the next token is "simliar" perhaps
+semantically we might only transform/move the state a little, but if they are
+not very simliar we might move the point further.
+For example, if the we processed the token representing "cat" followed by a
+token representing "kitten" we might only move a little as the context is not
+changing very much. But if there is a token representing "microbe" we might move
+further as this is a different context.
+
+We can think of the current state as a point/vector representing the model's
+understanding up to and including the last processed token.
+
+So the current state of the system is a vector that has a point somewhere in
+this space. The A matrix is a transformation that moves this vector to a new
+point in the space. It suggests a direction the this point would naturally drift.
+The B matrix determines how new input tokens influence the states position.
+
+This is where delta comes in where it can control how much the state is
+transformed.
+
+Now, we need to keep in mind that we are dealing with an underlying continious
+system, and A represents this continious-time dynamics. This might be described
+a a differential equation like:
+```
+  dx
+  -- = A x(t)
+  dt
+
+x(t) = state at time t
+A    = state transition matrix
+```
+This describes how the state evolves over time without any input. So A is this
+State transition matrix which describes how the system would evolve natrually
+over time if there was not input to the system.
+In Mamba we have a discrete system so we are approximating this continous system
+with a discrete one:
+```
+x[t+1] = exp(Δ * A) * x[t]
+
+x(t) = state at time t
+A    = state transition matrix
+Δ    = time step
+```
+Notice that there is still no input here.
+The B matrix allows the input to influence the state transition.
+```
+Δ * B * u[t]
+
+u[k] = input at time t
+Δ    = time step
+B    = input matrix
+```
+The `exp(Δ * A) * x[t]` part evolves the current state as if no input occurred.
+The `Δ * B * u[t]` part adds the effect of the current input.
+The combination of these two parts is the new state after processing the
+current token:
+```
+x[t+1] = exp(Δ * A) * x[t] + Δ * B * u[t]
+```
+And again the delta is dynamic and can be adjusted for each token and can
+control the step size (smaller steps to stay within the current context, larger
+to perhaps move to a different context).
 
 
 And lastly we have the SSM function has the parameters A, B, and C matrices and
