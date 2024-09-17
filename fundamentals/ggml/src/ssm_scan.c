@@ -21,24 +21,26 @@ int main(int argc, char **argv) {
 
   // s is the current state of the system.
   // 
-  //           d_state
-  //       0 [0  ...  7]
-  //       1 [0  ...  7]     d_inner
-  //       2 [0  ...  7]
-  //       3 [0  ...  7]
-  //       4 [0  ...  7]
-  //       5 [0  ...  7]
-  //       6 [0  ...  7]
-  //       7 [0  ...  7]
+  //             d_state
+  //       0 [0  ...        15]
+  //       1 [0  ...        15]
+  //       2 [0  ...        15]
+  //       3 [0  ...        15]     d_inner
+  //       4 [0  ...        15]
+  //       5 [0  ...        15]
+  //       6 [0  ...        15]
+  //       7 [0  ...        15]
   //
   struct ggml_tensor* s = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state , d_inner);
   ggml_set_name(s, "s");
   ggml_set_zero(s);
   printf("s nelements: %lld:\n", ggml_nelements(s));
+  /*
   for (int i = 0; i < ggml_nelements(s); i++) {
 	printf("%.2f ", ggml_get_f32_1d(s, i));
   }
   printf("\n");
+  */
 
   // x is the output of the input->projection->convolution->silu.
   //
@@ -50,6 +52,10 @@ int main(int argc, char **argv) {
   //
   struct ggml_tensor* x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
   ggml_set_name(x, "x");
+  printf("x nelements: %lld:\n", ggml_nelements(x));
+  printf("x ne[0]: %lld:\n", x->ne[0]);
+  printf("x ne[1]: %lld:\n", x->ne[1]);
+  printf("x ne[2]: %lld:\n", x->ne[2]);
   ggml_set_f32_nd(x, 0, 0, 0, 0, 1.0f);
 
   // dt is the delta and we have one delta value per token.
@@ -64,15 +70,16 @@ int main(int argc, char **argv) {
   ggml_set_name(dt, "delta");
 
   // A is the learned state transition matrix.
-  //           d_state
-  //       0 [0  ...  7]
-  //       1 [0  ...  7]     d_inner
-  //       2 [0  ...  7]
-  //       3 [0  ...  7]
-  //       4 [0  ...  7]
-  //       5 [0  ...  7]
-  //       6 [0  ...  7]
-  //       7 [0  ...  7]
+  //
+  //              d_state
+  //       0 [0  ...        15]
+  //       1 [0  ...        15]
+  //       2 [0  ...        15]
+  //       3 [0  ...        15]     d_inner
+  //       4 [0  ...        15]
+  //       5 [0  ...        15]
+  //       6 [0  ...        15]
+  //       7 [0  ...        15]
   //
   struct ggml_tensor* A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, d_inner);
   ggml_set_name(A, "A");
@@ -97,12 +104,16 @@ int main(int argc, char **argv) {
   struct ggml_tensor* C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
   ggml_set_name(C, "C");
 
-  // r is the result of the scan operation.
-  struct ggml_tensor* r = ggml_ssm_scan(ctx, s, x, dt, A, B, C);
-  ggml_set_name(r, "result");
+  // y is the result of the scan operation. Which is a one dimensional tensor 
+  // with the number of elements of x plus the number of elements in s.
+  //
+  // [0    ...  31   ... 160]
+  //
+  struct ggml_tensor* y = ggml_ssm_scan(ctx, s, x, dt, A, B, C);
+  ggml_set_name(y, "y");
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
-  ggml_build_forward_expand(c_graph, r);
+  ggml_build_forward_expand(c_graph, y);
 
   int n_threads = 1;
   enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
@@ -111,7 +122,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  printf("r nelements: %lld:\n", ggml_nelements(r));
+  printf("y nelements: %lld:\n", ggml_nelements(y));
+  printf("y ne[0]: %lld:\n", y->ne[0]);
 
   ggml_free(ctx);
   return 0;

@@ -66,15 +66,15 @@ The `s` tensor is the current state of the system.
 
 So it will look like something like this:
 ```
-             d_state
-         0 [0  ...  7]
-         1 [0  ...  7]     d_inner
-         2 [0  ...  7]
-         3 [0  ...  7]
-         4 [0  ...  7]
-         5 [0  ...  7]
-         6 [0  ...  7]
-         7 [0  ...  7]
+                d_state
+         0 [0  ...        15]
+         1 [0  ...        15]
+         2 [0  ...        15]
+         3 [0  ...        15]     d_inner
+         4 [0  ...        15]
+         5 [0  ...        15]
+         6 [0  ...        15]
+         7 [0  ...        15]
 ```
 And since we are only using one thread we can ignore ir0 as it will be zero:
 ```c
@@ -135,15 +135,15 @@ Next we have the A tensor (state transition matrix):
 ```
 And A looks like this:
 ```
-             d_state
-         0 [0  ...  7]
-         1 [0  ...  7]     d_inner
-         2 [0  ...  7]
-         3 [0  ...  7]
-         4 [0  ...  7]
-         5 [0  ...  7]
-         6 [0  ...  7]
-         7 [0  ...  7]
+                d_state
+         0 [0  ...        15]
+         1 [0  ...        15]
+         2 [0  ...        15]
+         3 [0  ...        15]     d_inner
+         4 [0  ...        15]
+         5 [0  ...        15]
+         6 [0  ...        15]
+         7 [0  ...        15]
 ```
 And we'll simplify this as well:
 ```c
@@ -197,16 +197,23 @@ Note that this is not const so we can expect it to be updated.
                       dst->data;
 ````
 So this is currently just a pointer to the dst tensor data which is our
-`result tensor` in the example code:
+`y` tensor in the example code:
 ```console
 (lldb) p dst
 (ggml_tensor *) 0x000000013e000fc0
 (lldb) p dst->name
-(char[64]) "result"
+(char[64]) "y"
 (lldb) p dst->ne
 (int64_t[4])  ([0] = 160, [1] = 1, [2] = 1, [3] = 1)
 ```
-So `y` would be the output to the next layer.
+So `y` will be the output of this function. Note that this is a one dimensional
+tensor and was created in the `ggml_ssm_scan` function:
+```c
+    // concatenated y + ssm_states
+    struct ggml_tensor * result = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, ggml_nelements(x) + ggml_nelements(s));
+```
+So it looks like the this will contain both the output values (y) and the
+ssm_states.
 
 Next we have an `s` tensor:
 ```c
@@ -222,14 +229,21 @@ Notice that this is also a pointer to dst data. If we simplify this we get:
 (const size_t) 128
 ```
 So this is a pointer to the 128th element in the dst tensor data. Why 128?
-Is this storing the computed state of each iteration to move it forward perhaps?
+So I think that they output y for each dimension is stored first in this tensor
+so there will be 128 elements for the y values. 
+```
+  
+  0                                   127            159
+  [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15][1   2   3   4]
+              y outputs 16*8=128           states 4*8=32
+```
 
 After that we have:
 ```
             if (i2 > 0) { s0 = s; }
 ```
 So if we are not at the first token we set `s0` to the value of `s`, the last
-computed state I think.
+computed state (not the output) I think.
 
 After that we hae a final loop which is iterating over all the dimensions of the
 inner state (`d_inner`) (in our case 8):
@@ -303,6 +317,7 @@ The `expf` function is part of the zero-hold order (ZOH) descretization which
 
 And then we have the previous state value `s0[i]` multiplied by the descretized
 state transition matrix.
+And also notice that the new state is stored in `s[i]` for the next iteration.
 
 So that gives as the updated state of the system. This is then multiplied by the
 output transition matrix `C[i0]` and summed and stored in `sumf`. And this
@@ -336,7 +351,17 @@ SSM |  |  |  | |  |  |  |  |  |  |  |  |  |  |  | |  | |  | |  | |  | |  | |  | 
                                       +---+
 ```
 And this is for the first token. We then do the same for the rest of the tokens
-in the sequence and the internal state is updated by the previous state.
+in the sequence and the internal state is updated by the previous state. And
+the output is stored in the y tensor which is the output to the next layer.
+Just to recap we iterated over the sequences (`n_s`), then the number of tokens
+in the sequence (`n_t`), then the number of states (`d_state`), and then the
+channels in each state (`d_inner`).
+
+So there will be a y value for each dimension of the inner state. But the state
+of the system will be update for each channel.
+```
+
+```
 
 _wip_
 
