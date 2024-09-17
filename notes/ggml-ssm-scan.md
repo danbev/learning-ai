@@ -53,6 +53,7 @@ Next it will loop over all the tokens in each sequence:
 ```c
         for (int i2 = 0; i2 < n_t; ++i2) {
 ```
+
 Next we have a pointer to the data in the s tensor:
 ```c
             const float * s0 = (const float *) ((const char *)
@@ -229,14 +230,11 @@ Notice that this is also a pointer to dst data. If we simplify this we get:
 (const size_t) 128
 ```
 So this is a pointer to the 128th element in the dst tensor data. Why 128?
-So I think that they output y for each dimension is stored first in this tensor
+Notice that this is using `nb` which is number of bytes (stride), so we need
+divide by 4, 128/4 = 32. So this is the offset for the s tensor. And this should
+match the number of elements of the y part of the output tensor.
+So I think that the output y for each dimension is stored first in this tensor
 so there will be 128 elements for the y values. 
-```
-  
-  0                                   127            159
-  [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15][1   2   3   4]
-              y outputs 16*8=128           states 4*8=32
-```
 
 After that we have:
 ```
@@ -317,7 +315,101 @@ The `expf` function is part of the zero-hold order (ZOH) descretization which
 
 And then we have the previous state value `s0[i]` multiplied by the descretized
 state transition matrix.
-And also notice that the new state is stored in `s[i]` for the next iteration.
+
+We can visualize the inner state interation (over `d_state`) after we exit the inner
+most loop:
+```
+s[0] = state0
+s[1] = state1
+s[2] = state2
+s[3] = state3
+s[4] = state4
+s[5] = state5
+s[6] = state6
+s[7] = state7
+s[8] = state8
+s[9] = state9
+s[10] = state10
+s[11] = state11
+s[12] = state12
+s[13] = state13
+s[14] = state14
+s[15] = state15
+
+y[0] = weighted sum of all the above states
+```
+This completes the first `d_inner` and we continue with the next `d_inner`.
+This time through the inner most loop i will get updated and be offset by 16:
+```c
+                for (int i0 = 0; i0 < nc; ++i0) {
+                    int i = i0 + i1*nc;
+```
+```
+s[16] = state16
+s[17] = state17
+s[18] = state18
+s[19] = state19
+s[20] = state20
+s[21] = state21
+s[22] = state22
+s[23] = state23
+s[24] = state24
+s[25] = state25
+s[26] = state26
+s[27] = state27
+s[28] = state28
+s[29] = state29
+s[30] = state30
+s[31] = state31
+
+y[1] = weighted sum of all the above states
+```
+This will continue for all `ir` (`d_inner`) dimensions. So there will be `d_inner` *
+`d_state` elements in the s part of the tensor.
+And there should be `ir` elements in the y part of the tensor.
+
+So if `d_inner/ir` is 4096 and `d_state/nc` is 16, and `n_t` (the number of tokens) we
+should have:
+```
+y = 4096 * 5  = 20480
+s = 4096 * 16 = 65536
+Total: 86016
+
+(lldb) p ir * n_t
+(int64_t) 20480
+
+(lldb) p ir * nc
+(int64_t) 65536
+
+(lldb) p (ir * nc) + ir * n_t
+(int64_t) 86016
+
+(lldb) p ggml_nelements(dst)
+(int64_t) 86016
+```
+As we can see the number of elements in the tensor is correct.
+Notice that the "y" part has the the same number of tokens (5 in this case) and
+the dimension is 4096.
+
+Just touch on the offset of the s tensor which is created using:
+```console
+(lldb) p src1->nb[3]
+(const size_t) 81920
+```
+This had me confused as forgot that nb is number of bytes (stride). And we are dealing
+with floats so we can assume 4 bytes. So 81920/4 = 20480 which is the number of elements
+in y.
+
+Now, y and s point to the same tensor but s uses an offset from the beginning.
+Which in this case would be 81920
+
+
+
+
+To clarify, ignoring the sequences as we only have one in this case, we are looping
+over the tokens in the sequence `n_t`. And then we are doing to iterate over all the
+`d_inner` dimensions. And for each of these dimensions we are going to iterate over
+all the states in the system `d_state`.
 
 So that gives as the updated state of the system. This is then multiplied by the
 output transition matrix `C[i0]` and summed and stored in `sumf`. And this
@@ -359,9 +451,8 @@ channels in each state (`d_inner`).
 
 So there will be a y value for each dimension of the inner state. But the state
 of the system will be update for each channel.
-```
-
-```
+One way to think about this is that we are updating the state of the system one token
+(time step) at a time. This will move the system from one state to a new state.
 
 _wip_
 
