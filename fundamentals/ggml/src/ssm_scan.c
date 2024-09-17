@@ -19,7 +19,8 @@ int main(int argc, char **argv) {
   // d_state is the dimension of the state vector
   int d_state = 16;
 
-  // s is the output of the input->projection->convolution->silu and is what will be scanned.
+  // s is the current state of the system.
+  // 
   //           d_state
   //       0 [0  ...  7]
   //       1 [0  ...  7]     d_inner
@@ -29,6 +30,7 @@ int main(int argc, char **argv) {
   //       5 [0  ...  7]
   //       6 [0  ...  7]
   //       7 [0  ...  7]
+  //
   struct ggml_tensor* s = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state , d_inner);
   ggml_set_name(s, "s");
   ggml_set_zero(s);
@@ -38,23 +40,26 @@ int main(int argc, char **argv) {
   }
   printf("\n");
 
-  // x is the token embeddings for the input sequence which consists of 4 tokens
-  // of dimension 8.
+  // x is the output of the input->projection->convolution->silu.
+  //
   //           d_inner
   // token 0 [0  ...  7]
   // token 1 [0  ...  7]     seq_len
   // token 2 [0  ...  7]
   // token 3 [0  ...  7]
+  //
   struct ggml_tensor* x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
   ggml_set_name(x, "x");
   ggml_set_f32_nd(x, 0, 0, 0, 0, 1.0f);
 
   // dt is the delta and we have one delta value per token.
+  //
   //           d_inner
   // token 0 [0  ...  7]
   // token 1 [0  ...  7]     seq_len
   // token 2 [0  ...  7]
   // token 3 [0  ...  7]
+  //
   struct ggml_tensor* dt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_inner, seq_len);
   ggml_set_name(dt, "delta");
 
@@ -68,6 +73,7 @@ int main(int argc, char **argv) {
   //       5 [0  ...  7]
   //       6 [0  ...  7]
   //       7 [0  ...  7]
+  //
   struct ggml_tensor* A = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, d_inner);
   ggml_set_name(A, "A");
 
@@ -77,6 +83,7 @@ int main(int argc, char **argv) {
   // token 1 [0  ...  7]     seq_len
   // token 2 [0  ...  7]
   // token 3 [0  ...  7]
+  //
   struct ggml_tensor* B = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
   ggml_set_name(B, "B");
 
@@ -86,6 +93,7 @@ int main(int argc, char **argv) {
   // token 1 [0  ...  7]     seq_len
   // token 2 [0  ...  7]
   // token 3 [0  ...  7]
+  //
   struct ggml_tensor* C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
   ggml_set_name(C, "C");
 
