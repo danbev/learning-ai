@@ -995,19 +995,19 @@ Step 2 (kernel slides one positions to the right):
            [w_13_0 w_13_1 w_13_2]   [y_13]
            [w_14_0 w_14_1 w_14_2]   [y_14]
            [w_15_0 w_15_1 w_15_2]   [y_15]
-
+```
 The process continues until the kernel has been applied to all the tokens in the
 input sequence.
-```
+
 So what we have done here is that we have taken three features from from the
 projected input embeddings and applied the kernel to them. This gives as a
-weighed sum of these features accross all the tokens (mixing them together in a
+weighed sum of these features across all the tokens (mixing them together in a
 sense). This is what enables the capturing of local neighbors information.
 And notice that the kernel slides one position to the right at a time which
 means the length of the output will be the same as the input.
 
 #### Padding
-Now, we also need to consider passing to ensure that the output length is
+Now, we also need to consider padding to ensure that the output length is
 correct. What I means is that consider the following input sequence of 4 tokens:
 ```
 Input: [A, B, C, D]
@@ -1173,6 +1173,7 @@ A    = the learned state transition matrix.
 x[t] = input at time step t.
 B    = input matrix (input dependent)
 C    = output matrix (input dependent)
+```
 
 #### Exploration
 
