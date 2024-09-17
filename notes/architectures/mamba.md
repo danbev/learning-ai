@@ -1173,13 +1173,12 @@ A    = the learned state transition matrix.
 x[t] = input at time step t.
 B    = input matrix (input dependent)
 C    = output matrix (input dependent)
-```
-
 
 #### Exploration
+
 ```console
 $ make debug-mamba-simple-prompt
-gdb --args ./simple-promt 0 0 models/mamba-1.4b-f16.gguf
+gdb --args ./simple-prompt 0 0 models/mamba-1.4b-f16.gguf
 (gdb) br build_mamba
 ```
 
@@ -1582,7 +1581,7 @@ op = GGML_OP_UNARY, op_params = {10, 0 <repeats 15 times>}, flags = 0,
 grad = 0x0, src = {0x7fff4ae43780, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0}
 ```
-So first this will be projected by using `model.layers[il].ssm_x`:
+So first this will be projected by using `Imodel.layers[il].ssm_x`:
 ```c++
     // ssm
     {
@@ -1596,13 +1595,13 @@ $66 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
 ne = {160, 5, 1, 1}, nb = {4, 640, 3200, 3200}, op = GGML_OP_MUL_MAT,
 op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555556727110, 0x7fff4ae438f0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0, name = '\000' <repeats 63 times>, extra = 0x0}
 ```
-I wonder what the reason for this reduction is?
 
 Following that we will create a view for the delta tensor:
 ```c++
         struct ggml_tensor * dt = ggml_view_3d(ctx, x_db, dt_rank, n_seq_tokens, n_seqs, x_db->nb[1], x_db->nb[2], 0);
 ```
-
+Notice that we are passing in `dt_rank` as the `x` dimension value. In this case
+it is 128. So this is creating a view into the `x_db` tensor.
 ```console
 (gdb) p dt_rank
 $67 = 128
@@ -1636,4 +1635,117 @@ op_params = {576, 0 <repeats 15 times>}, flags = 0, grad = 0x0,
 src = {0x7fff4ae43a60, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x7fff4ae43a60, view_offs = 576, data = 0x0, name = " (view)", '\000' <repeats 56 times>,
 extra = 0x0}
 ```
+
+```c++
+        // Some Mamba variants (e.g. FalconMamba) apply RMS norm in B, C & Dt layers
+        if (ssm_dt_b_c_rms) {
+            dt = ggml_rms_norm(ctx, dt, norm_rms_eps);
+            B = ggml_rms_norm(ctx, B, norm_rms_eps);
+            C = ggml_rms_norm(ctx, C, norm_rms_eps);
+        }
+```
+
+```c++
+        // {dt_rank, d_inner} @ {dt_rank, n_seq_tokens, n_seqs} => {d_inner, n_seq_tokens, n_seqs}
+        dt = llm_build_lora_mm(lctx, ctx, model.layers[il].ssm_dt, dt);
+        dt = ggml_add(ctx, dt, model.layers[il].ssm_dt_b);
+```
+In our case we don't have any lora adapters configured so this will just be a 
+matrix multiplication (mm)
+
+Next we have the selective scan operation:
+```c++
+        struct ggml_tensor * y_ssm = ggml_ssm_scan(ctx, ssm, x, dt, model.layers[il].ssm_a, B, C);
+```
+I've written more about this in [ggml-ssm-scan.md](../ggml-ssm-scan.md).
+
+```c++
+        ggml_build_forward_expand(graph,
+            ggml_cpy(ctx,
+                ggml_view_1d(ctx, y_ssm, d_state*d_inner*n_seqs, x->nb[3]),
+                ggml_view_1d(ctx, ssm_states_all, d_state*d_inner*n_seqs, kv_head*d_state*d_inner*ggml_element_size(ssm_states_all))));
+```
+Notice that the source view of this copy is specifying that 65536 bytes should
+be copied starting from the offset (in bytes) 81920 (81920 / 4 = 20480). So this
+is skipping they y values and copying the state. And the destination view is
+`ssm_states_all` which is `kv.v_l[il]`.
+
+Following that a view is created for the y values (the output of the SSM block):
+```c++
+        struct ggml_tensor * y = ggml_view_3d(ctx, y_ssm, d_inner, n_seq_tokens, n_seqs, x->nb[1], x->nb[2], 0);
+```
+
+Next `x` will be multplied by the `model.layers[il].ssm_d` tensor which is the
+D matrix in the Mamba paper that is often skipped in the diagrams. But this is
+multipling by the D matrix and adding that to X (it is the skip connection:
+```
+                     +---+
+   +-----------------| D |-----------+
+   |                 +---+           |
+   |  +---+     +---+       +---+    ↓
+x-----| B |-----| h |---+---| C |-----------> y
+      +---+  ↑  +---+   |   +---+
+             |  +---+   |
+             +--| A |---+
+                +---+
+```
+So below we are first multiplying x by D and then adding this to y.
+```c++
+        y = ggml_add(ctx, y, ggml_mul(ctx, x, model.layers[il].ssm_d));
+```
+The we have the final activation function, and z is first passed through the
+silu function (left hand side of the diagram after the projection which is
+actually the z tensor)::
+```c++
+        y = ggml_mul(ctx, y, ggml_silu(ctx, ggml_cont(ctx, z)));
+```
+Following that we have a final projection to the output size:
+```c++
+        cur = llm_build_lora_mm(lctx, ctx, model.layers[il].ssm_out, y);
+```
+And then there is also a reshaping:
+```c++
+    cur = ggml_reshape_2d(ctx, cur, cur->ne[0], n_seq_tokens * n_seqs);
+    cb(cur, "mamba_out", il);
+```
+This will then return to `build_mamba`:
+```c++
+            if (il == n_layer - 1) {
+                // skip computing output for unused tokens
+                struct ggml_tensor * inp_out_ids = build_inp_out_ids();
+                cur  = ggml_get_rows(ctx0,  cur, inp_out_ids);
+                inpL = ggml_get_rows(ctx0, inpL, inp_out_ids);
+            }
+```
+TODO: Revisit the above and explain what is happening. 
+
+Next we have a residual connection and the application of any control
+vectors:
+```c++
+            // residual
+            cur = ggml_add(ctx0, cur, inpL);
+            cur = lctx.cvec.apply_to(ctx0, cur, il);
+            cb(cur, "l_out", il);
+```
+Interesting to see how control vectors are applied and this is something I will
+take a closer look at separately.
+The above will then be performed for each layer in the model (48 in the case of
+the current Mamba model we are using).
+```c++
+        // final rmsnorm
+        cur = llm_build_norm(ctx0, inpL, hparams,
+                model.output_norm, NULL,
+                LLM_NORM_RMS, cb, -1);
+        cb(cur, "result_norm", -1);
+
+        // lm_head
+        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
+        cb(cur, "result_output", -1);
+
+        ggml_build_forward_expand(gf, cur);
+
+        return gf;
+```
+
+
 (wip)
