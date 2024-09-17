@@ -270,6 +270,13 @@ else
 	lldb ./simple-prompt-multi 0 20 models/mamba-1.4b-f16.gguf
 endif
 
+debug-mamba-simple-prompt:
+ifeq ($(OS),Linux)
+	gdb --args ./simple-prompt 0 0 models/mamba-1.4b-f16.gguf
+else
+	lldb ./simple-prompt 0 20 models/mamba-1.4b-f16.gguf
+endif
+
 
 
 ### Finetune targets
