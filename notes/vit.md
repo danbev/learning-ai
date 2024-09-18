@@ -23,7 +23,7 @@ might be of a dimension of say 512. So we will have 4 vectors of 512 dimensions
 'cream' 10004 [0      ...        512]
 ```
 
-Lets take a look at how an image would be processed by an ViT. We start with
+Lets take a look at how an image would be processed by a ViT. We start with
 an image which is like our complete sentence above:
 ```
                      250x250
@@ -90,7 +90,7 @@ vocabulary, but do generate embeddings, which are called patch embedding, and
 they also do this using a matrix multiplication of a learned matrix. This looks
 something like this:
 ```
-E = VW * b
+E = VW + b
 
 E = embedding for a single patch, like Im₁ for example
 V = a flattened vector which contains raw pixel values of the patch
@@ -130,7 +130,7 @@ C₂ = [0+pos,     ...        768+pos]
 Cₙ = [0+pos,     ...        768+pos]
 ```
 Now, there is also a extra special patch embedding prepended to the sequence of
-patch embeddings called a class:
+patch embeddings called a class (CLS):
 ```
 C  = [0+pos,     ...        768+pos] [class]
 C₁ = [0+pos,     ...        768+pos]
