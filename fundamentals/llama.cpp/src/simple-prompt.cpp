@@ -1,4 +1,5 @@
 #include "llama.h"
+#include "llama-sampling.h"
 
 #include <cstdio>
 #include <string>
@@ -11,7 +12,7 @@ int main(int argc, char** argv) {
     // parse the two optional integers named "main_gpu" and "n_gpu_layers" and set the default to zero if they are not provided.
     int main_gpu = 0;
     int num_gpu_layers = 0;
-    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
+    std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
 
     if (argc > 1) {
         main_gpu = atoi(argv[1]);
@@ -43,11 +44,12 @@ int main(int argc, char** argv) {
     }
 
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.seed  = 1234;
     ctx_params.n_ctx = 1024;
-    ctx_params.n_threads = 1;
-    ctx_params.n_threads_batch = 1;
+    ctx_params.n_threads = 4;
+    ctx_params.n_threads_batch = 4;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
+    
+    struct llama_sampler* sampler = llama_sampler_init_greedy();
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
@@ -151,25 +153,7 @@ int main(int argc, char** argv) {
     
     //while (true) {
     while (n_cur <= n_len) {
-        // logits are stored in the last token of the batch and are the 
-        // raw unnormalized predictions.
-        //float* logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
-        float* logits = all_logits + (n_batch_tokens - 1) * n_vocab;
-
-        std::vector<llama_token_data> candidates;
-        candidates.reserve(n_vocab);
-
-        // The following is populating the candidates vector with the
-        // logit for each token in the vocabulary (32000).
-        for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
-            candidates.emplace_back(llama_token_data{ token_id, logits[token_id], 0.0f });
-        }
-        // Here we are creating an unsorted array of token data from the vector.
-        bool sorted = false;
-        llama_token_data_array candidates_p = { candidates.data(), candidates.size(), sorted };
-
-        // Find the token with the highest raw score (logit) and return it.
-        const llama_token new_token_id = llama_sample_token_greedy(ctx, &candidates_p);
+        const llama_token new_token_id = llama_sampler_sample(sampler, ctx, -1);
         // This is the token id that the model predicted.
 
         // is it an end of stream?

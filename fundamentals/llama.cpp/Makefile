@@ -35,7 +35,7 @@ llama-cuda-debug:
 llama-debug: 
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
-CXXFLAGS = -std=c++11 -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Lllama.cpp/ 
+CXXFLAGS = -std=c++11 -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Illama.cpp/src -Lllama.cpp/ 
 
 ifeq ($(OS),Linux)
 CXXFLAGS += -fopenmp
@@ -58,7 +58,8 @@ OBJ_COMMON = llama.cpp/common/common.o \
 	llama.cpp/common/train.o \
 	llama.cpp/common/grammar-parser.o \
 	llama.cpp/common/build-info.o \
-	llama.cpp/common/json-schema-to-grammar.o
+	llama.cpp/common/json-schema-to-grammar.o \
+	llama.cpp/common/log.o
 
 OBJ_GGML += \
 	llama.cpp/ggml/src/ggml.o \
@@ -131,7 +132,7 @@ pre-simple-prompt: src/simple-prompt.cpp
 	$(CXX) -E $(CXXFLAGS) $^  -o pre-simple-prompt.cpp
 
 update-llama:
-	git submodule update --recursive --remote --merge llama.cpp
+	git submodule update --recursive --remote llama.cpp
 
 .PHONY clean:
 clean:
@@ -146,7 +147,7 @@ quantize-llama-model:
 
 download-llama-7b-q4: | models
 	cd models && \
-	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_0.gguf
+	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_K_M.gguf
 
 download-jina: | models
 	cd models && \
