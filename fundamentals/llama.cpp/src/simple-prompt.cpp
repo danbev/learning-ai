@@ -49,7 +49,11 @@ int main(int argc, char** argv) {
     ctx_params.n_threads_batch = 4;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
     
-    struct llama_sampler* sampler = llama_sampler_init_greedy();
+    //struct llama_sampler* sampler = llama_sampler_init_greedy();
+    auto sparams = llama_sampler_chain_default_params();
+    llama_sampler* sampler = llama_sampler_chain_init(sparams);
+    llama_sampler_chain_add(sampler, llama_sampler_init_softmax());
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
@@ -154,6 +158,7 @@ int main(int argc, char** argv) {
     //while (true) {
     while (n_cur <= n_len) {
         const llama_token new_token_id = llama_sampler_sample(sampler, ctx, -1);
+        llama_sampler_reset(sampler);
         // This is the token id that the model predicted.
 
         // is it an end of stream?
