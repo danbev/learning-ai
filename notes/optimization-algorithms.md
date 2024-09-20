@@ -174,7 +174,7 @@ And then we update the weights/parameters:
 This helpful with saddle points where the slope of the function is zero but it
 is not a local max or min. Because of momentum for us to have arrived at the
 saddle point we must have been moving down hill and therefor the velocity vector
-will case the update to the weights to be larger and we will/can help move past
+will cause the update to the weights to be larger and we will/can help move past
 the saddle point. But it is also possible that the momentum will cause us to
 miss a local minimum and the velocity could cause us to overshoot it. This is
 controlled by the momentum coefficient alpha (α). There are adaptive learning
