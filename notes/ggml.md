@@ -1327,21 +1327,132 @@ $43 = false
 
 _wip_
 
-#### `ggml_build_forward_impl`
+#### Forward pass
 ```c
-  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
-  ggml_build_forward_expand(c_graph, result);
+  struct ggml_cgraph* f_graph = ggml_new_graph_custom(ctx, GGML_DEFAULT_GRAPH_SIZE, true);
+  ggml_build_forward_expand(f_graph, mul);
 ```
 
 ```c
-static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor, bool expand) {
+struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t size, bool grads) {
+    ...
+    void* p = cgraph + 1;
+
+    struct ggml_tensor** nodes_ptr = incr_ptr_aligned(&p, size* sizeof(struct ggml_tensor*),
+        sizeof(struct ggml_tensor*));
+```
+The `incr_ptr_aligned` is used to increment a pointer while ensuring proper alignment. So p is
+the pointer to be be incremented, and size is how much we want to increment the pointer by.
+And align is how it should be aligned which in this case is the size of a tensor pointer.
+```c
+static void * incr_ptr_aligned(void ** p, size_t size, size_t align) {
+    void * ptr = *p;
+    ptr = (void *) GGML_PAD((uintptr_t) ptr, align);
+    *p = (void *) ((char *) ptr + size);
+    return ptr;
+}
+```
+So above we first deref the pointer that we want to increment, then pad it using the
+`GGML_PAD` macro. The third line will increment (the char cast is just to enable pointer
+arithmetic) the pointer by the size we want to increment it by.
+
+And then we do the same for the leafs in the graph:
+```c
+    struct ggml_tensor** leafs_ptr = incr_ptr_aligned(&p, size* sizeof(struct ggml_tensor*),
+        sizeof(struct ggml_tensor*));
+```
+And similarly for the hash keys and grads:
+```c
+
+    struct ggml_tensor** hash_keys_ptr = incr_ptr_aligned(&p,
+        hash_size* sizeof(struct ggml_tensor*), sizeof(struct ggml_tensor*));
+
+    struct ggml_tensor** grads_ptr = grads ?
+        incr_ptr_aligned(&p, size* sizeof(struct ggml_tensor*), sizeof(struct ggml_tensor*)) :
+        NULL;
+
+    ggml_bitset_t* hash_used = incr_ptr_aligned(&p, ggml_bitset_size(hash_size) * sizeof(ggml_bitset_t), sizeof(ggml_bitset_t));
+```
+These pointer will then be used to create a `ggml_cgraph` struct:
+```c
+    *cgraph = (struct ggml_cgraph) {
+        /*.size         =*/ size,
+        /*.n_nodes      =*/ 0,
+        /*.n_leafs      =*/ 0,
+        /*.nodes        =*/ nodes_ptr,
+        /*.grads        =*/ grads_ptr,
+        /*.leafs        =*/ leafs_ptr,
+        /*.hash_table   =*/ { hash_size, hash_used, hash_keys_ptr },
+        /*.order        =*/ GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,
+};
+```
+Just to clarify that all tensors in the graph are nodes. Some nodes don't have any
+incoming edges and are therefore leafs. More on this later.
+Notice that we create a .hash_table which is a struct with a size, a pointer to
+a bitset and a pointer to the hash keys.
+```c
+    typedef uint32_t ggml_bitset_t;
+
+    struct ggml_hash_set {
+        size_t size;
+        ggml_bitset_t * used;
+        struct ggml_tensor ** keys;
+    };
+```
+```console
+(lldb) p cgraph->visited_hash_set
+(ggml_hash_set) {
+  size = 4099
+  used = 0x000000015c014980
+  keys = 0x000000015c008968
+}
+```
+Next we have:
+```c
+    ggml_hash_set_reset(&cgraph->visited_hash_set);
+```
+```c
+void ggml_hash_set_reset(struct ggml_hash_set * hash_set) {
+    memset(hash_set->used, 0, sizeof(ggml_bitset_t) * ggml_bitset_size(hash_set->size));
+}
+```
+So this is writing 516 bytes of 0 to the used `visited_hash_set` which is just to initialize
+it to 0. After that the compute graph is ready to be used and returned.
+
+Lets inspect the compute graph:
+```console
+(lldb) p *cgraph
+(ggml_cgraph) {
+  size = 2048
+  n_nodes = 0
+  n_leafs = 0
+  nodes = 0x0000000136000968
+  grads = 0x0000000136010980
+  leafs = 0x0000000136004968
+  visited_hash_set = {
+    size = 4099
+    used = 0x0000000136014980
+    keys = 0x0000000136008968
+  }
+  order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT
+}
+```
+Next lets look at the `ggml_build_forward_expand` function:
+```c
+void ggml_build_forward_expand(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor) {
+    ggml_build_forward_impl(cgraph, tensor, true);
+}
+```
+Notice that this is passing `true` as `expand`:
+```c
+static void ggml_build_forward_impl(struct ggml_cgraph * cgraph,
+    struct ggml_tensor * tensor, bool expand) {
     if (!expand) {
         // TODO: this branch isn't accessible anymore, maybe move this to ggml_build_forward_expand
         ggml_graph_clear(cgraph);
     }
 
     const int n0 = cgraph->n_nodes;
-    UNUSED(n0);
 
     ggml_visit_parents(cgraph, tensor);
 
@@ -1354,30 +1465,200 @@ static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_ten
     }
 }
 ```
-This will basically go through the passed in tensor and add it to the graph
-and then visit its parents (the src[]). These will then be added to the 
-cgraph and will have been also added to the hashset.
+In our case `n0` is 0. Lets take a look at the `ggml_visit_parents` function:
+```c
+static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor * node) {
+    if (node->grad == NULL) {
+        if (node->op != GGML_OP_NONE) {
+            //GGML_PRINT_DEBUG("%s: warning: node %p has no grad, but op %d\n", __func__, (void *) node, node->op);
+        }
+    }
+
+    // check if already visited
+    if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
+        return;
+    }
+```
+Next lets look at `ggml_hash_insert`. The `node` is the tensor that we passed in to
+`ggml_build_forward_expand` which is:
+```console
+(lldb) p tensor->op
+(ggml_op) GGML_OP_MUL
+```
+```c
+static size_t ggml_hash_insert(struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
+    size_t h = ggml_hash(key) % hash_set->size;
+
+    // linear probing
+    size_t i = h;
+    do {
+        if (!ggml_bitset_get(hash_set->used, i)) {
+            ggml_bitset_set(hash_set->used, i);
+            hash_set->keys[i] = key;
+            return i;
+        }
+        if (hash_set->keys[i] == key) {
+            return GGML_HASHSET_ALREADY_EXISTS;
+        }
+        i = (i + 1) % hash_set->size;
+    } while (i != h);
+
+    // visited all hash table entries -> not found
+    GGML_ABORT("fatal error");
+}
+```
+Now, `ggml_hash` is uses the pointer of the tensor (minus the padding) as the hash:
+```c
+// hash function for ggml_tensor
+static inline size_t ggml_hash(const struct ggml_tensor * p) {
+    // the last 4 bits are always zero due to alignment
+    return (size_t)(uintptr_t)p >> 4;
+}
+```
+So we have a `hash_set->size` of 4099 and we need the map the hash value into this
+range of values which is what the modulo operation is used for.
 
 ```c
-size_t ggml_hash_find(const struct ggml_hash_set hash_set, struct ggml_tensor * key) {
-    size_t h = ggml_hash(key) % hash_set.size;                                       
-                                                                                     
-    // linear probing                                                                
-    size_t i = h;                                                                    
-    while (hash_set.keys[i] != NULL && hash_set.keys[i] != key) {                    
-        i = (i + 1) % hash_set.size;                                                 
-        if (i == h) {                                                                
-            // visited all hash table entries -> not found                           
-            return GGML_HASHTABLE_FULL;                                              
-        }                                                                            
-    }                                                                                
-    return i;                                                                        
-}               
+static size_t ggml_hash_insert(struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
+    size_t h = ggml_hash(key) % hash_set->size;
 ```
-This is using memory address of the tensor key and then using modulo to get it
-in the range/bounds of the hash_set.size.
-If we don't call `ggml_build_forward_expand` then the graph will not have any
-nodes or leafs.
+Next, we have the following where the hash value is used (and the key is the tensor):
+```c
+    // linear probing
+    size_t i = h;
+    do {
+        if (!ggml_bitset_get(hash_set->used, i)) {
+            ggml_bitset_set(hash_set->used, i);
+            hash_set->keys[i] = key;
+            return i;
+        }
+        if (hash_set->keys[i] == key) {
+            return GGML_HASHSET_ALREADY_EXISTS;
+        }
+        i = (i + 1) % hash_set->size;
+    } while (i != h);
+```
+
+```c
+#define BITSET_SHR 5 // log2(sizeof(ggml_bitset_t)*8)
+#define BITSET_MASK (sizeof(ggml_bitset_t)*8 - 1) // 31
+
+static inline bool ggml_bitset_get(const ggml_bitset_t * bitset, size_t i) {
+    return !!(bitset[i >> BITSET_SHR] & (1u << (i & BITSET_MASK)));
+}
+```
+So lets take a look at a concreate example and lets say that `i` is 37:
+```
+i = 37
+BITSET_SHR = 5
+BITSET_MASK = 31 (binary: 00011111)
+
+i >> BITSET_SHR:
+37 in binary:        00100101
+37 >> 5:             00000001
+
+i & BITSET_MASK:
+37 in binary:        00100101
+BITSET_MASK:         00011111
+37 & BITSET_MASK:    00000101
+
+1u << (i & BITSET_MASK)
+1 in binary:         00000001
+1 << 5:              00100000  (32 in decimal)
+
+Now, the bitset is passed but lets say it is 10100000:
+bitset[1]:           10100000
+Bit mask:            00100000
+bitset[1] & mask:    00100000
+
+!!(00100000)
+
+First !: 00100000 becomes 0
+Second !: 0 becomes 1
+Final result: 1 (true, the bit is set)
+```
+In our case (debugging session, not the above example) the bit is not set and we will
+enter the if block:
+```c
+        if (!ggml_bitset_get(hash_set->used, i)) {
+            ggml_bitset_set(hash_set->used, i);
+            hash_set->keys[i] = key;
+            return i;
+        }
+```
+Next the bitset will be set for this hash (i) and then the key will be set to the
+tensor that we passed in and the hash returned (recall that we are in `ggml_hash_insert`):
+```c
+    // check if already visited
+    if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
+        return;
+    }
+```
+Following that we have:
+```c
+    for (int i = 0; i < GGML_MAX_SRC; ++i) {
+        const int k =
+            (cgraph->order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
+            (cgraph->order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
+            /* unknown order, just fall back to using i*/ i;
+        if (node->src[k]) {
+            ggml_visit_parents(cgraph, node->src[k]);
+        }
+    }
+
+#define GGML_MAX_SRC            10
+```
+This will visit the parents of the children of the tensor that was passed in. In our case
+`k` will be 0 so we will visit the first child:
+```console
+(lldb) p node->src[0]->name
+(char[64]) "a"
+```
+So we will go through the same process we did above but now for the a tensor. And we will
+also do the same for the b tensor.
+
+Next we have:
+```c
+    if (node->op == GGML_OP_NONE && node->grad == NULL) {
+        // reached a leaf node, not part of the gradient graph (e.g. a constant)
+        GGML_ASSERT(cgraph->n_leafs < cgraph->size);
+
+        if (strlen(node->name) == 0) {
+            ggml_format_name(node, "leaf_%d", cgraph->n_leafs);
+        }
+
+        cgraph->leafs[cgraph->n_leafs] = node;
+        cgraph->n_leafs++;
+```
+This is checking if the tensor is an operation, and that it does not have a gradient which
+indicates that this is a leaf node (a constant). Recall that node is the multiplcation operator
+node so the above block will not be executed.
+
+```c
+    } else {
+        GGML_ASSERT(cgraph->n_nodes < cgraph->size);
+
+        if (strlen(node->name) == 0) {
+            ggml_format_name(node, "node_%d", cgraph->n_nodes);
+        }
+
+        cgraph->nodes[cgraph->n_nodes] = node;
+        if (cgraph->grads) {
+            cgraph->grads[cgraph->n_nodes] = node->grad;
+        }
+        cgraph->n_nodes++;
+    }
+```
+We can see that if the node/tensor does not have a name it will be given one now.
+```console
+(lldb) p node->name
+(char[64]) "node_2"
+```
+Then we can see that the node is added to the cgraph nodes array, and the nodes counter is
+incremented. Note that we already recursed through the children of the node so we have already
+visited the children and they would also have been added and incremented `n_nodes` just in case
+it is confusing that this is `node_2`.
+And that is bascially the how the forward pass is built up.
 
 After we have created a cgraph and called `ggml_build_forward_expand` we can
 then call `ggml_graph_compute`:
@@ -2284,3 +2565,52 @@ is not rows that this thread is going to process. And if `ir` has reached `ir1`
 then it will break out of the loop. So when the body of the loop is executed i1
 will be in the range 143 to 191.
 And I think this is how the multi-threading is implemented in GGML.
+
+### Backpropagation
+This section deals with the backpropagation in GGML.
+The following example [backprop.c](../fundamentals/ggml/backprop.c) will be used
+to explore backpropagation in this secion.
+
+First lets take a look at the compute graph which we have seen ealier. 
+```c
+    struct ggml_cgraph {
+        int size;
+        int n_nodes;
+        int n_leafs;
+
+        struct ggml_tensor ** nodes;
+        struct ggml_tensor ** grads;
+        struct ggml_tensor ** leafs;
+
+        struct ggml_hash_set visited_hash_set;
+
+        enum ggml_cgraph_eval_order order;
+    };
+```
+So just like the compute graph has nodes, and leafs it also has grads which are
+the gradients.
+
+Now, lets take a look at the `ggml_compute_backward` function:
+```c
+  struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph);
+  ggml_build_backward_expand(ctx, f_graph, b_graph, /* keep gradients */ false);
+```
+
+```c
+void ggml_build_backward_expand(struct ggml_context * ctx,
+    struct ggml_cgraph * gf, struct ggml_cgraph * gb, bool keep) {
+
+    if (keep) {
+        for (int i = 0; i < gf->n_nodes; i++) {
+            struct ggml_tensor * node = gf->nodes[i];
+
+            if (node->grad) {
+                node->grad = ggml_dup_tensor(ctx, node);
+                gf->grads[i] = node->grad;
+            }
+        }
+    }
+```
+So the last parameter is false in our case which means that we don't want to keep the
+gradients from the forward compute graph, so this is duplicating those tensors so they
+won't be modified.
