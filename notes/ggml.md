@@ -1386,9 +1386,9 @@ These pointer will then be used to create a `ggml_cgraph` struct:
         /*.order        =*/ GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,
 };
 ```
-Just to clarify that all tensors in the graph are nodes. Some nodes don't have any
-incoming edges and are therefore leafs. More on this later.
-Notice that we create a .hash_table which is a struct with a size, a pointer to
+Just to clarify that all tensors in the graph are nodes. In ggml any node that is an operation
+of and any node that participates in gradient computation.
+Notice that we create a `.hash_table` which is a struct with a size, a pointer to
 a bitset and a pointer to the hash keys.
 ```c
     typedef uint32_t ggml_bitset_t;
@@ -1660,15 +1660,31 @@ visited the children and they would also have been added and incremented `n_node
 it is confusing that this is `node_2`.
 And that is bascially the how the forward pass is built up.
 
+We can print the graph (I've added a few columns for readability):
+```console
+=== GRAPH ===
+n_nodes = 3
+          ne[0]   ne[1]  ne[2]             OP   Param (x) or Gradient (g)
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+ -   2: [     1,     1,     1]              MUL g
+n_leafs = 1
+          ne[0]   ne[1]     OP                  Name
+ -   0: [     1,     1]     NONE                5
+========================================
+```
+
 After we have created a cgraph and called `ggml_build_forward_expand` we can
 then call `ggml_graph_compute`:
 ```c
-  int n_threads = 4;
+  int n_threads = 1;
   ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
 ```
+I'm just using 1 thread to simplfy stepping through the code in the debugger.
 
-```
-enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+```c
+enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx,
+    struct ggml_cgraph * cgraph, int n_threads) {
     struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads);
 
     struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
@@ -1678,42 +1694,220 @@ enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct g
     return ggml_graph_compute(cgraph, &cplan);
 }
 ```
-So before we can compute we need to create a plan. This will loop over all the
-nodes in the cgraph
+So before we can compute we need to create a plan. So what is a plan?  
+```c   
+    struct ggml_cplan {
+        size_t    work_size;
+        uint8_t * work_data;
+
+        int n_threads;
+        struct ggml_threadpool * threadpool;
+
+        // abort ggml_graph_compute when true
+        ggml_abort_callback abort_callback;
+        void *              abort_callback_data;
+    };
+```
+TODO: look into the threadpool.
+I'm going to skip the threadpool for now and revisit as my focus is on the backpropagation.
+
 ```c
-struct ggml_cplan ggml_graph_plan(const struct ggml_cgraph * cgraph, int n_threads) {
+struct ggml_cplan ggml_graph_plan(
+          const struct ggml_cgraph * cgraph,
+                               int   n_threads,
+            struct ggml_threadpool * threadpool) {
+
+    if (threadpool == NULL) {
+        GGML_PRINT_DEBUG("Threadpool is not specified. Will create a disposable threadpool : n_threads %d\n", n_threads);
+    }
     if (n_threads <= 0) {
-        n_threads = GGML_DEFAULT_N_THREADS;
+        n_threads = threadpool ? threadpool->n_threads_max : GGML_DEFAULT_N_THREADS;
     }
 
     size_t work_size = 0;
 
     struct ggml_cplan cplan;
     memset(&cplan, 0, sizeof(struct ggml_cplan));
-
-    int max_tasks = 1;
-
-    // thread scheduling for the different operations + work buffer size estimation
-    for (int i = 0; i < cgraph->n_nodes; i++) {
-        struct ggml_tensor * node = cgraph->nodes[i];
-
-        const int n_tasks = ggml_get_n_tasks(node, n_threads);
-
-        max_tasks = MAX(max_tasks, n_tasks);
-
-        size_t cur = 0;
-
-        switch (node->op) {
-        ...
+    ...
 ```
-In this case we only have one:
+```c
+void ggml_build_backward_expand(struct ggml_context * ctx, struct ggml_cgraph * gf,
+    struct ggml_cgraph * gb, bool keep) {
+
+    ...
+
+    // remember original gradients which start with zero values
+    struct ggml_hash_set zero_table = ggml_hash_set_new(gf->size);
+    for (int i = 0; i < gf->n_nodes; i++) {
+        if (gf->grads[i]) {
+            ggml_hash_insert(&zero_table, gf->grads[i]);
+        }
+    }
+    ...
+}
+```
+We can inspect the gradients:
 ```console
-(gdb) p *node
-$45 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {3, 1, 1, 1}, nb = {4, 12, 12, 12}, 
-  op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6bff030, 0x7ffff6bff1c0, 0x0, 0x0, 
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6bff490, name = "result", '\000' <repeats 57 times>, 
-  extra = 0x0}
+(lldb) p gf->grads[0]->name
+(char[64]) "a (grad)"
+(lldb) p gf->grads[1]->name
+(char[64]) "b (grad)"
+(lldb) p gf->grads[2]
+(ggml_tensor *) 0x00000001358007a0
+(lldb) p gf->nodes[2]->grad
+(ggml_tensor *) 0x00000001358007a0
 ```
+Lets start with this hash set named `zero_table`. Keeping track of the gradients that are zero
+might enable optimizations, like skipping some calculations or using speciallized algorithms
+for sparse gradients. But at this point in the code the `zero_table` is simply being populated
+with all the gradient tensors (for a, b, and mul in our case). Recall that the keys
+in the hash set are the hashes like we mentioned earlier. But when debugging we can see
+the hash values and check, for example for the `b (grad)` tensor:
+```console
+(lldb) p *zero_table->keys[1392]->name
+(char) 'b'
+```
+And notice that if the grandient tensor (key) is not in the set it will be added and
+set to they key, and the hash returned.
+
+After that we have where we will iterate over al the nodes in the graph:
+```c
+    for (int i = gf->n_nodes - 1; i >= 0; i--) {
+        struct ggml_tensor * node = gf->nodes[i];
+
+        // inplace operations to add gradients are not created by ggml_compute_backward
+        // use allocator to automatically make inplace operations
+        if (node->grad) {
+            ggml_compute_backward(ctx, node, &zero_table);
+        }
+    }
+```
+This will start with `node_2` (I'd forgotten to set a name for the multiplication operation
+node but will update this shortly). And notice that we are passing in the `zero_table` to
+`ggml_compute_backward`. Lets take a look at this function:
+```c
+static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor,
+    struct ggml_hash_set * zero_table) {
+    struct ggml_tensor * src0 = tensor->src[0];
+    struct ggml_tensor * src1 = tensor->src[1];
+    struct ggml_tensor * src2 = tensor->src[2];
+
+    switch (tensor->op) {
+```
+We can check that `src0` is `a` and `src1` is `b`:
+```console
+(lldb) p src0->name
+(char[64]) "a"
+(lldb) p src1->name
+(char[64]) "b"
+```
+And after that we have a switch statement and different cases for the different operations.
+```c
+        case GGML_OP_MUL:
+            {
+                if (src0->grad) {
+                    src0->grad =
+                        ggml_add_or_set(ctx,
+                                src0->grad,
+                                ggml_mul(ctx, src1, tensor->grad),
+                                zero_table);
+                }
+                if (src1->grad) {
+                    src1->grad =
+                        ggml_add_or_set(ctx,
+                                src1->grad,
+                                ggml_mul(ctx, src0, tensor->grad),
+                                zero_table);
+                }
+            } break;
+```
+Now, recall we have something that looks like this `mul = a * b`:
+```
+mul = a * b
+tensor = src0 * src1
+
+Partial derivatives:
+d(mul)
+------ = b
+ d(a)
+
+∂z/∂a = b
+
+d(mul)
+------ = a
+ d(b)
+
+∂z/∂b = a
+
+```
+And in backpropagation we are interested in how this loss value will change the a and b nodes.
+```
+How does the loss change with respect to a:
+∂L/∂a = (∂L/∂z) * (∂z/∂a) = (∂L/∂z) * b
+
+How does the loss change with respect to b:
+∂L/∂b = (∂L/∂z) * (∂z/∂b) = (∂L/∂z) * a
+
+(∂L/∂z)  = tensor->grad
+(∂z/∂a)  = src0->grad (accumulation of gradients since this is added)
+(∂z/∂b)  = src1->grad (accumulation of gradients since this is added)
+```
+We calculate a loss value that indicates how well our system is performing relative to what
+we want it to do.
+Backpropagation: We indeed pass this loss value back through the nodes, calculating gradients
+along the way.
+
+We know from before tha both `a` and `b` have gradients. So first we will call
+`ggml_mul` on b using the gradient of the multiplication operation node.
+```c
+                    src0->grad =
+                        ggml_add_or_set(ctx,
+                                src0->grad,
+                                ggml_mul(ctx, src1, tensor->grad),
+                                zero_table);
+```
+So we are first calculating the gradient of `a` by multiplyin b with the gradient of the
+multiplication operation node  `(∂L/∂z) * b`. One thing to note is that `ggml_mul` returns
+a tensor so nothing is actually calculated here, not yet.
+After that `ggml_add_or_set` is called with this new tensor:
+```c
+static struct ggml_tensor * ggml_add_or_set(struct ggml_context * ctx, struct ggml_tensor * a,
+    struct ggml_tensor * b, struct ggml_hash_set * zero_table) {
+    if (ggml_hash_contains(zero_table, a)) {
+        return b;
+    } else {
+        return ggml_add_impl(ctx, a, b, false);
+    }
+}
+```
+Keep in mind that a is the grandient (`a_grad`) in this case and that tensor of the
+multiplication operation of src1 and tensor-grad. So this is checking if the gradient for
+a is in the zero hash set.
+```c
+static bool ggml_hash_contains(const struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
+    size_t i = ggml_hash_find(hash_set, key);
+    return i != GGML_HASHSET_FULL && ggml_bitset_get(hash_set->used, i);
+}
+```
+If the zero hash set contains the gradient for a then we will return b, which makes sense, if
+there is no gradient then b does not need scaling. And recall that these were added in
+`ggml_build_backward_expand`.
+
+
+```c
+    for (int i = 0; i < gf->n_nodes; i++) {
+        struct ggml_tensor * node = gf->nodes[i];
+
+        if (node->flags & GGML_TENSOR_FLAG_PARAM) {
+            GGML_PRINT_DEBUG("%s: found root node %p\n", __func__, (void *) node);
+            ggml_build_forward_expand(gb, node->grad);
+        }
+}
+```
+Notice that we are passing the `node->grad` tensor to `ggml_build_forward_expand` here.
+
+_wip_
+
 And notice that the operation is of type `GGML_OP_MUL_MAT`.
 ```
         switch (node->op) {
