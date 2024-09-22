@@ -1746,6 +1746,7 @@ void ggml_build_backward_expand(struct ggml_context * ctx, struct ggml_cgraph * 
     ...
 }
 ```
+Notice that this is using the forward compute graph.
 We can inspect the gradients:
 ```console
 (lldb) p gf->grads[0]->name
@@ -1782,9 +1783,10 @@ After that we have where we will iterate over al the nodes in the graph:
         }
     }
 ```
-This will start with `node_2` (I'd forgotten to set a name for the multiplication operation
-node but will update this shortly). And notice that we are passing in the `zero_table` to
-`ggml_compute_backward`. Lets take a look at this function:
+This will start with `mul`. And notice that we are passing in the `zero_table` to
+`ggml_compute_backward`. Now, recall that we are currently in `ggml_build_backward_expand`
+and I was not expecting to see a compute function call here.
+Lets take a look at this function:
 ```c
 static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor,
     struct ggml_hash_set * zero_table) {
@@ -1823,24 +1825,25 @@ And after that we have a switch statement and different cases for the different 
 ```
 Now, recall we have something that looks like this `mul = a * b`:
 ```
-mul = a * b
+Think of this as
+mul    =    a * b
 tensor = src0 * src1
 
-Partial derivatives:
-d(mul)
------- = b
- d(a)
+And we have the derivative function def:
+ f(x+h) - f(x)
+ -------------
+      h
 
-∂z/∂a = b
-
-d(mul)
------- = a
- d(b)
-
-∂z/∂b = a
-
+So we plug in our function which is f(a * b) and we get:
+ df/da = (a + h) * b) - (a * b) / h
+ df/da = ab + hb - ab / h
+ df/da = ab - ab + hb / h
+ df/da = hb / h
+ df/da = b
 ```
-And in backpropagation we are interested in how this loss value will change the a and b nodes.
+And this is what `src0` is and we multiply this by the gradient of the tensor (mul) and add
+this to the gradient of `a`.
+
 ```
 How does the loss change with respect to a:
 ∂L/∂a = (∂L/∂z) * (∂z/∂a) = (∂L/∂z) * b
@@ -1854,10 +1857,8 @@ How does the loss change with respect to b:
 ```
 We calculate a loss value that indicates how well our system is performing relative to what
 we want it to do.
-Backpropagation: We indeed pass this loss value back through the nodes, calculating gradients
-along the way.
 
-We know from before tha both `a` and `b` have gradients. So first we will call
+We know from before that both `a` and `b` have gradients. So first we will call
 `ggml_mul` on b using the gradient of the multiplication operation node.
 ```c
                     src0->grad =
@@ -1883,16 +1884,26 @@ static struct ggml_tensor * ggml_add_or_set(struct ggml_context * ctx, struct gg
 Keep in mind that a is the grandient (`a_grad`) in this case and that tensor of the
 multiplication operation of src1 and tensor-grad. So this is checking if the gradient for
 a is in the zero hash set.
-```c
-static bool ggml_hash_contains(const struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
-    size_t i = ggml_hash_find(hash_set, key);
-    return i != GGML_HASHSET_FULL && ggml_bitset_get(hash_set->used, i);
-}
-```
+
 If the zero hash set contains the gradient for a then we will return b, which makes sense, if
 there is no gradient then b does not need scaling. And recall that these were added in
-`ggml_build_backward_expand`.
-
+`ggml_build_backward_expand`. And if not then we add an operation to  increment the `a`
+grandient by the multiplication operator of b and the tensor gradient. The result of this is
+then set to update the gradient of `a`:
+```c
+        src0->grad =
+```
+The same is done for src1.
+The last thing to be done in `ggml_compute_backward` is just the following checks:
+```c
+    for (int i = 0; i < GGML_MAX_SRC; ++i) {
+        if (tensor->src[i] && tensor->src[i]->grad) {
+            GGML_ASSERT(ggml_are_same_shape(tensor->src[i], tensor->src[i]->grad));
+        }
+}
+```
+This will then return to `ggml_build_backward_expand` and we will continue with the next node
+which is `b`.
 
 ```c
     for (int i = 0; i < gf->n_nodes; i++) {
@@ -1904,7 +1915,8 @@ there is no gradient then b does not need scaling. And recall that these were ad
         }
 }
 ```
-Notice that we are passing the `node->grad` tensor to `ggml_build_forward_expand` here.
+Notice that this is using the backward computation graph (`gb`) and that we are passing the
+`node->grad` tensor to `ggml_build_forward_expand` here.
 
 _wip_
 
