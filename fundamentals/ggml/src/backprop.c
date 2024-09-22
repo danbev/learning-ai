@@ -46,14 +46,21 @@ int main(int argc, char **argv) {
 
   printf("Operation/Output tensor mul:\n");
   struct ggml_tensor* mul = ggml_mul(ctx, a, b);
+  ggml_set_name(mul, "mul");
   printf("mul->op: %s\n", ggml_op_name(mul->op));
   printf("mul->src0: %s\n", mul->src[0]->name);
   printf("mul->src1: %s\n", mul->src[1]->name);
   printf("mul->grad: %s\n", mul->grad->name);
   printf("\n");
 
+  struct ggml_tensor* five = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  ggml_set_name(five, "5");
+  ggml_set_f32_1d(five, 0, 5);
+
   struct ggml_cgraph* f_graph = ggml_new_graph_custom(ctx, GGML_DEFAULT_GRAPH_SIZE, true);
+  ggml_build_forward_expand(f_graph, five);
   ggml_build_forward_expand(f_graph, mul);
+  ggml_graph_print(f_graph);
 
   printf("[Perform forward pass 1]\n\n");
   enum ggml_status st = ggml_graph_compute_with_ctx(ctx, f_graph, 1);
