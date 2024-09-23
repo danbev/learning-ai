@@ -1917,6 +1917,23 @@ This will then return to `ggml_build_backward_expand` and we will continue with 
 which is `b`.
 
 ```c
+    for (int i = gf->n_nodes - 1; i >= 0; i--) {
+        struct ggml_tensor * node = gf->nodes[i];
+
+        // inplace operations to add gradients are not created by ggml_compute_backward
+        // use allocator to automatically make inplace operations
+        if (node->grad) {
+            ggml_compute_backward(ctx, node, &zero_table);
+        }
+    }
+}
+```
+Then the same will be done for the `b` tensor but this tensor does not have
+an operation so nothing will be done for it, and the same goes for the `a`
+tensor.
+
+Following that we have:
+```c
     for (int i = 0; i < gf->n_nodes; i++) {
         struct ggml_tensor * node = gf->nodes[i];
 
@@ -1924,10 +1941,47 @@ which is `b`.
             GGML_PRINT_DEBUG("%s: found root node %p\n", __func__, (void *) node);
             ggml_build_forward_expand(gb, node->grad);
         }
-}
+    }
 ```
-Notice that this is using the backward computation graph (`gb`) and that we are passing the
-`node->grad` tensor to `ggml_build_forward_expand` here.
+This is iterating over all the nodes in the forward graph so it will start
+with tensor a. But notice that it is using the backward computation graph (gb)
+and it is passing it's gradient tensor to `ggml_build_forward_expand`. 
+Now, just so we understand what is going on here. Recall that in the we
+added a gradient to a in `ggml_compute_backward`:
+```c
+        case GGML_OP_MUL:
+            {
+                if (src0->grad) {
+                    src0->grad =
+                        ggml_add_or_set(ctx,
+                                src0->grad,
+                                ggml_mul(ctx, src1, tensor->grad),
+                                zero_table);
+                }
+                if (src1->grad) {
+                    src1->grad =
+                        ggml_add_or_set(ctx,
+                                src1->grad,
+                                ggml_mul(ctx, src0, tensor->grad),
+                                zero_table);
+                }
+            } break;
+```
+And if we recall this was set to the multiplation operation of b and the loss.
+Now, the `b` tensor has already been added to the compuation graph but the
+loss tensor has not yet (and note that this tensor will be added as a leaf node.
+
+And the last thing to happen in `ggml_build_backward_expand` is:
+```c
+    ggml_hash_set_free(&zero_table);
+```
+Now with the backward graph constructed we can actually compute the gradients.
+First we compute a loss function and set the output nodes gradient to this
+value:
+```
+  ggml_set_f32(mul->grad, 2.0f);
+  ggml_graph_compute_with_ctx(ctx, b_graph, 1);
+```
 
 _wip_
 
