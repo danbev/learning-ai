@@ -1,6 +1,6 @@
 ## baby-llama issue
 
-I ran into when investigating an issue related to the baby-llama example in
+I ran into this when investigating an issue related to the baby-llama example in
 llama.cpp. When stepping through the code to understand the original issue I
 notice the following in `init_mode`:
 ```console
@@ -65,3 +65,80 @@ type = std::vector<baby_llama_layer>
 $2 = 1
 ```
 
+### Reproducing the issue
+
+The following can be produced on the current master branch:
+```console
+The issue here can be reproduce using the `make` build with the following steps:
+```console
+$ git co master
+$ make clean
+$ make llama-baby-llama -j8 LLAMA_DEBUG=1
+```
+Running the `llama-baby-llama` executable results in the following error:
+```console
+$ ./llama-baby-llama
+Segmentation fault (core dumped)
+```
+Running this in the debugger shows the following:
+```console
+$ gdb --args ./llama-baby-llama
+Reading symbols from ./llama-baby-llama...
+(gdb) r
+Starting program: /home/danbev/work/ai/llama.cpp/llama-baby-llama
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Program received signal SIGSEGV, Segmentation fault.
+__memset_avx2_unaligned_erms () at ../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:328
+warning: 328	../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S: No such file or directory
+(gdb) bt
+#0  __memset_avx2_unaligned_erms () at ../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:328
+#1  0x00005555556fa3ae in llama_model::llama_model (this=0x7fffffffd910) at src/llama.cpp:2842
+#2  0x00005555558eaba8 in main (argc=1, argv=0x7fffffffdb28) at examples/baby-llama/baby-llama.cpp:1447
+(gdb) up
+#1  0x00005555556fa3ae in llama_model::llama_model (this=0x7fffffffd910) at src/llama.cpp:2842
+2842	struct llama_model {
+```
+
+Trying this using the `cmake` build produces:
+```console
+$ rm -rf build
+$ cmake -S . -B build -DLLAMA_CURL=ON
+$ cmake --build build
+```
+And running `llama-baby-llama`:
+```console
+$ ./build/bin/llama-baby-llama
+init model
+init_kv_cache
+/home/danbev/work/ai/llama.cpp/ggml/src/ggml.c:6815: GGML_ASSERT(false && "backwards pass not implemented") failed
+Could not attach to process.  If your uid matches the uid of the target
+process, check the setting of /proc/sys/kernel/yama/ptrace_scope, or try
+again as the root user.  For more details, see /etc/sysctl.d/10-ptrace.conf
+ptrace: Operation not permitted.
+No stack.
+The program is not being run.
+Aborted (core dumped)
+```
+This is a different issue and there is no segfault. Lets try a debug build using
+cmake and see if that produces a different result:
+```console
+$ ./build/bin/llama-baby-llama
+init model
+init_kv_cache
+/home/danbev/work/ai/llama.cpp/ggml/src/ggml.c:6815: GGML_ASSERT(false && "backwards pass not implemented") failed
+Could not attach to process.  If your uid matches the uid of the target
+process, check the setting of /proc/sys/kernel/yama/ptrace_scope, or try
+again as the root user.  For more details, see /etc/sysctl.d/10-ptrace.conf
+ptrace: Operation not permitted.
+No stack.
+The program is not being run.
+Aborted (core dumped)
+```
+This produces the same result which is different from the cmake results where
+we are seeing the segfault and also the issue with the `llama_layer` struct.
+
+So what is different in the case of `make` and `cmake`?  
+
+_wip_
