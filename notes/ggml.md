@@ -1694,7 +1694,7 @@ enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx,
     return ggml_graph_compute(cgraph, &cplan);
 }
 ```
-So before we can compute we need to create a plan. So what is a plan?  
+So before we can compute we need to create a plan. So what is a plan? 
 ```c   
     struct ggml_cplan {
         size_t    work_size;
@@ -1709,7 +1709,8 @@ So before we can compute we need to create a plan. So what is a plan?
     };
 ```
 TODO: look into the threadpool.
-I'm going to skip the threadpool for now and revisit as my focus is on the backpropagation.
+I'm going to skip the threadpool for now and revisit as my focus is on the
+computation in this section.
 
 ```c
 struct ggml_cplan ggml_graph_plan(
@@ -1730,6 +1731,14 @@ struct ggml_cplan ggml_graph_plan(
     memset(&cplan, 0, sizeof(struct ggml_cplan));
     ...
 ```
+
+### Backward expand
+In the example we have:
+```c
+  struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph);
+  ggml_build_backward_expand(ctx, f_graph, b_graph, /* keep gradients */ false);
+```
+
 ```c
 void ggml_build_backward_expand(struct ggml_context * ctx, struct ggml_cgraph * gf,
     struct ggml_cgraph * gb, bool keep) {
@@ -1746,7 +1755,8 @@ void ggml_build_backward_expand(struct ggml_context * ctx, struct ggml_cgraph * 
     ...
 }
 ```
-Notice that this is using the forward compute graph.
+Notice that this is using the forward compute graph (gf).
+
 We can inspect the gradients:
 ```console
 (lldb) p gf->grads[0]->name
@@ -1785,7 +1795,8 @@ After that we have where we will iterate over al the nodes in the graph:
 ```
 This will start with `mul`. And notice that we are passing in the `zero_table` to
 `ggml_compute_backward`. Now, recall that we are currently in `ggml_build_backward_expand`
-and I was not expecting to see a compute function call here.
+and I was not expecting to see this `ggml_compute_backward`  function call here!
+
 Lets take a look at this function:
 ```c
 static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor,
@@ -1823,32 +1834,44 @@ And after that we have a switch statement and different cases for the different 
                 }
             } break;
 ```
+We can see that this is setting the `src0->grad` tensor to some tensor.
 Now, recall we have something that looks like this `mul = a * b`:
+Think of this as:
 ```
-Think of this as
 mul    =    a * b
 tensor = src0 * src1
-
-And we have the derivative function def:
- f(x+h) - f(x)
+```
+And we have the derivative function definition:
+```
+ f(a+h) - f(a)
  -------------
       h
 
-So we plug in our function which is f(a * b) and we get:
- df/da = (a + h) * b) - (a * b) / h
+f(a) = a * b
+```
+And we want to find out how our function `f(a * b)` will change if we make
+a small change to 'a' (the partial derivative of a that is):
+```
+ df/da = ((a + h) * b) - (a * b) / h
  df/da = ab + hb - ab / h
  df/da = ab - ab + hb / h
  df/da = hb / h
  df/da = b
 ```
-And this is what `src0` is and we multiply this by the gradient of the tensor (mul) and add
-this to the gradient of `a`.
-
+So that is the partial derivitive of `a`. Now we want to find out how our new
+loss value will effect a. This can be done by taking derivative of the loss
+with respect to the output of the multiplication operation node multiplied
+by the derivative of a:
 ```
-How does the loss change with respect to a:
 ∂L/∂a = (∂L/∂z) * (∂z/∂a) = (∂L/∂z) * b
+```
+So the result of this operation is what we want to add to the gradient of a. We
+need add this value to the gradient of a becuase `a` might be used in other
+places in the graph and we don't want to loose any information which is what
+would happen if we just replaced the gradient.
 
 How does the loss change with respect to b:
+```
 ∂L/∂b = (∂L/∂z) * (∂z/∂b) = (∂L/∂z) * a
 
 (∂L/∂z)  = tensor->grad
