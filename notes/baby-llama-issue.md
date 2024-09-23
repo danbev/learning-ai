@@ -42,7 +42,7 @@ layers.size(): 2049638230412172414
 ```
 After some digging into this a little and first thinking that this was something
 to do with the `resize` function in combination with the `llama_layer` I later
-realized that this was actually a symbol conflict. There is a `llama_layer` in
+realized that this was actually a type conflict. There is a `llama_layer` in
 llama.cpp and this object file is compiled into the `llama-baby-llama` binary:
 ```console
 /usr/bin/ccache c++ -std=c++11 -fPIC -O0 -g -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wmissing-declarations -Wmissing-noreturn -pthread -fopenmp  -march=native -mtune=native -Wno-array-bounds -Wno-format-truncation -Wextra-semi -Iggml/include -Iggml/src -Iinclude -Isrc -Icommon -D_XOPEN_SOURCE=600 -D_GNU_SOURCE -D_GLIBCXX_ASSERTIONS -DGGML_USE_OPENMP -DGGML_USE_LLAMAFILE  ggml/src/llamafile/sgemm.o ggml/src/ggml.o ggml/src/ggml-alloc.o ggml/src/ggml-backend.o ggml/src/ggml-quants.o ggml/src/ggml-aarch64.o src/llama.o src/llama-vocab.o src/llama-grammar.o src/llama-sampling.o src/unicode.o src/unicode-data.o common/common.o common/arg.o common/log.o common/console.o common/ngram-cache.o common/sampling.o common/train.o common/build-info.o common/json-schema-to-grammar.o examples/baby-llama/baby-llama.o -o llama-baby-llama -g
@@ -235,9 +235,9 @@ $ nm -D build/src/libllama.so | c++filt | grep llama_layer
 000000000036ed59 W llama_layer&& std::forward<llama_layer>(std::remove_reference<llama_layer>::type&)
 00000000003420fe W void std::_Destroy<llama_layer*>(llama_layer*, llama_layer*)
 ```
-Notice that these symbols are `weak` symbols (W) which allows the multiple
-definitions accross different compilation units. There will not be an error
-raise in this case.
+Notice that these symbols (like constructors for `llama_layers`) are `weak`
+symbols (W) which allows the multiple definitions accross different compilation
+units. There will not be an error raise in this case.
 
 Lets also inspect the `llama-baby-llama` binary:
 ```console
@@ -284,8 +284,8 @@ $ nm -D build/bin/llama-baby-llama | c++filt | grep llama_layer
 ```
 Now, my understanding of how the dynamic linker (ld.so) will handle this is that
 it will look for symbols in the llama-baby-llama executable first, where it will
-find the symbol and not look any further. There will be now warning or error
-like we mentioned above..
+find the symbol and not look any further. There will be no warning or error like
+we mentioned above.
 
 While the `make` build is statically linked:
 ```console
@@ -440,5 +440,3 @@ And in this case there is a potential for a symbol collision where the dynamic
 linker could pick the "wrong" symbol.
 
 _wip_
-
-
