@@ -1781,7 +1781,8 @@ the hash values and check, for example for the `b (grad)` tensor:
 And notice that if the grandient tensor (key) is not in the set it will be added and
 set to they key, and the hash returned.
 
-After that we have where we will iterate over al the nodes in the graph:
+After that we have where we will iterate over all the nodes in the graph, but
+in reverse order:
 ```c
     for (int i = gf->n_nodes - 1; i >= 0; i--) {
         struct ggml_tensor * node = gf->nodes[i];
@@ -1794,8 +1795,10 @@ After that we have where we will iterate over al the nodes in the graph:
     }
 ```
 This will start with `mul`. And notice that we are passing in the `zero_table` to
-`ggml_compute_backward`. Now, recall that we are currently in `ggml_build_backward_expand`
-and I was not expecting to see this `ggml_compute_backward`  function call here!
+`ggml_compute_backward`. Now, recall that we are currently in
+`ggml_build_backward_expand` and I was not expecting to see this
+`ggml_compute_backward`  function call here! But this is constructing the graph
+that will later be used during backpropagation.
 
 Lets take a look at this function:
 ```c
@@ -1865,34 +1868,19 @@ by the derivative of a:
 ```
 ∂L/∂a = (∂L/∂z) * (∂z/∂a) = (∂L/∂z) * b
 ```
+This is what the following line is doing:
+```c
+    ggml_mul(ctx, src1, tensor->grad),
+```
 So the result of this operation is what we want to add to the gradient of a. We
 need add this value to the gradient of a becuase `a` might be used in other
 places in the graph and we don't want to loose any information which is what
-would happen if we just replaced the gradient.
+would happen if we just replaced the gradient. Also keep in mind that this is
+only defining an operation and returning the tensor representing that operation.
 
-How does the loss change with respect to b:
-```
-∂L/∂b = (∂L/∂z) * (∂z/∂b) = (∂L/∂z) * a
+The loss value indicates how well our system is performing relative to what we
+want it to do.
 
-(∂L/∂z)  = tensor->grad
-(∂z/∂a)  = src0->grad (accumulation of gradients since this is added)
-(∂z/∂b)  = src1->grad (accumulation of gradients since this is added)
-```
-We calculate a loss value that indicates how well our system is performing relative to what
-we want it to do.
-
-We know from before that both `a` and `b` have gradients. So first we will call
-`ggml_mul` on b using the gradient of the multiplication operation node.
-```c
-                    src0->grad =
-                        ggml_add_or_set(ctx,
-                                src0->grad,
-                                ggml_mul(ctx, src1, tensor->grad),
-                                zero_table);
-```
-So we are first calculating the gradient of `a` by multiplyin b with the gradient of the
-multiplication operation node  `(∂L/∂z) * b`. One thing to note is that `ggml_mul` returns
-a tensor so nothing is actually calculated here, not yet.
 After that `ggml_add_or_set` is called with this new tensor:
 ```c
 static struct ggml_tensor * ggml_add_or_set(struct ggml_context * ctx, struct ggml_tensor * a,
@@ -1905,18 +1893,18 @@ static struct ggml_tensor * ggml_add_or_set(struct ggml_context * ctx, struct gg
 }
 ```
 Keep in mind that a is the grandient (`a_grad`) in this case and that tensor of the
-multiplication operation of src1 and tensor-grad. So this is checking if the gradient for
-a is in the zero hash set.
+multiplication operation of src1 and tensor-grad. In this case remember that
+the b tensor is the gradient of the multiplication operation node and not 'b'
+in our example (was not the best choice of names perhaps on my part for this).
+So if the a->grad is in the zero hash set then we will return b, which makes sense,
+as we don't have to perform the add operation in that case.
 
-If the zero hash set contains the gradient for a then we will return b, which makes sense, if
-there is no gradient then b does not need scaling. And recall that these were added in
-`ggml_build_backward_expand`. And if not then we add an operation to  increment the `a`
-grandient by the multiplication operator of b and the tensor gradient. The result of this is
-then set to update the gradient of `a`:
+The result of this is then set to update the gradient of `a`:
 ```c
         src0->grad =
 ```
 The same is done for src1.
+
 The last thing to be done in `ggml_compute_backward` is just the following checks:
 ```c
     for (int i = 0; i < GGML_MAX_SRC; ++i) {
