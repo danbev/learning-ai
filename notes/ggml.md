@@ -2231,13 +2231,343 @@ a: [  1    1    1    1 ]
 The `ne02 * ne01` is multiplying the number of rows (ne01) by the number of y-dimensions.
 In our case `i03` will become 0 as we only have one thread.
 
+I want to try to visualize this and I want to step away from the current example
+and think about a tensor with 4 dimensions:
+```
+        x  y  z  w
+       [3  2  2  2]
+              
+ +----------w0----------+
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  |   [3, 4,  5] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 6, 7, 8] y0|  |
+ |  |   [ 9,10,11] y1|  |
+ |  +----------------+  |
+ +----------------------+
 
+ +----------w1----------+       
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [12,13,14] y0|  |
+ |  |   [15,16,17] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [18,19,20] y0|  |
+ |  |   [21,22,23] y1|  |
+ |  +----------------+  |
+ +----------------------+
 
-Now, `ne02` (src0)->ne[2]) is the number of elements of the second dimension of
-the first source which is `a`. So `ir` is the current row being processed.
-`i03` is the index of the 4th dimension, `i02` is the index of the 3rd dimension
-and `i01` is the index of the 2nd dimension.
+x = (ne[0] = 3 columns) 
+y = (ne01 = 2 rows)               (i01 in ggml code)
+z = (ne02 = 2 z depth)            (i02 in ggml code)
+w = (ne03 = 2 w groups)           (i03 in ggml code)
 
+Total elements: 3 * 2 * 2 * 2 = 24
+```
+What I'm trying to convey here a way to visualize this tensor with 4 dimensions.
+We have the inner dimensions which is a 3x2 (3 columns (x) and two rows (y)),
+and we have two (z) of these. And we have 1 (w) of z groups. Something like that.
+Now, this is how I think of these but this would really  stored in memory as a
+an array:
+```
+Memory layout:
+  [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23]
+```
+Now, if we map this back to what the code in ggml is doing:
+```c
+ir = 1
+
+        x   y     z    w
+           ne01  ne02 ne03
+       [3   2     2    2]
+    const int64_t i03 = ir/(ne02*ne01);
+    const int64_t i03 =  1/(   2*2);
+    const int64_t i03 =  0
+```
+And `i03` is the index into w so this would be `w0` in our diagram/image above.
+```
+  i03 ------+
+            ↓
+ +----------w0----------+
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  |   [3, 4,  5] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 6, 7, 8] y0|  |
+ |  |   [ 9,10,11] y1|  |
+ |  +----------------+  |
+ +----------------------+
+```
+Nex we have `i02`:
+```c
+    const int64_t i02 = (ir - i03*ne02*ne01)/ne01;
+    const int64_t i02 = ( 1 -  0 *  2 * 2  )/  2 ;
+    const int64_t i02 = (1 -  0 *  2 * 2  )/  2 ;
+    const int64_t i02 = 0
+```
+So `i02` is the index into z.
+  i03 ------+
+            ↓
+ +----------w0----------+
+ |  +-------z0-------+←-|-------i02 (pointing to z0)
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  |   [3, 4,  5] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 6, 7, 8] y0|  |
+ |  |   [ 9,10,11] y1|  |
+ |  +----------------+  |
+ +----------------------+
+```
+And after that we have `i01`:
+```
+    const int64_t i01 = (ir - i03*ne02*ne01 - i02*ne01);
+    const int64_t i01 = (1  -  0 * 2  * 2   -  0 * 2  );
+    const int64_t i01 = 1
+```
+So `i01` is the index "into" y:
+```
+  i03 ------+
+            ↓
+ +----------w0----------+
+ |  +-------z0-------+←-|-------i02 (pointing to z0)
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  |   [3, 4,  5] y1|←-|-------i01 (pointing to y1)
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 6, 7, 8] y0|  |
+ |  |   [ 9,10,11] y1|  |
+ |  +----------------+  |
+ +----------------------+
+```
+Now that is our visual but memory is still layed out as:
+```
+Memory layout:
+  [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23]
+
+   ne00  ne01  ne02 ne03
+   [3     2     2    2]
+
+i03 = 0
+i02 = 0
+i01 = 1
+
+row_index = i03 * (ne02 * ne01) + i02 * ne01 + i01
+          =  0  * (  2  *  2  ) +  0  *  2   + 1
+          =  1
+
+Memory Layout (showing row starts):
+[0, 1, 2, | 3, 4, 5, | 6, 7, 8, | 9, 10, 11, | 12, 13, 14, | 15, 16, 17, | 18, 19, 20, | 21, 22, 23]
+ ^         ^         ^          ^             ^             ^             ^             ^
+ |         |         |          |             |             |             |             |
+ Row 0     Row 1     Row 2      Row 3         Row 4         Row 5         Row 6         Row 7
+```
+Next we have the following which is using ne1 which is src1 and in our case
+the b tensor:
+```c
+            const int64_t i13 = i03 % ne13;
+            const int64_t i12 = i02 % ne12;
+            const int64_t i11 = i01 % ne11;
+```
+This is broadscasting the b tensor to match the shape of the a tensor. So i13
+handles broadcasting for the w dimension, i12 for the z dimension, and i11 for
+the y dimension. Lets look at an example:
+```
+src0 shape: [3, 2, 2, 2] (ne00, ne01, ne02, ne03)
+
+ +----------w0----------+
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  |   [3, 4,  5] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 6, 7, 8] y0|  |
+ |  |   [ 9,10,11] y1|  |
+ |  +----------------+  |
+ +----------------------+
+
+ +----------w1----------+       
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [12,13,14] y0|  |
+ |  |   [15,16,17] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [18,19,20] y0|  |
+ |  |   [21,22,23] y1|  |
+ |  +----------------+  |
+ +----------------------+
+
+src1 shape: [3, 1, 2, 1] (ne10, ne11, ne12, ne13)
+ +----------w0----------+
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 3, 4, 5] y0|  |
+ |  +----------------+  |
+ +----------------------+
+
+    const int64_t i13 = i03 % ne13;
+    const int64_t i13 = 0   % 1;
+    const int64_t i13 = 0;
+```
+So we can see that src1 only has one element in the w dimension so this will
+be broadcasted, that is the first element of w in src1 will be "duplicated".
+And the same will happen for the y dimension which is also different.
+```
+src0:                           src1 (before broadcasting):
++----------w0----------+        +----------w0----------+
+|  +-------z0-------+  |        |  +-------z0-------+  |
+|  |    x0 x1 x2    |  |        |  |    x0 x1 x2    |  |
+|  |   [0, 1,  2] y0|  |        |  |   [0, 1,  2] y0|  |
+|  |   [3, 4,  5] y1|  |        |  +----------------+  |
+|  +----------------+  |        |  +-------z1-------+  |
+|  +-------z1-------+  |        |  |    x0 x1 x2    |  |
+|  |    x0 x1 x2    |  |        |  |   [3, 4,  5] y0|  |
+|  |   [ 6, 7, 8] y0|  |        |  +----------------+  |
+|  |   [ 9,10,11] y1|  |        +----------------------+
+|  +----------------+  |
++----------------------+
++----------w1----------+
+|  +-------z0-------+  |
+|  |    x0 x1 x2    |  |
+|  |  [12,13,14] y0 |  |
+|  |  [15,16,17] y1 |  |
+|  +----------------+  |
+|  +-------z1-------+  |
+|  |    x0 x1 x2    |  |
+|  |  [18,19,20] y0 |  |
+|  |  [21,22,23] y1 |  |
+|  +----------------+  |
++----------------------+
+
+src1 (after broadcasting):
++----------w0----------+
+|  +-------z0-------+  |
+|  |    x0 x1 x2    |  |
+|  |   [0, 1,  2] y0|  |
+|  |   [0, 1,  2] y1|  |
+|  +----------------+  |
+|  +-------z1-------+  |
+|  |    x0 x1 x2    |  |
+|  |   [3, 4,  5] y0|  |
+|  |   [3, 4,  5] y1|  |
+|  +----------------+  |
++----------------------+
++----------w1----------+
+|  +-------z0-------+  |
+|  |    x0 x1 x2    |  |
+|  |   [0, 1,  2] y0|  |
+|  |   [0, 1,  2] y1|  |
+|  +----------------+  |
+|  +-------z1-------+  |
+|  |    x0 x1 x2    |  |
+|  |   [3, 4,  5] y0|  |
+|  |   [3, 4,  5] y1|  |
+|  +----------------+  |
++----------------------+
+```
+
+Following that we have create a pointer to the destination tensors data:
+```c
+float * dst_ptr  = (float *) ((char *) dst->data  + i03*nb3  + i02*nb2  + i01*nb1 );
+```
+And this is using the i03, i02, and i01 to calculate the index into the data
+and it is using the strides (nb) for the respective dimensions.
+And the same is done for the src0 and src1 tensors:
+```c
+float * src0_ptr = (float *) ((char *) src0->data + i03*nb03 + i02*nb02 + i01*nb01);
+float * src1_ptr = (float *) ((char *) src1->data + i13*nb13 + i12*nb12 + i11*nb11);
+```
+Next we will iterate over all rows of nr
+```c
+    const int64_t nr0 = ne00 / ne10;
+```
+Now, `ne00` is the number of elements of the innermost dimension of src0 and
+`ne10` is the number of elements in the innermost dimension of src1. So nr0
+will be the number of times src1's innermost dimension needs to be repeated as
+part of the broadcasting. If these are the same then nr0 will be 1. If src0 is
+greater than src1 then nr0 will be greater than 1. For example 4/2 = 2.
+This will then be used for the following loop:
+```c
+    for (int64_t r = 0 ; r < nr0; ++r) {
+        ggml_vec_mul_f32(ne10, dst_ptr + r*ne10, src0_ptr + r*ne10, src1_ptr);
+    }
+```
+Lets start with the first argument which is `ne10` and we know that this is
+the number of elements of the src1 tensors first dimension. So this is the
+number of element to multiply.
+```console
+(gdb) p ne10
+$70 = 1
+```
+Next we have the destination pointer, and then the src0 pointer and the src1
+pointer. Notice that the src1 pointer is not incremented as it does not change
+even if broadcasting is done, the same elements are used.
+We can visualize this with the following example:
+```
+nr0 = 2, ne10 = 2:
+
+Memory layout:
+src0: [a, b, c, d]
+src1: [x, y]
+dst:  [_, _, _, _] (before mul operation)
+
+Iteration 1 (r = 0):
+  src0_ptr + 0*ne10 → [a, b]
+  src1_ptr          → [x, y]
+  dst_ptr  + 0*ne10 → [a*x, b*y, _, _]
+
+Iteration 2 (r = 1):
+  src0_ptr + 1*ne10 → [c, d]
+  src1_ptr          → [x, y]
+  dst_ptr  + 1*ne10 → [a*x, b*y, c*x, d*y]
+
+Result: dst = [a*x, b*y, c*x, d*y]
+```
+
+```c
+inline static void ggml_vec_mul_f32(const int n,
+                                    float * z,
+                                    const float * x,
+                                    const float * y) {
+    for (int i = 0; i < n; ++i) {
+        z[i]  = x[i]*y[i];
+        }
+}
+```
+
+And that is pretty much it.
+TODO: Create an example that has 4 dimension like the visualizations above
+and also requires broadcasting, that is the dimensions for a and b should
+differ.
 
 _wip_
 
