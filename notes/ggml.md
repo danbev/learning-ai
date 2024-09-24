@@ -1982,8 +1982,307 @@ value:
   ggml_set_f32(mul->grad, 2.0f);
   ggml_graph_compute_with_ctx(ctx, b_graph, 1);
 ```
+Notice that we are using the backward graph (b_graph) and not the forward graph
+this time, and threads are still 1.
+```c
+enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+    struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
+
+    struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, cplan.work_size);
+
+    cplan.work_data = (uint8_t *)ctx->mem_buffer + obj->offs;
+
+    return ggml_graph_compute(cgraph, &cplan);
+}
+```
+So we create a plan and then set a work buffer and then we call
+`ggml_graph_compute`.
+```c
+enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+    ...
+    } else {
+        ggml_graph_compute_thread(&threadpool->workers[0]);
+    }
+```
+I'm skipping the threadpool/threading for now and will revisit that later as
+mentioned before.
+But lets take a look at the `ggml_graph_compute_thread` function:
+```c
+static thread_ret_t ggml_graph_compute_thread(void * data) {
+    struct ggml_compute_state * state = (struct ggml_compute_state *) data;
+
+    const struct ggml_cgraph * cgraph = state->threadpool->cgraph;
+    const struct ggml_cplan  * cplan  = state->threadpool->cplan;
+
+    set_numa_thread_affinity(state->ith);
+
+    struct ggml_compute_params params = {
+        /*.ith       =*/ state->ith,
+        /*.nth       =*/ state->threadpool->n_threads_cur,
+        /*.wsize     =*/ cplan->work_size,
+        /*.wdata     =*/ cplan->work_data,
+        /*.threadpool=*/ state->threadpool,
+    };
+
+    for (int node_n = 0; node_n < cgraph->n_nodes; node_n++) {
+        struct ggml_tensor * node = cgraph->nodes[node_n];
+
+        ggml_compute_forward(&params, node);
+
+        if (state->ith == 0 && cplan->abort_callback && cplan->abort_callback(cplan->abort_callback_data)) {
+            state->threadpool->ec = GGML_STATUS_ABORTED;
+        }
+
+        ggml_barrier(state->threadpool);
+
+        if (state->threadpool->ec != GGML_STATUS_SUCCESS) {
+            break;
+        }
+    }
+
+    return 0;
+}
+```
+TODO: add some notes about NUMA. But in short this is about pinning/binding a
+thread to a specific CPU core.
+We can inspect the ggml_compute_state:
+```console
+$4 = {threadpool = 0x5555556b0740, ith = 0}
+```
+So in this case we have the threadpool pointer and the thread index
+(index thread=ith).
+
+Just to get an overview of the threadpool here is what this struct looks like:
+```console
+(gdb) ptype *state->threadpool
+type = struct ggml_threadpool {
+    ggml_mutex_t mutex;
+    ggml_cond_t cond;
+    struct ggml_cgraph *cgraph;
+    struct ggml_cplan *cplan;
+    atomic_int n_graph;
+    atomic_int n_barrier;
+    atomic_int n_barrier_passed;
+    atomic_int current_chunk;
+    atomic_bool stop;
+    atomic_bool pause;
+    struct ggml_compute_state *workers;
+    int n_threads_max;
+    int n_threads_cur;
+    int32_t prio;
+    uint32_t poll;
+    enum ggml_status ec;
+}
+```
+After creating the compute params the main look is iterating over all the nodes
+in the graph:
+```c
+    for (int node_n = 0; node_n < cgraph->n_nodes; node_n++) {
+        struct ggml_tensor * node = cgraph->nodes[node_n];
+
+        ggml_compute_forward(&params, node);
+
+        if (state->ith == 0 && cplan->abort_callback && cplan->abort_callback(cplan->abort_callback_data)) {
+            state->threadpool->ec = GGML_STATUS_ABORTED;
+        }
+
+        ggml_barrier(state->threadpool);
+
+        if (state->threadpool->ec != GGML_STATUS_SUCCESS) {
+            break;
+        }
+    }
+```
+TODO: I've actually written about this part before and should consolidate this
+into a section that is easier to find.
+The first node in this case will be tensor `a`:
+`ggml_compute_forward`.
+```console
+(gdb) p node->name
+$11 = "a"
+(gdb) p node->op
+$10 = GGML_OP_NONE
+```
+And this will be passed to `ggml_compute_forward`:
+```c
+static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
+    GGML_ASSERT(params);
+
+    if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
+        return;
+    }
+```
+Notice that in this case `a` does not have an operation so this will just
+return at this point.
+The same will happen for `b`.
+
+Just a note about the `ggml_is_empty` function:
+```c
+GGML_CALL bool ggml_is_empty(const struct ggml_tensor * tensor) {
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (tensor->ne[i] == 0) {
+            // empty if any dimension has no elements
+            return true;
+        }
+    }
+    return false;
+}
+```
+If a tensor has any dimension that is 0 then it is considered empty. This makes
+sense as if we have a 2d tensor of size 4x0 (4 x-axis element and 0 y-axis) ther
+are no elements in the tensor.
+
+After that we have the multiplication operation:
+```console
+(gdb) p node->name
+$17 = "mul", '\000' <repeats 60 times>
+(gdb) p node->op
+$18 = GGML_OP_MUL
+```
+This time we will reach the switch statement as the mul tensor has an operation:
+```c
+static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
+    GGML_ASSERT(params);
+
+    if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
+        return;
+    }
+
+    switch (tensor->op) {
+        ...
+        case GGML_OP_MUL:
+            {
+                ggml_compute_forward_mul(params, tensor);
+            } break;
+        ...
+    }
+```
+So dst will be the mul tensor, and src0 and src1 the a and b tensors in the
+following function:
+```c
+static void ggml_compute_forward_mul(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];
+    const struct ggml_tensor * src1 = dst->src[1];
+
+    GGML_ASSERT(src1->type == GGML_TYPE_F32 && "only f32 src1 supported for now");
+
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_mul_f32(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+```
+```c
+static void ggml_compute_forward_mul_f32(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];
+    const struct ggml_tensor * src1 = dst->src[1];
+
+    const int ith = params->ith;  // 0
+    const int nth = params->nth;  // 1 (only using one thread for this example)
+
+    const int64_t nr = ggml_nrows(src0);
+
+    GGML_TENSOR_BINARY_OP_LOCALS
+
+    if (nb10 == sizeof(float)) {
+```
+The above is checking if nb10 (number of bytes) which is the first dimension of
+the second source which is `b` in our case:
+```console
+(gdb) p src1->nb[0]
+$32 = 4
+(gdb) p nb10
+$33 = 4
+(gdb) p nb10 == sizeof(float)
+$36 = 1
+```
+So we will enter this if block:
+Now, we can see that `ir` is set to the thread index (0 in this specific case
+as we are only using 1 thread).
+```c
+        for (int64_t ir = ith; ir < nr; ir += nth) {
+            // src0 and dst are same shape => same indices
+            const int64_t i03 = ir/(ne02*ne01);
+            const int64_t i02 = (ir - i03*ne02*ne01)/ne01;
+            const int64_t i01 = (ir - i03*ne02*ne01 - i02*ne01);
+```
+Now, `ne02` (src0)->ne[2]) is the number of elements of the second dimension of
+the first source which is `a`. So `ir` is the current row being processed.
+`i03` is the index of the 4th dimension, `i02` is the index of the 3rd dimension
+and `i01` is the index of the 2nd dimension.
+
 
 _wip_
+
+### GGML_TENSOR_BINARY_OP_LOCALS
+`GGML_TENSOR_BINARY_OP_LOCALS` expands local variables for the src tensors and
+this is used in many if not all the operation functions so it can be good to
+understand/know about them as it will make reading the code easier (otherwise
+it just looks like variables are magically being used)
+```c
+    const int64_t ne00 = (src0)->ne[0];
+    const int64_t ne01 = (src0)->ne[1];
+    const int64_t ne02 = (src0)->ne[2];
+    const int64_t ne03 = (src0)->ne[3];
+
+    const size_t nb00 = (src0)->nb[0];
+    const size_t nb01 = (src0)->nb[1];
+    const size_t nb02 = (src0)->nb[2];
+    const size_t nb03 = (src0)->nb[3];
+
+    const int64_t ne10 = (src1)->ne[0];
+    const int64_t ne11 = (src1)->ne[1];
+    const int64_t ne12 = (src1)->ne[2];
+    const int64_t ne13 = (src1)->ne[3];
+
+    const size_t nb10 = (src1)->nb[0];
+    const size_t nb11 = (src1)->nb[1];
+    const size_t nb12 = (src1)->nb[2];
+    const size_t nb13 = (src1)->nb[3];
+
+    const int64_t ne0 = (dst)->ne[0];
+    const int64_t ne1 = (dst)->ne[1];
+    const int64_t ne2 = (dst)->ne[2];
+    const int64_t ne3 = (dst)->ne[3];
+
+    const size_t nb0 = (dst)->nb[0];
+    const size_t nb1 = (dst)->nb[1];
+    const size_t nb2 = (dst)->nb[2];
+    const size_t nb3 = (dst)->nb[3];
+```
+There are also casts are just to avoid warnings about unused variables which
+I've removed for clarity here.
+Notice the pattern here that is used. For the source tensor we have `ne` for
+number of elements and `nb` for number of bytes (stride), followed the source
+index (src0, src1 etc), and then the dimension index.
+For the destination tensor (mul in this case), these are named only using
+ne and nb followed by the dimension index (there is only one dst tensor).
+
+### `ggml_get_rows`
+```c
+GGML_CALL int64_t ggml_nrows(const struct ggml_tensor * tensor) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return tensor->ne[1]*tensor->ne[2]*tensor->ne[3];
+}
+```
+Notice that for a 2d case we have d0 which are the number of elements, and d1
+is the number of rows. For more dimensions we have d1*d2 rows and so on. This
+is basically what the above is caclulating.
+
+
 
 And notice that the operation is of type `GGML_OP_MUL_MAT`.
 ```
