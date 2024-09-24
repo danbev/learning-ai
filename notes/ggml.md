@@ -2226,6 +2226,53 @@ and `i01` is the index of the 2nd dimension.
 
 _wip_
 
+### Broadcasting
+Lets take a normal matrix vector multiplication as an example:
+```
+Matrix A (shape 3x2):  (using ggml dimension "notation" so x is the first dim)
+[1  2  3]
+[4  5  6]
+
+Vector b (shape 3x1):
+[10  20  30]
+
+Transposed:
+[10]
+[20]
+[30]
+
+[1  2  3]  [10]  = [1 * 10 + 2 * 20 + 3 * 30] =  [140]
+[4  5  6]  [20]    [4 * 10 + 5 * 20 + 6 * 30]    [320]
+           [30]    [10 * 10 + 20 * 20 + 30 * 30] [1400]
+```
+There is no problem multiplying these as the dimensions match up. But what if
+b was 2x1 instead:
+```
+Matrix A (shape 3x2):  (using ggml dimension "notation" so x is the first dim)
+[1  2  3]
+[4  5  6]
+
+Vector b (shape 2x1):
+[10  20 ]
+
+[1  2  3]  [10]  Not possible due to dimension missmatch. 
+[4  5  6]  [20]
+```
+We can think of the a matrix as a matrix of 2 rows and each row is like a function that
+takes 3 arguments. So call a function we have to provide the right number of arguments
+just like calling a function in programming.
+So broadcasting is a way to make the dimensions match up so that we can perform the
+operation. For example:
+```
+Vector b (shape 2x1):
+[10  20 ]  -> [10  20 1]
+
+[1  2  3]  [10]  = [1 * 10 + 2 * 20 + 3 * 1] =  [50]
+[4  5  6]  [20]    [4 * 10 + 5 * 20 + 6 * 1]    [140]
+```
+So be is extened with 1 (the identity element for multiplication).
+
+
 ### GGML_TENSOR_BINARY_OP_LOCALS
 `GGML_TENSOR_BINARY_OP_LOCALS` expands local variables for the src tensors and
 this is used in many if not all the operation functions so it can be good to
