@@ -2616,7 +2616,7 @@ Vector b (shape 2x1):
 [4  5  6]  [20]    [4 * 10 + 5 * 20 + 6 * 1]    [146]
 ```
 So be is extened with 1 (the identity element for multiplication).
-There is an example of broadcasting in [braodcast.c](../fundamentals/ggml/src/broadcast.c)
+There is an example of broadcasting in [braodcast_manual.c](../fundamentals/ggml/src/broadcast_manual.c)
 which might help to explore this idea more.
 
 One thing to note is that how the vector, like b above, is extended can be different for
@@ -2624,6 +2624,142 @@ different operations. For multiplication it might be appropriate to extend the v
 with 1s but for other operations it might be different. I'll try to go through and addition
 operation too later to see how this is handled.
 
+The following is using the ggml example [braodcast.c](../fundamentals/ggml/src/broadcast.c)
+for debugging:
+```c
+  struct ggml_tensor* a = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 3, 2, 2, 2);
+  struct ggml_tensor* b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 3, 1, 2, 1);
+  struct ggml_tensor* mul = ggml_mul(ctx, a, b);
+```
+```
+a (src0) shape: [3, 2, 2, 2] (ne00, ne01, ne02, ne03)
+
+ +----------w0----------+
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  |   [3, 4,  5] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 6, 7, 8] y0|  |
+ |  |   [ 9,10,11] y1|  |
+ |  +----------------+  |
+ +----------------------+
+
+ +----------w1----------+       
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [12,13,14] y0|  |
+ |  |   [15,16,17] y1|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [18,19,20] y0|  |
+ |  |   [21,22,23] y1|  |
+ |  +----------------+  |
+ +----------------------+
+
+b (src1) shape: [3, 1, 2, 1] (ne10, ne11, ne12, ne13)
+ +----------w0----------+
+ |  +-------z0-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [0, 1,  2] y0|  |
+ |  +----------------+  |
+ |                      |
+ |  +-------z1-------+  |
+ |  |    x0 x1 x2    |  |
+ |  |   [ 3, 4, 5] y0|  |
+ |  +----------------+  |
+ +----------------------+
+```
+If we set a breakpoint in `ggml_compute_forward_mul_f32` we can see the
+following:
+```c
+    const int64_t nr = ggml_nrows(src0);
+```
+```console
+(gdb) p ggml_nrows(src0)
+$5 = 8
+```
+Now, ggml_nrows only takes the last three dimensions into account:
+```c
+int64_t ggml_nrows(const struct ggml_tensor * tensor) {
+    return tensor->ne[1]*tensor->ne[2]*tensor->ne[3];
+}
+```
+The total number of elements in a/src0 is 3 * 2 * 2 * 2 = 24, and the number
+of rows will be 2 * 2 * 2 = 8.
+```
+Memory Layout (showing row starts):
+[0, 1, 2, | 3, 4, 5, | 6, 7, 8, | 9, 10, 11, | 12, 13, 14, | 15, 16, 17, | 18, 19, 20, | 21, 22, 23]
+ ^         ^         ^          ^             ^             ^             ^             ^
+ |         |         |          |             |             |             |             |
+ Row 0     Row 1     Row 2      Row 3         Row 4         Row 5         Row 6         Row 7
+```
+This is the number of rows what we will be iterating over (I'm skipping over
+some of the details here that we convered priviously):
+```
+        for (int64_t ir = ith; ir < nr; ir += nth) {
+            ...
+            for (int64_t r = 0 ; r < nr0; ++r) {
+                ggml_vec_mul_f32(ne10, dst_ptr + r*ne10, src0_ptr + r*ne10, src1_ptr);
+            }
+```
+Now, we can expect broadcasting to happen for the y and z dimension as these
+are smaller for the b/src1 tensor. 
+So lets set a conditional breakpoint for i01, which is for the y dimension:
+```console
+(gdb) br ggml.c:10578 if i01 > 0
+(gdb) r
+```
+At this point src0_ptr is:
+```console
+(gdb) p *src0_ptr
+$18 = 4
+
+(gdb) p ((float*)dst->data)[0]
+$12 = 1
+(gdb) p ((float*)dst->data)[1]
+$13 = 4
+(gdb) p ((float*)dst->data)[2]
+$14 = 9
+(gdb) p ((float*)dst->data)[3]
+$15 = 0
+```
+So we have already multiplied the first row of a/src0 with the first row of
+b/src1. And we can see that the first row of dst is [1, 4, 9]. Now src1/b does
+not have a second row to multiply so the same row will be used:
+```console
+(gdb) p src1_ptr[0]
+$20 = 1
+(gdb) p src1_ptr[1]
+$21 = 2
+(gdb) p src1_ptr[2]
+$22 = 3
+
+(gdb) p ne10
+$23 = 3
+```
+After the multiplication we can see that the second row of dst is:
+```console
+(gdb) p dst_ptr[0]
+$34 = 4                 (4 * 1)
+(gdb) p dst_ptr[1]    
+$35 = 10                (5 * 2)
+(gdb) p dst_ptr[2]
+$36 = 18                (6 * 3)
+```
+Perhaps it would be interesting to see how broadcasting is done for tensors
+that also differ in the x dimension or perhaps only in that dimension.
+
+_wip_
+
+Now, recall that we are iterating over all the 8 rows in a/src0. If there is
+a missmatch of dimension size (other than the first dimension) then the above
+will just use the first element of the smaller tensor.
 
 ### GGML_TENSOR_BINARY_OP_LOCALS
 `GGML_TENSOR_BINARY_OP_LOCALS` expands local variables for the src tensors and
