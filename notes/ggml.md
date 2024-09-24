@@ -2572,6 +2572,9 @@ differ.
 _wip_
 
 ### Broadcasting
+Broadcasting is a set of rules for how to handle operations between arrays of
+different shapes which is not specific to ML or neural networks.
+
 Lets take a normal matrix vector multiplication as an example:
 ```
 Matrix A (shape 3x2):  (using ggml dimension "notation" so x is the first dim)
