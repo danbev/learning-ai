@@ -2271,6 +2271,13 @@ Vector b (shape 2x1):
 [4  5  6]  [20]    [4 * 10 + 5 * 20 + 6 * 1]    [146]
 ```
 So be is extened with 1 (the identity element for multiplication).
+There is an example of broadcasting in [braodcast.c](../fundamentals/ggml/src/broadcast.c)
+which might help to explore this idea more.
+
+One thing to note is that how the vector, like b above, is extended can be different for
+different operations. For multiplication it might be appropriate to extend the vector
+with 1s but for other operations it might be different. I'll try to go through and addition
+operation too later to see how this is handled.
 
 
 ### GGML_TENSOR_BINARY_OP_LOCALS
