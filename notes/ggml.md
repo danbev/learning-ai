@@ -2211,6 +2211,9 @@ $36 = 1
 So we will enter this if block:
 Now, we can see that `ir` is set to the thread index (0 in this specific case
 as we are only using 1 thread).
+
+Now, in GGML we always have 4 dimension, or there can be 4 dimensions so this has
+to be taken into account.
 ```c
         for (int64_t ir = ith; ir < nr; ir += nth) {
             // src0 and dst are same shape => same indices
@@ -2218,6 +2221,18 @@ as we are only using 1 thread).
             const int64_t i02 = (ir - i03*ne02*ne01)/ne01;
             const int64_t i01 = (ir - i03*ne02*ne01 - i02*ne01);
 ```
+Now, `ir` is the thread index that this thread is responsible for computing. This is
+zero in our case. And notice that the above code is only using `ne0` so this is the
+src0 tensor (a). And only the "last" three dimensions are used in the above code.
+```
+    ne00 ne01 ne02 ne03
+a: [  1    1    1    1 ]
+```
+The `ne02 * ne01` is multiplying the number of rows (ne01) by the number of y-dimensions.
+In our case `i03` will become 0 as we only have one thread.
+
+
+
 Now, `ne02` (src0)->ne[2]) is the number of elements of the second dimension of
 the first source which is `a`. So `ir` is the current row being processed.
 `i03` is the index of the 4th dimension, `i02` is the index of the 3rd dimension
