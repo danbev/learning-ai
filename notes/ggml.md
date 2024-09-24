@@ -2267,8 +2267,8 @@ operation. For example:
 Vector b (shape 2x1):
 [10  20 ]  -> [10  20 1]
 
-[1  2  3]  [10]  = [1 * 10 + 2 * 20 + 3 * 1] =  [50]
-[4  5  6]  [20]    [4 * 10 + 5 * 20 + 6 * 1]    [140]
+[1  2  3]  [10]  = [1 * 10 + 2 * 20 + 3 * 1] =  [53]
+[4  5  6]  [20]    [4 * 10 + 5 * 20 + 6 * 1]    [146]
 ```
 So be is extened with 1 (the identity element for multiplication).
 
