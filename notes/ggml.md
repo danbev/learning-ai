@@ -3722,3 +3722,18 @@ void ggml_build_backward_expand(struct ggml_context * ctx,
 So the last parameter is false in our case which means that we don't want to keep the
 gradients from the forward compute graph, so this is duplicating those tensors so they
 won't be modified.
+
+### Tests
+Tests for GGML are located in the tests directory. These are CTest tests which
+is CMakes built-in test system. 
+
+The available tests can be listed by running the following command:
+```console
+$ cd build
+$ ctest -N
+```
+Running a test can be done by running the following command:
+```console
+$ ctest -R test1 -V
+```
+
