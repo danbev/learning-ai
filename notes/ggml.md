@@ -3737,3 +3737,25 @@ Running a test can be done by running the following command:
 $ ctest -R test1 -V
 ```
 
+### Project structure
+This is just a section about some of the files and directory that were not
+obvious to me at first.
+
+#### spm-headers
+Thisis a Swift Package Manager directory which is referenced from the file
+Package.swift:
+```
+...
+    publicHeadersPath: "spm-headers",
+```
+So this is related to packaging the libary for Swift.
+
+#### ggml.pc.in
+This is a file used by the pkg-config tool.
+
+#### .editorconfig
+This is a file used to define and maintain consistent coding styles between
+different editors and IDEs for a project.
+
+#### build.zig
+Is part of the [Zig build system)(https://ziglang.org/learn/build-system/).
