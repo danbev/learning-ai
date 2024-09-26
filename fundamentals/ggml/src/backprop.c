@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
   ggml_graph_reset(f_graph);
 
   struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph);
-  ggml_build_backward_expand(ctx, f_graph, b_graph, /* keep gradients */ false);
+  ggml_build_backward_expand(ctx, f_graph, b_graph, /*accumulate*/ false, /* keep gradients */ false);
   ggml_graph_print(b_graph);
 
   // Set the gradient of the output tensor (mul) which would be the value of
