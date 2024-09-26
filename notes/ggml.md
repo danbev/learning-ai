@@ -679,7 +679,109 @@ Memory layout:
     row 1      row 2        row 3
              ↑
              8 (ne[1])
-```  
+```
+
+### Gradients
+When we create a tensor we do so using the `ggml_new_tensor` functions. For
+example:
+```c
+  struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  ggml_set_param(ctx, a);
+  ggml_set_i32_1d(a, 0, 2);
+```
+In this case `a` and `b` are tensors of type `GGML_TYPE_F32` and they will not
+have any operation associated with them (op = GGML_OP_NONE).
+
+`ggml_set_param` is worth looking closer at:
+```c
+void ggml_set_param(struct ggml_context * ctx, struct ggml_tensor * tensor) {
+    tensor->flags |= GGML_TENSOR_FLAG_PARAM;
+
+    GGML_ASSERT(tensor->grad == NULL);
+    tensor->grad = ggml_dup_tensor(ctx, tensor);
+    ggml_format_name(tensor->grad, "%s (grad)", tensor->name);
+}
+```
+Notice that the first line will set the `GGML_TENSOR_FLAG_PARAM` flag on the
+tensor.
+
+Lets take a look at the call where `a` is passed in:
+```console
+(gdb) p *tensor
+$6 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE, 
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+view_src = 0x0, view_offs = 0, data = 0x7ffff6a00180,
+name = "a", '\000' <repeats 62 times>, extra = 0x0}
+```
+Notice that the `grad` field is being set to the tensor returned by
+`ggml_dup_tensor` which looks like this:
+```c
+struct ggml_tensor * ggml_dup_tensor(struct ggml_context * ctx, const struct ggml_tensor * src) {
+    return ggml_new_tensor(ctx, src->type, GGML_MAX_DIMS, src->ne);
+}
+```
+So this is creating a new tensor with the same type as `a`, and it uses the
+same shape which is specified using `src->ne`. But the data is not duplicated:
+```console
+(gdb) p *((float*)tensor->data)
+$10 = 2
+(gdb) p *((float*)tensor->grad->data)
+$11 = 0
+```
+Just keep in mind that the gradient is also "just" a tensor which in turn can
+have a gradient (second derivative) associated with it.
+
+But `mul` is different as it takes both `a` and `b` as arguments.
+```c
+  struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+  ggml_set_param(ctx, b);
+  struct ggml_tensor* mul = ggml_mul(ctx, a, b);
+```
+
+```c
+struct ggml_tensor * ggml_mul(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b) {
+    return ggml_mul_impl(ctx, a, b, false);
+}
+
+static struct ggml_tensor * ggml_mul_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor * a,
+        struct ggml_tensor * b,
+        bool inplace) {
+    GGML_ASSERT(ggml_can_repeat(b, a));
+
+    bool is_node = false;
+
+    if (!inplace && (a->grad || b->grad)) {
+        // TODO: support backward pass for broadcasting
+        GGML_ASSERT(ggml_are_same_shape(a, b));
+        is_node = true;
+    }
+
+    if (inplace) {
+        GGML_ASSERT(!is_node);
+    }
+
+    struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
+
+    result->op   = GGML_OP_MUL;
+    result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
+    result->src[0] = a;
+    result->src[1] = b;
+
+    return result;
+}
+```
+In this case `is_node` will be set to true as `a` and `b` are tensors that have
+a gradient associated with them as we saw above. If inplace was true a view of
+the tensor is used as the result/return value, other wise a duplicate of `a` is
+used. This tensor is then updated to have the operation set to `GGML_OP_MUL`
+and and take `a` and `b` as sources/inputs. In this case `is_node` is true
+so a duplicate of the result tensor is created as set as the gradient.
 
 ### views
 If we inspect a tensor we can see that it contains the following:
