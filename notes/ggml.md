@@ -612,7 +612,6 @@ represented as:
 (gdb) x/t table_f32_f16 + 2
 0x6011e8 <table_f32_f16+8>:	00110100000000000000000000000000
 
-```
 (gdb) p table_f32_f16[3]
 $111 = 1.78813934e-07
 
@@ -636,7 +635,6 @@ This is done for all the possibe half-precision floating point numbers.
 Similarlty this is also done for other activation functions.
 
 Lets turn our attention to the llama_init_from_gpt_params function:
-```console
 ```console
 std::tie(model, ctx) = llama_init_from_gpt_params(params);
 ```
@@ -2318,6 +2316,7 @@ Nex we have `i02`:
     const int64_t i02 = 0
 ```
 So `i02` is the index into z.
+```
   i03 ------+
             ↓
  +----------w0----------+
