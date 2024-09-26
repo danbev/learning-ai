@@ -53,12 +53,7 @@ int main(int argc, char **argv) {
   printf("mul->grad: %s\n", mul->grad->name);
   printf("\n");
 
-  struct ggml_tensor* five = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-  ggml_set_name(five, "5");
-  ggml_set_f32_1d(five, 0, 5);
-
   struct ggml_cgraph* f_graph = ggml_new_graph_custom(ctx, GGML_DEFAULT_GRAPH_SIZE, true);
-  ggml_build_forward_expand(f_graph, five);
   ggml_build_forward_expand(f_graph, mul);
   ggml_graph_print(f_graph);
 
