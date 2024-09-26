@@ -1825,7 +1825,7 @@ After we have created a cgraph and called `ggml_build_forward_expand` we can
 then call `ggml_graph_compute`:
 ```c
   int n_threads = 1;
-  ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
+  ggml_graph_compute_with_ctx(ctx, f_graph, n_threads);
 ```
 I'm just using 1 thread to simplfy stepping through the code in the debugger.
 
@@ -1878,28 +1878,194 @@ struct ggml_cplan ggml_graph_plan(
     memset(&cplan, 0, sizeof(struct ggml_cplan));
     ...
 ```
+After the computation plan has been created we can call `ggml_graph_compute`:
+```c
+    return ggml_graph_compute(cgraph, &cplan);
+```
+```c
+enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+    ...
+    } else {
+        atomic_store_explicit(&threadpool->n_threads_cur, 1, memory_order_relaxed);
+        ggml_graph_compute_thread(&threadpool->workers[0]);
+    }
+```
+```c
+static thread_ret_t ggml_graph_compute_thread(void * data) {
+    struct ggml_compute_state * state = (struct ggml_compute_state *) data;
+    struct ggml_threadpool    * tp    = state->threadpool;
+
+    const struct ggml_cgraph * cgraph = tp->cgraph;
+    const struct ggml_cplan  * cplan  = tp->cplan;
+
+    set_numa_thread_affinity(state->ith);
+
+    struct ggml_compute_params params = {
+        /*.ith       =*/ state->ith,
+        /*.nth       =*/ atomic_load_explicit(&tp->n_threads_cur, memory_order_relaxed),
+        /*.wsize     =*/ cplan->work_size,
+        /*.wdata     =*/ cplan->work_data,
+        /*.threadpool=*/ tp,
+    };
+
+    for (int node_n = 0; node_n < cgraph->n_nodes && !tp->abort; node_n++) {
+        struct ggml_tensor * node = cgraph->nodes[node_n];
+
+        ggml_compute_forward(&params, node);
+
+        if (state->ith == 0 && cplan->abort_callback &&
+                cplan->abort_callback(cplan->abort_callback_data)) {
+            tp->abort = true;
+            tp->ec    = GGML_STATUS_ABORTED;
+        }
+
+        ggml_barrier(state->threadpool);
+    }
+
+    return 0;
+}
+```
+In our case the computation graph looks like this:
+```console
+(gdb) p ggml_graph_print(cgraph)
+=== GRAPH ===
+n_nodes = 3
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+ -   2: [     1,     1,     1]              MUL g
+n_leafs = 0
+========================================
+
+(gdb) p cgraph->nodes[0]->name
+$51 = "a", '\000' <repeats 62 times>
+
+(gdb) p cgraph->nodes[1]->name
+$52 = "b", '\000' <repeats 62 times>
+
+(gdb) p cgraph->nodes[2]->name
+$53 = "mul", '\000' <repeats 60 times>
+```
+So the above will iterate over all the nodes in the graph and call
+`ggml_compute_forward` for each one. The first one will be `a`.
+```c
+static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
+    GGML_ASSERT(params);
+
+    if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
+        return;
+    }
+```
+In the case of `a` and `b` these don't have an operation so they will just
+return. But for `mul` this is more interesting:
+```c
+static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
+    GGML_ASSERT(params);
+
+    if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
+        return;
+    }
+
+    switch (tensor->op) {
+        ...
+        case GGML_OP_MUL:
+            {
+                ggml_compute_forward_mul(params, tensor);
+            } break;
+        ...
+```
+And `ggml_compute_forward_mul` petty much delegates to
+`ggml_compute_forward_mul_f32` in this case:
+```c
+static void ggml_compute_forward_mul(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];
+    const struct ggml_tensor * src1 = dst->src[1];
+
+    GGML_ASSERT(src1->type == GGML_TYPE_F32 && "only f32 src1 supported for now");
+
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_mul_f32(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+```
+Note that `ggml_compute_forward_mul_f32` is passed the `dst` tensor which is
+`mul` in our case. TODO: I'm sure I've discussed this function else where
+so copy this here instead of duplicating it.
+
+This might be obvious but the above does not modify or use the grad fiels in any
+way. That part is handled by the backward pass which is composed of a backward
+expand followed by a backward compute (though the compute is the same
+`ggml_graph_compute` function but using a different graph).
 
 ### Backward expand
-In the example we have:
+For the backward computation we need to create a graph what will handle the
+gradients. This is done in a simliar manner to the forward pass where we created
+a graph and then expanded it, and performed the computation.
+
+Here we will duplicate the forward graph first and then expand it:
 ```c
   struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph);
-  ggml_build_backward_expand(ctx, f_graph, b_graph, /* keep gradients */ false);
 ```
+```console
+(gdb) p ggml_graph_print(f_graph)
+=== GRAPH ===
+n_nodes = 3
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+ -   2: [     1,     1,     1]              MUL g
+n_leafs = 0
+========================================
 
+(gdb) p ggml_graph_print(b_graph)
+=== GRAPH ===
+n_nodes = 3
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+ -   2: [     1,     1,     1]              MUL g
+n_leafs = 0
+========================================
+```
+So before we perform the backward expansion the graphs are identical.
+
+```c
+  ggml_build_backward_expand(ctx, f_graph, b_graph, /*accumulate*/ false, /* keep gradients */ false);
+```
 ```c
 void ggml_build_backward_expand(struct ggml_context * ctx, struct ggml_cgraph * gf,
     struct ggml_cgraph * gb, bool keep) {
 
     ...
 
-    // remember original gradients which start with zero values
+    // keep tables of original gradients for replacement/accumulation logic
     struct ggml_hash_set zero_table = ggml_hash_set_new(gf->size);
+    struct ggml_hash_set acc_table  = ggml_hash_set_new(gf->size);
     for (int i = 0; i < gf->n_nodes; i++) {
-        if (gf->grads[i]) {
-            ggml_hash_insert(&zero_table, gf->grads[i]);
+        struct ggml_tensor * node = gf->nodes[i];
+
+        if (node->grad) {
+            {
+                const size_t insert_result = ggml_hash_insert(&zero_table, node->grad);
+                GGML_ASSERT(insert_result != GGML_HASHSET_FULL);
+                GGML_ASSERT(insert_result != GGML_HASHSET_ALREADY_EXISTS);
+            }
+
+            // only gradients of trainable parameters should be accumulated
+            if (accumulate && (node->flags & GGML_TENSOR_FLAG_PARAM)) {
+                const size_t insert_result = ggml_hash_insert(&acc_table, node->grad);
+                GGML_ASSERT(insert_result != GGML_HASHSET_FULL);
+                GGML_ASSERT(insert_result != GGML_HASHSET_ALREADY_EXISTS);
+            }
         }
     }
-    ...
 }
 ```
 Notice that this is using the forward compute graph (gf).
@@ -1915,11 +2081,12 @@ We can inspect the gradients:
 (lldb) p gf->nodes[2]->grad
 (ggml_tensor *) 0x00000001358007a0
 ```
-Lets start with this hash set named `zero_table`. Keeping track of the gradients that are zero
-might enable optimizations, like skipping some calculations or using speciallized algorithms
-for sparse gradients. But at this point in the code the `zero_table` is simply being populated
-with all the gradient tensors (for a, b, and mul in our case). Recall that the keys
-in the hash set are the hashes like we mentioned earlier. But when debugging we can see
+Lets start with this `ggml_hash_set` named `zero_table`. Keeping track of the
+gradients that are zero might enable optimizations, like skipping some
+calculations or using speciallized algorithms for sparse gradients. But at this
+point in the code the `zero_table` is simply being populated with all the
+gradient tensors (for a, b, and mul in our case). Recall that the keys in the
+hash set are the hashes like we mentioned earlier. But when debugging we can see
 the hash values and check, for example for the `b (grad)` tensor:
 ```console
 (lldb) p *zero_table->keys[1392]->name
@@ -1928,29 +2095,28 @@ the hash values and check, for example for the `b (grad)` tensor:
 And notice that if the grandient tensor (key) is not in the set it will be added and
 set to they key, and the hash returned.
 
-After that we have where we will iterate over all the nodes in the graph, but
-in reverse order:
+After that we have where we will iterate over all the nodes in the forward graph,
+but in reverse order, so we will start with `mul`:
 ```c
     for (int i = gf->n_nodes - 1; i >= 0; i--) {
         struct ggml_tensor * node = gf->nodes[i];
 
-        // inplace operations to add gradients are not created by ggml_compute_backward
+        // inplace operations to add gradients are not created by ggml_compute_backward except for gradient accumulation
         // use allocator to automatically make inplace operations
         if (node->grad) {
-            ggml_compute_backward(ctx, node, &zero_table);
+            ggml_compute_backward(ctx, node, &zero_table, &acc_table);
         }
     }
 ```
-This will start with `mul`. And notice that we are passing in the `zero_table` to
-`ggml_compute_backward`. Now, recall that we are currently in
+This will start with `mul`. And notice that we are passing in the `zero_table`
+to `ggml_compute_backward`. Now, recall that we are currently in
 `ggml_build_backward_expand` and I was not expecting to see this
-`ggml_compute_backward`  function call here! But this is constructing the graph
-that will later be used during backpropagation.
-
+`ggml_compute_backward`  function call here! What does this do?  
 Lets take a look at this function:
 ```c
-static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor * tensor,
-    struct ggml_hash_set * zero_table) {
+static void ggml_compute_backward(struct ggml_context * ctx,
+    struct ggml_tensor * tensor, struct ggml_hash_set * zero_table,
+    struct ggml_hash_set * acc_table) {
     struct ggml_tensor * src0 = tensor->src[0];
     struct ggml_tensor * src1 = tensor->src[1];
     struct ggml_tensor * src2 = tensor->src[2];
@@ -1973,14 +2139,14 @@ And after that we have a switch statement and different cases for the different 
                         ggml_add_or_set(ctx,
                                 src0->grad,
                                 ggml_mul(ctx, src1, tensor->grad),
-                                zero_table);
+                                zero_table, acc_table);
                 }
                 if (src1->grad) {
                     src1->grad =
                         ggml_add_or_set(ctx,
                                 src1->grad,
                                 ggml_mul(ctx, src0, tensor->grad),
-                                zero_table);
+                                zero_table, acc_table);
                 }
             } break;
 ```
@@ -2060,24 +2226,16 @@ The last thing to be done in `ggml_compute_backward` is just the following check
         }
 }
 ```
-This will then return to `ggml_build_backward_expand` and we will continue with the next node
-which is `b`.
+This will then return to `ggml_build_backward_expand` and we will continue with
+the next node which is `b`.
 
-```c
-    for (int i = gf->n_nodes - 1; i >= 0; i--) {
-        struct ggml_tensor * node = gf->nodes[i];
-
-        // inplace operations to add gradients are not created by ggml_compute_backward
-        // use allocator to automatically make inplace operations
-        if (node->grad) {
-            ggml_compute_backward(ctx, node, &zero_table);
-        }
-    }
-}
-```
-Then the same will be done for the `b` tensor but this tensor does not have
-an operation so nothing will be done for it, and the same goes for the `a`
-tensor.
+What `ggml_compute_backward` did was it added tensor operations for the
+grandients of of the parents of `mul` (a and b) but it did not "compute"
+anything at this point which I what I think got me a little confused by the name
+of this function. But the actual computation will be done in the
+`ggml_graph_compute` function just like in the forward computation. My current
+understanding of this function is that it will build/create the gradient tensors
+according to the operation of the tensor like `mul` above.
 
 Following that we have:
 ```c
@@ -2092,45 +2250,186 @@ Following that we have:
 ```
 This is iterating over all the nodes in the forward graph so it will start
 with tensor a. But notice that it is using the backward computation graph (gb)
-and it is passing it's gradient tensor to `ggml_build_forward_expand`. 
-Now, just so we understand what is going on here. Recall that in the we
-added a gradient to a in `ggml_compute_backward`:
-```c
-        case GGML_OP_MUL:
-            {
-                if (src0->grad) {
-                    src0->grad =
-                        ggml_add_or_set(ctx,
-                                src0->grad,
-                                ggml_mul(ctx, src1, tensor->grad),
-                                zero_table);
-                }
-                if (src1->grad) {
-                    src1->grad =
-                        ggml_add_or_set(ctx,
-                                src1->grad,
-                                ggml_mul(ctx, src0, tensor->grad),
-                                zero_table);
-                }
-            } break;
-```
-And if we recall this was set to the multiplation operation of b and the loss.
-Now, the `b` tensor has already been added to the compuation graph but the
-loss tensor has not yet (and note that this tensor will be added as a leaf node.
+and it is passing it's gradient tensor `grad` to `ggml_build_forward_expand`. 
+This is important to understand that we passing in the grandient of the node and
+not the node itself.
+We can inspect the first node to be expanded which is `a`
+```console
+(gdb) p node->name
+$91 = "a", '\000' <repeats 62 times>
 
-And the last thing to happen in `ggml_build_backward_expand` is:
+(gdb) p *node->grad
+$90 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_MUL,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x7ffff6a28ff0, src = {0x7ffff6a00330, 0x7ffff6a007b0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6a28fc0, name = '\000' <repeats 63 times>, extra = 0x0}
+```
+Notice that the `grad` now has parents (src) which are the ones that we added
+by `ggml_compute_backward` above. And the first one is `b` which matches what
+we discussed above. 
+```console
+
+(gdb) p *node->grad->src[0]->name
+$92 = 98 'b'
+```
+So `node->grad` is what we are passing into `ggml_build_forward_expand`, and we
+have seen this function before when we expanded the forward graph.
+
+The backward graph currently looks like this:
+```console
+
+(gdb) p ggml_graph_print(gb)
+=== GRAPH ===
+n_nodes = 3
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+ -   2: [     1,     1,     1]              MUL g
+n_leafs = 0
+========================================
+```
+Like we saw before this will visit the parents of the grandient tensor of `a`.
+And the first parent of `a` is `b` (which is already in the graph. Next we will
+handle src[1] which is the the gradient of `mul`(?) which does not have any
+parents so it will complete the for loop and continue with:
+```c
+    if (node->op == GGML_OP_NONE && node->grad == NULL) {
+        // reached a leaf node, not part of the gradient graph (e.g. a constant)
+        GGML_ASSERT(cgraph->n_leafs < cgraph->size);
+
+        if (strlen(node->name) == 0) {
+            ggml_format_name(node, "leaf_%d", cgraph->n_leafs);
+        }
+
+        cgraph->leafs[cgraph->n_leafs] = node;
+        cgraph->n_leafs++;
+```
+This node will be added as a leaf node to the backward graph.
+```console
+(gdb) p ggml_graph_print(cgraph)
+=== GRAPH ===
+n_nodes = 3
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+ -   2: [     1,     1,     1]              MUL g
+n_leafs = 1
+ -   0: [     1,     1]     NONE           leaf_0
+========================================
+```
+That will return and we will be back in `ggml_visit_parents` and we are
+currently processing the parents of `a` which only has two parents so it will
+continue the loop.
+Now, the grandient of `a` is a multiplication operation.
+```c
+        GGML_ASSERT(cgraph->n_nodes < cgraph->size);
+
+        if (strlen(node->name) == 0) {
+            ggml_format_name(node, "node_%d", cgraph->n_nodes);
+        }
+
+        cgraph->nodes[cgraph->n_nodes] = node;
+        if (cgraph->grads) {
+            cgraph->grads[cgraph->n_nodes] = node->grad;
+        }
+        cgraph->n_nodes++;
+    }
+```
+I wonder if it would b possible/acceptable to add the operations name to the
+nodes name? I think it would help with debugging and understanding the graph.
+So another node will be added to the graph.
+```console
+=== GRAPH ===
+n_nodes = 4
+ -   0: [     1,     1,     1]             NONE x  (a)
+ -   1: [     1,     1,     1]             NONE x  (b)
+ -   2: [     1,     1,     1]              MUL g  (mul)
+ -   3: [     1,     1,     1]              MUL g  (node_3)
+n_leafs = 1
+ -   0: [     1,     1]     NONE           leaf_0
+========================================
+```
+This will return us back in `ggml_build_backward_expand`, which is the loop
+over all the nodes in the `forward graph` (gf).
+And the forward graphs is unchanged just to confirm this:
+```console
+(gdb) p ggml_graph_print(gf)
+=== GRAPH ===
+n_nodes = 3
+ -   0: [     1,     1,     1]             NONE x (a)
+ -   1: [     1,     1,     1]             NONE x (b)
+ -   2: [     1,     1,     1]              MUL g (mul)
+n_leafs = 0
+========================================
+```
+So now `b`s gradient will be processed just like we did for `a`s gradient.
+And we will visit the parents of b's gradient which is `a` and the gradient
+of the multiplication operation node. Now, both `a` and the mul grad (leaf_0)
+have been added to the backward graph so there is nothing to be done.
+The operation is again `GGML_OP_MUL` so we will enter the same block as we did
+for the `a` grandient.
+
+```console
+=== GRAPH ===
+n_nodes = 5
+ -   0: [     1,     1,     1]             NONE x (a)
+ -   1: [     1,     1,     1]             NONE x (b)
+ -   2: [     1,     1,     1]              MUL g (mul)
+ -   3: [     1,     1,     1]              MUL g (node_3)
+ -   4: [     1,     1,     1]              MUL g (node_4)
+n_leafs = 1
+ -   0: [     1,     1]     NONE           leaf_0
+========================================
+```
+After that we will again return to the iteration over the nodes in the forward
+graph in `ggml_build_backward_expand`. And the last node to be processed is
+`mul`.
+```console
+    for (int i = 0; i < gf->n_nodes; i++) {
+        struct ggml_tensor * node = gf->nodes[i];
+
+        if (node->flags & GGML_TENSOR_FLAG_PARAM) {
+            GGML_PRINT_DEBUG("%s: found root node %p\n", __func__, (void *) node);
+            ggml_build_forward_expand(gb, node->grad);
+        }
+    }
+```
+But in this case the `mul` node is not a parameter so there will not be any
+forward expansion for it.
+After that the `zero_table` and `acc_table` will be freed:
 ```c
     ggml_hash_set_free(&zero_table);
+    ggml_hash_set_free(&acc_table);
+}
 ```
+And that was the complete `ggml_build_backward_expand` function.
+
+### Graph Compute (Backward)
+
 Now with the backward graph constructed we can actually compute the gradients.
-First we compute a loss function and set the output nodes gradient to this
-value:
+Recall that the backward graph looks like this:
+```console
+=== GRAPH ===
+n_nodes = 5
+ -   0: [     1,     1,     1]             NONE x (a)
+ -   1: [     1,     1,     1]             NONE x (b)
+ -   2: [     1,     1,     1]              MUL g (mul)
+ -   3: [     1,     1,     1]              MUL g (node_3)
+ -   4: [     1,     1,     1]              MUL g (node_4)
+n_leafs = 1
+ -   0: [     1,     1]     NONE           leaf_0
+========================================
 ```
+First we would compute a loss function and set the output nodes gradient to this
+value. In this case I'm just making the value up and setting this as the last
+node/tensors gradient:
+```c
   ggml_set_f32(mul->grad, 2.0f);
+```
+Then we will perform the computation by call `ggml_graph_compute_with_ctx` just
+like we did before for the forward pass, but this time we will be using the
+backward graph:
+```c
   ggml_graph_compute_with_ctx(ctx, b_graph, 1);
 ```
-Notice that we are using the backward graph (b_graph) and not the forward graph
-this time, and threads are still 1.
+
 ```c
 enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
     struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
@@ -2190,37 +2489,6 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     return 0;
 }
 ```
-TODO: add some notes about NUMA. But in short this is about pinning/binding a
-thread to a specific CPU core.
-We can inspect the ggml_compute_state:
-```console
-$4 = {threadpool = 0x5555556b0740, ith = 0}
-```
-So in this case we have the threadpool pointer and the thread index
-(index thread=ith).
-
-Just to get an overview of the threadpool here is what this struct looks like:
-```console
-(gdb) ptype *state->threadpool
-type = struct ggml_threadpool {
-    ggml_mutex_t mutex;
-    ggml_cond_t cond;
-    struct ggml_cgraph *cgraph;
-    struct ggml_cplan *cplan;
-    atomic_int n_graph;
-    atomic_int n_barrier;
-    atomic_int n_barrier_passed;
-    atomic_int current_chunk;
-    atomic_bool stop;
-    atomic_bool pause;
-    struct ggml_compute_state *workers;
-    int n_threads_max;
-    int n_threads_cur;
-    int32_t prio;
-    uint32_t poll;
-    enum ggml_status ec;
-}
-```
 After creating the compute params the main look is iterating over all the nodes
 in the graph:
 ```c
@@ -2240,9 +2508,8 @@ in the graph:
         }
     }
 ```
-TODO: I've actually written about this part before and should consolidate this
-into a section that is easier to find.
-The first node in this case will be tensor `a`:
+So we have 5 notes in total in our graph (see graph printout above). We are
+going iterator over them in order so node `a` will be first:
 `ggml_compute_forward`.
 ```console
 (gdb) p node->name
@@ -2263,23 +2530,7 @@ Notice that in this case `a` does not have an operation so this will just
 return at this point.
 The same will happen for `b`.
 
-Just a note about the `ggml_is_empty` function:
-```c
-GGML_CALL bool ggml_is_empty(const struct ggml_tensor * tensor) {
-    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
-        if (tensor->ne[i] == 0) {
-            // empty if any dimension has no elements
-            return true;
-        }
-    }
-    return false;
-}
-```
-If a tensor has any dimension that is 0 then it is considered empty. This makes
-sense as if we have a 2d tensor of size 4x0 (4 x-axis element and 0 y-axis) ther
-are no elements in the tensor.
-
-After that we have the multiplication operation:
+After that we have the `mul` node:
 ```console
 (gdb) p node->name
 $17 = "mul", '\000' <repeats 60 times>
@@ -2328,6 +2579,7 @@ static void ggml_compute_forward_mul(
     }
 }
 ```
+
 ```c
 static void ggml_compute_forward_mul_f32(
         const struct ggml_compute_params * params,
@@ -2359,8 +2611,8 @@ So we will enter this if block:
 Now, we can see that `ir` is set to the thread index (0 in this specific case
 as we are only using 1 thread).
 
-Now, in GGML we always have 4 dimension, or there can be 4 dimensions so this has
-to be taken into account.
+Now, in GGML there are always 4 dimension, or there can be 4 dimensions so this
+has to be taken into account.
 ```c
         for (int64_t ir = ith; ir < nr; ir += nth) {
             // src0 and dst are same shape => same indices
@@ -2368,18 +2620,23 @@ to be taken into account.
             const int64_t i02 = (ir - i03*ne02*ne01)/ne01;
             const int64_t i01 = (ir - i03*ne02*ne01 - i02*ne01);
 ```
-Now, `ir` is the thread index that this thread is responsible for computing. This is
-zero in our case. And notice that the above code is only using `ne0` so this is the
-src0 tensor (a). And only the "last" three dimensions are used in the above code.
+Now, `ir` is the thread index that this thread is responsible for computing.
+This is zero in our case. And notice that the above code is only using `ne0` so
+this is the src0 tensor (a), see [GGML_TENSOR_BINARY_OP_LOCALS](#GGML_TENSOR_BINARY_OP_LOCALS)
+for details about this macro.
+
+And only the "last" three dimensions are used in the above code.
 ```
     ne00 ne01 ne02 ne03
 a: [  1    1    1    1 ]
 ```
-The `ne02 * ne01` is multiplying the number of rows (ne01) by the number of y-dimensions.
+The `ne02 * ne01` is multiplying the number of rows (ne01) by the number of
+z-dimensions.
 In our case `i03` will become 0 as we only have one thread.
 
 I want to try to visualize this and I want to step away from the current example
-and think about a tensor with 4 dimensions:
+and think about a tensor with 4 dimensions with a different shape that the
+current example:
 ```
         x  y  z  w
        [3  2  2  2]
@@ -2422,7 +2679,8 @@ Total elements: 3 * 2 * 2 * 2 = 24
 What I'm trying to convey here a way to visualize this tensor with 4 dimensions.
 We have the inner dimensions which is a 3x2 (3 columns (x) and two rows (y)),
 and we have two (z) of these. And we have 1 (w) of z groups. Something like that.
-Now, this is how I think of these but this would really  stored in memory as a
+
+Now, this is how I think of these but this would really stored in memory as a
 an array:
 ```
 Memory layout:
@@ -2716,6 +2974,73 @@ And that is pretty much it.
 TODO: Create an example that has 4 dimension like the visualizations above
 and also requires broadcasting, that is the dimensions for a and b should
 differ.
+
+Then we have `node_n` which will now be 3:
+```console
+(gdb) p *node
+$141 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_MUL,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x7ffff6a28ff0,
+src = {0x7ffff6a00330, 0x7ffff6a007b0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6a28fc0, name = "node_3", '\000' <repeats 57 times>,
+extra = 0x0}
+```
+And this is the gradient for `a`. But how do we know that. Well one way to
+figure this out is to look at the source tensors for this node:
+```console
+gdb) p node->src[0]->name
+$143 = "b", '\000' <repeats 62 times>
+(gdb) p node->src[1]->name
+$150 = "leaf_0", '\000' <repeats 57 times>
+
+```
+And we can verify this by looking at the source tensor `a`:
+```console
+(gdb) p cgraph->nodes[0]->name
+$144 = "a", '\000' <repeats 62 times>
+
+(gdb) p cgraph->nodes[0]->grad
+$145 = (struct ggml_tensor *) 0x7ffff6a28e70
+(gdb) p node
+$146 = (struct ggml_tensor *) 0x7ffff6a28e70
+```
+So we will call `ggml_compute_forward` with this tensor (that gradient for a
+that is) and this is a `GGML_OP_MUL` so it is an operation.
+So this will multiply the gradient of mul with b which is caculating the
+derivative for a.
+```console
+(gdb) p *(float*)src0->data
+$155 = 3
+(gdb) p *(float*)src1->data
+$154 = 2
+```
+Recall what we set `ggml_set_f32(mul->grad, 2.0f)` and b is 3.
+And after the multiplication:
+```console
+(gdb) p *(float*)dst->data
+$158 = 6
+```
+Next will be node 4:
+```console
+(gdb) p *node
+$161 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_MUL,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x7ffff6a292f0,
+src = {0x7ffff6a00030, 0x7ffff6a007b0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6a292c0,
+name = "node_4", '\000' <repeats 57 times>,
+extra = 0x0}
+```
+This is also a `GGML_OP_MUL` and the source tensors are `a` and `leaf_0`:
+```console
+(gdb) p node->src[0]->name
+$162 = "a", '\000' <repeats 62 times>
+(gdb) p node->src[1]->name
+$163 = "leaf_0", '\000' <repeats 57 times>
+```
+So this is the operation for calculating the derivative for `b`.
+
+
 
 _wip_
 
@@ -3907,3 +4232,20 @@ different editors and IDEs for a project.
 
 #### build.zig
 Is part of the [Zig build system)(https://ziglang.org/learn/build-system/).
+
+### `ggml_is_empty`
+Just a note about the `ggml_is_empty` function:
+```c
+GGML_CALL bool ggml_is_empty(const struct ggml_tensor * tensor) {
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (tensor->ne[i] == 0) {
+            // empty if any dimension has no elements
+            return true;
+        }
+    }
+    return false;
+}
+```
+If a tensor has any dimension that is 0 then it is considered empty. This makes
+sense as if we have a 2d tensor of size 4x0 (4 x-axis element and 0 y-axis) ther
+are no elements in the tensor.
