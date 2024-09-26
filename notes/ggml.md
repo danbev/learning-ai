@@ -1427,10 +1427,12 @@ $43 = false
 
 _wip_
 
-#### Forward pass
+#### Forward expand
+After we have created tensors we need to create a computation graph that will
+drive the forward pass. Building upon the multiplication example from earlier
+where we have `mul = a * b` we can create a graph like this:
 ```c
   struct ggml_cgraph* f_graph = ggml_new_graph_custom(ctx, GGML_DEFAULT_GRAPH_SIZE, true);
-  ggml_build_forward_expand(f_graph, mul);
 ```
 
 ```c
@@ -1486,8 +1488,8 @@ These pointer will then be used to create a `ggml_cgraph` struct:
         /*.order        =*/ GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT,
 };
 ```
-Just to clarify that all tensors in the graph are nodes. In ggml any node that is an operation
-of and any node that participates in gradient computation.
+Just to clarify that all tensors in the graph are nodes. In ggml any node that
+is an operation or any node that participates in gradient computation.
 Notice that we create a `.hash_table` which is a struct with a size, a pointer to
 a bitset and a pointer to the hash keys.
 ```c
@@ -1539,6 +1541,10 @@ Lets inspect the compute graph:
 ```
 Next lets look at the `ggml_build_forward_expand` function:
 ```c
+  ggml_build_forward_expand(f_graph, mul);
+```
+
+```c
 void ggml_build_forward_expand(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor) {
     ggml_build_forward_impl(cgraph, tensor, true);
 }
@@ -1565,7 +1571,8 @@ static void ggml_build_forward_impl(struct ggml_cgraph * cgraph,
     }
 }
 ```
-In our case `n0` is 0. Lets take a look at the `ggml_visit_parents` function:
+In our case `n0` is 0. Lets take a look at the `ggml_visit_parents` function, 
+which will be passed the `mul` tensor:
 ```c
 static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor * node) {
     if (node->grad == NULL) {
@@ -1579,12 +1586,15 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         return;
     }
 ```
-Next lets look at `ggml_hash_insert`. The `node` is the tensor that we passed in to
-`ggml_build_forward_expand` which is:
+Next lets look at `ggml_hash_insert`. The `node` is the tensor that we passed in
+to `ggml_build_forward_expand` which is:
 ```console
-(lldb) p tensor->op
+(lldb) p node->op
 (ggml_op) GGML_OP_MUL
+(gdb) p node->name
+$4 = "mul", '\000' <repeats 60 times>
 ```
+
 ```c
 static size_t ggml_hash_insert(struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
     size_t h = ggml_hash(key) % hash_set->size;
@@ -1617,6 +1627,13 @@ static inline size_t ggml_hash(const struct ggml_tensor * p) {
 ```
 So we have a `hash_set->size` of 4099 and we need the map the hash value into this
 range of values which is what the modulo operation is used for.
+If we have know the size of the visited hash (4099 in this case) we can get the
+hash for any tensor:
+```console
+(gdb) p ggml_hash(node) % cgraph->visited_hash_set->size
+$7 = 3843
+```
+This might be handy to do later when debugging.
 
 ```c
 static size_t ggml_hash_insert(struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
@@ -1647,7 +1664,7 @@ static inline bool ggml_bitset_get(const ggml_bitset_t * bitset, size_t i) {
     return !!(bitset[i >> BITSET_SHR] & (1u << (i & BITSET_MASK)));
 }
 ```
-So lets take a look at a concreate example and lets say that `i` is 37:
+So lets take a look at a concrete example and lets say that `i` is 37:
 ```
 i = 37
 BITSET_SHR = 5
@@ -1677,8 +1694,8 @@ First !: 00100000 becomes 0
 Second !: 0 becomes 1
 Final result: 1 (true, the bit is set)
 ```
-In our case (debugging session, not the above example) the bit is not set and we will
-enter the if block:
+In our case (debugging session, not the above example) the bit is not set and we
+will enter the if block:
 ```c
         if (!ggml_bitset_get(hash_set->used, i)) {
             ggml_bitset_set(hash_set->used, i);
@@ -1686,15 +1703,16 @@ enter the if block:
             return i;
         }
 ```
-Next the bitset will be set for this hash (i) and then the key will be set to the
-tensor that we passed in and the hash returned (recall that we are in `ggml_hash_insert`):
+Next the bitset will be set for this hash (i) and then the key will be set to
+the tensor that we passed in and the hash returned (recall that we are in
+`ggml_hash_insert`):
 ```c
     // check if already visited
     if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
         return;
     }
 ```
-Following that we have:
+Following that we have (in `ggml_visit_parents`):
 ```c
     for (int i = 0; i < GGML_MAX_SRC; ++i) {
         const int k =
@@ -1708,16 +1726,15 @@ Following that we have:
 
 #define GGML_MAX_SRC            10
 ```
-This will visit the parents of the children of the tensor that was passed in. In our case
-`k` will be 0 so we will visit the first child:
+This will visit the parents of the children of the tensor that was passed in. In
+our case `k` will be 0 so we will visit the first child:
 ```console
 (lldb) p node->src[0]->name
 (char[64]) "a"
 ```
-So we will go through the same process we did above but now for the a tensor. And we will
-also do the same for the b tensor.
-
-Next we have:
+Now, `a` does not have any parents (src) so the for loop in `ggml_visit_parents`
+will just iterate over all the `GGML_MAX_SRC` which is 10 and then exit the
+for loop. After that we have the following if statement:
 ```c
     if (node->op == GGML_OP_NONE && node->grad == NULL) {
         // reached a leaf node, not part of the gradient graph (e.g. a constant)
@@ -1729,12 +1746,6 @@ Next we have:
 
         cgraph->leafs[cgraph->n_leafs] = node;
         cgraph->n_leafs++;
-```
-This is checking if the tensor is an operation, and that it does not have a gradient which
-indicates that this is a leaf node (a constant). Recall that node is the multiplcation operator
-node so the above block will not be executed.
-
-```c
     } else {
         GGML_ASSERT(cgraph->n_nodes < cgraph->size);
 
@@ -1749,30 +1760,66 @@ node so the above block will not be executed.
         cgraph->n_nodes++;
     }
 ```
-We can see that if the node/tensor does not have a name it will be given one now.
+For `a` it is not an operation, but it does have a grad so the else block will
+be executed. If `a` did no have a name it would get one now (node_0). And then
+the cgraphs nodes array will be updated with the tensor. And in this case
+cgraph->grads will not be null so the `grad` of `a` will be set to the
+corresponding index in the grads array. And then the `n_nodes` counter will be
+updated.
 ```console
-(lldb) p node->name
-(char[64]) "node_2"
+(gdb) p ggml_graph_print(cgraph)
+=== GRAPH ===
+n_nodes = 1
+ -   0: [     1,     1,     1]             NONE x
+n_leafs = 0
+========================================
 ```
-Then we can see that the node is added to the cgraph nodes array, and the nodes counter is
-incremented. Note that we already recursed through the children of the node so we have already
-visited the children and they would also have been added and incremented `n_nodes` just in case
-it is confusing that this is `node_2`.
-And that is bascially the how the forward pass is built up.
+`x` stands for parameter, and the other possible value is `g` which stands for
+gradient.
 
-We can print the graph (I've added a few columns for readability):
+So that was the first parent of the mul tensor so we will be back in the
+for loop in `ggml_visit_parents` to process the second parent/src which is `b`.
+Simliar to `a` `b` does not have any parents so the for loop will just iterate
+over all the `GGML_MAX_SRC` which is 10 and then exit the for loop.
+```console
+(gdb) p ggml_graph_print(cgraph)
+=== GRAPH ===
+n_nodes = 2
+ -   0: [     1,     1,     1]             NONE x
+ -   1: [     1,     1,     1]             NONE x
+n_leafs = 0
+========================================
+```
+After this the for loop in `ggml_visit_parents` will try to visit the third
+parent but there are no more so this loop will continue through all the 8 left
+and exit the loop.
+This time we do have an operation (GGML_OP_MUL) but we also have a gradient so
+so this will also enter the else block like we did for `a`and `b`.
 ```console
 === GRAPH ===
 n_nodes = 3
-          ne[0]   ne[1]  ne[2]             OP   Param (x) or Gradient (g)
  -   0: [     1,     1,     1]             NONE x
  -   1: [     1,     1,     1]             NONE x
  -   2: [     1,     1,     1]              MUL g
-n_leafs = 1
-          ne[0]   ne[1]     OP                  Name
- -   0: [     1,     1]     NONE                5
+n_leafs = 0
 ========================================
 ```
+And that is the last of `ggml_visit_parents` and this will return us to
+`ggml_build_forward_impl`.
+```c
+    ggml_visit_parents(cgraph, tensor);
+
+    const int n_new = cgraph->n_nodes - n0;
+    GGML_PRINT_DEBUG("%s: visited %d new nodes\n", __func__, n_new);
+
+    if (n_new > 0) {
+        // the last added node should always be starting point
+        GGML_ASSERT(cgraph->nodes[cgraph->n_nodes - 1] == tensor);
+    }
+```
+And that is the last of `ggml_build_forward_expand`.
+
+### Graph Compute
 
 After we have created a cgraph and called `ggml_build_forward_expand` we can
 then call `ggml_graph_compute`:
