@@ -13,8 +13,8 @@ int main(int argc, char **argv) {
   };
   struct ggml_context* ctx = ggml_init(params);
 
-  const int nx = 2; // x-axis, width of number of columns in the matrix.
-  const int ny = 3; // y-axis, the height or the number of rows in the matrix.
+  const int nx = 2;
+  const int ny = 3;
   struct ggml_tensor* a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nx, ny);
   ggml_set_name(a, "a");
   //void* data   = (char *) a->data + i0*tensor->nb[0] + i1*tensor->nb[1] + i2*tensor->nb[2] + i3*tensor->nb[3];
@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   // transpose operation. The transpose operation is a special case of the
   // permute operation. The first argument is which dimension we want to move
   // or have become the x-axis dimension and the second the which dimension
-  // index we want // to move/have as the y-axis dimension.
+  // index we want to move/have as the y-axis dimension.
   //
   // For example, if we want to turn the above 3x2 matrix into a 2x3 matrix we
   // could permute the matrix:
