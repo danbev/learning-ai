@@ -2001,15 +2001,15 @@ Note that `ggml_compute_forward_mul_f32` is passed the `dst` tensor which is
 `mul` in our case. TODO: I'm sure I've discussed this function else where
 so copy this here instead of duplicating it.
 
-This might be obvious but the above does not modify or use the grad fiels in any
-way. That part is handled by the backward pass which is composed of a backward
-expand followed by a backward compute (though the compute is the same
+This might be obvious but the above does not modify or use the grad fields in
+any way. That part is handled by the backward pass which is composed of a
+backward expand followed by a backward compute (though the compute is the same
 `ggml_graph_compute` function but using a different graph).
 
 ### Backward expand
 For the backward computation we need to create a graph what will handle the
 gradients. This is done in a simliar manner to the forward pass where we created
-a graph and then expanded it, and performed the computation.
+a graph and then expanded it, and then performed the computation.
 
 Here we will duplicate the forward graph first and then expand it:
 ```c
@@ -2130,7 +2130,8 @@ We can check that `src0` is `a` and `src1` is `b`:
 (lldb) p src1->name
 (char[64]) "b"
 ```
-And after that we have a switch statement and different cases for the different operations.
+And after that we have a switch statement and different cases for the different
+operations.
 ```c
         case GGML_OP_MUL:
             {
@@ -3039,10 +3040,6 @@ $162 = "a", '\000' <repeats 62 times>
 $163 = "leaf_0", '\000' <repeats 57 times>
 ```
 So this is the operation for calculating the derivative for `b`.
-
-
-
-_wip_
 
 ### Broadcasting
 Broadcasting is a set of rules for how to handle operations between arrays of
