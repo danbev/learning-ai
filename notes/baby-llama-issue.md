@@ -1048,8 +1048,169 @@ $61 = (struct ggml_tensor *) 0x7fff776e0eb0
 ```
 And notice this is the same tensor we set above.
 
+It could be that the issue is with the permuted tensor. This is what is setting
+the gradient for `Qcur` in `ggml_compute_backward` in the `GGML_OP_PERMUTE`
+case.
+```console
+(gdb) p tensor->name
+$34 = "Q\000ur (permuted)", '\000' <repeats 48 times>
+
+(gdb) p tensor->grad->op
+$24 = GGML_OP_OUT_PROD
+
+(gdb) p tensor->grad->op
+$35 = GGML_OP_OUT_PROD
+```
+
+```console
+(gdb) p *a->src[0]
+$26 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4, 8, 8, 8}, nb = {4, 128, 16, 1024}, op = GGML_OP_PERMUTE,
+op_params = {0, 2, 1, 3, 0 <repeats 12 times>}, flags = 0,
+grad = 0x7fff776d4610, src = {0x7fff774e7d00, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x7fff774d8ea0, view_offs = 0, data = 0x7fff774d8ff0,
+name = " (view) (reshaped) (permuted)", '\000' <repeats 34 times>, extra = 0x0}
+```
+So the src0 of the grandient (which is what a is above) is a tensor that has
+been permuted, reshaped, and then a view has been taken of it.
+
+```c
+struct ggml_tensor * Qcur = ggml_rope(ctx0,
+    ggml_reshape_4d(ctx0, ggml_mul_mat(ctx0, model->layers[il].wq, cur), n_embd/n_head, n_head, N, n_batch),
+    KQ_pos, n_rot, 0);
+
+struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
+```
+So the tensor we are looking at above it Q.
+
+_NOTE_: When looking into issue with the backward expansion keep in mind that
+we are working from the output tensor back up the graph. So if we suspect that
+an ealier tensor/gradient if causing an issue we need to look further down the
+graph (towards the end).
+
+In baby-llama.cpp we have the following operation (I've added some names to the
+tensors to make it easier to identify the them when debugging):
+```
+    inpL = ggml_mul_mat(ctx0, model->output, inpL);
+    ggml_set_name(model->output, "model-output");
+    ggml_set_name(inpL, "lm_head");
+```
+This is a matrix multiplication operation:
+```console
+(gdb) p node->op
+$22 = GGML_OP_MUL_MAT
+
+(gdb) p node->src[0]->name
+$24 = "model-output", '\000' <repeats 51 times>
+
+(gdb) p node->src[1]->name
+25 = "norm*inpL", '\000' <repeats 54 times>
+```
+If we follow this call into `ggml_compute_backward` we can take a look at the
+case for `GGML_OP_MUL_MAT`:
+```c
+        case GGML_OP_MUL_MAT:
+            {
+                if (src0->grad) {
+                    struct ggml_tensor * s1_tg =
+                        ggml_out_prod(ctx, // [n,m,qq,rr]
+                            src1,          // [n,p,qq,rr]
+                            tensor->grad); // [m,p,qq,rr]
+                    const int64_t qq = s1_tg->ne[2];
+                    const int64_t rr = s1_tg->ne[3];
+                    const int64_t q1 = src0->ne[2];
+                    const int64_t r1 = src0->ne[3];
+                    const bool ne2_broadcasted = qq > q1;
+                    const bool ne3_broadcasted = rr > r1;
+                    if (ne2_broadcasted || ne3_broadcasted) {
+                        // sum broadcast repetitions of s1_tg into shape of src0
+                        s1_tg = ggml_repeat_back(ctx, s1_tg, src0);
+                    }
+                    src0->grad =
+                        ggml_add_or_set(ctx,
+                                src0->grad, // [n,m,q1,r1]
+                                s1_tg,      // [n,m,q1,r1]
+                                zero_table, acc_table);
+                }
+                if (src1->grad) {
+                    src1->grad =
+                        ggml_add_or_set(ctx,
+                                src1->grad,                            // [n,p,qq,rr]
+                                // ggml_mul_mat(ctx,                   // [n,p,qq,rr]
+                                //     ggml_cont(ctx,                  // [m,n,q1,r1]
+                                //         ggml_transpose(ctx, src0)), // [m,n,q1,r1]
+                                //     tensor->grad),                  // [m,p,qq,rr]
+
+                                // // when src0 is bigger than tensor->grad (this is mostly the case in llama),
+                                // // avoid transpose of src0, rather transpose smaller tensor->grad
+                                // // and then use ggml_out_prod
+                                ggml_out_prod(ctx,                  // [n,p,qq,rr]
+                                    src0,                           // [n,m,q1,r1]
+                                    ggml_transpose(ctx,             // [p,m,qq,rr]
+                                        tensor->grad)),             // [m,p,qq,rr]
+                                zero_table, acc_table);
+                }
+            } break;
+```
+My understanding is that this is creating tensor operations to compute the
+gradients for the matrix multiplication. Lets say we have a multiplication that
+looks like `C = A * B`, the gradients would be computed as:
+```
+dA = dC * B^T
+dB = A^T * dC
+```
+`src0` is the `A` tensor and `src1` is the `B` tensor.
+Now, the following is using the outer product instead of matrix multiplication
+as an optimization:
+```c
+                    struct ggml_tensor * s1_tg =
+                        ggml_out_prod(ctx, // [n,m,qq,rr]
+                            src1,          // [n,p,qq,rr]
+                            tensor->grad); // [m,p,qq,rr]
+```
+So `s1_tg` (B) is src1 times the tensor gradient (C).
+
+So if we were to use normal matrix multiplication:
+```
+A = [1  2]   B = [5  6]   C = A * B = [19  22]
+    [3  4]       [7  8]               [43  50]
+
+dC = [0.1 0.2]
+     [0.3 0.4]
+
+dA = dC * B^T = [0.1 0.2] * [5 7] = [1.7 2.3]
+                [0.3 0.4]   [6 8]   [3.9 5.3]
+```
+And lets see the output product way:
+```
+dC = [0.1 0.2]
+     [0.3 0.4]
+
+B = [5  6]
+    [7  8]
+
+B ⊗ dC = [5 6] ⊗ [0.1 0.2]
+         [7 8]   [0.3 0.4]
+```
 
 _wip_
+
+In this case `src0` is the `model-output` tensor which gradient tensor is
+getting updated. This is done by passing in src1 and the tensor gradient.
+At this stage
+```
+                    struct ggml_tensor * s1_tg =
+                        ggml_out_prod(ctx, // [n,m,qq,rr]
+                            src1,          // [n,p,qq,rr]
+                            tensor->grad); // [m,p,qq,rr]
+
+                    src0->grad =
+                        ggml_add_or_set(ctx,
+                                src0->grad, // [n,m,q1,r1]
+                                s1_tg,      // [n,m,q1,r1]
+                                zero_table, acc_table);
+```
+
 
 In the example there are 
 ```c
