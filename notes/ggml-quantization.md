@@ -13,6 +13,13 @@ scale =  ---------------         --------------------
            
 ```
 
+### Notation
+In this document and in ggml there is the following names/notation:
+
+* QI is the quantized value
+* QK is the number of bits used for quantization
+* QR is the ratio of the quantized value and the number for which it is a quantization(?)
+
 ### `ggml_half`
 This typedef is defined in `ggml/src/ggml-common.h`:
 ```c
@@ -29,23 +36,18 @@ typedef uint32_t ggml_half2;
 And this is a 32 bit unsigned integer, that is 4 bytes, and like `ggml_half` it
 can only store positive values.
 
-
-* QI is the quantized value
-* QK is the number of bits used for quantization
-* QR is the ratio of the quantized value and the number for which it is a quantization(?)
-
 ### Blocks
 In the coming sections we will look at types that are used in ggml and the all
-start with block_ and it was not clear to me what this meant and why blocks are
-used. Blocks are simply tensors that are divided into blocks of a certain size
-and then quantized individually. As we will see we have a scaling factor when we
-quantize which is calculated based on the maximum value in the block. If just
-one or a few data points are extreme outliers (very high or very low compared to
-the rest of the data), they can disproportionately influence the scale factor.
-This is because the scale factor is often chosen to accommodate the maximum
-absolute value in the tensor.
+start with `block_` and it was not clear to me what this meant and why blocks
+are used. Blocks are simply tensors that are divided into blocks of a certain
+size and then quantized individually. As we will see we have a scaling factor
+when we quantize which is calculated based on the maximum value in the block. If
+just one or a few data points are extreme outliers (very high or very low
+compared to the rest of the data), they can disproportionately influence the
+scale factor. This is because the scale factor is often chosen to accommodate
+the maximum absolute value in the tensor.
 So instead the tensors are flattened into vectors and then divided into blocks
-of a certain size like 32, 64, or 128 elements. Each block is the scaled
+of a certain size like 32, 64, or 128 elements. Each block is then scaled
 individually based on its own max absolute value. Outliers affect only the block
 they are in, rather than the entire dataset. 
 
@@ -99,9 +101,11 @@ delta ~ 0.0333
 This means that all values in my set of floating point numbers will be divided
 by this delta so that they will be able to be represented by one of the number
 in the range from 0-15. And the max value will be mapped to the value 15 because
+```
 0.0333 * 15 = 0.4995 ~ 0.5
+```
 
-The we quantize using the formula:
+Then we quantize using the formula:
 ```
 quantized_value = round(org_value / delta)
 
@@ -126,6 +130,8 @@ org_value = quantized_value * delta
 ```
 So this is how the delta stored in the block struct is used.
 
+### ggml quantization type traits
+
 Now, if we take a look at how quantization works in ggml this is done using
 type traits. For example in `ggml/src/ggml.c` we have:
 ```c
@@ -148,6 +154,7 @@ static const ggml_type_traits_t type_traits[GGML_TYPE_COUNT] = {
 ```
 There is an example in [ggml-quants.c](fundamental/ggml/src/ggml-quants.c) which
 how this type trait can be accessed.
+
 Lets take a look at `from_float` which is a function pointer to
 `quantize_row_q4_K` and is defined in `ggml-quants.c`:
 ```c

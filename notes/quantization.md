@@ -1,16 +1,17 @@
 ## Quanitization
-This are ways to take floating point values and turn them into ints, or I guess
-the main point is that we want to make something that take more storage space,
-or memory space and store it with less bits. So if we think about floating
-points we have half presicion 16-bits, single precision 32-bits, and double
-precision 64-bits. My understanding that models are trained using
-single-precision 32-bit floating points. But these can then be quantanised to
-smaller sizes. This might make the model less accurate but I'm not clear on
-that yet.
+These are ways to take floating point values and storing them with fewer bits,
+we want to make something that take more storage space, or memory space and
+store it with less bits.
+
+So if we think about floating points we have half presicion 16-bits, single
+precision 32-bits, and double precision 64-bits. My understanding that models
+are trained using single-precision 32-bit floating points. But these can then be
+quantanised to smaller sizes. This might make the model less accurate but I'm
+not clear on that yet.
 
 My current understanding is that the models could be trained on single-precision
 and then quantanised. So this will make the model size smaller, taking less
-room on dist, and also less memory. But at inference time I'm not sure yet if
+room on disk, and also less memory. But at inference time I'm not sure yet if
 the the values are then converted back to single-precision or if they are
 inferred using the quantanised values. Hopefully this document will sort that
 out.
@@ -37,7 +38,7 @@ scale = ---------------
 scale =  ------------- = 3.9215686274509803
          255 - 0
 ```
-So 3.9215686274509803 is the scale factor. So to convert a floating point in
+So 3.9215686274509803 is the scale factor. So to convert a floating point into
 our range we can use this scaling factor:
 ```
 int quantanised_value = value / scale
@@ -74,7 +75,7 @@ So if we quantize a value in that range, for example -40.0 then we should get
 -40.0 / 4.07843137254902 = -9.80392156862745
                          = -10 (rounded)
 ```
-Notice that this does not lined up to 0 which is what have have above. This is
+Notice that this does not line up to 0 which is what have have above. This is
 an issue and something that we need to take into account.
 ```
 1000.0 / 4.07843137254902 = 245.09803921568627
