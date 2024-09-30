@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
 
   // Create a computation graph (c = computation  in ggml_cgraph)
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
-  printf("c_graph size: %d\n", c_graph->size);
+  printf("c_graph size: %d\n", ggml_graph_size(c_graph));
 
   // The following will create tensors that will make up the computation graph
   struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
 
   // The following will add the tensors to the computation graph (I think)
   ggml_build_forward_expand(c_graph, c);
-  printf("c_graph after build_forward_expand: %d\n", c_graph->size);
+  printf("c_graph after build_forward_expand: %d\n", ggml_graph_size(c_graph));
 
   // Now we set the values to be computed
   ggml_set_f32(a, 3.0f);
