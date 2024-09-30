@@ -930,3 +930,7 @@ current nodes parents:
 
 With out going through all these nodes this is how this issue is affecting
 other nodes int the computation graph.
+
+When I was going to commit a [suggestion](https://github.com/danbev/ggml/tree/out_prod_no_grad)
+for fixing this there had been an [update](https://github.com/ggerganov/ggml/pull/966)
+to ggml which fixes this.
