@@ -4461,6 +4461,34 @@ struct ggml_object * const obj_new = ggml_new_object(ctx,
 So this will use the memory of the context `mem_buffer`. So when `no_alloc` is
 false this what will happen.
 
+Lets try an example where we set `no_alloc` to true. The context will still get
+its `mem_buffer` allocated just as in the previous example. But the context will
+have `no_alloc` and `no_alloc_save` set to true: So when we create a tensor
+```console
+(gdb) p *ctx
+$3 = {mem_size = 1024, mem_buffer = 0x5555556b0740, mem_buffer_owned = true,
+no_alloc = true, no_alloc_save = true, n_objects = 0, objects_begin = 0x0,
+objects_end = 0x0, scratch = {offs = 0, size = 0, data = 0x0}, scratch_save = {offs = 0, size = 0, data = 0x0}}
+```
+So lets see if there is any difference when creating a tensor. There is a
+difference in this case as we won't enter the following if statement and
+hence `obj_alloc_size` will be 0:
+```c
+    size_t data_size = ggml_row_size(type, ne[0]);
+
+    size_t obj_alloc_size = 0;
+
+    if (view_src == NULL && !ctx->no_alloc) {
+       ...
+    }
+    struct ggml_object * const obj_new = ggml_new_object(ctx, GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
+```
+In this case `obj_alloc_size` will be 0 and not the size of `data_size` which
+was 4 in the previous example.  So the size of this object created will not
+include the data for it after the tensor struct. This makes sense as we might
+not won't to allocated the data for the tensor in the main memory and instead
+use a different backend.
+
 Now, we can also pass in a `mem_buffer` to the context which will be used and
 no memory will be allocated internally:
 ```c
@@ -4480,7 +4508,5 @@ $7 = (void *) 0x7fffffffd5e0
 $8 = (char (*)[1024]) 0x7fffffffd5e0
 ```
 
-I can't see that `no_alloc` is used in any other way when creating a tensor
-so it must have other usages.
 
 _wip_
