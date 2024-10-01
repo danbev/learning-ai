@@ -379,7 +379,7 @@ $62 = 388
 ### GGML walk through
 
 ```console
-$ gdb --args ./main -m models/llama-2-13b-chat.Q4_0.gguf --prompt "What is LoRA?</s>"
+$ gdb --args ./llama-cli -m models/llama-2-13b-chat.Q4_0.gguf --prompt "What is LoRA?</s>"
 (gdb) br
 Breakpoint 2 at 0x429ea4: file ggml.c, line 4589.
 
@@ -4382,3 +4382,105 @@ GGML_CALL bool ggml_is_empty(const struct ggml_tensor * tensor) {
 If a tensor has any dimension that is 0 then it is considered empty. This makes
 sense as if we have a 2d tensor of size 4x0 (4 x-axis element and 0 y-axis) ther
 are no elements in the tensor.
+
+### `no_alloc`
+When we create a `ggml_context` we can pass in a number of configuration
+parameters using `struct ggml_init_params`:
+```c
+    struct ggml_init_params {
+        // memory pool
+        size_t mem_size;   // bytes
+        void * mem_buffer; // if NULL, memory will be allocated internally
+        bool   no_alloc;   // don't allocate memory for the tensor data
+    };
+```
+
+```c 
+  struct ggml_init_params params = {
+    .mem_size   = 16*1024*1024, // 16 MB
+    .mem_buffer = NULL,
+    .no_alloc   = false,
+  };
+  struct ggml_context* ctx = ggml_init(params);
+```
+So what does `no_alloc` actually do?  
+
+Lets take a look using the example [no-alloc.c](../fundamentals/ggml/src/no-alloc.c).
+```console
+$ gdb --args ./bin/no-alloc 
+Reading symbols from ./bin/no-alloc...
+(gdb) br no-alloc.c:16
+Breakpoint 1 at 0x4b65: file src/no-alloc.c, line 16.
+(gdb) r
+(gdb) p *no_alloc_ctx
+$2 = {mem_size = 16777216,
+      mem_buffer = 0x7ffff6a00010,
+      mem_buffer_owned = true,
+      no_alloc = false,
+      no_alloc_save = false,
+      n_objects = 0,
+      objects_begin = 0x0,
+      objects_end = 0x0,
+      scratch = {offs = 0, size = 0, data = 0x0},
+      scratch_save = {offs = 0, size = 0, data = 0x0}}
+```
+Now, lets see what happens when we create a tensor using this context.
+```c
+static struct ggml_tensor * ggml_new_tensor_impl(
+        struct ggml_context * ctx,
+        enum   ggml_type      type,
+        int                   n_dims,
+        const int64_t       * ne,
+        struct ggml_tensor  * view_src,
+        size_t                view_offs) {
+        ...
+
+    size_t obj_alloc_size = 0;
+    if (view_src == NULL && !ctx->no_alloc) {
+        if (ctx->scratch.data != NULL) {
+```
+`view_src` will be NULL in our case as we have set `.no_alloc = false` above
+so this if statement will have its block executed.
+
+```c
+    if (view_src == NULL && !ctx->no_alloc) {
+        if (ctx->scratch.data != NULL) {
+           ...
+        } else {
+            // allocate tensor data in the context's memory pool
+            obj_alloc_size = data_size;
+        }
+    }
+```
+So in this case `obj_alloc_size` will be set to 4 which will be used in the
+creation of a new ggml object:
+```c
+struct ggml_object * const obj_new = ggml_new_object(ctx,
+    GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
+```
+So this will use the memory of the context `mem_buffer`. So when `no_alloc` is
+false this what will happen.
+
+Now, we can also pass in a `mem_buffer` to the context which will be used and
+no memory will be allocated internally:
+```c
+  char stack_buffer[1024];
+  struct ggml_init_params sb_params = {
+    .mem_size   = 1024,
+    .mem_buffer = stack_buffer,
+    .no_alloc   = true,
+  };
+  struct ggml_context* sb_ctx = ggml_init(sb_params);
+```
+And we can inspect the memory used:
+```console
+(gdb) p sb_ctx->mem_buffer
+$7 = (void *) 0x7fffffffd5e0
+(gdb) p &stack_buffer
+$8 = (char (*)[1024]) 0x7fffffffd5e0
+```
+
+I can't see that `no_alloc` is used in any other way when creating a tensor
+so it must have other usages.
+
+_wip_
