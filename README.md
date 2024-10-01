@@ -6,7 +6,6 @@ This repository contains notes and code examples related to AI.
 * [Tokenization](./notes/tokenization/README.md)
 * [Architectures](./notes/architectures/README.md)
 * [Position Embeddings](./notes/position-embeddings)
-* [Transformers](./notes/architectures/transformers.md)
 * [GPUs](./gpu/README.md)
 * [Vector Databases](./notes/vector-databases.md)
 
