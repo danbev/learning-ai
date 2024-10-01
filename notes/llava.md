@@ -356,7 +356,7 @@ llama_print_timings:       total time =   27646.54 ms /   703 tokens
 ### Using LLaVA 1.6
 First clone the LLaVA 1.6 model:
 ```console
-$ git clone https://huggingface.co/liuhaotian/llava-v1.6-vicuna-7b
+$ git clone -v --progress --depth 1 --single-branch --branch main https://huggingface.co/liuhaotian/llava-v1.6-vicuna-7b
 ```
 One thing to note about this model is that it includes the vision part in the    
 model files, in contrast to llava-1.5 where the vision part is in a separate     
@@ -455,3 +455,166 @@ options:
 https://arxiv.org/pdf/2402.03766.pdf
 
 
+### llama.cpp llava notes
+This section will step through the llava-cli example to understand how it work.
+
+First we will build the llama.cpp project with debugging symbols enabled and
+with CUDA support:
+```console
+$ cmake -S . -B build -DGGML_CUDA=On -DCMAKE_BUILD_TYPE=Debug
+$ cmake --build build
+```
+Lets try running the example first to see that it works as expected:
+```console
+$ ./build/bin/llama-llava-cli -m models/vicuna-7b-q5_k.gguf --mmproj models/mmproj-vicuna7b-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg -c 4096 -ngl 15
+```
+This will output the following (cleaned up from debugging output):
+```console
+The image you've shared depicts an astronaut on the surface of the moon,
+standing next to a flag of the United States. This photograph captures a
+significant moment in history, as the Apollo missions were the first time that
+humans walked on the moon and planted the flag of the United States. The image
+is often remembered as a symbol of national pride and the triumph of human
+ingenuity. It was taken on July 20, 1969, during the Apollo 11 mission.
+```
+The actual output was this which I'm saving here so that I can take a look at
+where these are coming from:
+```console
+ The image you've shared depicts an astronaut on the surface of the moon, standing next to a flagggml_gallocr_needs_realloc: src 1 (KQ_mask) of node kq_soft_max_ext-0 is not valid
+ggml_gallocr_alloc_graph: cannot reallocate multi buffer graph automatically, call reserve
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 0)
+ of the United States. This photograph captures a significant moment in history, as the Apollo missions were the first time that humans walked on the moon andggml_gallocr_needs_realloc: node kq-0 is not valid
+ggml_gallocr_alloc_graph: cannot reallocate multi buffer graph automatically, call reserve
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 0)
+ planted the flag of the United States. The image is often remembered as a symbol of national pride and the triumph of human ingenuity. It was takenggml_gallocr_needs_realloc: node kq-0 is not valid
+ggml_gallocr_alloc_graph: cannot reallocate multi buffer graph automatically, call reserve
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 0)
+ on July 20, 1969, during the Apollo 11 mission.
+llama_perf_context_print:        load time =   36031.05 ms
+llama_perf_context_print: prompt eval time =   30555.63 ms /  2920 tokens (   10.46 ms per token,    95.56 tokens per second)
+llama_perf_context_print:        eval time =   54394.93 ms /   109 runs   (  499.04 ms per token,     2.00 tokens per second)
+llama_perf_context_print:       total time =   90945.80 ms /  3029 tokens
+```
+Great, so lets start stepping through the code:
+```console
+$ gdb --args ./build/bin/llama-llava-cli -m models/vicuna-7b-q5_k.gguf --mmproj models/mmproj-vicuna7b-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg -c 4096 -ngl 15
+(gdb) br llava-cli.cpp:273
+Breakpoint 1 at 0x5e566: file /home/danbev/work/ai/llama.cpp/examples/llava/llava-cli.cpp, line 273.
+```
+Skipping the parsing of command line arguments and some checks we get to:
+```c++
+    auto * model = llava_init(&params);
+```
+This will load the language model which in our case is the Vicuna 7B model. This
+uses common.cpp to load and is something we have gone through before.
+```c
+static struct llama_model * llava_init(gpt_params * params) {
+    llama_backend_init();
+    llama_numa_init(params->numa);
+
+    llama_model_params model_params = llama_model_params_from_gpt_params(*params);
+
+    llama_model * model = llama_load_model_from_file(params->model.c_str(), model_params);
+    if (model == NULL) {
+        LOG_ERR("%s: unable to load model\n" , __func__);
+        return NULL;
+    }
+    return model;
+}
+```
+After that we have the following check which is checking to see if the prompt
+contains an embedded base64 encoded image (I think, I need to look into this
+more and try it out) which is not the case for this session, so else block will
+be executed:
+```c++
+    if (prompt_contains_image(params.prompt)) {
+        auto * ctx_llava = llava_init_context(&params, model);
+
+        auto * image_embed = load_image(ctx_llava, &params, "");
+
+        // process the prompt
+        process_prompt(ctx_llava, image_embed, &params, params.prompt);
+
+        llama_perf_context_print(ctx_llava->ctx_llama);
+        llava_image_embed_free(image_embed);
+        ctx_llava->model = NULL;
+        llava_free(ctx_llava);
+    } else {
+        for (auto & image : params.image) {
+            auto * ctx_llava = llava_init_context(&params, model);
+
+            auto * image_embed = load_image(ctx_llava, &params, image);
+            if (!image_embed) {
+                LOG_ERR("%s: failed to load image %s. Terminating\n\n", __func__, image.c_str());
+                return 1;
+            }
+
+            // process the prompt
+            process_prompt(ctx_llava, image_embed, &params, params.prompt);
+
+            llama_perf_context_print(ctx_llava->ctx_llama);
+            llava_image_embed_free(image_embed);
+            ctx_llava->model = NULL;
+            llava_free(ctx_llava);
+        }
+    }
+```
+So we can see that `params.image` is in fact a vector so we can supply multiple
+images on the command line:
+```console
+(gdb) ptype params.image
+type = std::vector<std::string>
+```
+Next a `llava_context` will be initialized.
+```c++
+static struct llava_context * llava_init_context(gpt_params * params, llama_model * model) {
+    const char * clip_path = params->mmproj.c_str();
+
+    auto prompt = params->prompt;
+    if (prompt.empty()) {
+        prompt = "describe the image in detail.";
+    }
+
+    auto ctx_clip = clip_model_load(clip_path, /*verbosity=*/ 1);
+
+
+    llama_context_params ctx_params = llama_context_params_from_gpt_params(*params);
+    ctx_params.n_ctx           = params->n_ctx < 2048 ? 2048 : params->n_ctx; // we need a longer context size to process image embeddings
+
+    llama_context * ctx_llama = llama_new_context_with_model(model, ctx_params);
+
+    if (ctx_llama == NULL) {
+        LOG_ERR("%s: failed to create the llama_context\n" , __func__);
+        return NULL;
+    }
+
+    auto * ctx_llava = (struct llava_context *)malloc(sizeof(llava_context));
+
+    ctx_llava->ctx_llama = ctx_llama;
+    ctx_llava->ctx_clip = ctx_clip;
+    ctx_llava->model = model;
+    return ctx_llava;
+}
+```
+Notice that we did not specify a prompt on the command line so the default prompt
+will be used which is "describe the image in detail.".
+Next `clip_model_load` will be called which is defined in clip.cpp:
+```c++
+struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+    struct ggml_context * meta = NULL;
+
+    struct gguf_init_params params = {
+        /*.no_alloc = */ true,
+        /*.ctx      = */ &meta,
+    };
+```
+So first a `ggml_context` is created named `meta` and 
+
+_wip_
+
+### `std_image`
+The clip implementation in the example (clip.cpp) used `std_image.h` which is
+a from the [single-file public domain library](https://github.com/nothings/stb)
+which was created by Sean T. Barrett, hence `std`. The `std_image.h` header
+contains code related to loading and decoding images from files and memory in
+various formats like PNG, JPEG, BMP, PSD, GIF, HDR, PIC.
