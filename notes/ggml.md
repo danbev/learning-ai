@@ -4277,6 +4277,93 @@ take a look at the history of this file this was previously:
 +                /*.contexts =*/ { { 0 } },
              };
 ```
+So the above will only be done once and after this a free context from the
+global state will be looked up:
+```c
+    // find non-used context in g_state
+    struct ggml_context * ctx = NULL;
+
+    for (int i = 0; i < GGML_MAX_CONTEXTS; i++) {
+        if (!g_state.contexts[i].used) {
+            g_state.contexts[i].used = true;
+            ctx = &g_state.contexts[i].context;
+
+            GGML_PRINT_DEBUG("%s: found unused context %d\n", __func__, i);
+            break;
+        }
+    }
+```
+After that there is a check to see if `params.mem_size` was set and if not
+then set it to `GGML_MEM_ALIGN`:
+```
+    // allow to call ggml_init with 0 size
+    if (params.mem_size == 0) {
+        params.mem_size = GGML_MEM_ALIGN;
+    }
+```
+
+```c
+    const size_t mem_size = params.mem_buffer ? params.mem_size : GGML_PAD(params.mem_size, GGML_MEM_ALIGN);
+    *ctx = (struct ggml_context) {
+        /*.mem_size           =*/ mem_size,
+        /*.mem_buffer         =*/ params.mem_buffer ? params.mem_buffer : GGML_ALIGNED_MALLOC(mem_size),
+        /*.mem_buffer_owned   =*/ params.mem_buffer ? false : true,
+        /*.no_alloc           =*/ params.no_alloc,
+        /*.no_alloc_save      =*/ params.no_alloc,
+        /*.n_objects          =*/ 0,
+        /*.objects_begin      =*/ NULL,
+        /*.objects_end        =*/ NULL,
+        /*.scratch            =*/ { 0, 0, NULL, },
+        /*.scratch_save       =*/ { 0, 0, NULL, },
+    };
+```
+Now, in this case we did not set the `mem_buffer` parameter. So the
+`GGML_ALIGNED_MALLOC` macro will be used and mem_size will be passed to it
+which is 16 in this case:
+```c
+#define GGML_ALIGNED_MALLOC(size) ggml_aligned_malloc(size)
+
+inline static void * ggml_aligned_malloc(size_t size) {
+    if (size == 0) {
+        GGML_PRINT("WARNING: Behavior may be unexpected when allocating 0 bytes for ggml_aligned_malloc!\n");
+        return NULL;
+    }
+    void * aligned_memory = NULL;
+    int result = posix_memalign(&aligned_memory, GGML_MEM_ALIGN, size);
+    if (result != 0) {
+        // Handle allocation failure
+        const char *error_desc = "unknown allocation error";
+        switch (result) {
+            case EINVAL:
+                error_desc = "invalid alignment value";
+                break;
+            case ENOMEM:
+                error_desc = "insufficient memory";
+                break;
+        }
+        GGML_PRINT("%s: %s (attempted to allocate %6.2f MB)\n", __func__, error_desc, size/(1024.0*1024.0));
+        GGML_ABORT("fatal error");
+        return NULL;
+    }
+    return aligned_memory;
+}
+```
+In the above case I've removed the `GGML_USE_CPU_HBM` and `GGML_USE_METAL`
+macros and just showing the one that is actually used for this debugging
+session. So this will allocate 16 bytes of memory that is aligned to 16 bytes
+and store the address in `aligned_memory`.
+So the contexts `mem_buffer` will be set to this address for usage by this
+context. This field is a void pointer so it can point to anything.
+
+After the context has been initalized it looks like:
+```console
+(gdb) p *ctx
+$4 = {mem_size = 16, mem_buffer = 0x5555556b0740, mem_buffer_owned = true,
+no_alloc = false, no_alloc_save = false, n_objects = 0, objects_begin = 0x0,
+objects_end = 0x0, scratch = {offs = 0, size = 0, data = 0x0},
+scratch_save = {offs = 0, size = 0, data = 0x0}}
+```
+And this will be returned to the caller of `ggml_init`.
 
 
 ### `ggml_is_empty`
