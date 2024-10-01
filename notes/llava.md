@@ -22,8 +22,8 @@ And the paper for 1.5 can be found [here](https://arxiv.org/abs/2310.03744).
 
 Llava has a LLM, a Visual Transformer (CLIP with ViT-L/14 (ViT Large and using
 14x14 patches), and adds a trainable projection layer (Multi-layer projector in
-LLaVA-1.5). The project is used to project/transform the patch embeddings into
-the token embedding space.
+LLaVA-1.5). The projection layer is used to project/transform the patch
+embeddings into the token embedding space.
 
 So a [ViT](vit.md) will produce a patch embedding for the image, and the LLM
 will produce token embeddings:
@@ -37,10 +37,9 @@ will produce token embeddings:
    +-------------+      +----------------+
 ```
 But these are embeddings from different embedding spaces, so we need to project
-them into the same space. This is done by a trainable projection layer (W) on
-top of
+them into the same space. This is done by a trainable projection layer (W):
 ```
-   patch embeddings [0                 512]
+   patch embeddings [0                 511]
        (Z)
 
 Zᵥ = the patch embeddings
