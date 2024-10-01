@@ -4230,6 +4230,55 @@ different editors and IDEs for a project.
 #### build.zig
 Is part of the [Zig build system)(https://ziglang.org/learn/build-system/).
 
+
+### `ggml_context`
+When we call `ggml_init` the first time there will a a few things that will
+be done only for the first call. One of these is setting up a global
+`g_state` struct.
+```c
+struct ggml_state {
+    struct ggml_context_container contexts[GGML_MAX_CONTEXTS];
+    struct ggml_numa_nodes numa;
+};
+
+struct ggml_context_container {
+    bool used;
+    struct ggml_context context;
+};
+```
+This struct is created by the following code:
+```c
+            g_state = (struct ggml_state) {
+                /*.contexts =*/ { { 0 } },
+                /*.numa =*/ {
+                    .n_nodes = 0,
+                    .total_cpus = 0,
+                },
+            };
+```
+Now, `contexts` is being initialized using `{ { 0 } }`. The outer braces are
+creating an array and the inner braces are creating one `ggml_context_container`
+which is initalizes to 0 (`{ 0 }`). In C when we provide fewer initializers than
+the number of elements in an array, the remaining elements are initialized to 0.
+So by providing just `{ { 0 } }`, we explicitly zeroing out the first element,
+and implicitly zeroing out all the rest.
+Now, there is also an additional for loop that is initializing the `used` member
+of each `ggml_context_container` to false:
+```c
+            for (int i = 0; i < GGML_MAX_CONTEXTS; ++i) {
+                g_state.contexts[i].used = false;
+            }
+```
+But this should/has already been done by the `{ { 0 } }` initialization. If we
+take a look at the history of this file this was previously:
+```console
+             g_state = (struct ggml_state) {
+-                /*.contexts =*/ { 0 },
++                /*.contexts =*/ { { 0 } },
+             };
+```
+
+
 ### `ggml_is_empty`
 Just a note about the `ggml_is_empty` function:
 ```c
