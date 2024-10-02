@@ -608,7 +608,602 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         /*.ctx      = */ &meta,
     };
 ```
-So first a `ggml_context` is created named `meta` and 
+So first a `ggml_context` pointer is created named `meta` and used to initialize
+`gguf_init_params` which is then passed to `gguf_init_from_file`:
+```
+    struct gguf_context * ctx = gguf_init_from_file(fname, params);
+```
+```console
+(gdb) p *ctx
+$22 = {header = {magic = "GGUF", version = 2, n_tensors = 378, n_kv = 25},
+kv = 0x555556b33520, infos = 0x555555b602b0, alignment = 32, offset = 22112,
+size = 624429056, data = 0x0}
+```
+This image encoder (`image encoder for LLaVA`) has 378 tensors which will be
+iterated over:
+```console
+        std::map<enum ggml_type, uint32_t> n_type;
+
+        for (int i = 0; i < n_tensors; i++) {
+            enum ggml_type type = gguf_get_tensor_type(ctx, i);
+
+            n_type[type]++;
+        }
+```
+```c
+enum ggml_type gguf_get_tensor_type(const struct gguf_context * ctx, int i) {
+    return ctx->infos[i].type;
+}
+```
+And infos is of type `struct gguf_tensor_info`:
+```console
+(gdb) ptype *ctx->infos
+type = struct gguf_tensor_info {
+    gguf_str name;
+    uint32_t n_dims;
+    uint64_t ne[4];
+    ggml_type type;
+    uint64_t offset;
+    const void *data;
+    size_t size;
+}
+
+(gdb) p ctx->infos[0]
+$28 = {name = {n = 9, data = 0x555555b4afe0 "mm.0.bias"}, n_dims = 1,
+ne = {4096, 1, 1, 1}, type = GGML_TYPE_F32, offset = 0, data = 0x0, size = 0}
+```
+The above for loop is only used to count the number of tensors of each type.
+```console
+(gdb) until 1080
+```
+Actuall this whole block is just for logging so lets skip it but I'll show the
+output here:
+```console
+(gdb) until 1109
+clip_model_load: - kv   0:                       general.architecture str              = clip
+clip_model_load: - kv   1:                      clip.has_text_encoder bool             = false
+clip_model_load: - kv   2:                    clip.has_vision_encoder bool             = true
+clip_model_load: - kv   3:                   clip.has_llava_projector bool             = true
+clip_model_load: - kv   4:                          general.file_type u32              = 1
+clip_model_load: - kv   5:                               general.name str              = vit-large336-custom
+clip_model_load: - kv   6:                        general.description str              = image encoder for LLaVA
+clip_model_load: - kv   7:                        clip.projector_type str              = mlp
+clip_model_load: - kv   8:                     clip.vision.image_size u32              = 336
+clip_model_load: - kv   9:                     clip.vision.patch_size u32              = 14
+clip_model_load: - kv  10:               clip.vision.embedding_length u32              = 1024
+clip_model_load: - kv  11:            clip.vision.feed_forward_length u32              = 4096
+clip_model_load: - kv  12:                 clip.vision.projection_dim u32              = 768
+clip_model_load: - kv  13:           clip.vision.attention.head_count u32              = 16
+clip_model_load: - kv  14:   clip.vision.attention.layer_norm_epsilon f32              = 0.000010
+clip_model_load: - kv  15:                    clip.vision.block_count u32              = 23
+clip_model_load: - kv  16:           clip.vision.image_grid_pinpoints arr[i32,10]      = [336, 672, 672, 336, 672, 672, 1008, ...
+clip_model_load: - kv  17:          clip.vision.image_crop_resolution u32              = 224
+clip_model_load: - kv  18:             clip.vision.image_aspect_ratio str              = anyres
+clip_model_load: - kv  19:         clip.vision.image_split_resolution u32              = 224
+clip_model_load: - kv  20:            clip.vision.mm_patch_merge_type str              = spatial_unpad
+clip_model_load: - kv  21:              clip.vision.mm_projector_type str              = mlp2x_gelu
+clip_model_load: - kv  22:                     clip.vision.image_mean arr[f32,3]       = [0.481455, 0.457828, 0.408211]
+clip_model_load: - kv  23:                      clip.vision.image_std arr[f32,3]       = [0.268630, 0.261303, 0.275777]
+clip_model_load: - kv  24:                              clip.use_gelu bool             = false
+clip_model_load: - type  f32:  236 tensors
+clip_model_load: - type  f16:  142 tensors
+clip_model_load (fname=0x555555b548e0 "models/mmproj-vicuna7b-f16.gguf", verbosity=1)
+    at /home/danbev/work/ai/llama.cpp/examples/llava/clip.cpp:1109
+```
+
+```c++
+    clip_ctx * new_clip = new clip_ctx{};
+```
+The `clip_ctx` struct is defined in clip.cpp:
+```c++
+struct clip_ctx {
+    bool has_text_encoder    = false;
+    bool has_vision_encoder  = false;
+    bool has_llava_projector = false;
+    bool has_minicpmv_projector = false;
+    int minicpmv_version = 2;
+
+    struct clip_vision_model vision_model;
+    projector_type proj_type = PROJECTOR_TYPE_MLP;
+
+    float image_mean[3];
+    float image_std[3];
+    bool use_gelu = false;
+    int32_t ftype = 1;
+
+    bool has_class_embedding = true;
+    bool has_pre_norm = true;
+    bool has_post_norm = false;
+    bool has_patch_bias = false;
+
+    struct gguf_context * ctx_gguf;
+    struct ggml_context * ctx_data;
+
+    std::vector<uint8_t> buf_compute_meta;
+
+    // memory buffers to evaluate the model
+    ggml_backend_buffer_t params_buffer  = NULL;
+
+    ggml_backend_t backend       = NULL;
+    ggml_gallocr_t compute_alloc = NULL;
+
+    struct clip_image_size * load_image_size;
+};
+```
+Next the type of the projector will will be read from the model inforation
+```c++
+            const std::string proj_type = gguf_get_val_str(ctx, idx);
+            new_clip->proj_type = clip_projector_type_from_string(proj_type);
+```
+```console
+(gdb) p proj_type
+$2 = "mlp
+```
+The following projector types are currently defined:
+```c++
+static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
+    { PROJECTOR_TYPE_MLP, "mlp" },
+    { PROJECTOR_TYPE_LDP, "ldp" },
+    { PROJECTOR_TYPE_LDPV2, "ldpv2"},
+    { PROJECTOR_TYPE_RESAMPLER, "resampler"},
+};
+```
+So these different types of approches to mappingg the image embeddings into a
+space that can be processed along side text token embeddings.
+* MPL
+is a multi-layer perceptron which is a feedforward neural network which
+does the transformation the image embeddings from CLIP's image encoder into a 
+format compatible with the language model.
+* LDP TODO: what is this? There is a section above but it needs more info.
+* LDPV2 TODO: what is this?
+* RESAMPLER TODO: what is this?
+
+So the above will set the projector type on the clip context.
+Specific to the MLP type projector is the following:
+```c++
+        if (new_clip->proj_type == PROJECTOR_TYPE_MLP) {
+            if (gguf_find_tensor(ctx, format(TN_LLAVA_PROJ, 3, "weight").c_str()) != -1) {
+                new_clip->proj_type = PROJECTOR_TYPE_MLP_NORM;
+            }
+        }
+```
+In our case this will not be true:
+```console
+(gdb) p gguf_find_tensor(ctx, format("mm.%d.%s", 3, "weight"))
+$3 = -1
+```
+Following that we have the initalization of the CUDA backend:
+```
+#ifdef GGML_USE_CUDA
+    new_clip->backend = ggml_backend_cuda_init(0);
+    LOG_INF("%s: CLIP using CUDA backend\n", __func__);
+#endif
+```
+
+After that we have a block which populates the clip context:
+```
+        int idx = get_key_idx(ctx, KEY_HAS_TEXT_ENC);
+        new_clip->has_text_encoder = gguf_get_val_bool(ctx, idx);
+        ...
+```
+This block is setting some of the model values that we saw in the output above.
+```
+clip_model_load: - kv   0:                       general.architecture str              = clip
+clip_model_load: - kv   1:                      clip.has_text_encoder bool             = false
+clip_model_load: - kv   2:                    clip.has_vision_encoder bool             = true
+clip_model_load: - kv   3:                   clip.has_llava_projector bool             = true
+```
+
+After that we have the loading of tensors:
+```c++
+    // load tensors
+    {
+        std::vector<uint8_t> read_buf;
+        struct ggml_init_params params = {
+            /*.mem_size =*/ (n_tensors + 1) * ggml_tensor_overhead(),
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc =*/ true,
+        };
+        new_clip->ctx_data = ggml_init(params);
+```
+Notice where that `no_alloc` is set to true which means that data for the tensor
+will not be allocated. See [ggml.md](./ggml.md#no_alloc) for more details on
+this.
+The we open a input files stream to `models/mmproj-vicuna7b-f16.gguf`:
+```c++
+        auto fin = std::ifstream(fname, std::ios::binary);
+```
+And then we will iterate over all the tensors, keep in mind that `ctx` in this
+case is a `gguf_context` and not a `ggml_context`, and `meta` is a
+`ggml_context`:
+```c++
+        // add tensors to context
+        for (int i = 0; i < n_tensors; ++i) {
+            const char * name = gguf_get_tensor_name(ctx, i);
+            struct ggml_tensor * t = ggml_get_tensor(meta, name);
+            struct ggml_tensor * cur = ggml_dup_tensor(new_clip->ctx_data, t);
+            ggml_set_name(cur, name);
+        }
+```
+So we have 378 tensors for this model. Lets go through one of them:
+```console
+(gdb) p name
+$11 = 0x555555b4afe0 "mm.0.bias"
+(gdb) p ctx->infos[i]
+$12 = {name = {n = 9, data = 0x555555b4afe0 "mm.0.bias"}, n_dims = 1, ne = {4096, 1, 1, 1}, type = GGML_TYPE_F32, offset = 0,
+  data = 0x0, size = 0}
+(gdb) p ctx->infos[i].name
+$13 = {n = 9, data = 0x555555b4afe0 "mm.0.bias"}
+(gdb) p ctx->infos[i].name.data
+$14 = 0x555555b4afe0 "mm.0.bias"
+```
+Then the tensor will be looked up in the `ggml_context` meta:
+```console
+gdb) p *t
+$15 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4096, 1, 1, 1}, nb = {4, 16384, 16384, 16384}, 
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0, name = "mm.0.bias", '\000' <repeats 54 times>, extra = 0x0}
+```
+And this will be duplicated into a different `ggml_context` which is the field
+of the `clip_ctx` struct. The name of a tensor is not duplicated so we need to
+set the the name of the new tensor.
+
+After all the tensors have been copied into the `new_clip` `ggml_context`
+(`ctx_data`) these tensors will be allocated in the backend which is:
+```console
+(gdb) p new_clip->backend.iface.get_name(new_clip->backend)
+$21 = 0x555556b328a8 "CUDA0"
+```
+And the allocation is done like this:
+```c++
+        new_clip->params_buffer = ggml_backend_alloc_ctx_tensors(new_clip->ctx_data, new_clip->backend);
+```
+```c++
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {
+    return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));
+}
+```
+Note that this function suffix is `buft` which stands for buffer type. This will
+end up in ggml-alloc.c:
+```c
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx,
+    ggml_backend_buffer_type_t buft) {
+    GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
+```
+And notice here that the assert is checking that `no_alloc` is set to true which
+makes sense as the data for the tensors are to be allocated in the backend.
+
+This will get the first tensor from the `new_clip->ctx_data` ggml context:
+```c
+    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+```
+And then start from that tensor and iterate over all tensors to calculate the
+size of the buffer required to store all the tensors:
+```c
+    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+        size_t this_size = 0;
+        if (t->data == NULL && t->view_src == NULL) {
+            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+        }
+
+        if ((cur_buf_size + this_size) > max_size) {
+            // allocate tensors in the current buffer
+            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
+                return NULL;
+            }
+            first = t;
+            cur_buf_size = this_size;
+        } else {
+            cur_buf_size += this_size;
+        }
+    }
+```
+Notice that this will iterate over the tensors and calculate the size of the
+buffer required to store all the tensors. If the size of the buffer is greater
+than the maximum size then then tensors up to the current tensor will be
+allocated on the CUDA device by calling `alloc_tensor_range`.
+```c
+    // allocate remaining tensors
+    if (cur_buf_size > 0) {
+        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+            return NULL;
+        }
+    }
+```
+The first thing that happens where is that a buffer will be allocated using
+the backend type:
+```c
+static bool alloc_tensor_range(struct ggml_context * ctx,
+        struct ggml_tensor * first, struct ggml_tensor * last,
+        ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+    if (buffer == NULL) {
+        ...
+        free(*buffers);
+        return false;
+    }
+
+    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+
+    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
+        if (t->data == NULL) {
+            if (t->view_src == NULL) {
+                ggml_tallocr_alloc(&tallocr, t);
+            } else if (t->buffer == NULL) {
+                ggml_backend_view_init(t);
+            }
+        } else {
+            if (t->view_src != NULL && t->buffer == NULL) {
+                // view of a pre-allocated tensor
+                ggml_backend_view_init(t);
+            }
+        }
+    }
+
+    *buffers = realloc(*buffers, sizeof(ggml_backend_buffer_t) * (*n_buffers + 1));
+    (*buffers)[(*n_buffers)++] = buffer;
+
+    return true;
+}
+```
+So the `ggml_backend_buft_alloc_buffer` will end up in `ggml-cuda.cu` where we
+first set the device to be used:
+```c
+GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    ggml_backend_cuda_buffer_type_context * buft_ctx = (ggml_backend_cuda_buffer_type_context *)buft->context;
+
+    ggml_cuda_set_device(buft_ctx->device);
+
+    size = std::max(size, (size_t)1); // cudaMalloc returns null for size 0
+
+    void * dev_ptr;
+    cudaError_t err = ggml_cuda_device_malloc(&dev_ptr, size, buft_ctx->device);
+    if (err != cudaSuccess) {
+        ...
+        return nullptr;
+    }
+
+    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr);
+
+    return ggml_backend_buffer_init(buft, ggml_backend_cuda_buffer_interface, ctx, size);
+}
+```
+And we can see that a new `ggml_backend_cuda_buffer_context` is created:
+```console
+(gdb) p *ctx
+$35 = {device = 0, dev_ptr = 0x7ffdc6000000, name = "CUDA0"}
+```
+And notice that the `dev_ptr` is a pointer to the device memory, so this is
+memory on the CUDA device.
+
+And finally `ggml_backend_buffer_init` is called to initialize the buffer:
+```c
+GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
+               ggml_backend_buffer_type_t      buft,
+        struct ggml_backend_buffer_i           iface,
+               ggml_backend_buffer_context_t   context,
+               size_t                          size) {
+    ggml_backend_buffer_t buffer = malloc(sizeof(struct ggml_backend_buffer));
+
+    (*buffer) = (struct ggml_backend_buffer) {
+        /* .interface = */ iface,
+        /* .buft      = */ buft,
+        /* .context   = */ context,
+        /* .size      = */ size,
+        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
+    };
+
+    return buffer;
+}
+```
+Now, the `ggml_backend_buffer` is a allocated on the host, but the context has
+its `dev_ptr` pointing to memory on the CUDA device.
+
+This will be returned to `alloc_tensor_range` where we will call
+`ggml_tallocr_new` where talloc stands for tensor allocator:
+```
+    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+```
+```c
+// Tensor allocator
+struct ggml_tallocr {
+    ggml_backend_buffer_t buffer;
+    void * base;
+    size_t alignment;
+    size_t offset;
+};
+```
+After that all the tensors will be iterated over. Recall that we set `no_alloc`
+to true to the tensors in this case will not have an data pointer and their
+`view_src` will also be NULL:
+```
+    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
+        if (t->data == NULL) {
+            if (t->view_src == NULL) {
+                ggml_tallocr_alloc(&tallocr, t);
+            } else if (t->buffer == NULL) {
+                ggml_backend_view_init(t);
+            }
+        } else {
+            if (t->view_src != NULL && t->buffer == NULL) {
+                // view of a pre-allocated tensor
+                ggml_backend_view_init(t);
+            }
+        }
+```
+So `ggml_tallocr_alloc` will be called for each tensor. Lets take a look at the
+first tensor before this call and then we can inspect it again afterwards:
+```console
+(gdb) p *tensor
+$45 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4096, 1, 1, 1}, nb = {4, 16384, 16384, 16384}, op = GGML_OP_NONE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0}, view_src = 0x0, view_offs = 0, data = 0x0, name = "mm.0.bias", '\000' <repeats 54 times>, extra = 0x0}
+```
+
+```c
+void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
+    size_t size = ggml_backend_buffer_get_alloc_size(talloc->buffer, tensor);
+    size = GGML_PAD(size, talloc->alignment);
+
+    if (talloc->offset + size > ggml_backend_buffer_get_size(talloc->buffer)) {
+        fprintf(stderr, "%s: not enough space in the buffer to allocate %s (needed %zu, available %zu)\n",
+                __func__, tensor->name, size, ggml_backend_buffer_get_size(talloc->buffer) - talloc->offset);
+        GGML_ABORT("not enough space in the buffer");
+    }
+
+    void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
+    talloc->offset += size;
+
+    assert(((uintptr_t)addr % talloc->alignment) == 0);
+
+    ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
+}
+```
+In our case size will be 16384 bytes.
+```c
+void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    // removed asserts for readability
+    ...
+    tensor->buffer = buffer;
+    tensor->data = addr;
+    ggml_backend_buffer_init_tensor(buffer, tensor);
+}
+```
+Notice that this is updating the buffer field and the data field of the tensor.
+
+And `ggml_backend_buffer_init_tensor`
+```c
+GGML_CALL void ggml_backend_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    // init_tensor is optional
+    if (buffer->iface.init_tensor) {
+        buffer->iface.init_tensor(buffer, tensor);
+    }
+}
+```
+This will land in `ggml-cuda.cu`:
+```c
+GGML_CALL static void ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+    ...
+
+    if (ggml_is_quantized(tensor->type) && tensor->view_src == nullptr &&
+        ggml_backend_buffer_get_usage(buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
+        // initialize padding to 0 to avoid possible NaN values
+        size_t original_size = ggml_nbytes(tensor);
+        size_t padded_size = ggml_backend_buft_get_alloc_size(buffer->buft, tensor);
+
+        if (padded_size > original_size) {
+            ggml_cuda_set_device(ctx->device);
+            CUDA_CHECK(cudaMemset((char *)tensor->data + original_size, 0, padded_size - original_size));
+        }
+    }
+}
+```
+In our case the above will do nothing as the tensor is not quantized.
+And all of the tensors will go through the same process where they will have
+their buffer and data fields updated. So after this the tensors data pointer
+will point to the memory of the CUDA device.
+
+So to recap, we have been looking into `alloc_tensor_range` which looks like
+this:
+```c
+static bool alloc_tensor_range(struct ggml_context * ctx,
+        struct ggml_tensor * first, struct ggml_tensor * last,
+        ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+    if (buffer == NULL) {
+        for (size_t i = 0; i < *n_buffers; i++) {
+            ggml_backend_buffer_free((*buffers)[i]);
+        }
+        free(*buffers);
+        return false;
+    }
+
+    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+
+    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
+        if (t->data == NULL) {
+            if (t->view_src == NULL) {
+                ggml_tallocr_alloc(&tallocr, t);
+            } else if (t->buffer == NULL) {
+                ggml_backend_view_init(t);
+            }
+        } else {
+            if (t->view_src != NULL && t->buffer == NULL) {
+                // view of a pre-allocated tensor
+                ggml_backend_view_init(t);
+            }
+        }
+    }
+
+    *buffers = realloc(*buffers, sizeof(ggml_backend_buffer_t) * (*n_buffers + 1));
+    (*buffers)[(*n_buffers)++] = buffer;
+
+    return true;
+}
+```
+And we have seen most of this apart from the last three lines. Recall that this
+function was called when `max_size` was reached and the `realloc` is adding a
+the new buffer we created at the start of this function. Realloc will behave
+like malloc if `*buffers` is null, otherwise if there is not enough space it
+will copy the old buffer to a new location and free the old buffer.
+```console
+(gdb) p *buffers
+$55 = (ggml_backend_buffer_t *) 0x0
+
+(gdb) p *buffers
+$60 = (ggml_backend_buffer_t *) 0x555556b2fda0
+```
+So now there will be a space for the new buffer in the array since it was
+expanded:
+```console
+(gdb) p (*buffers)[0]
+$68 = (ggml_backend_buffer_t) 0x555003e796ef
+```
+So we can dereference the pointer to the buffer, and index the array element
+using the value that `n_buffers` currently points to (notice the parentheses
+which makes this using the value as an index), and set that to the the new
+buffer. The value `n_buffers` will then be incremented by one.
+```console
+(gdb) p *n_buffers
+$72 = 0
+```
+```c
+    (*buffers)[(*n_buffers)++] = buffer;
+```
+```console
+(gdb) p *n_buffers
+$73 = 1
+(gdb) p *(*buffers)[0]
+$75 = {iface = {get_name = 0x7fffe1f741c8 <ggml_backend_cuda_buffer_get_name(ggml_backend_buffer_t)>,
+    free_buffer = 0x7fffe1f74218 <ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t)>,
+    get_base = 0x7fffe1f74255 <ggml_backend_cuda_buffer_get_base(ggml_backend_buffer_t)>,
+    init_tensor = 0x7fffe1f74277 <ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t, ggml_tensor*)>,
+    memset_tensor = 0x7fffe1f743e6 <ggml_backend_cuda_buffer_memset_tensor(ggml_backend_buffer_t, ggml_tensor*, uint8_t, size_t, size_t)>,
+    set_tensor = 0x7fffe1f744d0 <ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t, ggml_tensor*, void const*, size_t, size_t)>,
+    get_tensor = 0x7fffe1f745c0 <ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t, ggml_tensor const*, void*, size_t, size_t)>, cpy_tensor = 0x7fffe1f746b0 <ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t, ggml_tensor const*, ggml_tensor*)>,
+    clear = 0x7fffe1f74860 <ggml_backend_cuda_buffer_clear(ggml_backend_buffer_t, uint8_t)>, reset = 0x0},
+  buft = 0x7ffff781a7e0 <ggml_backend_cuda_buffer_type::ggml_backend_cuda_buffer_types>, context = 0x555555b499e0, size = 624429056,
+  usage = GGML_BACKEND_BUFFER_USAGE_ANY}
+```
+That will return us back in `ggml_backend_alloc_ctx_tensors_from_buft`:
+```c
+    ggml_backend_buffer_t buffer;
+    if (n_buffers == 1) {
+        buffer = buffers[0];
+    } else {
+        buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
+    }
+    free(buffers);
+    return buffer;
+```
+And that will return us back to `clip_model_load`:
+```c++
+        // alloc memory and offload data
+        new_clip->params_buffer = ggml_backend_alloc_ctx_tensors(new_clip->ctx_data, new_clip->backend);
+```
 
 _wip_
 
