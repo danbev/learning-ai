@@ -1199,13 +1199,453 @@ That will return us back in `ggml_backend_alloc_ctx_tensors_from_buft`:
     free(buffers);
     return buffer;
 ```
-And that will return us back to `clip_model_load`:
+And that will return us back to `clip_model_load`. Now the data for the tensors
+have been alloced on the backend but they don't contain any data yet.
 ```c++
         // alloc memory and offload data
         new_clip->params_buffer = ggml_backend_alloc_ctx_tensors(new_clip->ctx_data, new_clip->backend);
+        for (int i = 0; i < n_tensors; ++i) {
+            const char * name = gguf_get_tensor_name(ctx, i);
+            struct ggml_tensor * cur = ggml_get_tensor(new_clip->ctx_data, name);
+            const size_t offset = gguf_get_data_offset(ctx) + gguf_get_tensor_offset(ctx, i);
+            fin.seekg(offset, std::ios::beg);
+            ...
+
+            int num_bytes = ggml_nbytes(cur);
+            if (ggml_backend_buffer_is_host(new_clip->params_buffer)) {
+                // for the CPU and Metal backend, we can read directly into the tensor
+                fin.read(reinterpret_cast<char *>(cur->data), num_bytes);
+            } else {
+                // read into a temporary buffer first, then copy to device memory
+                read_buf.resize(num_bytes);
+                fin.read(reinterpret_cast<char *>(read_buf.data()), num_bytes);
+                ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+            }
+        }
+```
+In our case the else block will be executed as the backend is CUDA. Lets take a
+closer look at `ggml_backend_tensor_set`:
+```c
+GGML_CALL void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+    ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+    ...
+    buf->iface.set_tensor(buf, tensor, data, offset, size);
+}
+```
+```c
+GGML_CALL static void ggml_backend_cuda_buffer_set_tensor(
+    ggml_backend_buffer_t buffer,
+    ggml_tensor * tensor,
+    const void * data,
+    size_t offset,
+    size_t size) {
+    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+
+    ggml_cuda_set_device(ctx->device);
+    CUDA_CHECK(cudaMemcpyAsync((char *)tensor->data + offset, data, size, cudaMemcpyHostToDevice, cudaStreamPerThread));
+    CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+}
+```
+This is copying data from the host, which is the tensor data that was read from
+the the file into a buffer and then passed to this function. Notice that the
+destionation is the tensor data pointer which is on the CUDA device. 
+And this is done for all the tensors.
+
+Next we have the vision model loading:
+```c++
+    // vision model
+    if (new_clip->has_vision_encoder) {
+        // load vision model
+        auto & vision_model = new_clip->vision_model;
+        auto & hparams = vision_model.hparams;
+        hparams.hidden_size    = get_u32(ctx, format(KEY_N_EMBD, "vision"));
+        hparams.n_head         = get_u32(ctx, format(KEY_N_HEAD, "vision"));
+        hparams.n_intermediate = get_u32(ctx, format(KEY_N_FF, "vision"));
+        hparams.n_layer        = get_u32(ctx, format(KEY_N_BLOCK, "vision"));
+        hparams.image_size     = get_u32(ctx, KEY_IMAGE_SIZE);
+        hparams.patch_size     = get_u32(ctx, KEY_PATCH_SIZE);
+        hparams.projection_dim = get_u32(ctx, format(KEY_PROJ_DIM, "vision"));
+        hparams.eps            = get_f32(ctx, format(KEY_LAYER_NORM_EPS, "vision"));
+```
+The above is getting values for the keys in the model:
+```console
+$ ./inspect-model.sh models/mmproj-vicuna7b-f16.gguf
+INFO:gguf-dump:* Loading: models/mmproj-vicuna7b-f16.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+* Dumping 28 key/value pair(s)
+     ...
+     13: UINT32     |        1 | clip.vision.patch_size = 14
+     14: UINT32     |        1 | clip.vision.embedding_length = 1024
+     15: UINT32     |        1 | clip.vision.feed_forward_length = 4096
+     16: UINT32     |        1 | clip.vision.projection_dim = 768
+     17: UINT32     |        1 | clip.vision.attention.head_count = 16
+     18: FLOAT32    |        1 | clip.vision.attention.layer_norm_epsilon = 9.999999747378752e-06
+```
+Following that we have:
+```c
+        try {
+            int idx = get_key_idx(ctx, KEY_IMAGE_GRID_PINPOINTS);
+            int n = gguf_get_arr_n(ctx, idx);
+            const int32_t * pinpoints = (const int32_t *)gguf_get_arr_data(ctx, idx);
+            for (int i = 0; i < 32 && i < n && pinpoints[i] != 0; ++i) {
+                hparams.image_grid_pinpoints[i] = pinpoints[i];
+            }
+            if (n < 32)
+                hparams.image_grid_pinpoints[n] = 0;
+        } catch (std::runtime_error & /*e*/) {
+            hparams.image_grid_pinpoints[0]=0;
+        }
+```
+Now, we we inspect the output of the model we can see the following:
+```
+     20: [INT32]    |       10 | clip.vision.image_grid_pinpoints
+ ```
+ This is an array of 10 integers representing something called pin points.
+ A vision model will often divide an image into a grid of cells/patches. The grid
+ enables a systemactic way of processing the image.
+```console
+pinpoints[0] = 336
+pinpoints[1] = 672
+pinpoints[2] = 672
+pinpoints[3] = 672
+pinpoints[4] = 672
+pinpoints[5] = 1008
+pinpoints[6] = 336
+pinpoints[7] = 336
+pinpoints[8] = 336
+pinpoints[9] = 1008
+```
+
+clip.vision.image_size = 336
+clip.vision.patch_size = 14
+clip.vision.image_grid_pinpoints = [336, 672, 672, 336, 672, 672, 1008, 336, 336, 1008]
+```
+So we have an image size of `336x336` pixels, and a patch size of `14x14`
+pixels. So if we divide 336 by 14 we get 24 which means that the image will be
+divided into a grid of 24x24 patches.
+```
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+0 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 |14 |15 |16 |17 |18 |19 |20 |21 |22 |23 |
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+1 |24 |25 |26 |...                                                                         ...|47 |
+  +---+---+---+-------------------------------------------------------------------------------+---+
+  |...|                                                                                       |...|
+  +---+---------------------------------------------------------------------------------------+---+
+23|552|553|554|...                                                                         ...|575|
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+
+Each box is 14x14 pixels
+Each row is 24 boxes
+And we have 24x24=576 boxes in total
+576 * 14 * 14 = 
+576 * 196     = 112896
+336 * 336     = 112896
+```
+The values in the pinpoints array are coordinates in the image grid that the
+model will focus more on (I think).
+```
+(336, 672)
+(672, 672)
+(672, 1008)
+(336, 336)
+(336, 1008)
+```
+We can think of these as regions/tiles in the patch.
+```console
+0
++-------------------------------------------------------------> x
+| [ (0,0)      ] [ (336,0)    ] [ (672,0)    ] [ (1008,0)   ]
+| [            ] [            ] [            ] [            ]
+| [------------] [------------] [------------] [------------]
+| [ (0,336)    ] [ (336,336)  ] [ (672,336)  ] [ (1008,336) ]
+| [            ] [            ] [            ] [            ]
+| [------------] [------------] [------------] [------------]
+| [ (0,672)    ] [ (336,672)  ] [ (672,672)  ] [ (1008,672) ]
+| [            ] [            ] [            ] [            ]
+| [------------] [------------] [------------] [------------]
+| [ (0,1008)   ] [ (336,1008) ] [ (672,1008) ] [ (1008,1008)]
+| [            ] [            ] [            ] [            ]
+↓
+y
+
+0
++-------------------------------------------------------------> x
+| [ (0,0)      ] [ (336,0)    ] [ (672,0)    ] [ (1008,0)   ]
+| [            ] [            ] [            ] [            ]
+| [------------] [------------] [------------] [------------]
+| [ (0,336)    ] [XXXXXXXXXXXX] [ (672,336)  ] [ (1008,336) ]
+| [            ] [XXXXXXXXXXXX] [            ] [            ]
+| [------------] [------------] [------------] [------------]
+| [ (0,672)    ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [ (1008,672) ]
+| [            ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [            ]
+| [------------] [------------] [------------] [------------]
+| [ (0,1008)   ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [ (1008,1008)]
+| [            ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [            ]
+↓
+y
+```
+This could be a way to focus on specific regions of the image and we can see
+that the center of the image is focused on more than the edges and this makes
+sense I guess as most subjects of images are in the center.
+
+Next we have the merge type:
+```
+        try {
+            int idx = get_key_idx(ctx, KEY_MM_PATCH_MERGE_TYPE);
+            strcpy(hparams.mm_patch_merge_type, gguf_get_val_str(ctx, idx));
+        } catch (std::runtime_error & /*e*/) {
+            strcpy(hparams.mm_patch_merge_type, "flat");
+        }
+```
+We can see that the default type is `flat` which I believe means that that a
+grid of 3x3 patches will be flattened into a single vector:
+```
+Sequence = [Patch at (336, 672), Patch at (672, 336), Patch at (672, 672), Patch at (1008, 336), Patch at (336, 1008)]
+```
+The type that used in this model is:
+```console
+(gdb) p gguf_get_val_str(ctx, idx)
+$119 = 0x555555b4b240 "spatial_unpad"
+```
+So what would it look like:
+```console
+
+Input Sequence (flattened grid with empty slots):
+[0, 0, 0, 0, 0, P(672,336), P(1008,336), 0, P(336,672), P(672,672), 0, 0, P(336,1008), 0, 0, 0]
+
+Possible mask:
+[0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0]
+```
+After that we have:
+```c++
+        try {
+            hparams.image_crop_resolution = get_u32(ctx, KEY_IMAGE_CROP_RESOLUTION); // llava-1.6
+        } catch(const std::exception& /*e*/) {
+            hparams.image_crop_resolution = hparams.image_size;
+        }
+```
+This is about the resolution in pixels to which images are to be cropped during
+pre-processing before being fed into the model. So if we input an image it will
+be cropped. Notice that this is first copping to 224 and then resizing to 336
+which sounded a little strange to me. But reading some more about this it seems
+like this may be because of the way the model was trained. If the model was
+trained on 224x224 images (like ResNet) then having the same value here might
+ensure compability and optimal performance.
+
+* Load image using its original dimensions.
+* Crop to 224x224 (center crop?)
+* Resize to 336x336
+* Normalize (mean and std)
+
+Next we have the mean and std used for the normalization:
+```c
+        int idx_mean = get_key_idx(ctx, KEY_IMAGE_MEAN);
+        int idx_std  = get_key_idx(ctx, KEY_IMAGE_STD);
+```
+These are also arrays:
+```console
+     26: [FLOAT32]  |        3 | clip.vision.image_mean
+     27: [FLOAT32]  |        3 | clip.vision.image_std
+```
+```c++
+        for (int i = 0; i < 3; ++i) {
+            new_clip->image_mean[i] = mean_data[i];
+            new_clip->image_std[i]  = std_data[i];
+        }
+```
+```console
+(gdb) p new_clip->image_mean[0]
+$1 = 0.48145467
+(gdb) p new_clip->image_mean[1]
+$2 = 0.457827508
+(gdb) p new_clip->image_mean[2]
+$3 = 0.408210725
+(gdb) p new_clip->image_std[0]
+$4 = 0.268629551
+(gdb) p new_clip->image_std[1]
+$5 = 0.26130259
+(gdb) p new_clip->image_std[2]
+$6 = 0.275777102
+```
+I think the intuition here is that since we have rescaled the image we want to
+adjust the pixel values to match what the model was trained on.
+
+Next, we have a number of tensor that will be set on the vision model
+```c++
+        try {
+            vision_model.class_embedding  = get_tensor(new_clip->ctx_data, TN_CLASS_EMBD);
+            new_clip->has_class_embedding = true;
+        } catch (const std::exception& /*e*/) {
+            new_clip->has_class_embedding = false;
+        }
+```
+This is the class token which aggragates information from all patches and is
+used for classification.
+```console
+(gdb) p *vision_model.class_embedding
+$8 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {1024, 1, 1, 1}, nb = {4, 4096, 4096,
+    4096}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc880c000, name = "v.class_embd", '\000' <repeats 51 times>,
+  extra = 0x0}
+```
+After that we have the weights and bias for the pre-layer normalization (this is
+applied before the transformer blocks):
+```c++
+        try {
+            vision_model.pre_ln_w  = get_tensor(new_clip->ctx_data, format(TN_LN_PRE, "v", "weight"));
+            vision_model.pre_ln_b  = get_tensor(new_clip->ctx_data, format(TN_LN_PRE, "v", "bias"));
+            new_clip->has_pre_norm = true;
+        } catch (std::exception & /*e*/) {
+            new_clip->has_pre_norm = false;
+        }
+```
+```console
+(gdb) p *vision_model.pre_ln_w
+$10 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {1024, 1, 1, 1}, nb = {4, 4096, 4096,
+    4096}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc8a53800, name = "v.pre_ln.weight", '\000' <repeats 48 times>,
+  extra = 0x0}
+(gdb) p *vision_model.pre_ln_b
+$11 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {1024, 1, 1, 1}, nb = {4, 4096, 4096,
+    4096}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc8a54800, name = "v.pre_ln.bias", '\000' <repeats 50 times>,
+  extra = 0x0}
+```
+Next we have the weights and bias for the post-layer normalization (this is
+applied after the transformer blocks):
+```c++
+        try {
+            vision_model.post_ln_w  = get_tensor(new_clip->ctx_data, format(TN_LN_POST, "v", "weight"));
+            vision_model.post_ln_b  = get_tensor(new_clip->ctx_data, format(TN_LN_POST, "v", "bias"));
+            new_clip->has_post_norm = true;
+        } catch (std::exception & /*e*/) {
+            new_clip->has_post_norm = false;
+        }
+```
+I'm skipping a head as some of the tensor do not exist in this model. One thing
+to note when debugging is that if you are stepping then `get_tensor` may throw
+and exception and this will cause the debugger to continue executing. Just
+setting a breakpoint outside of the block or in the catch block will allow you
+to continue stepping.
+
+Next, we have the patch embeddings whch are used to project the flattened
+image patches into the models embedding space, and the positional embedding
+which encode the position of each patch in the image grid:
+```c++
+        try {
+            vision_model.patch_embeddings    = get_tensor(new_clip->ctx_data, TN_PATCH_EMBD);
+            vision_model.position_embeddings = get_tensor(new_clip->ctx_data, format(TN_POS_EMBD, "v"));
+        } catch(const std::exception& /*e*/) {
+            LOG_ERR("%s: failed to load vision model tensors\n", __func__);
+        }
+```
+```console
+(gdb) p *vision_model.patch_embeddings
+$13 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {14, 14, 3, 1024}, nb = {2, 28, 392,
+    1176}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc880d000, name = "v.patch_embd.weight", '\000' <repeats 44 times>,
+  extra = 0x0}
+
+(gdb) p *vision_model.position_embeddings
+$14 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {1024, 577, 1, 1}, nb = {2, 2048,
+    1181696, 1181696}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc8933000,
+  name = "v.position_embd.weight", '\000' <repeats 41 times>, extra = 0x0}
+```
+
+Following that we have:
+```c++
+        // LLaVA projection
+        if (new_clip->proj_type == PROJECTOR_TYPE_MLP || new_clip->proj_type == PROJECTOR_TYPE_MLP_NORM) {
+            vision_model.mm_0_w              = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 0, "weight"));
+            vision_model.mm_0_b              = get_tensor(new_clip->ctx_data, format(TN_LLAVA_PROJ, 0, "bias"));
+
+```
+So these are the weights and bias for the first projection linear layer
+```console
+(gdb) p *vision_model.mm_0_w
+$17 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {1024, 4096, 1, 1}, nb = {2, 2048,
+    8388608, 8388608}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc6004000, name = "mm.0.weight", '\000' <repeats 52 times>,
+  extra = 0x0}
+```
+Following that there are number of try/catch blocks for loading tensors for
+different models type(?) like Yi.
+
+Next the vision models layer is resized to the number of layers in the model
+which is 23 in this case:
+```c++
+        vision_model.layers.resize(hparams.n_layer);
+        for (int il = 0; il < hparams.n_layer; ++il) {
+            auto & layer = vision_model.layers[il];
+```
+```console
+(gdb) ptype vision_model.layers
+type = std::vector<clip_layer>
+```
+So what does a `clip_layer` look like
+```console
+(gdb) ptype clip_layer
+type = struct clip_layer {
+    ggml_tensor *k_w;
+    ggml_tensor *k_b;
+    ggml_tensor *q_w;
+    ggml_tensor *q_b;
+    ggml_tensor *v_w;
+    ggml_tensor *v_b;
+    ggml_tensor *o_w;
+    ggml_tensor *o_b;
+    ggml_tensor *ln_1_w;
+    ggml_tensor *ln_1_b;
+    ggml_tensor *ff_i_w;
+    ggml_tensor *ff_i_b;
+    ggml_tensor *ff_o_w;
+    ggml_tensor *ff_o_b;
+    ggml_tensor *ln_2_w;
+    ggml_tensor *ln_2_b;
+}
+```
+Now this is the text encoder part of the model and represents a a tranformer
+attention layer. These layers will get populated clip context.
+
+After that the current `gguf` context is set on the clip context:
+```c++
+    new_clip->ctx_gguf = ctx;
+```
+And the last things that happen before returning the clip context is:
+```c++
+    // measure mem requirement and allocate
+    {
+        new_clip->buf_compute_meta.resize(GGML_DEFAULT_GRAPH_SIZE * ggml_tensor_overhead() + ggml_graph_overhead());
+        new_clip->compute_alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(new_clip->backend));
+        clip_image_f32_batch batch;
+        batch.size = 1;
+        ggml_cgraph * gf = clip_image_build_graph(new_clip, &batch, nullptr, false);
+        ggml_gallocr_reserve(new_clip->compute_alloc, gf);
+        size_t compute_memory_buffer_size = ggml_gallocr_get_buffer_size(new_clip->compute_alloc, 0);
+        LOG_INF("%s: compute allocated memory: %.2f MB\n", __func__, compute_memory_buffer_size /1024.0/1024.0);
+    }
 ```
 
 _wip_
+
+```console
+(gdb) ptype new_clip->vision_model.hparams
+type = struct clip_hparams {
+    int32_t image_size;
+    int32_t patch_size;
+    int32_t hidden_size;
+    int32_t n_intermediate;
+    int32_t projection_dim;
+    int32_t n_head;
+    int32_t n_layer;
+    float eps;
+    char mm_patch_merge_type[32];
+    int32_t image_grid_pinpoints[32];
+    int32_t image_crop_resolution;
+}
+```
+
 
 ### `std_image`
 The clip implementation in the example (clip.cpp) used `std_image.h` which is
