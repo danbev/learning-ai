@@ -10,6 +10,14 @@ consists of an image and a correct textual description, along with several
 incorrect descriptions. The model's objective is to learn to identify the
 correct pairings among the incorrect ones.
 
+The model is trained to map similar images and text descriptions close together
+in the embedding space, while pushing dissimilar pairs apart. So a picture of a
+cat and a text description of a cat should be close together in the embedding
+space.
+
+Another usecase for CLIP is a sementic search for image retrieval. This is where
+we have a query and we want to find the most similar images to the query.
+
 Two main components:
 1. Image encoder
 This part produces image embeddings like patch embeddings from a ViT I think,
