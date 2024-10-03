@@ -4565,6 +4565,139 @@ So if we
 
 An example can be found in [conv2d.c](../fundamentals/ggml/src/conv2d.c).
 
+
+If we take a closer look at how conv2d is implemented in GGML we can see that
+it looks like this.
+
+Our input tensor and kernel will look like this:
+```console
+
+  b  (8x2):                           a (2x2):
++---+---+---+---+---+---+---+---+    +---+---+
+| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |    | 1 | 2 |
++---+---+---+---+---+---+---+---+    +---+---+
+| 9 |10 |11 |12 |13 |14 |15 |16 |    | 3 | 4 |
++---+---+---+---+---+---+---+---+    +---+---+
+```
+And we will have stride of 1 and no padding, and no dilation.
+
+```console
+$ gdb --args bin/conv2d
+```
+We can step into `ggml_conv_2d` and see what is happening:
+```c
+// a: [OC，IC, KH, KW]
+// b: [N, IC, IH, IW]
+// result: [N, OC, OH, OW]
+struct ggml_tensor * ggml_conv_2d(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,  // kernel
+        struct ggml_tensor  * b,  // input tensor
+        int                   s0, // stride x
+        int                   s1, // stride y
+        int                   p0, // padding x
+        int                   p1, // padding y
+        int                   d0, // dilation x
+        int                   d1) // dilation y{
+    struct ggml_tensor * im2col = ggml_im2col(ctx, a, b, s0, s1, p0, p1, d0, d1, true, a->type); // [N, OH, OW, IC * KH * KW]
+```
+Notice that this uses `ggml_im2col` which there is a section on in this
+document. This will prepare the input tensor so that matrix multiplication can
+be used to perform the convolution operation.
+The resulting `im2col` tensor looks like this:
+```console
+(gdb) p *im2col 
+$2 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4, 7, 1, 1}, nb = { 4, 16, 112, 112}, op = GGML_OP_IM2COL, op_params = {1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+0}, flags = 0, grad = 0x0, src = {0x7ffff6a00030, 0x7ffff6a001b0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6a004b0, name = '\000' <repeats 63 times>, extra = 0x0}
+
+Patch 1      Patch 2   Patch 3    Patch 4     Patch 5     Patch 6   Patch 7
++----------+----------+----------+----------+----------+----------+----------+
+| 1  2     | 2  3     | 3  4     | 4  5     | 5  6     | 6  7     | 7  8     |
+| 9  10    | 10 11    | 11 12    | 12 13    | 13 14    | 14 15    | 15 16    |
++----------+----------+----------+----------+----------+----------+----------+
+```
+Next in `ggml_im2col` we have:
+```c
+    struct ggml_tensor * result =
+        ggml_mul_mat(ctx,
+                ggml_reshape_2d(ctx, im2col, im2col->ne[0],  im2col->ne[3] * im2col->ne[2] * im2col->ne[1]),
+                ggml_reshape_2d(ctx, a, (a->ne[0] * a->ne[1] * a->ne[2]),  a->ne[3]));
+
+    result = ggml_reshape_4d(ctx, result, im2col->ne[1], im2col->ne[2], im2col->ne[3], a->ne[3]);
+    result = ggml_cont(ctx, ggml_permute(ctx, result, 0, 1, 3, 2));
+
+    return result;
+```
+Notice that the above is reshaping the result from `im2col` which in our case
+does not change the shape of the tensor:
+```console
+(gdb) p *ggml_reshape_2d(ctx, im2col, im2col->ne[0],  im2col->ne[3] * im2col->ne[2] * im2col->ne[1])
+
+$4 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4, 7, 1, 1}, nb = {4, 16, 112, 112}, op = GGML_OP_RESHAPE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6a00360, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x7ffff6a00360, view_offs = 0, data = 0x7ffff6a004b0,
+name = " (reshaped)", '\000' <repeats 52 times>, extra = 0x0}
+```
+Also the kernel is reshaped:
+```console
+(gdb) p *ggml_reshape_2d(ctx, a, (a->ne[0] * a->ne[1] * a->ne[2]),  a->ne[3])
+$7 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4, 1, 1, 1}, nb = {4, 16, 16, 16}, 
+op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6a00030, 0x0, 0x0, 0x0, 
+0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x7ffff6a00030, view_offs = 0, data = 0x7ffff6a00180, 
+name = "a (reshaped)", '\000' <repeats 51 times>, extra = 0x0}
+
+Making the kernal into a row vector:
+[1  2  3  4]
+```
+And then those reshaped tensors are multiplied using matrix multiplication:
+```console
+reshaped(a)       reshaped(im2col)
+[1  2  3  4] × [1   2   3   4   5   6   7 ]
+               [2   3   4   5   6   7   8 ]
+               [9  10  11  12  13  14  15 ]
+               [10 11  12  13  14  15  16 ]
+```
+The result from the matrix multiplication will be:
+```console
+(gdb) p *result
+$9 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {7, 1, 1, 1}, nb = {4, 28, 28, 28}, 
+op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6a00c70, 0x7ffff6a00b00, 
+0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffff6a00f30, 
+name = '\000' <repeats 63 times>, extra = 0x0}
+```
+Next the result from the matrix multiplication is reshaped:
+```c
+    result = ggml_reshape_4d(ctx, result, im2col->ne[1], im2col->ne[2], im2col->ne[3], a->ne[3]);
+```
+```console
+(gdb) p *result
+$10 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {7, 1, 1, 1}, nb = {4, 28, 28, 28},
+  op = GGML_OP_RESHAPE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x7ffff6a00de0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x7ffff6a00de0, view_offs = 0, data = 0x7ffff6a00f30,
+  name = " (reshaped)", '\000' <repeats 52 times>, extra = 0x0
+```
+And finally we have a permutation of the tensor and an operation to make it
+contiguous:
+```c
+    result = ggml_cont(ctx, ggml_permute(ctx, result, 0, 1, 3, 2));
+```
+Now the matrix multipliation operation likely creates a tensor that is
+contiguous in memory. The reshaping operations change the interpretation of the
+tensors dimensinons without change the actual data in the tensor. The permuation
+operation logically reorders the tensor without changing the data. `ggml_cont`
+is used to ensure that the physical memory layout matches the logical layout
+after these operations.
+
+For image tensors we would probably have a channel dimension and also a batch.
+I'm thinking this might look something like this in ggml:
+```
+ [ x-dim, y-dim, channel-dim, batch-dim]
+```
+
 ### image to column (im2col)
 This is a common technique used in convolutional neural networks (CNN). The idea
 is to transform image data, or more generally a multi-dimensional tensor, into a
