@@ -1314,7 +1314,6 @@ pinpoints[6] = 336
 pinpoints[7] = 336
 pinpoints[8] = 336
 pinpoints[9] = 1008
-```
 
 clip.vision.image_size = 336
 clip.vision.patch_size = 14
@@ -1859,13 +1858,49 @@ to understand the image.
 So in effect the convolution operation above has created the embeddings for the
 image.
 
-
-
-```console
-(gdb) p new_clip->buf_compute_meta.size()
-$27 = 819856
+Next the embeddings are reshaped and permuted:
+```c++
+    inp = ggml_reshape_3d(ctx0, inp, num_patches, hidden_size, batch_size);
+    inp = ggml_cont(ctx0, ggml_permute(ctx0, inp, 1, 0, 2, 3));
 ```
+```console
+(gdb) p inp->ne
+$10 = {24, 24, 1024, 1}
 
+(gdb) p num_patches
+$7 = 576
+(gdb) p hidden_size
+$8 = 1024
+(gdb) p batch_size
+$9 = 1
+```
+So that will reshape the tensor to 576x1024x1:
+```console
+(gdb) p inp->ne
+$11 = {576, 1024, 1, 1}
+```
+And then this tensor is permuted where the order of the first two dimensions are
+swapped:
+```console
+(gdb) p ggml_permute(ctx0, inp, 1, 0, 2, 3)->ne
+$14 = {1024, 576, 1, 1}
+```
+And then the permuted tensor is made contiguous (a new tensor created with the
+data now guaranteed to be contiguous in memory).
+
+Next, if the clip context has a patch bias it will be applied:
+```c
+    if (ctx->has_patch_bias) {
+        // inp = ggml_add(ctx0, inp, ggml_repeat(ctx0, model.patch_bias, inp));
+        inp = ggml_add(ctx0, inp, model.patch_bias);
+    }
+```
+This is not the case for this model so this will be skipped.
+
+```
+    struct ggml_tensor * embeddings = inp;
+    struct ggml_tensor * pos_embed = nullptr;
+```
 
 _wip_
 
