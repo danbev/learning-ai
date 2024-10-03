@@ -5,8 +5,8 @@ This repository contains notes and code examples related to AI.
 
 * [Tokenization](./notes/tokenization/README.md)
 * [Architectures](./notes/architectures/README.md)
-* [ggml](./notes/ggml.md)
-* [llama.cpp](./notes/llama.md)
+* [GGML](./notes/ggml.md)
+* [Llama.cpp](./notes/llama.md)
 * [Position Embeddings](./notes/position-embeddings)
 * [GPUs](./gpu/README.md)
 * [Vector Databases](./notes/vector-databases.md)
@@ -14,7 +14,7 @@ This repository contains notes and code examples related to AI.
 ### Examples/Exploration code
 
 * [GGML](./fundamentals/ggml) GGML C library exploration code
-* [llama.cpp](fundamentals/llama.cpp) Llama.cpp library exploration code
+* [Llama.cpp](fundamentals/llama.cpp) Llama.cpp library exploration code
 * [GPU](gpu/README.md) CUDA, Kompute, Metal, OpenCL, ROCm, and Vulkan exploration code
 * [Embeddings](./embeddings) Word embeddings examples in Rust and Python
 * [OpenAI API](./openai) OpenAI API examples written in Rust and Python
