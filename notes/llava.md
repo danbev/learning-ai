@@ -1627,6 +1627,246 @@ And the last things that happen before returning the clip context is:
     }
 ```
 
+```c++
+ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
+    return ggml_gallocr_new_n(&buft, 1);
+}
+
+ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
+    ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
+    GGML_ASSERT(galloc != NULL);
+
+    galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
+    GGML_ASSERT(galloc->bufts != NULL);
+
+    galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t));
+    GGML_ASSERT(galloc->buffers != NULL);
+
+    galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
+    GGML_ASSERT(galloc->buf_tallocs != NULL);
+
+    for (int i = 0; i < n_bufs; i++) {
+        galloc->bufts[i] = bufts[i];
+        galloc->buffers[i] = NULL;
+
+        // check if the same buffer type is used multiple times and reuse the same allocator
+        for (int j = 0; j < i; j++) {
+            if (bufts[i] == bufts[j]) {
+                galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
+                break;
+            }
+        }
+
+        if (galloc->buf_tallocs[i] == NULL) {
+            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
+            galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment);
+        }
+    }
+    galloc->n_buffers = n_bufs;
+
+    return galloc;
+}
+```
+So the `ggml_backend_buffer_type_t` is
+`ggml_backend_cuda_buffer_type::ggml_backend_cuda_buffer_types` in our case and
+`n_bufs` is 1. We can see that calloc (allocate and clear memory) is used to
+create a `ggml_gallocr` struct which I think is similar to the `ggml_tallocr`
+but for computation graphs (not sure yet).
+After the computation graph allocator has been created we have the following:
+```c++
+        clip_image_f32_batch batch;
+        batch.size = 1;
+        ggml_cgraph * gf = clip_image_build_graph(new_clip, &batch, nullptr, false);
+```
+
+```console
+struct clip_image_f32_batch {
+    struct clip_image_f32 * data;
+    size_t size;
+};
+
+// RGB float32 image (NHWC)
+// Memory layout: RGBRGBRGB...
+struct clip_image_f32 {
+    int nx;
+    int ny;
+
+    std::vector<float> buf;
+};
+```
+So `clip_image_f32` is storing an image in a float32 vector. The width of the
+image is `nx` and the height is `ny`. The NHWC is a common format in ML for
+representing images where N is the number of images, H is the height, W is the
+width and C is the number of channels. For example if nx=4 and ny=3 we would
+have:
+```
+  buf.size = 4 * 3 * 3 = 36
+  [R1, G1, B1, R2,  G2,  B2,  R3,  G3,  B3,  R4,  G4,  B4]
+  [R5, G5, B5, R6,  G6,  B6,  R7,  G7,  B7,  R8,  G8,  B8]
+  [R9, G9, B9, R10, G10, B10, R11, G11, B11, R12, G12, B12]
+```
+
+So we are passing in a batch of size 1 to `clip_image_build_graph`:
+```c++
+static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx,
+    const clip_image_f32_batch * imgs,
+    struct clip_image_size * load_image_size,
+    bool is_inf = false) {
+    ...
+
+    struct ggml_init_params params = {
+        /*.mem_size   =*/ ctx->buf_compute_meta.size(),
+        /*.mem_buffer =*/ ctx->buf_compute_meta.data(),
+        /*.no_alloc   =*/ true,
+    };
+
+    struct ggml_context * ctx0 = ggml_init(params);
+    struct ggml_cgraph * gf = ggml_new_graph(ctx0);
+```
+This is familiar and we are creating a new computation graph.
+```console
+(gdb) p ggml_graph_print(gf)
+=== GRAPH ===
+n_nodes = 0
+n_leafs = 0
+========================================
+```
+And now the computation graph will be built up.
+```c++
+    struct ggml_tensor * inp_raw = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, image_size_width, image_size_height, 3, batch_size);
+    ggml_set_name(inp_raw, "inp_raw");
+    ggml_set_input(inp_raw);
+```
+We start with the input layer which is the raw image data. Notice that the
+dimensions are 336x366x3x1 where 3 is the number of channels (RGB) and 1 is the
+batch size. We are then giving this tensor a name and setting it as as input so
+that it will be take part in auto differentiation:
+```console
+(gdb) p *inp_raw
+$1 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {336, 336, 3, 1}, nb = {4, 1344, 451584, 1354752},
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0}, view_src = 0x0, view_offs = 0, data = 0x0, name = "inp_raw", '\000' <repeats 56 times>, extra = 0x0}
+```
+Next we have a convolution operation. I was not familiar with the `ggml_conv_2d`
+function and I had to take a breif detour to understand what it does and the
+notes and examples can be found in [ggml.md](./ggml.md#conv2d).
+```console
+    struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
+```
+Notice that the inputs are the `model.patch_embedings` which will be the kernel:
+```console
+$4 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555b49a20,
+ne = {14, 14, 3, 1024}, nb = {2, 28, 392, 1176}, op = GGML_OP_NONE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffe6c20d020,
+name = "v.patch_embd.weight", '\000' <repeats 44 times>, extra = 0x0}
+```
+So we can see that we have a 14x14 kernel with 3 channels and 1024 batches(?).
+`inp_raw`  is the input data. The `patch_size` is the stride for x and for
+y, which is 14 in this case. So this means that the kernel will move 14 pixels
+in the x and y direction. The result will be that there are no overlaps between
+the kernels. And we have 0 padding for x and y. The last two arguments are the
+dilation of x and y which is 1 which means that the kernel is not dilated (does
+not have any gaps).
+
+So, what we are doing here is that we dividing the input image into patches and
+then embedding each patch into a high-dimensional space, which is 1024 in this
+case. We think of each patch as a token in an NLP model, where each token needs
+to get an token embedding. The embedding process for these patches, using
+convolution in this case, is analogous to word embeddings in NLP. It transforms
+the raw pixel data into a format that the transformer can process, just like
+word embeddings transform words into vector representations.
+
+After the convolution we have:
+```console
+(gdb) p *inp
+$6 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {24, 24, 1024, 1}, nb = {4, 96, 2304, 2359296}, op = GGML_OP_CONT,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x555555bbd050, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0,
+name = " (reshaped) (permuted) (cont)", '\000' <repeats 34 times>, extra = 0x0}
+```
+
+Lets try to visualize this:
+```console
+               336
+  +---------------------------------------+
+  |                                       |           Image 
+  |                                       |
+  |                                       |
+  |                                       |
+  |                                       |  336
+  |                                       |
+  |                                       |
+  |                                       |
+  |                                       |
+  |                                       |
+  +---------------------------------------+
+
+        14                                             Patch
+  +-------------+
+  |             |
+  |             |
+  |             | 14
+  |             |
+  |             |
+  +-------------+
+
+x = 336 / 14 = 24
+y = 336 / 14 = 24
+z = 1024 (embedding size)
+```
+This input image is divided into 336/14=24 patches:
+```
+                                     x
+    +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+0   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 | 14|15 |16 |17 |18 |19 |20 |21 |22 |23 |
+    +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+    | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 | 14|15 |16 |17 |18 |19 |20 |21 |22 |23 |   y
+    +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+    |                             ...                                                               |
+    +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+23  | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |10 |11 |12 |13 | 14|15 |16 |17 |18 |19 |20 |21 |22 |23 |
+    +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+```
+Each cell in the above grid can be identified using an x and y coordinate. This
+represents a patch in the input and we can think of this in a similar way aso
+tokens embeddings in NPL. In NPL I'm used to thinking about tokens embeddings as
+rows in a matrix, where one row would represent a token, and the columns would
+be the actual embeddings:
+```
+token 0 : [0       ...           1023]
+token 1 : [0       ...           1023]
+token 2 : [0       ...           1023]
+...
+```
+But in the case of images we will keep the x and y dimensions of the patch, and
+the embeddings for each patch will be in the z dimension:
+```console
+x_0, y_0   -> [0, ...                          1023]
+x_0, y_1   -> [0, ...                          1023]
+ ...
+x_0, y_23  -> [0, ...                          1023]
+x_1, y_0   -> [0, ...                          1023]
+ ...
+x_23, y_23 -> [0, ...                          1023]
+```
+By doing this the spatial information is preserved and the model can learn
+about the spatial relationships between the patches. This is important as the
+model needs to understand the spatial relationships between the patches in order
+to understand the image.
+So in effect the convolution operation above has created the embeddings for the
+image.
+
+
+
+```console
+(gdb) p new_clip->buf_compute_meta.size()
+$27 = 819856
+```
+
+
 _wip_
 
 ```console
