@@ -1761,7 +1761,7 @@ op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0,
 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffe6c20d020,
 name = "v.patch_embd.weight", '\000' <repeats 44 times>, extra = 0x0}
 ```
-So we can see that we have a 14x14 kernel with 3 channels and 1024 embedding.
+So we can see that we have a 14x14 kernel with 3 channels and 1024 embedding
 dimensions.
 `inp_raw`  is the input data. The `patch_size` is the stride for x and for
 y, which is 14 in this case. So this means that the kernel will move 14 pixels
@@ -1772,8 +1772,8 @@ not have any gaps).
 
 So, what we are doing here is that we dividing the input image into patches and
 then embedding each patch into a high-dimensional space, which is 1024 in this
-case. We think of each patch as a token in an NLP model, where each token needs
-to get an token embedding. The embedding process for these patches, using
+case. We can think of each patch as a token in an NLP model, where each token
+needs to get a token embedding. The embedding process for these patches, using
 convolution in this case, is analogous to word embeddings in NLP. It transforms
 the raw pixel data into a format that the transformer can process, just like
 word embeddings transform words into vector representations.
@@ -1831,7 +1831,7 @@ This input image is divided into 336/14=24 patches:
     +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
 ```
 Each cell in the above grid can be identified using an x and y coordinate. This
-represents a patch in the input and we can think of this in a similar way aso
+represents a patch in the input and we can think of this in a similar way as
 tokens embeddings in NPL. In NPL I'm used to thinking about tokens embeddings as
 rows in a matrix, where one row would represent a token, and the columns would
 be the actual embeddings:
@@ -1898,10 +1898,101 @@ Next, if the clip context has a patch bias it will be applied:
 ```
 This is not the case for this model so this will be skipped.
 
+Following that we have:
 ```
     struct ggml_tensor * embeddings = inp;
     struct ggml_tensor * pos_embed = nullptr;
+
+    if (ctx->has_llava_projector) {
+        // concat class_embeddings and patch_embeddings
+        if (ctx->has_class_embedding) {
+            embeddings = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, num_positions, batch_size);
+            ggml_set_name(embeddings, "embeddings");
+            ggml_set_input(embeddings);
+
+            embeddings = ggml_acc(ctx0, embeddings, model.class_embedding,
+                    embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], 0);
+
+            embeddings = ggml_acc(ctx0, embeddings, inp,
+                    embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding->nb[1]);
+        }
+    }
 ```
+Notice that the above code will be executed in our case and notice that the
+embeddings tensor will be reassigned to a new 3d tensor with the shape
+1024x576x1. Then the name and input flag are set on this new tensor.
+
+The first `ggml_acc` operation will use the `embeddings` tensor as the
+destination, and the values in the `model.class_embedding` tensor will be added
+to destination and the result will be a new tensor. So at this point embeddings
+looks like this:
+```console
+(gdb) p embeddings->ne
+$32 = {1024, 577, 1, 1}
+(gdb) p embeddings->nb
+$37 = {4, 4096, 2363392, 2363392}
+```
+So the following is using the same strides as embeddings currently has and an
+offset of 0:
+```c
+            embeddings = ggml_acc(ctx0, embeddings, model.class_embedding,
+                    embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], 0);
+```
+So the `model.class_embeddings` values will added to the `embeddings` tensor
+starting at the first element.
+Then we have another `ggml_acc` using the same destination as before but the
+source is now `inp` but notice that the offset is 4096 (the first dimension
+as 1024 element and is of type float32 which are 4 bytes and 1024x4=4096). So
+this will be added with the elements of the embeddings tensor starting at
+the 4096th element.
+```c
+            embeddings = ggml_acc(ctx0, embeddings, inp,
+                    embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding->nb[1]);
+```
+But in summary this will create a new tensor and assigning it to embeddings
+and it will have the class embeddings first and then the input embeddings.
+```
+[CLASS_TOKEN] [PATCH_1] [PATCH_2] ... [PATCH_N]
+```
+
+Following that a tensor for positions is created where the number of positions
+for this model is 577 (576 + 1 for the class token):
+```c
+    struct ggml_tensor * positions = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions);
+    ggml_set_name(positions, "positions");
+    ggml_set_input(positions);
+
+    embeddings = ggml_add(ctx0, embeddings, ggml_get_rows(ctx0, model.position_embeddings, positions));
+```
+Notice that the `ggml_get_rows` function is used to get the rows from
+`model.position_embeddings` tensor and the indices are given by the `positions`
+tensor. These are then added to the embeddings tensor. So this is using absolute
+positional encodings which is different from LLMs which nowadays mostly use
+RoPE or extensions of that (relative positional encodings and not absolute at
+least). These are learned and as we can see above are part of the model. In
+a vision transformer each patch is like a token in NLP, and the patches have
+an extra dimension (x, y like we discussed above). These will be flattend but
+their 2d relationships must be preserved. Vision models deal with fixed-size
+inputs so absolute positional encodings are suitable compared to LLMs which have
+to deal with variable length sequences and where relative positional encoding is
+a better option. So each element in the embedding tensor, where each one
+represents a patch from the input image (apart from the class token), will have
+a positional encoding added to it.
+
+Reflection:  
+How can I think about the absolute position values, like how does adding this
+value to each embedding element (patch or class token) enable positions to be
+encoded? Is it that during training this has been learned and a patch will be
+"moved in the embedding dimension space" approprieately for it to understand
+that this is the top left, top right etc?
+I think that this might be a way of imaging what is happending. So each
+patch/token start with its own embedding which is a unique vector in the
+embedding space. Then the positional encoding is added to this vector and this
+will move the vector in the embedding space. During training the model learns to
+assign unique vectors to each position (the x y grid or patches). It can also
+capture relationships between positions as well. So adjacent patches might be
+more similar to each other, located closer, than other patches further away.
+
 
 <a name="wip"></a>
 _wip_
