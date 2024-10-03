@@ -4765,3 +4765,336 @@ a GPU for example. So this is a way to speed up the convolution operation.
 
 There is also a standalone example of using `ggml_im2col` in
 [im2col.c](../fundamentals/ggml/src/im2col.c).
+
+
+### `ggml_norm`
+This is a normalization operation in GGML. This is used to normalize the input
+tensor. 
+```
+z = (x - μ) / sqrt(σ² + ε)
+
+Where:
+z is the normalized tensor.
+x is the input tensor.
+μ is the mean of the input tensor.
+σ² is the variance of the input tensor.
+ε is a small value to avoid division by zero
+```
+
+The function declaration looks like this:
+```c
+    // normalize along rows
+    GGML_API struct ggml_tensor * ggml_norm(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            float                 eps);
+```
+Where a is the input tensor we want to normalize and eps is a small value to
+avoid division by zero. The above is only creating the tensor operation for this
+and the actual compuation looks like this:
+```c
+static void ggml_compute_forward_norm_f32(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    GGML_TENSOR_UNARY_OP_LOCALS
+
+    float eps;
+    memcpy(&eps, dst->op_params, sizeof(float));
+
+    for (int64_t i03 = 0; i03 < ne03; i03++) {
+        for (int64_t i02 = 0; i02 < ne02; i02++) {
+            for (int64_t i01 = ith; i01 < ne01; i01 += nth) {
+                const float * x = (float *) ((char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03);
+
+                ggml_float sum = 0.0;
+                for (int64_t i00 = 0; i00 < ne00; i00++) {
+                    sum += (ggml_float)x[i00];
+                }
+
+                float mean = sum/ne00;
+
+                float * y = (float *) ((char *) dst->data + i01*nb1 + i02*nb2 + i03*nb3);
+
+                ggml_float sum2 = 0.0;
+                for (int64_t i00 = 0; i00 < ne00; i00++) {
+                    float v = x[i00] - mean;
+                    y[i00] = v;
+                    sum2 += (ggml_float)(v*v);
+                }
+
+                float variance = sum2/ne00;
+                const float scale = 1.0f/sqrtf(variance + eps);
+
+                ggml_vec_scale_f32(ne00, y, scale);
+            }
+        }
+    }
+}
+```
+The for loop is iterating over all the elements in the batch, and then sequence
+and then the rows. I'm only using one thread to make it easier to step through
+but normally there would be multiple threads performing this operation on
+different rows in parallel.
+First a float pointer is created that points into the source tensor data for
+the row that is being processed.
+For each element in this row the following will sum the entries and then
+calculate the mean:
+```c
+                ggml_float sum = 0.0;
+                for (int64_t i00 = 0; i00 < ne00; i00++) {
+                    sum += (ggml_float)x[i00];
+                }
+                float mean = sum/ne00;
+```
+```console
+(gdb) p sum
+$17 = 15
+(gdb) p sum/ne00
+$18 = 3
+```
+Next a float pointer in to the destination tensors data is created and this
+will be used to subtract the mean and calculate the variance:
+```c
+                float * y = (float *) ((char *) dst->data + i01*nb1 + i02*nb2 + i03*nb3);
+                ggml_float sum2 = 0.0;
+                for (int64_t i00 = 0; i00 < ne00; i00++) {
+                    float v = x[i00] - mean;
+                    y[i00] = v;
+                    sum2 += (ggml_float)(v*v);
+                }
+```
+And notice that sum2 is the sum of the squared differences from the mean.
+And then we normalize, we scale the input by this value using:
+```c
+                float variance = sum2/ne00;
+                const float scale = 1.0f/sqrtf(variance + eps);
+                ggml_vec_scale_f32(ne00, y, scale);
+```
+Just clarify this, this is performed per row and there might be multiple thread
+performing this operation in parallel.
+
+Now, lets take a closer looks at the `ggml_vec_scale_f32` function:
+```c
+inline static void ggml_vec_scale_f32(const int n, float * y, const float   v) {
+#if defined(GGML_USE_ACCELERATE)
+    vDSP_vsmul(y, 1, &v, y, 1, n);
+#elif defined(GGML_SIMD)
+    const int np = (n & ~(GGML_F32_STEP - 1));
+
+    GGML_F32_VEC vx = GGML_F32_VEC_SET1(v);
+
+    GGML_F32_VEC ay[GGML_F32_ARR];
+
+    for (int i = 0; i < np; i += GGML_F32_STEP) {
+        for (int j = 0; j < GGML_F32_ARR; j++) {
+            ay[j] = GGML_F32_VEC_LOAD(y + i + j*GGML_F32_EPR);
+            ay[j] = GGML_F32_VEC_MUL(ay[j], vx);
+
+            GGML_F32_VEC_STORE(y + i + j*GGML_F32_EPR, ay[j]);
+        }
+    }
+
+    // leftovers
+    for (int i = np; i < n; ++i) {
+        y[i] *= v;
+    }
+#else
+    // scalar
+    for (int i = 0; i < n; ++i) {
+        y[i] *= v;
+    }
+#endif
+}
+```
+Now, I'm currently running this on Linux and the `GGML_SIMD` macro is defined.
+I'm copying the values that are used here from the [simd](./simd) section of
+below which also contains some more details.
+```c
+#define GGML_F32_STEP 32
+#define GGML_F32_EPR  8
+
+#define GGML_F32_VEC        GGML_F32x8
+#define GGML_F32x8         __m256
+
+#define GGML_F32_VEC_SET1   GGML_F32x8_SET1
+#define GGML_F32x8_SET1(x) _mm256_set1_ps(x)
+
+#define GGML_F32_VEC_LOAD   GGML_F32x8_LOAD
+#define GGML_F32x8_LOAD    _mm256_loadu_ps
+
+#define GGML_F32_VEC_MUL    GGML_F32x8_MUL
+#define GGML_F32x8_MUL     _mm256_mul_ps
+
+#define GGML_F32_VEC_STORE  GGML_F32x8_STORE
+#define GGML_F32x8_STORE   _mm256_storeu_ps
+
+#define GGML_F32_ARR (GGML_F32_STEP/GGML_F32_EPR)
+```
+And this is the function with the macros expanded:
+```c
+inline static void ggml_vec_scale_f32(const int n, float * y, const float   v) {
+    const int np = (n & ~(32 - 1));
+
+    // This will set all the values in the vector to v (the scale value)
+    __m256 vx = _mm256_set1_ps(v);
+
+    // This declares an array of 4 _m256 vectors (each can store 8 32 bit floats)
+    // So ay can hold a total of 32 float values.
+    __m256 ay[4];
+
+    // Processes the vector in chunks of 32
+    for (int i = 0; i < np; i += 32) {
+        for (int j = 0; j < 4; j++) {
+            // load 32 bytes from the memory address calculated by y+i+j*4 in to a register
+            ay[j] = _mm256_loadu_ps(y + i + j * 4);
+            // multiply the values of the current chunk by the scale value
+            ay[j] = _mm256_mul_ps(ay[j], vx);
+
+            // Write the data back to memory from the register.
+            _mm256_storeu_ps(y + i + j*4, ay[j]);
+        }
+    }
+
+    // leftovers
+    for (int i = np; i < n; ++i) {
+        y[i] *= v;
+    }
+}
+```
+
+
+### simd
+There is SIMD support in ggml which is enable by using pre-processor macros
+and these are based on the features of the target CPU that is being compiled
+for.
+
+When I'm on Linux I can see the that the following macros will be defined
+and used:
+```c
+#define GGML_SIMD
+
+
+// F32 AVX
+
+#define GGML_F32_STEP 32
+#define GGML_F32_EPR  8
+
+#define GGML_F32x8         __m256
+#define GGML_F32x8_ZERO    _mm256_setzero_ps()
+#define GGML_F32x8_SET1(x) _mm256_set1_ps(x)
+#define GGML_F32x8_LOAD    _mm256_loadu_ps
+#define GGML_F32x8_STORE   _mm256_storeu_ps
+#if defined(__FMA__)
+    #define GGML_F32x8_FMA(a, b, c) _mm256_fmadd_ps(b, c, a)
+#else
+    #define GGML_F32x8_FMA(a, b, c) _mm256_add_ps(_mm256_mul_ps(b, c), a)
+#endif
+#define GGML_F32x8_ADD     _mm256_add_ps
+#define GGML_F32x8_MUL     _mm256_mul_ps
+#define GGML_F32x8_REDUCE(res, x)                                 \
+do {                                                              \
+    int offset = GGML_F32_ARR >> 1;                               \
+    for (int i = 0; i < offset; ++i) {                            \
+        x[i] = _mm256_add_ps(x[i], x[offset+i]);                  \
+    }                                                             \
+    offset >>= 1;                                                 \
+    for (int i = 0; i < offset; ++i) {                            \
+        x[i] = _mm256_add_ps(x[i], x[offset+i]);                  \
+    }                                                             \
+    offset >>= 1;                                                 \
+    for (int i = 0; i < offset; ++i) {                            \
+        x[i] = _mm256_add_ps(x[i], x[offset+i]);                  \
+    }                                                             \
+    const __m128 t0 = _mm_add_ps(_mm256_castps256_ps128(x[0]),    \
+                                 _mm256_extractf128_ps(x[0], 1)); \
+    const __m128 t1 = _mm_hadd_ps(t0, t0);                        \
+    res = (ggml_float) _mm_cvtss_f32(_mm_hadd_ps(t1, t1));        \
+} while (0)
+// TODO: is this optimal ?
+
+#define GGML_F32_VEC        GGML_F32x8
+#define GGML_F32_VEC_ZERO   GGML_F32x8_ZERO
+#define GGML_F32_VEC_SET1   GGML_F32x8_SET1
+#define GGML_F32_VEC_LOAD   GGML_F32x8_LOAD
+#define GGML_F32_VEC_STORE  GGML_F32x8_STORE
+#define GGML_F32_VEC_FMA    GGML_F32x8_FMA
+#define GGML_F32_VEC_ADD    GGML_F32x8_ADD
+#define GGML_F32_VEC_MUL    GGML_F32x8_MUL
+#define GGML_F32_VEC_REDUCE GGML_F32x8_REDUCE
+
+// F16 AVX
+
+#define GGML_F16_STEP 32
+#define GGML_F16_EPR  8
+
+// F16 arithmetic is not supported by AVX, so we use F32 instead
+
+#define GGML_F32Cx8             __m256
+#define GGML_F32Cx8_ZERO        _mm256_setzero_ps()
+#define GGML_F32Cx8_SET1(x)     _mm256_set1_ps(x)
+
+#if defined(__F16C__)
+// the  _mm256_cvt intrinsics require F16C
+#define GGML_F32Cx8_LOAD(x)     _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(x)))
+#define GGML_F32Cx8_STORE(x, y) _mm_storeu_si128((__m128i *)(x), _mm256_cvtps_ph(y, 0))
+#else
+static inline __m256 __avx_f32cx8_load(ggml_fp16_t *x) {
+    float tmp[8];
+
+    for (int i = 0; i < 8; i++) {
+        tmp[i] = GGML_FP16_TO_FP32(x[i]);
+    }
+
+    return _mm256_loadu_ps(tmp);
+}
+static inline void __avx_f32cx8_store(ggml_fp16_t *x, __m256 y) {
+    float arr[8];
+
+    _mm256_storeu_ps(arr, y);
+
+    for (int i = 0; i < 8; i++)
+        x[i] = GGML_FP32_TO_FP16(arr[i]);
+}
+#define GGML_F32Cx8_LOAD(x)     __avx_f32cx8_load(x)
+#define GGML_F32Cx8_STORE(x, y) __avx_f32cx8_store(x, y)
+#endif
+
+#define GGML_F32Cx8_FMA         GGML_F32x8_FMA
+#define GGML_F32Cx8_ADD         _mm256_add_ps
+#define GGML_F32Cx8_MUL         _mm256_mul_ps
+#define GGML_F32Cx8_REDUCE      GGML_F32x8_REDUCE
+
+#define GGML_F16_VEC                GGML_F32Cx8
+#define GGML_F16_VEC_ZERO           GGML_F32Cx8_ZERO
+#define GGML_F16_VEC_SET1           GGML_F32Cx8_SET1
+#define GGML_F16_VEC_LOAD(p, i)     GGML_F32Cx8_LOAD(p)
+#define GGML_F16_VEC_STORE(p, r, i) GGML_F32Cx8_STORE(p, r[i])
+#define GGML_F16_VEC_FMA            GGML_F32Cx8_FMA
+#define GGML_F16_VEC_ADD            GGML_F32Cx8_ADD
+#define GGML_F16_VEC_MUL            GGML_F32Cx8_MUL
+#define GGML_F16_VEC_REDUCE         GGML_F32Cx8_REDUCE
+
+// GGML_F32_ARR / GGML_F16_ARR
+//   number of registers to use per step
+#ifdef GGML_SIMD
+#define GGML_F32_ARR (GGML_F32_STEP/GGML_F32_EPR)
+#define GGML_F16_ARR (GGML_F16_STEP/GGML_F16_EPR)
+#endif
+```
+`GGML_F16_STEP 32` defines how may many elements can be processed in a single
+SIMD instruction for F16 (half precision) floating point numbers.
+`GGML_F16_EPR  8` defines the number of elements per register for F16.
+`GGML_F16_ARR (GGML_F16_STEP/GGML_F16_EPR)` defines the number of registers to
+use per step for F16 (half precision) floating point numbers.
+
+So we can process 32 elements in a single SIMD instruction and 8 elements can
+fit into a single register. So the number of registers we need to user for one
+step is 32/8 = 4. 
+So we can process 32 F16 numbers and we need 4 registers to do so each storing
+8 floating point numbers.
