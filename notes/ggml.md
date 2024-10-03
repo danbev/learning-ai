@@ -4565,4 +4565,70 @@ So if we
 
 An example can be found in [conv2d.c](../fundamentals/ggml/src/conv2d.c).
 
+### image to column (im2col)
+This is a common technique used in convolutional neural networks (CNN). The idea
+is to transform image data, or more generally a multi-dimensional tensor, into a
+format that allows for efficient computation of the convolution operation using
+matrix multiplication.
 
+This works by taking patches of the input tensor and reshaping them into columns.
+```
+Input tensor (5x5):          Kernel (3x3):
++---+---+---+---+---+      +---+---+---+
+| 1 | 2 | 3 | 4 | 5 |      | 1 | 2 | 3 |
++---+---+---+---+---+      +---+---+---+
+| 6 | 7 | 8 | 9 | 10|      | 4 | 5 | 6 |
++---+---+---+---+---+      +---+---+---+
+| 11| 12| 13| 14| 15|      | 7 | 8 | 9 |
++---+---+---+---+---+      +---+---+---+
+| 16| 17| 18| 19| 20|
++---+---+---+---+---+
+| 21| 22| 23| 24| 25|
++---+---+---+---+---+
+
+stride = 1, padding = 0, dilation = 1 (none)
+```
+The im2col process will extract 3x3 patches and arrange them as columns:
+```
+Patch 1       Patch 2   Patch 3   Patch 4    ...
++----------+----------+----------+----------+---
+| 1  2  3  | 2  3  4  | 3  4  5  | 6  7  8  |
+| 6  7  8  | 7  8  9  | 8  9 10  | 11 12 13 |
+| 11 12 13 | 12 13 14 | 13 14 15 | 16 17 18 |
++----------+----------+----------+----------+---
+```
+Notice that there is overlap between the patches.
+
+So this is an operation that prepares a tensor that can then be used in a matrix
+operation, for example a convolution operation. We could apply this to the
+above conv2d example:
+```
+Input Tensor (8x2):                Kernel (2x2):
++---+---+---+---+---+---+---+---+    +---+---+
+| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |    | 1 | 2 |
++---+---+---+---+---+---+---+---+    +---+---+
+| 9 |10 |11 |12 |13 |14 |15 |16 |    | 3 | 4 |
++---+---+---+---+---+---+---+---+    +---+---+
+
+
+Patch 1      Patch 2   Patch 3    Patch 4     Patch 5     Patch 6   Patch 7
++----------+----------+----------+----------+----------+----------+----------+
+| 1  2     | 2  3     | 3  4     | 4  5     | 5  6     | 6  7     | 7  8     |
+| 9  10    | 10 11    | 11 12    | 12 13    | 13 14    | 14 15    | 15 16    |
++----------+----------+----------+----------+----------+----------+----------+
+
+Make the kernal into a row vector:
+[1  2  3  4]
+
+Now, we can perform a matrix multiplication:
+
+[1  2  3  4] × [1   2   3   4   5   6   7 ] = [72  82  92  102  112  122  132]
+               [2   3   4   5   6   7   8 ]
+               [9  10  11  12  13  14  15 ]
+               [10 11  12  13  14  15  16 ]
+```
+Matrix mutliplication is a very efficient operation and can be offloaded onto
+a GPU for example. So this is a way to speed up the convolution operation.
+
+There is also a standalone example of using `ggml_im2col` in
+[im2col.c](../fundamentals/ggml/src/im2col.c).
