@@ -1,6 +1,11 @@
 ## Learning AI
 This repository contains notes and code examples related to AI.
 
+### In-progress
+What I'm currently "working" on.
+
+* [Llava](./notes/llava.md) Llava exploration
+
 ### Topics
 
 * [Tokenization](./notes/tokenization/README.md)
