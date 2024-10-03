@@ -120,3 +120,6 @@ update-ggml:
 
 clean-ggml:
 	${RM} -rf ggml/build
+
+.PHONY: arch-macro
+arch-macro: CFLAGS += -march=native
