@@ -4510,3 +4510,59 @@ $8 = (char (*)[1024]) 0x7fffffffd5e0
 
 
 _wip_
+
+### `ggml_conv_2d`
+This is a convolution of a 2d tensor in GGML. So we have a kernel which slides
+over the input tensor and an element wise multiplication the kernel and the
+input tensor is calculated at each position of the kernel and then summing.
+```console
+Input Tensor (8x2):                Kernel (2x2):
++---+---+---+---+---+---+---+---+    +---+---+
+| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |    | 1 | 2 |
++---+---+---+---+---+---+---+---+    +---+---+
+| 9 |10 |11 |12 |13 |14 |15 |16 |    | 3 | 4 |
++---+---+---+---+---+---+---+---+    +---+---+
+
+Convolution Operation (stride 1, no padding):
+
+Step 1:     Step 2:     Step 3:     Step 4:
++---+---+   +---+---+   +---+---+   +---+---+
+| 1 | 2 |   | 2 | 3 |   | 3 | 4 |   | 4 | 5 |
++---+---+   +---+---+   +---+---+   +---+---+
+| 9 |10 |   |10 |11 |   |11 |12 |   |12 |13 |
++---+---+   +---+---+   +---+---+   +---+---+
+    |           |           |           |
+    v           v           v           v
+   72          82          92         102
+
+Step 5:     Step 6:     Step 7:
++---+---+   +---+---+   +---+---+
+| 5 | 6 |   | 6 | 7 |   | 7 | 8 |
++---+---+   +---+---+   +---+---+
+|13 |14 |   |14 |15 |   |15 |16 |
++---+---+   +---+---+   +---+---+
+    |           |           |
+    v           v           v
+   112         122         132
+
+Result (7x1):
++----+----+----+-----+-----+-----+-----+
+| 72 | 82 | 92 | 102 | 112 | 122 | 132 |
++----+----+----+-----+-----+-----+-----+
+
+One calculation:
+[1  2]   [1  2]  =  [1*1 + 2*2 + 9*1 + 10*2] = 72 
+[9 10]   [3  4]   
+```
+
+One of the parameters that can be passed to the `ggml_conv_2d` function is the
+`dilation` parameter.  Dilation ("atrous convoluation" from the French term
+"à trous," meaning "with holes").This is the spacing between the kernel elements.
+So if we 
+* 0 means no kernel elementes will be applied.
+* 1 means no dilation.
+* 2 means one space between kernel elements.
+
+An example can be found in [conv2d.c](../fundamentals/ggml/src/conv2d.c).
+
+
