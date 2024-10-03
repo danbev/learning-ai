@@ -1761,7 +1761,8 @@ op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0,
 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffe6c20d020,
 name = "v.patch_embd.weight", '\000' <repeats 44 times>, extra = 0x0}
 ```
-So we can see that we have a 14x14 kernel with 3 channels and 1024 batches(?).
+So we can see that we have a 14x14 kernel with 3 channels and 1024 embedding.
+dimensions.
 `inp_raw`  is the input data. The `patch_size` is the stride for x and for
 y, which is 14 in this case. So this means that the kernel will move 14 pixels
 in the x and y direction. The result will be that there are no overlaps between
