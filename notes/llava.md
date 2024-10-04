@@ -656,7 +656,7 @@ The above for loop is only used to count the number of tensors of each type.
 ```console
 (gdb) until 1080
 ```
-Actuall this whole block is just for logging so lets skip it but I'll show the
+Actually this whole block is just for logging so lets skip it but I'll show the
 output here:
 ```console
 (gdb) until 1109
@@ -748,11 +748,11 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_RESAMPLER, "resampler"},
 };
 ```
-So these different types of approches to mappingg the image embeddings into a
+So these different types of approches to mapping the image embeddings into a
 space that can be processed along side text token embeddings.
 * MPL
 is a multi-layer perceptron which is a feedforward neural network which
-does the transformation the image embeddings from CLIP's image encoder into a 
+does the transformation of the image embeddings from CLIP's image encoder into a 
 format compatible with the language model.
 * LDP TODO: what is this? There is a section above but it needs more info.
 * LDPV2 TODO: what is this?
@@ -809,7 +809,7 @@ After that we have the loading of tensors:
 Notice where that `no_alloc` is set to true which means that data for the tensor
 will not be allocated. See [ggml.md](./ggml.md#no_alloc) for more details on
 this.
-The we open a input files stream to `models/mmproj-vicuna7b-f16.gguf`:
+Then we open an input file stream to `models/mmproj-vicuna7b-f16.gguf`:
 ```c++
         auto fin = std::ifstream(fname, std::ios::binary);
 ```
@@ -909,7 +909,7 @@ allocated on the CUDA device by calling `alloc_tensor_range`.
         }
     }
 ```
-The first thing that happens where is that a buffer will be allocated using
+The first thing that happens here is that a buffer will be allocated using
 the backend type:
 ```c
 static bool alloc_tensor_range(struct ggml_context * ctx,
@@ -970,7 +970,7 @@ GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffe
 ```
 And we can see that a new `ggml_backend_cuda_buffer_context` is created:
 ```console
-(gdb) p *ctx
+(gdb) p *buft_ctx
 $35 = {device = 0, dev_ptr = 0x7ffdc6000000, name = "CUDA0"}
 ```
 And notice that the `dev_ptr` is a pointer to the device memory, so this is
@@ -1415,6 +1415,11 @@ Input Sequence (flattened grid with empty slots):
 Possible mask:
 [0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0]
 ```
+Notice here that there is still an order to the patches. My understanding of
+`spatial_unpad` is that it will remove the empty slots after the model has
+processed the image. TODO: see how this works where `hparams.mm_patch_merge_type`
+is used.
+
 After that we have:
 ```c++
         try {
@@ -1527,7 +1532,7 @@ and exception and this will cause the debugger to continue executing. Just
 setting a breakpoint outside of the block or in the catch block will allow you
 to continue stepping.
 
-Next, we have the patch embeddings whch are used to project the flattened
+Next, we have the patch embeddings which are used to project the flattened
 image patches into the models embedding space, and the positional embedding
 which encode the position of each patch in the image grid:
 ```c++
@@ -1604,8 +1609,7 @@ type = struct clip_layer {
     ggml_tensor *ln_2_b;
 }
 ```
-Now this is the text encoder part of the model and represents a a tranformer
-attention layer. These layers will get populated clip context.
+These layers will get populated clip context.
 
 After that the current `gguf` context is set on the clip context:
 ```c++
@@ -1888,6 +1892,19 @@ $14 = {1024, 576, 1, 1}
 ```
 And then the permuted tensor is made contiguous (a new tensor created with the
 data now guaranteed to be contiguous in memory).
+So we went from 24x24x1024x1 -> 1024x576x1x1 which is more like the what we have
+in an NLP where we would have a row for each token, in this case we have a row
+for each patch:
+```
+NLP:
+token 0   : [0       ...           1023]
+...
+token 576 : [0       ...           1023]
+
+Visiion:
+patch 0   : [0       ...           1023]
+```
+patch 576 : [0       ...           1023]
 
 Next, if the clip context has a patch bias it will be applied:
 ```c
@@ -1993,6 +2010,40 @@ assign unique vectors to each position (the x y grid or patches). It can also
 capture relationships between positions as well. So adjacent patches might be
 more similar to each other, located closer, than other patches further away.
 
+Following that we have the following check:
+```c
+    if (ctx->has_minicpmv_projector) {
+        ...
+    }
+```
+TODO: revisit when trying out MiniCPMV model.
+
+Next we have a layer normalization, and then a multiplication with the
+`model.pre_ln_w` weights and addition of the `model.pre_ln_b` bias:
+```c
+    // pre-layernorm
+    if (ctx->has_pre_norm) {
+        embeddings = ggml_norm(ctx0, embeddings, eps);
+        ggml_set_name(embeddings, "pre_ln");
+
+        embeddings = ggml_add(ctx0, ggml_mul(ctx0, embeddings, model.pre_ln_w), model.pre_ln_b);
+    }
+```
+This is the pre-layer normalization which is applied before the transformer.
+Is the last multiplication and addition called a linear layer? I think it is
+because we are multiplying the embeddings with a weight matrix and then adding
+a bias vector. This is a linear transformation and is used to project the
+embeddings into a different space. This is a common operation in neural
+networks and is used to learn a mapping from one space to another. In this case
+
+Following that there is a loop over all the layers in the model:
+```c
+    for (int il = 0; il < n_layer - 1; il++) {
+        struct ggml_tensor * cur = embeddings; // embeddings = residual, cur = hidden_states
+
+
+    }
+```
 
 <a name="wip"></a>
 _wip_
