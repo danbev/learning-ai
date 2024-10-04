@@ -2402,6 +2402,107 @@ And finally embeddings is set to the current tensor for the next iteration:
 ```
 And that is a complete layer!
 
+To the input was the image divided into patches and then embedded into a
+high-dimensional space. The embeddings were then reshaped and permuted and
+class embeddings and positional embeddings were added. The embeddings were then
+passed through a series of transformer layers where each layer consists of a
+self-attention block and a feed-forward block. The output of the model is the
+embeddings after the last layer. 
+
+After that we have:
+```c++
+    // llava projector
+    if (ctx->has_llava_projector) {
+        embeddings = ggml_reshape_2d(ctx0, embeddings, embeddings->ne[0], embeddings->ne[1]);
+```
+So this is the projector for the LLAVA model which is above taking the patch
+embeddings and transforming them into the embedding space of the LLM to be
+used. So both text token embeddings and image patch embeddings are transformed
+into the same space for processing by a transformer model.
+```console
+(gdb) p embeddings->ne
+$45 = {1024, 577, 1, 1}
+```
+First a tensor is created for the patches (576):
+```console
+        struct ggml_tensor * patches = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_patches);
+        ggml_set_name(patches, "patches");
+        ggml_set_input(patches);
+```
+Next, an operation is created to extract/get rows from the embeddins tensor
+for the indices given by the patches tensor:
+```c++
+        embeddings = ggml_get_rows(ctx0, embeddings, patches);
+```
+Following that we have:
+```c++
+        // llava projector
+        if (ctx->proj_type == PROJECTOR_TYPE_MLP) {
+            embeddings = ggml_mul_mat(ctx0, model.mm_0_w, embeddings);
+            embeddings = ggml_add(ctx0, embeddings, model.mm_0_b);
+```
+This is the code path taken in our case and this is the MLP (Multi-Layer
+Perceptron) projector. The embeddings are first multiplied with the
+`model.mm_0_w` weights:
+```console
+(gdb) p *model.mm_0_w
+$53 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0,
+ne = {1024, 4096, 1, 1}, nb = {2, 2048, 8388608, 8388608}, op = GGML_OP_NONE,
+op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0,
+0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc6004000,
+name = "mm.0.weight", '\000' <repeats 52 times>, extra = 0x0}
+```
+Before this operation the embeddings looks like this:
+```console
+(gdb) p embeddings->ne
+$54 = {1024, 576, 1, 1}
+```
+And after the multiplication:
+```console
+(gdb) p embeddings->ne
+$55 = {4096, 576, 1, 1}
+```
+So we can see that this has expanded the dimensions from 1024->4096.
+And we can see above that a bias is also added.
+Then we have a GELU activation function, a matrix multiplication and an addition:
+```c
+            embeddings = ggml_gelu(ctx0, embeddings);
+            embeddings = ggml_mul_mat(ctx0, model.mm_2_w, embeddings);
+            embeddings = ggml_add(ctx0, embeddings, model.mm_2_b);
+    }
+```
+After these operations the embeddings tensor will have the shape:
+```console
+(gdb) p embeddings->ne
+$58 = {4096, 576, 1, 1}
+```
+So my understanding of this is that it is taking the embeddings from output
+self-attention block and projecting them into the embedding space of the LLM
+model. And for this model that is the last thing done for building the graph.
+```c++
+    // build the graph
+    ggml_build_forward_expand(gf, embeddings);
+
+    ggml_free(ctx0);
+
+    return gf;
+}
+```
+TODO: Take a closer look at the other types of projector like
+`PROJECTOR_TYPE_MLP_NORM`, `PROJECTOR_TYPE_LDP`, `PROJECTOR_TYPE_LDPV2`, and
+`PROJECTOR_TYPE_RESAMPLER`. These does not seem to be a if clause for this last
+one at the momenet.
+
+So that will returns us back in `clip_model_load`.
+```c++
+        ggml_cgraph * gf = clip_image_build_graph(new_clip, &batch, nullptr, false);
+
+        ggml_gallocr_reserve(new_clip->compute_alloc, gf);
+        size_t compute_memory_buffer_size = ggml_gallocr_get_buffer_size(new_clip->compute_alloc, 0);
+        LOG_INF("%s: compute allocated memory: %.2f MB\n", __func__, compute_memory_buffer_size /1024.0/1024.0);
+```
+
+
 <a name="wip"></a>
 _wip_
 
