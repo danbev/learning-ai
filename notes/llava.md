@@ -2036,14 +2036,371 @@ a bias vector. This is a linear transformation and is used to project the
 embeddings into a different space. This is a common operation in neural
 networks and is used to learn a mapping from one space to another. In this case
 
-Following that there is a loop over all the layers in the model:
+Following that there is a loop over all the layers in the model, which there are
+23 of in this model. At this point the embeddings have the shape:
+```console
+(gdb) p embeddings->ne
+$3 = {1024, 577, 1, 1}
+```
+So these is one row (token) for each patch plus one row (token for the class
+token.
 ```c
     for (int il = 0; il < n_layer - 1; il++) {
         struct ggml_tensor * cur = embeddings; // embeddings = residual, cur = hidden_states
-
-
+        ...
     }
 ```
+First we have a layer normalization:
+```c++
+
+        // layernorm1
+        {
+            cur = ggml_norm(ctx0, cur, eps);
+
+            cur = ggml_add(ctx0, ggml_mul(ctx0, cur, model.layers[il].ln_1_w),
+                           model.layers[il].ln_1_b);
+        }
+```
+To recap the layer normalization formula is:
+```
+y = γ * ((x - μ) / σ) + β
+
+Where:
+- x is the input tensor
+- μ is the mean of the input tensor               (ggml_norm)
+- σ is the standard deviation of the input tensor (ggml_norm)
+- γ is the scale parameter (model.layers[i].ln_1_w)
+- β is the shift parameter (model.layers[i].ln_1_b)
+
+cur = model.layers[i].ln_1_w * cur + model.layers[i].ln_1_b
+```
+Notice that the `ln_1_w` and `ln_1_b` are specific for each layer, so each layer
+can scale and shift the normalized tensor values differently.
+```console
+(gdb) p cur->ne
+$6 = {1024, 577, 1, 1}
+
+(gdb) p model.layers[il].ln_1_w->ne
+$5 = {1024, 1, 1, 1}
+
+```
+This could look something like this:
+```
+              cur                         model.layers[il].ln_1_w
+
+0    [0      ...              1023]  * [0     ...              1023] = [0]
+1    [0      ...              1023]                                    [1]
+...                                                                    ...
+576  [0      ...              1023]                                    [576]
+```
+But notice that if we just performed this type of multiplication we would get
+a tensor with the shape 1x577. What happens in `ggml_mul` though is that
+`model.layers[il].ln_1_w` is broadcasted to the shape of `cur`:
+```
+              cur                         model.layers[il].ln_1_w
+
+0    [0      ...              1023]  * [0     ...              1023] = [0 ...  1023]
+1    [0      ...              1023]    [0     ...              1023]   [0 ...  1023]
+...                                    ...                               ...
+576  [0      ...              1023]    [0     ...              1023]   [0 ...  1023]
+```
+
+After the layer normalization we have the attention layer, and going into this
+layer the shape of the current tensor is:
+```console
+(gdb) p cur->ne
+$8 = {1024, 577, 1, 1}
+```
+
+```c++
+        // self-attention
+        {
+
+            struct ggml_tensor * Q =
+                ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].q_w, cur), model.layers[il].q_b);
+```
+Now, this time we are doing a matrix multiplication using the
+`model.layers.[il].q_w` and the result of the normalization above.
+```console
+(gdb) p model.layers[il].q_w->ne
+$11 = {1024, 1024, 1, 1}
+(gdb) p model.hparams.hidden_size
+$13 = 1024
+
+0      [0    ...   1023]  x [0    ...   1023]
+       [0    ...   1023]    ...
+       [0    ...   1023]    [0    ...   1023] 576
+       ...                  
+       ...                  
+1023   [0    ...   1023]
+```
+Now, notice that the dimensios of `cur` don't add up to the dimensions of
+the weight matrix `model.layers[il].q_w`. I usually think of the weight matrix
+as functions on each row and they take a number of parameters, and when we
+perform matrix multiplication we take a column from the other matrix and pass
+it down the rows of the weight matrix. But just like in programming we need to
+pass the correct number of parameters to the function. So the above will not
+work so what is going on. Well, it turns out that the `ggml_mul_mat` function
+will actually transpose the `cur` tensor before performing the multiplication.
+We can find this information in the header documentation:
+```
+    // A: k columns, n rows => [ne03, ne02, n, k]
+    // B: k columns, m rows  (i.e. we transpose it internally) => [ne03 * x, ne02 * y, m, k]
+    // result is n columns, m rows => [ne03 * x, ne02 * y, m, n]
+    GGML_API struct ggml_tensor * ggml_mul_mat(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+```
+So the operation will actually look something like this instead internally in
+that function:
+```
+0      [0    ...   1023]  x [0...576]
+       [0    ...   1023]    ...
+       ...                  ...
+       ...                  ... 
+       ...                  ... 
+1023   [0    ...   1023]    [0...576] 
+```
+The output of this multiplication will be:
+```console
+(gdb) p ggml_mul_mat(ctx0, model.layers[il].q_w, cur)->ne
+$19 = {1024, 577, 1, 1}
+```
+A bias for this layer is also added which then results in the Q (Query) tensor.
+
+Recall that it is called scaled dot-product attention and the formula for
+the attention is:
+```
+Attention(Q, K, V) = softmax(Q * K^T / sqrt(d_k)) * V
+```
+And the Q tensor will now be used in the following operations:
+```c++
+            Q = ggml_scale_inplace(ctx0, Q, 1.0f / sqrt((float)d_head));
+            Q = ggml_reshape_4d(ctx0, Q, d_head, n_head, num_positions, batch_size);
+            Q = ggml_cont(ctx0, ggml_permute(ctx0, Q, 0, 2, 1, 3));
+            Q = ggml_reshape_3d(ctx0, Q, d_head, num_positions, n_head * batch_size);
+```
+The `ggml_scale_inplace` operation is performing the scaling part of the above
+formula. This is equivalent to performing the multiplication of K^T with Q and
+then dividing by the square root of the dimension of the key vectors. This could
+have scaled K just as well as long as one of the is scaled. K^T will then
+automicatically be scaled as well when it is multiplied by Q.
+After the scaling the Q tensor is reshaped to a 4d tensor.
+```console
+(gdb) p Q->ne
+$20 = {1024, 577, 1, 1}
+(gdb) p d_head
+$21 = 64
+(gdb) p n_head
+$22 = 16
+(gdb) p num_positions
+$23 = 577
+(gdb) p batch_size
+$24 = 1
+(gdb) p Q->ne
+$25 = {64, 16, 577, 1}
+```
+So this has split the 1024 featues into 16 heads with 64 features each.
+```
+z
+0          x
+  0  [0   ...   63]
+  ...                 y
+  15 [0   ...   63]
+
+...
+
+z
+576        x
+  0  [0   ...   63]
+  ...                 y
+  15 [0   ...   63]
+
+```
+
+This will then be permuted where, the second and third dimensions are swapped:
+```console
+(gdb) p ggml_permute(ctx0, Q, 0, 2, 1, 3)->ne
+$26 = {64, 577, 16, 1}
+
+z
+0          x
+  0   [0   ...   63]
+  ...                 
+  ...                 y
+  ...                 
+  576 [0   ...   63]
+
+...
+
+z
+16          x
+  0   [0   ...   63]
+  ...                 
+  ...                 y
+  ...                 
+  576 [0   ...   63]
+```
+By moving the positions (577) to the second dimension, we ensure that when we
+perform operations along the head dimension (64) and across positions, we're
+accessing contiguous memory. Most optimized linear algebra libraries
+(like BLAS) are designed to work most efficiently when operating on contiguous
+memory as well. 
+
+
+Now, this is nice because we can think of having 16 (64x577) matrices which 
+can be computed in parallel. We will see this later when we look at the Key
+matrix K but one way to think of this might be:
+```
+Head1:
+      Q (64x577)  K (64x577) = Attention (577x577)
+...
+Head15:
+      Q (64x577)  K (64x577) = Attention (577x577)
+```
+And since we have permuted the tensor we want to make it contiguous in memory
+for efficiency (something that we have discussed before and is something that
+it done often after a reshape/permute).
+This is then again reshaped to a 3d tensor:
+```console
+(gdb) p Q->ne
+$28 = {64, 577, 16, 1}
+```
+Next we have the Key tensor:
+```c++
+            struct ggml_tensor * K =
+                ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].k_w, cur), model.layers[il].k_b);
+
+            K = ggml_reshape_4d(ctx0, K, d_head, n_head, num_positions, batch_size);
+            K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
+            K = ggml_reshape_3d(ctx0, K, d_head, num_positions, n_head * batch_size);
+```
+And this is very similar to the Q tensor above so I won't repeat this.
+And we create the same operations for the Value tensor:
+```c++
+            struct ggml_tensor * V =
+                ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].v_w, cur), model.layers[il].v_b);
+
+            V = ggml_reshape_4d(ctx0, V, d_head, n_head, num_positions, batch_size);
+            V = ggml_cont(ctx0, ggml_permute(ctx0, V, 1, 2, 0, 3));
+            V = ggml_reshape_3d(ctx0, V, num_positions, d_head, n_head * batch_size);
+```
+Notice that V is permuted differently from Q and K. The result of Q * K will
+be a (577x577) matrix for each head (16) each with 64 features. So the Value
+will look like this after the permute operation:
+```console
+(gdb) p V->ne
+$31 = {577, 64, 16, 1}
+```
+After that we have the multiplication operation for Q x K, and recall that Q
+was already scaled so this will scale K as well:
+```c++
+            struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
+```
+The shape of QK will be:
+```console
+(gdb) p KQ->ne
+$35 = {577, 577, 16, 1}
+```
+After that a softmax operation is created:
+```c++
+            KQ = ggml_soft_max_inplace(ctx0, KQ);
+```
+And then we have the multiplication operation for QK x V:
+```c++
+            struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
+            KQV = ggml_reshape_4d(ctx0, KQV, d_head, num_positions, n_head, batch_size);
+            KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
+```
+This will result in a tensor with the shape:
+```console
+(gdb) p KQV->ne
+$36 = {64, 577, 16, 1}
+
+After the permute operation:
+(gdb) p KQV->ne
+$39 = {64, 16, 577, 1}
+```
+And then KQV is made contiguous in memory:
+```c++
+            cur = ggml_cont_3d(ctx0, KQV, hidden_size, num_positions, batch_size);
+```
+And that is the last of the self-attention block.
+
+The ouptut of the self-attention operation is then multiplied with the
+model layer weights and added with the bias:
+```c++
+        // attention output
+        cur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].o_w, cur), model.layers[il].o_b);
+```
+The shape of this tensor will be:
+```console
+(gdb) p cur->ne
+$40 = {1024, 577, 1, 1}
+```
+And then the original embeddings (the one before this layer) are added to the
+result of the above operation (this is the residual connection):
+```c++
+        cur = ggml_add(ctx0, cur, embeddings);
+```
+And then the current tensor is assigned to the embeddings tensor for use in the
+addition of a residual connection around of the layer2norm:
+next iteration:
+```c++
+        embeddings = cur; // embeddings = residual, cur = hidden_states
+```
+Following that we have the layernorm2:
+```c++
+        // layernorm2
+        {
+            cur = ggml_norm(ctx0, cur, eps);
+
+            cur = ggml_add(ctx0, ggml_mul(ctx0, cur, model.layers[il].ln_2_w), model.layers[il].ln_2_b);
+        }
+```
+Which creates the same type of operation as we saw before with the layernorm1.
+Then we have a Feed-Forward layer:
+```c++
+        cur = ggml_mul_mat(ctx0, model.layers[il].ff_i_w, cur);
+        cur = ggml_add(ctx0, cur, model.layers[il].ff_i_b);
+```
+```console
+(gdb) p cur->ne
+$41 = {4096, 577, 1, 1}
+```
+So we can see that the dimensions are expanded to 4096 which is part of the
+feed-forward process, it expands to a higher dimension, performs some operation
+on that higher dimension and then compresses it back to the original dimension.
+The operation will be one of the following:
+```c++
+        if (ctx->use_gelu) {
+            cur = ggml_gelu_inplace(ctx0, cur);
+        } else {
+            cur = ggml_gelu_quick_inplace(ctx0, cur);
+        }
+```
+In this case it will be the else branch which is the quick version of the GELU.
+And then we have the last operation for the feed-forward layer:
+```c++
+        cur = ggml_mul_mat(ctx0, model.layers[il].ff_o_w, cur);
+        cur = ggml_add(ctx0, cur, model.layers[il].ff_o_b);
+```
+```console
+(gdb) p cur->ne
+$43 = {1024, 577, 1, 1}
+```
+And then we have the second residual connection which is using the embeddings
+that where set before the layer2norm:
+```c++
+        // residual 2
+        cur = ggml_add(ctx0, embeddings, cur);
+```
+And finally embeddings is set to the current tensor for the next iteration:
+```c++
+        embeddings = cur;
+```
+And that is a complete layer!
 
 <a name="wip"></a>
 _wip_
