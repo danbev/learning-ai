@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
     printf("a[%d]: %f\n", i, ggml_get_f32_1d(a, i));
   }
 
-  // The source tensor which will have its vales added to the destination
+  // The source tensor which will have its values added to the destination
   // tensor dimensions specified later in the ggml_acc call.
   struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5);
   ggml_set_name(b, "b");
