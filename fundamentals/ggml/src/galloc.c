@@ -3,6 +3,7 @@
 #include "ggml-backend.h"
 
 #include <stdio.h>
+#include <string.h>
 
 int main(int argc, char **argv) {
   printf("GGML galloc (graph allocator) example\n");
@@ -34,6 +35,8 @@ int main(int argc, char **argv) {
   ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
   ggml_backend_tensor_set(a, a_data, 0, ggml_nbytes(a));  
   ggml_backend_tensor_set(b, b_data, 0, ggml_nbytes(b));  
+  // For the CPU backend this is pretty much just a memcpy:
+  memcpy((char *)b->data + 0, b_data, ggml_nbytes(b));
 
   ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
   ggml_gallocr_alloc_graph(galloc, c_graph);
