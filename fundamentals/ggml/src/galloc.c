@@ -29,15 +29,13 @@ int main(int argc, char **argv) {
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, result);
 
-  //ggml_backend_t cpu_backend = ggml_backend_reg_init_backend_from_str("CPU");
   ggml_backend_t backend = ggml_backend_cpu_init();
 
   ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
   ggml_backend_tensor_set(a, a_data, 0, ggml_nbytes(a));  
   ggml_backend_tensor_set(b, b_data, 0, ggml_nbytes(b));  
 
-  //ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(cpu_backend));
-  ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
+  ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
   ggml_gallocr_alloc_graph(galloc, c_graph);
 
   ggml_backend_cpu_set_n_threads(backend, 1);
