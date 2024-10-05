@@ -887,7 +887,9 @@ Exploration code can be found in [backend.c](../fundamentals/ggml/src/backend.c)
 
 What is a backend in ggml?  
 A backend in ggml is an interface which describes and abstracts operations on a
-buffer. Recall that a buffer is a contiguous block of memory of fixed size and
+buffer. There are backends for CPU, CUDA, Vulkan, Metal, Kompute, SYCL, etc.
+
+Recall that a buffer is a contiguous block of memory of fixed size and
 intended to hold data while moving that data between places (in this case the
 host and a device). And a buffer has a fixed size. This buffer can be on an
 accelerator, like a GPU, or on the host.
@@ -954,7 +956,98 @@ available for a backend which every backend must implement.
    void event_synchronize(ggml_backend_event_t event);
 ```
 Not all backends support async operations, for example the CPU backend does not
-and the same goes for the support of events.
+and the same goes for the support of events which I think are only for the
+async functions.
+
+
+### `ggml_tallocr` (Tensor Allocator)
+```c
+// Tensor allocator
+struct ggml_tallocr {
+    ggml_backend_buffer_t buffer;
+    void * base;
+    size_t alignment;
+    size_t offset;
+};
+```
+This type has a pointer to a `buffer` which is the backend buffer where tensors
+will be allocated (CPU, CUDA, Vulkan, etc). The `base` is the base address of
+memory region managed by this alloctor. The `alignment` is the memory alignment
+for all tensors allocated by this allocator. The `offset` is the offset within
+the buffer where the next tensor will be allocated.
+A usage of this can be found in 
+```c
+static bool alloc_tensor_range(struct ggml_context * ctx,
+        struct ggml_tensor * first, struct ggml_tensor * last,
+        ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+    ...
+    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+```
+We can see that to create a tensor allocator we need a buffer:
+```c
+struct ggml_tallocr ggml_tallocr_new(ggml_backend_buffer_t buffer) {
+    void * base = ggml_backend_buffer_get_base(buffer);
+    size_t align = ggml_backend_buffer_get_alignment(buffer);
+
+    assert(align && !(align & (align - 1))); // power of 2
+
+    struct ggml_tallocr talloc = (struct ggml_tallocr) {
+        /*.buffer    = */ buffer,
+        /*.base      = */ base,
+        /*.alignment = */ align,
+        /*.offset    = */ aligned_offset(base, 0, align),
+    };
+    return talloc;
+}
+```
+Then we can pass the tensor allocator to the tensor allocation functions:
+```c
+                ggml_tallocr_alloc(&tallocr, t);
+```
+
+```c
+void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
+    size_t size = ggml_backend_buffer_get_alloc_size(talloc->buffer, tensor);
+    size = GGML_PAD(size, talloc->alignment);
+
+    if (talloc->offset + size > ggml_backend_buffer_get_size(talloc->buffer)) {
+        fprintf(stderr, "%s: not enough space in the buffer to allocate %s (needed %zu, available %zu)\n",
+                __func__, tensor->name, size, ggml_backend_buffer_get_size(talloc->buffer) - talloc->offset);
+        GGML_ABORT("not enough space in the buffer");
+    }
+
+    void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
+    talloc->offset += size;
+
+    assert(((uintptr_t)addr % talloc->alignment) == 0);
+
+    ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
+}
+```
+Notice that `addr` is set to the base address of the buffer plus the offset
+so that it points to the next available memory location. And then the offset
+is incremented.
+```c
+void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    ... // just removing asserts for readability
+    tensor->buffer = buffer;
+    tensor->data = addr;
+    ggml_backend_buffer_init_tensor(buffer, tensor);
+}
+```
+```c
+GGML_CALL void ggml_backend_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    // init_tensor is optional
+    if (buffer->iface.init_tensor) {
+        buffer->iface.init_tensor(buffer, tensor);
+    }
+}
+```
+In this case `ggml_tallocr` is used as a temporary object used to manage the
+allocations with a single buffer.
+
 
 ### `ggml_backend_buffer_type_t`
 Lets now take a closer look at the buffer type, `ggml_backend_buffer_type_t`
