@@ -2501,6 +2501,47 @@ So that will returns us back in `clip_model_load`.
         size_t compute_memory_buffer_size = ggml_gallocr_get_buffer_size(new_clip->compute_alloc, 0);
         LOG_INF("%s: compute allocated memory: %.2f MB\n", __func__, compute_memory_buffer_size /1024.0/1024.0);
 ```
+So lets look closer at `ggml_gallocr_reserve`:
+```c
+bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
+    return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
+}
+```
+Notice that this returns a boolean value and that it is not checked in the
+code above.
+`galloc` looks like this at this point:
+```console
+(gdb) p *galloc
+$63 = {
+    bufts = 0x555555cc1ef0, buffers = 0x555555cc1f10,
+    buf_tallocs = 0x555555cc1f30, n_buffers = 1,
+    hash_set = {size = 0, used = 0x0, keys = 0x0},
+    hash_values = 0x0, node_allocs = 0x0, n_nodes = 0, leaf_allocs = 0x0,
+    n_leafs = 0
+}
+```
+
+```c++
+bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph,
+    const int * node_buffer_ids, const int * leaf_buffer_ids) {
+    size_t min_hash_size = graph->n_nodes + graph->n_leafs;
+    // add 25% margin to avoid hash collisions
+    min_hash_size += min_hash_size / 4;
+    ...
+}
+```
+```c++
+    // initialize hash table
+    if (galloc->hash_set.size < min_hash_size) {
+        ggml_hash_set_free(&galloc->hash_set);
+        galloc->hash_set = ggml_hash_set_new(min_hash_size);
+        GGML_ASSERT(galloc->hash_set.keys != NULL);
+
+        free(galloc->hash_values);
+        galloc->hash_values = malloc(sizeof(struct hash_node) * galloc->hash_set.size);
+        GGML_ASSERT(galloc->hash_values != NULL);
+    }
+```
 
 
 <a name="wip"></a>
