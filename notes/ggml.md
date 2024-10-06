@@ -1085,9 +1085,13 @@ interface:
 ```
 So we first have functions that describe the buffer type like the max size that
 can be allocated by this buffer, the memory alignment, if it is a host or
-device buffer etc. These are just describing a buffer, `alloc_buffer` returns a
-`ggml_backend_buffer_t` (typedef in ggml/include/ggml/ggml-alloc.h) which is the
-actual buffer that the type describes:
+device buffer etc. So this sort of like a memory allocator for a backend like
+CUDA, CPU, Vulkan, etc. We can use this type to allocate a buffer of a certain
+size using the `alloc_buffer` function.
+
+The above mentioned functions are just describing a buffer, `alloc_buffer`
+returns a `ggml_backend_buffer_t` (typedef in ggml/include/ggml/ggml-alloc.h)
+which is the actual buffer that the type describes:
 ```c
     typedef struct ggml_backend_buffer* ggml_backend_buffer_t;
 
@@ -1120,6 +1124,13 @@ The `iface` is the interface of a backend buffer which looks like this:
         void reset();
     };
 ```
+With an instance of this type we can initialize tensors in the backend, set and
+get tensors, copy tensors, clear the buffer, reset the buffer etc.
+```c
+  ggml_backend_t backend = ggml_backend_cpu_init();
+  ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+```
+
 `ggml_backend_buffer_type_t` is something we've already seen earlier as it the
 context.
 `ggml_backend_buffer_usage` is defined as follows:
@@ -5191,3 +5202,180 @@ fit into a single register. So the number of registers we need to user for one
 step is 32/8 = 4. 
 So we can process 32 F16 numbers and we need 4 registers to do so each storing
 8 floating point numbers.
+
+
+
+
+### graph allocator (galloc)
+This section is about the graph allocator in GGML. And example of using this
+can be found here [galloc.c](../fundamentals/ggml/src/galloc.c) and we'll be
+using this example to step through the code.
+
+```console
+$ gdb --args bin/galloc
+```
+
+The code in the example creates a graph in the same way that we "usually" do and
+is done in the same way as the other examples.
+```c
+  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
+  ggml_build_forward_expand(c_graph, result);
+```
+With the graph we can create a new graph allocator using `ggml_gallocr_new`:
+```c
+  ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
+```
+So lets take a look at this struct that is going to be returned:
+```c
+struct ggml_gallocr {
+    ggml_backend_buffer_type_t * bufts;          // [n_buffers]
+    ggml_backend_buffer_t * buffers;             // [n_buffers]
+    struct ggml_dyn_tallocr ** buf_tallocs;      // [n_buffers]
+    int n_buffers;
+
+    struct ggml_hash_set hash_set;
+    struct hash_node * hash_values;              // [hash_set.size]
+
+    struct node_alloc * node_allocs;             // [n_nodes]
+    int n_nodes;
+
+    struct leaf_alloc * leaf_allocs;             // [n_leafs]
+    int n_leafs;
+};
+```
+```c
+ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
+    return ggml_gallocr_new_n(&buft, 1);
+}
+```
+
+The first things that happens is that the struct is calloced (allocated and
+cleared):
+```c
+ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
+    ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
+    GGML_ASSERT(galloc != NULL);
+```
+And then the following arrays are calloced which have the size of `n_bufs`:
+```c
+    galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
+    GGML_ASSERT(galloc->bufts != NULL);
+
+    galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t));
+    GGML_ASSERT(galloc->buffers != NULL);
+
+    galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
+    GGML_ASSERT(galloc->buf_tallocs != NULL);
+```
+Then we have the following iteration over the number of buffers, which is this
+case is 1 which was passed in as an argument above:
+```c
+    for (int i = 0; i < n_bufs; i++) {
+        galloc->bufts[i] = bufts[i];
+        galloc->buffers[i] = NULL;
+
+        // check if the same buffer type is used multiple times and reuse the same allocator
+        for (int j = 0; j < i; j++) {
+            if (bufts[i] == bufts[j]) {
+                galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
+                break;
+            }
+        }
+
+        if (galloc->buf_tallocs[i] == NULL) {
+            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
+            galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment);
+        }
+    }
+    galloc->n_buffers = n_bufs;
+
+    return galloc;
+}
+```
+So the `bufts` array is populated with the buffer types that were passed in:
+```console
+(gdb) p bufts[i]
+$1 = (ggml_backend_buffer_type_t) 0x555555627780 <ggml_backend_cpu_buffer_type>
+```
+And the `buf_tallocs` (tensor allocators) array is populated with the dynamic
+allocator:
+```c
+static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment) {
+    struct ggml_dyn_tallocr * alloc = (struct ggml_dyn_tallocr *)malloc(sizeof(struct ggml_dyn_tallocr));
+
+    *alloc = (struct ggml_dyn_tallocr) {
+        /*.alignment     = */ alignment,
+        /*.n_free_blocks = */ 0,
+        /*.free_blocks   = */ {{0}},
+        /*.max_size      = */ 0,
+#ifdef GGML_ALLOCATOR_DEBUG
+        /*.allocated_tensors = */ {{0}},
+#endif
+    };
+
+    ggml_dyn_tallocr_reset(alloc);
+
+    return alloc;
+}
+```
+That will return us back in the example:
+```c
+  ggml_gallocr_alloc_graph(galloc, c_graph);
+```
+
+```c
+bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    if (ggml_gallocr_needs_realloc(galloc, graph)) {
+        if (galloc->n_buffers == 1) {
+#ifndef NDEBUG
+            fprintf(stderr, "%s: reallocating buffers automatically\n", __func__);
+#endif
+            if (!ggml_gallocr_reserve(galloc, graph)) {
+                return false;
+            }
+```
+In this case `ggml_galoccr_reserve` will be called:
+```c
+bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
+    return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
+}
+
+bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
+    size_t min_hash_size = graph->n_nodes + graph->n_leafs;
+    // add 25% margin to avoid hash collisions
+    min_hash_size += min_hash_size / 4;
+
+    // initialize hash table
+    if (galloc->hash_set.size < min_hash_size) {
+        ggml_hash_set_free(&galloc->hash_set);
+        galloc->hash_set = ggml_hash_set_new(min_hash_size);
+        GGML_ASSERT(galloc->hash_set.keys != NULL);
+
+        free(galloc->hash_values);
+        galloc->hash_values = malloc(sizeof(struct hash_node) * galloc->hash_set.size);
+        GGML_ASSERT(galloc->hash_values != NULL);
+    }
+```
+A new hash set will be created by calling `ggml_hash_set_new` and
+`min_hash_size` is 3 in this case:
+```c
+struct ggml_hash_set ggml_hash_set_new(size_t size) {
+    size = ggml_hash_size(size);
+    struct ggml_hash_set result;
+    result.size = size;
+    result.keys = GGML_MALLOC(sizeof(struct ggml_tensor *) * size);
+    result.used = GGML_CALLOC(ggml_bitset_size(size), sizeof(ggml_bitset_t));
+    return result;
+}
+``` 
+The returned value from this function will be of type `struct ggml_hash_set`:
+```console
+(gdb) ptype result
+type = struct ggml_hash_set {
+    size_t size;
+    ggml_bitset_t *used;
+    struct ggml_tensor **keys;
+}
+```
+So the size will be 3 and the `keys` array will be allocated with 3 elements.
+
