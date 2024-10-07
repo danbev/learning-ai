@@ -4613,7 +4613,6 @@ $8 = (char (*)[1024]) 0x7fffffffd5e0
 ```
 
 
-_wip_
 
 ### `ggml_conv_2d`
 This is a convolution of a 2d tensor in GGML. So we have a kernel which slides
@@ -5225,6 +5224,12 @@ With the graph we can create a new graph allocator using `ggml_gallocr_new`:
 ```c
   ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
 ```
+`ggml_backend_cpu_buffer_type` returns a pointer to a buffer type as this type is
+defined as:
+```c
+typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
+```
+
 So lets take a look at this struct that is going to be returned:
 ```c
 struct ggml_gallocr {
@@ -5243,11 +5248,22 @@ struct ggml_gallocr {
     int n_leafs;
 };
 ```
+So we have an array of buffer types, and one for the actual buffers, one for the
+tensor allocators. These all have the same number of elemements and the indices
+match up. I mean that is we have index 2 then the buffer type is at index 2 as
+will the buffer for it and the tensor allocator.
+
+And notice that we are passing in the `ggml_backend_cpu_buffer_type` which again
+is a pointer to a struct `ggml_backend_buffer_type`:
 ```c
 ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
     return ggml_gallocr_new_n(&buft, 1);
 }
 ```
+Notice that `ggml_gallocr_new_n` has a `n` in it so it can take an array of backend
+buffer types and not just a pointer to a single one which is the case here. Recall
+that passing an array is really just passing a pointer to the first element of the
+array.
 
 The first things that happens is that the struct is calloced (allocated and
 cleared):
@@ -5267,6 +5283,7 @@ And then the following arrays are calloced which have the size of `n_bufs`:
     galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 ```
+
 Then we have the following iteration over the number of buffers, which is this
 case is 1 which was passed in as an argument above:
 ```c
@@ -5292,13 +5309,11 @@ case is 1 which was passed in as an argument above:
     return galloc;
 }
 ```
-So the `bufts` array is populated with the buffer types that were passed in:
-```console
-(gdb) p bufts[i]
-$1 = (ggml_backend_buffer_type_t) 0x555555627780 <ggml_backend_cpu_buffer_type>
-```
-And the `buf_tallocs` (tensor allocators) array is populated with the dynamic
-allocator:
+We can see above that `galloc->bufts[i]` is set to the buffer type that was passed in (in this
+case we only passed in 1 buffer type but this function can also be called with an array.
+And we can see that the `galloc.buffers[i]` is set to NULL.
+There is also a dynamic tensor allocator which is different from the tensor allocator that
+we've seen before.
 ```c
 static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment) {
     struct ggml_dyn_tallocr * alloc = (struct ggml_dyn_tallocr *)malloc(sizeof(struct ggml_dyn_tallocr));
@@ -5318,6 +5333,8 @@ static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment) {
     return alloc;
 }
 ```
+I'll revisit this later when it is used.
+
 That will return us back in the example:
 ```c
   ggml_gallocr_alloc_graph(galloc, c_graph);
@@ -5339,7 +5356,30 @@ In this case `ggml_galoccr_reserve` will be called:
 bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
     return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
 }
+```
+This function will return true in our case and one thing to note is that it print
+the following debug message (when in debug mode):
+```console
+ggml_gallocr_needs_realloc: graph has different number of nodes
+```
+Next we will enter the following if block:
+```c
+    if (ggml_gallocr_needs_realloc(galloc, graph)) {
+        if (galloc->n_buffers == 1) {
+#ifndef NDEBUG
+            fprintf(stderr, "%s: reallocating buffers automatically\n", __func__);
+#endif
+            if (!ggml_gallocr_reserve(galloc, graph)) {
+                return false;
+            }
+```
+```c
+bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
+    return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
+}
+```
 
+```c
 bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
     size_t min_hash_size = graph->n_nodes + graph->n_leafs;
     // add 25% margin to avoid hash collisions
@@ -5368,6 +5408,17 @@ struct ggml_hash_set ggml_hash_set_new(size_t size) {
     return result;
 }
 ``` 
+The function `ggml_bitset_size` function is used to calculate the number of elements
+that are needed for the used array (array of `uinit32_t`) in the `hash_set` struct.
+For example:
+```
+n is the number of bits we want to be able to store.
+
+If n = 10, 10 + 31 >> 5 = 41 >> 5 = 1
+If n = 32, 32 + 31 >> 5 = 63 >> 5 = 1
+If n = 33, 33 + 31 >> 5 = 64 >> 5 = 2
+```
+
 The returned value from this function will be of type `struct ggml_hash_set`:
 ```console
 (gdb) ptype result
@@ -5378,4 +5429,320 @@ type = struct ggml_hash_set {
 }
 ```
 So the size will be 3 and the `keys` array will be allocated with 3 elements.
+
+Next in `ggml_gallocr_reserve_n` we have the following:
+```c
+    free(galloc->hash_values);
+    galloc->hash_values = malloc(sizeof(struct hash_node) * galloc->hash_set.size);
+```
+Notice were that this is allocating the same number of `hash_values` (which I'm not
+sure yet what they are used for) size of the `hash_set` size value which is 3 in our
+case.
+Next the dynamic tensor allocators (just one in our case) are reset:
+```c
+    // reset allocators
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        ggml_dyn_tallocr_reset(galloc->buf_tallocs[i]);
+    }
+```
+After that we have:
+```c
+    // allocate in hash table
+    ggml_gallocr_alloc_graph_impl(galloc, graph, node_buffer_ids, leaf_buffer_ids);
+```
+And in our case we are only passing in galloc and graph asn both the buffer and leaf
+ids are null.
+```c
+static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc,
+    struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
+
+    // clear hash tables
+    ggml_hash_set_reset(&galloc->hash_set);
+    memset(galloc->hash_values, 0, sizeof(struct hash_node) * galloc->hash_set.size);
+```
+Just to orient ourselfs lets take a look at the graph:
+```console
+(lldb) p ggml_graph_print(graph)
+=== GRAPH ===
+n_nodes = 1
+ -   0: [     2,     3,     1]              MUL
+n_leafs = 2
+ -   0: [     2,     3]     NONE                a
+ -   1: [     2,     1]     NONE                b
+========================================
+```
+Next all the leafs in the graph are iterated over, starting with `a`.
+```c
+    for (int i = 0; i < graph->n_leafs; i++) {
+        struct ggml_tensor * leaf = graph->leafs[i];
+        ggml_gallocr_allocate_node(galloc, leaf, get_node_buffer_id(leaf_buffer_ids, i));
+    }
+```
+And we are calling `ggml_gallocr_allocate_node` with the tensor `a`, and we know from before
+that `leaf_buffer_ids` is null so the buffer id will be 0.
+```c
+static int get_node_buffer_id(const int * node_buffer_ids, int i) {
+    return node_buffer_ids ? node_buffer_ids[i] : 0;
+}
+```
+So lets take a closer look at `ggml_gallocr_allocate_node`:
+```c
+static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node,
+int buffer_id) {
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+```
+```c
+static struct hash_node * ggml_gallocr_hash_get(ggml_gallocr_t galloc, struct ggml_tensor * t) {
+    size_t i = ggml_hash_find_or_insert(&galloc->hash_set, t);
+    return &galloc->hash_values[i];
+}
+```
+```c
+static size_t ggml_hash_find_or_insert(struct ggml_hash_set * hash_set, struct ggml_tensor * key) {
+    size_t h = ggml_hash(key) % hash_set->size;
+
+    // linear probing
+    size_t i = h;
+    do {
+        if (!ggml_bitset_get(hash_set->used, i)) {
+            ggml_bitset_set(hash_set->used, i);
+            hash_set->keys[i] = key;
+            return i;
+        }
+        if (hash_set->keys[i] == key) {
+            return i;
+        }
+        i = (i + 1) % hash_set->size;
+    } while (i != h);
+
+    // visited all hash table entries -> not found
+    GGML_ABORT("fatal error");
+}
+```
+The first thing is that a hash for the tensor is calculated which is using the 
+address of the pointer as a key (shifted to account for alignment), and then this is
+"compressed" into the range of our hash set size. The do/while loop is checking if the
+index is already set using `ggml_bitset_get` (which I can think of as `ggml_bitset_isset`).
+And if the index is not set then it will be set and they tensor will be stored in that
+index and then the index is returned. If the index has already been set then we check if
+the current index is the same as the tensor that we are looking for and if it is then we
+return the index. The index is then incremented and we also need to make sure that it is
+still in the range of the hash set size wo we need to mod it again.
+This will return the index for the tensor, and then `ggml_gallocr_hash_get` will return
+the corresponding hash node. The index will be 1 in this case:
+```c
+    return &galloc->hash_values[i];
+```
+This will return the address of:
+```console
+(lldb) p galloc->hash_values[1]
+(hash_node)  (n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = false)
+```
+Next we have:
+```c
+    if (!ggml_gallocr_is_allocated(galloc, node) && !ggml_is_view(node)) {
+        hn->allocated = true;
+        assert(hn->offset == 0);
+```
+```c
+static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor * t) {
+    return t->data != NULL || ggml_gallocr_hash_get(galloc, t)->allocated;
+}
+```
+So first thing that happens is that allocated is set to true.
+
+The tensor a is not an an operations so the following if block will be skipped:
+```c
+        if (ggml_op_can_inplace(node->op)) {
+            for (int i = 0; i < GGML_MAX_SRC; i++) {
+                struct ggml_tensor * parent = node->src[i];
+                if (parent == NULL) {
+                    continue;
+                }
+                ...
+            }
+            ....
+        }
+
+        // allocate tensor from the buffer
+        struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
+        ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
+        size_t size = ggml_backend_buft_get_alloc_size(buft, node);
+        size_t offset = ggml_dyn_tallocr_alloc(alloc, size, node);
+        hn->buffer_id = buffer_id;
+        hn->offset = offset;
+        return;
+```
+But the last part is of interest. So the dynamic tensor allocator is retrieved.
+And we also get a pointer to the buffer type.
+```c
+GGML_CALL size_t ggml_backend_buft_get_alloc_size(ggml_backend_buffer_type_t buft,
+    struct ggml_tensor * tensor) {
+    // get_alloc_size is optional, defaults to ggml_nbytes
+    if (buft->iface.get_alloc_size) {
+        size_t size = buft->iface.get_alloc_size(buft, tensor);
+        assert(size >= ggml_nbytes(tensor));
+        return size;
+    }
+    return ggml_nbytes(tensor);
+}
+```
+In our case `ggml_n_bytes` will be called:
+```c
+GGML_CALL size_t ggml_nbytes(const struct ggml_tensor * tensor) {
+    size_t nbytes;
+    size_t blck_size = ggml_blck_size(tensor->type);
+    if (blck_size == 1) {
+        nbytes = ggml_type_size(tensor->type);
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+            nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
+        }
+    }
+    else {
+        nbytes = tensor->ne[0]*tensor->nb[0]/blck_size;
+        for (int i = 1; i < GGML_MAX_DIMS; ++i) {
+            nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
+        }
+    }
+
+    return nbytes;
+}
+```
+Now, the a tensor is of type `GGML_TYPE_F32` and it has a block size as follows:
+```c
+static const ggml_type_traits_t type_traits[GGML_TYPE_COUNT] = {
+    ...
+    [GGML_TYPE_F32] = {
+        .type_name                = "f32",
+        .blck_size                = 1,
+        .type_size                = sizeof(float),
+        .is_quantized             = false,
+        .vec_dot                  = (ggml_vec_dot_t) ggml_vec_dot_f32,
+        .vec_dot_type             = GGML_TYPE_F32,
+        .nrows                    = 1,
+    },
+    ...
+```
+I had not reflected over this `.blk_size` before but now noticing that it is used
+in `ggml_nbytes`.  And `nbytes` is intialied to the size of the type which in this
+case is 4 bytes. Then all the dimensions, currently 4, are iterated over and nbytes
+is incremented by the number of elements in the dimension minus 1 times the number of
+bytes for a stride. This subtraction by one was not obvious to me at first but what I
+missed was that we have already accounted for the initial size of the type when we
+initialized `nbytes`.
+```c
+    if (blck_size == 1) {
+        nbytes = ggml_type_size(tensor->type);
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+            nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
+        }
+    }
+```
+Lets take an example, say we have a 1d tensor with 5 elements of type f32. This will have
+a `ne[0]=5`, and `nb[0]=4` (the number of bytes for a stride). So the calculation will be
+`4*4=16` but since this is += we also include the first 4 bytes.
+
+So after that little detour we are back in `ggml_gallocr_allocate_node`:
+`ggml_backend_buft_get_alloc_size`:
+```c
+        // allocate tensor from the buffer
+        struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
+        ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
+        size_t size = ggml_backend_buft_get_alloc_size(buft, node);
+
+->      size_t offset = ggml_dyn_tallocr_alloc(alloc, size, node);
+        hn->buffer_id = buffer_id;
+        hn->offset = offset;
+        return;
+```
+```c
+static size_t ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * alloc, size_t size,
+    const struct ggml_tensor * tensor) {
+    size = aligned_offset(NULL, size, alloc->alignment);
+```
+Lets look at `aligned_offset`, and notice that the buffer is set to NULL:
+```c
+static size_t aligned_offset(const void * buffer, size_t offset, size_t alignment) {
+    assert(alignment && !(alignment & (alignment - 1))); // power of 2
+    size_t align = (alignment - (((uintptr_t)buffer + offset) % alignment)) % alignment;
+    return offset + align;
+}
+```
+When passing in NULL as the buffer the align assignment becomes:
+```c
+    size_t align = (alignment - offset) % alignment) % alignment;
+```
+```console
+(lldb) p buffer
+(const void *) 0x0000000000000000
+(lldb) p offset
+(size_t) 24
+(lldb) p alignment
+(size_t) 32
+```
+
+What this is doing is that we are asking, if I start at the offset 24 how many bytes
+are needed to reach the next aligment boundrary which is 32. 
+We can visualize this like this:
+```console
+0        32        64        96   (byte positions)
+|         |         |         |
+      |---|
+     24   32
+     ↑    ↑
+     |    |
+ offset  next alignment boundry for this offset
+ ```
+So `align` will be 8 in this case and the returned value will be 24 + 8 = 32:
+ ```console
+ (lldb) p aligned_offset(0x0, 33, 32)
+(size_t) 64
+(lldb) p aligned_offset(0x0, 63, 32)
+(size_t) 64
+(lldb) p aligned_offset(0x0, 65, 32)
+(size_t) 96
+```
+
+```c
+    size_t align = (alignment - (((uintptr_t)buffer + offset) % alignment)) % alignment;
+```
+
+So with the aligned size of 32 which is stored in `size` we can move on in the
+function:
+```c
+    size = aligned_offset(NULL, size, alloc->alignment);
+    size_t max_avail = 0;
+
+    // find the best fitting free block besides the last block
+    int best_fit_block = -1;
+    size_t best_fit_size = SIZE_MAX;
+    for (int i = 0; i < alloc->n_free_blocks - 1; i++) {
+        struct free_block * block = &alloc->free_blocks[i];
+        max_avail = MAX(max_avail, block->size);
+        if (block->size >= size && block->size <= best_fit_size) {
+            best_fit_block = i;
+            best_fit_size = block->size;
+        }
+    }
+```
+Notice that the above is checking `alloc->n_free_blocks - 1` which is 0 in our case so
+this for loop will not be executed in this case. Instead the following block will be
+taken:
+```c
+    if (best_fit_block == -1) {
+        // the last block is our last resort
+        struct free_block * block = &alloc->free_blocks[alloc->n_free_blocks - 1];
+        max_avail = MAX(max_avail, block->size);
+        if (block->size >= size) {
+            best_fit_block = alloc->n_free_blocks - 1;
+        } else {
+            // this should never happen
+            fprintf(stderr, "%s: not enough space in the buffer to allocate %zu bytes, largest block available %zu bytes\n",
+                    __func__, size, max_avail);
+            GGML_ABORT("not enough space in the buffer");
+        }
+    }
+
+_wip_
+
 
