@@ -32,14 +32,13 @@ int main(int argc, char **argv) {
 
   ggml_backend_t backend = ggml_backend_cpu_init();
 
-  //ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
-  //ggml_backend_tensor_set(a, a_data, 0, ggml_nbytes(a));  
-  //ggml_backend_tensor_set(b, b_data, 0, ggml_nbytes(b));  
-  // For the CPU backend this is pretty much just a memcpy:
-  //memcpy((char *)b->data + 0, b_data, ggml_nbytes(b));
-
   ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
   ggml_gallocr_alloc_graph(galloc, c_graph);
+  
+  ggml_backend_tensor_set(a, a_data, 0, ggml_nbytes(a));  
+  ggml_backend_tensor_set(b, b_data, 0, ggml_nbytes(b));  
+  // For the CPU backend this is pretty much just a memcpy:
+  memcpy((char *)b->data + 0, b_data, ggml_nbytes(b));
 
   ggml_backend_cpu_set_n_threads(backend, 1);
   enum ggml_status st = ggml_backend_graph_compute(backend, c_graph);
@@ -61,7 +60,6 @@ int main(int argc, char **argv) {
 
   ggml_gallocr_free(galloc);
   ggml_free(ctx);
-  //ggml_backend_buffer_free(buffer);
   ggml_backend_free(backend);
   return 0;
 }
