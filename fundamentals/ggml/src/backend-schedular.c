@@ -38,20 +38,20 @@ int main(int argc, char **argv) {
   }
 
   // The following will call ggml_backend_registry_init
-  size_t count = ggml_backend_reg_get_count();
+  size_t count = ggml_backend_reg_count();
   printf("Number of backends registered: %ld\n", count);
   for (size_t i = 0; i < count; i++) {
-    printf("backend %ld name: %s\n", i, ggml_backend_reg_get_name(i));
+    printf("backend %ld name: %s\n", i, ggml_backend_dev_name(ggml_backend_dev_get(i)));
   }
 
-  ggml_backend_t cpu_backend = ggml_backend_reg_init_backend_from_str("CPU");
+  ggml_backend_t cpu_backend = ggml_backend_init_by_name("CPU", NULL);
   if (cpu_backend != NULL) {
       ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(cpu_backend, 10*4);
       print_backend_info(buffer, ctx);
       ggml_backend_free(cpu_backend);
   }
 
-  ggml_backend_t cuda_backend = ggml_backend_reg_init_backend_from_str("CUDA0");
+  ggml_backend_t cuda_backend = ggml_backend_init_by_name("CUDA0", NULL);
   if (cuda_backend != NULL) {
       ggml_backend_buffer_t buffer = ggml_backend_alloc_buffer(cuda_backend, 10*4);
       print_backend_info(buffer, ctx);

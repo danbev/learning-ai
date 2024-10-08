@@ -1,4 +1,4 @@
-CC = gcc
+CC = g++
 CXX = g++
 CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable
 LDFLAGS = -Lggml/build/src/
@@ -39,7 +39,7 @@ all: $(TARGETS_C)
 ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
 $(TARGETS_C): % : $(SRCDIR)/%.c | bindir
-	$(CC) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
+	$(CXX) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
 	$(WHOLE_ARCHIVE) \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
@@ -51,12 +51,12 @@ $(TARGETS_CPP): % : $(SRCDIR)/%.cpp | bindir
 .PHONY: pre-quants
 pre-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 pre-quants:
-	$(CC) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/quants.pre $(SRCDIR)/quants.c
+	$(CXX) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/quants.pre $(SRCDIR)/quants.c
 
 .PHONY: pre-ggml.c
 pre-ggml.c: CFLAGS += -Iggml/src -Iggml/include/ggml
 pre-ggml.c:
-	$(CC) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/ggml.c.pre ggml/src/ggml.c
+	$(CXX) -E $(CFLAGS) $(LDFLAGS) -o ${BINDIR}/ggml.c.pre ggml/src/ggml.c
 
 #.PHONY: backend-cuda
 backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
