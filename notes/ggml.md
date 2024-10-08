@@ -5224,13 +5224,14 @@ With the graph we can create a new graph allocator using `ggml_gallocr_new`:
 ```c
   ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
 ```
-`ggml_backend_cpu_buffer_type` returns a pointer to a buffer type as this type is
-defined as:
+`ggml_backend_cpu_buffer_type` returns a pointer to a buffer type as this type
+is defined as:
 ```c
 typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
 ```
 
-So lets take a look at this struct that is going to be returned:
+So lets take a look at this struct that is going to be returned to get an
+overview:
 ```c
 struct ggml_gallocr {
     ggml_backend_buffer_type_t * bufts;          // [n_buffers]
@@ -5250,8 +5251,8 @@ struct ggml_gallocr {
 ```
 So we have an array of buffer types, and one for the actual buffers, one for the
 tensor allocators. These all have the same number of elemements and the indices
-match up. I mean that is we have index 2 then the buffer type is at index 2 as
-will the buffer for it and the tensor allocator.
+match up. What I mean is that if we have index 2 then the buffer type is at
+index 2 as will the buffer for it and the tensor allocator.
 
 And notice that we are passing in the `ggml_backend_cpu_buffer_type` which again
 is a pointer to a struct `ggml_backend_buffer_type`:
@@ -5260,19 +5261,20 @@ ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
     return ggml_gallocr_new_n(&buft, 1);
 }
 ```
-Notice that `ggml_gallocr_new_n` has a `n` in it so it can take an array of backend
-buffer types and not just a pointer to a single one which is the case here. Recall
-that passing an array is really just passing a pointer to the first element of the
-array.
+Notice that `ggml_gallocr_new_n` has a `n` in it so it can take an array of
+backend buffer types and not just a pointer to a single one which is the case
+here. Recall that passing an array is really just passing a pointer to the first
+element of the array.
 
-The first things that happens is that the struct is calloced (allocated and
-cleared):
+The first things that happens is that the galloc struct is calloced (allocated
+and cleared):
 ```c
 ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
     ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
     GGML_ASSERT(galloc != NULL);
 ```
-And then the following arrays are calloced which have the size of `n_bufs`:
+And then the following arrays are calloced which have the size of the buffer
+types array, the buffers array, and the tensor allocators arrays:
 ```c
     galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
     GGML_ASSERT(galloc->bufts != NULL);
@@ -5309,11 +5311,11 @@ case is 1 which was passed in as an argument above:
     return galloc;
 }
 ```
-We can see above that `galloc->bufts[i]` is set to the buffer type that was passed in (in this
-case we only passed in 1 buffer type but this function can also be called with an array.
-And we can see that the `galloc.buffers[i]` is set to NULL.
-There is also a dynamic tensor allocator which is different from the tensor allocator that
-we've seen before.
+We can see above that `galloc->bufts[i]` is set to the buffer type that was
+passed in (in this case we only passed in 1 buffer type) but this function can
+also be called with an array.  And we can see that the `galloc.buffers[i]` is
+set to NULL. There is also a _dynamic_ tensor allocator which is different from
+the tensor allocator that we've seen before.
 ```c
 static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment) {
     struct ggml_dyn_tallocr * alloc = (struct ggml_dyn_tallocr *)malloc(sizeof(struct ggml_dyn_tallocr));
@@ -5333,9 +5335,9 @@ static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment) {
     return alloc;
 }
 ```
-I'll revisit this later when it is used.
+I'll revisit this struct later when it is used.
 
-That will return us back in the example:
+That will return us back in the example and we will call:
 ```c
   ggml_gallocr_alloc_graph(galloc, c_graph);
 ```
@@ -5344,35 +5346,13 @@ That will return us back in the example:
 bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
     if (ggml_gallocr_needs_realloc(galloc, graph)) {
         if (galloc->n_buffers == 1) {
-#ifndef NDEBUG
             fprintf(stderr, "%s: reallocating buffers automatically\n", __func__);
-#endif
+
             if (!ggml_gallocr_reserve(galloc, graph)) {
                 return false;
             }
 ```
-In this case `ggml_galoccr_reserve` will be called:
-```c
-bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
-    return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
-}
-```
-This function will return true in our case and one thing to note is that it print
-the following debug message (when in debug mode):
-```console
-ggml_gallocr_needs_realloc: graph has different number of nodes
-```
-Next we will enter the following if block:
-```c
-    if (ggml_gallocr_needs_realloc(galloc, graph)) {
-        if (galloc->n_buffers == 1) {
-#ifndef NDEBUG
-            fprintf(stderr, "%s: reallocating buffers automatically\n", __func__);
-#endif
-            if (!ggml_gallocr_reserve(galloc, graph)) {
-                return false;
-            }
-```
+In this case `ggml_gallocr_reserve` will be called:
 ```c
 bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
     return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
@@ -5380,7 +5360,8 @@ bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
 ```
 
 ```c
-bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
+bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph,
+    const int * node_buffer_ids, const int * leaf_buffer_ids) {
     size_t min_hash_size = graph->n_nodes + graph->n_leafs;
     // add 25% margin to avoid hash collisions
     min_hash_size += min_hash_size / 4;
@@ -5411,7 +5392,7 @@ struct ggml_hash_set ggml_hash_set_new(size_t size) {
 }
 ``` 
 The function `ggml_bitset_size` function is used to calculate the number of
-elements that are needed for the used array (array of `uinit32_t`) in the
+elements that are needed for the `used` array (array of `uinit32_t`) in the
 `hash_set` struct.
 For example:
 ```
@@ -5451,12 +5432,31 @@ struct hash_node {
 };
 ```
 So a hash node stores the number of children a node has, the number of views
-it has. A buffer id which might be the backend buffer where the node(tensor?) is
-allocated, and an offset within the buffer where it it allocated (if it is
-allocated). And a boolean that tells us if the node is allocated or not.
-It is still not clear to me what the usage of this array of hash values is but
-hopefully it will become clear later. But at this stage there will be 3 entries
-in the `hash_values` array and they will all be initialized to 0:
+it has. A buffer id which might is an index into the buffer types array,
+and an offset within the buffer where it is allocated (if it is allocated). And
+a boolean that tells us if the node is allocated or not.
+
+So the hash set enable us to quickly find a tensor, for example (this was taken
+at a later stage when the hash set has been populated):
+```console
+(gdb) p *b
+$456 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x5555556b1bb0, ne = {2, 1, 1, 1}, nb = {4, 8, 8,
+    8}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x5555556b1b60, name = "b", '\000' <repeats 62 times>,
+  extra = 0x0}
+
+(gdb) p ggml_hash_find_or_insert(&galloc->hash_set, b)
+$457 = 1
+
+(gdb) p galloc->hash_values[ggml_hash_find_or_insert(&galloc->hash_set, b)]
+$460 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = false}
+
+(gdb) p *ggml_gallocr_hash_get(galloc, b)
+$455 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = false}
+```
+
+At this stage there will be 3 entries in the `hash_values` array and they will
+all be initialized to 0:
 ```console
 (gdb) p galloc->hash_values[0]
 $65 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = false}
@@ -5701,7 +5701,7 @@ initial size of the type when we initialized `nbytes` by calling
 `ggml_type_size`:
 ```c
     if (blck_size == 1) {
-        nbytes = ggml_type_size(tensor->type);
+  ----> nbytes = ggml_type_size(tensor->type);
         for (int i = 0; i < GGML_MAX_DIMS; ++i) {
             nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
         }
@@ -5719,7 +5719,7 @@ So after that little detour we are back in `ggml_gallocr_allocate_node`:
         ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
         size_t size = ggml_backend_buft_get_alloc_size(buft, node);
 
-->      size_t offset = ggml_dyn_tallocr_alloc(alloc, size, node);
+---->   size_t offset = ggml_dyn_tallocr_alloc(alloc, size, node);
         hn->buffer_id = buffer_id;
         hn->offset = offset;
         return;
@@ -5882,7 +5882,7 @@ block:
 ```
 The `best_fit_block` will be set to 0 in this case and the offset of the 
 `block` will be set to offset + size (32) and its size set to -33 (notice that
-the above is subtracting size from the current blocks size:
+the above is subtracting size from the current blocks size):
 ```console
 (gdb) p *block
 $24 = {offset = 32, size = 9223372036854775775}
@@ -5899,8 +5899,8 @@ debugging part for the tensors) is:
     GGML_UNUSED(tensor);
 }
 ```
-The dynamic tensor allocatos max_size will be updated to 32 above
-(offset (0) + size (32)). And then the offset returned.
+The dynamic tensor allocator's max_size will be updated to 32 above
+(offset (0) + size (32)). And then the offset is returned.
 
 The dynamic tensor allocator `max_size` will be updated to 32 and the offset (0)
 returned to `ggml_gallocr_allocate_node`:
@@ -5909,7 +5909,7 @@ returned to `ggml_gallocr_allocate_node`:
         hn->offset = offset;
         return;
 ```
-`hn` is `hash_node` and will have the buffer id adn offset set:
+`hn` is `hash_node` and will have the buffer id and offset set:
 ```c
 gdb) p galloc->hash_values[2]
 $93 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
@@ -5999,43 +5999,9 @@ $141 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = tru
 ```
 
 So this whole time we've been stepping through `ggml_gallocr_reserve` which
-is called from `ggml_gallocr_alloc_graph`. Later in the that function we have
-the following:
-```c
-bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
-    ...
+is called from `ggml_gallocr_alloc_graph`. 
 
-    // allocate the graph tensors from the previous assignments
-    // leafs
-    for (int i = 0; i < graph->n_leafs; i++) {
-        struct ggml_tensor * leaf = graph->leafs[i];
-        struct leaf_alloc * leaf_alloc = &galloc->leaf_allocs[i];
-        ggml_gallocr_init_tensor(galloc, leaf, &leaf_alloc->leaf);
-    }
-}
-```
-So for tensor `a` this will get the leaf_allocator for that index and call
-`ggml_gallocr_init_tensor`:
-```c
-static void ggml_gallocr_init_tensor(ggml_gallocr_t galloc,
-    struct ggml_tensor * tensor, struct tensor_alloc * tensor_alloc) {
-    ...
-    } else {
-        if (tensor->data == NULL) {
-            void * base = ggml_backend_buffer_get_base(galloc->buffers[buffer_id]);
-            void * addr = (char *)base + tensor_alloc->offset;
-            ggml_backend_tensor_alloc(galloc->buffers[buffer_id], tensor, addr);
-```
-
-```c
-void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer,
-    struct ggml_tensor * tensor, void * addr) {
-    tensor->buffer = buffer;
-    tensor->data = addr;
-    ggml_backend_buffer_init_tensor(buffer, tensor);
-}
-```
-
+TODO: Move this somewhere and explain it better. Or remove it?
 ```
 [ggml_gallocr]
 |
@@ -6104,22 +6070,197 @@ in our case is only 1:
 I need to revisit the first two is statements as I'm not sure what they are
 about yet, but this this case we are processing the `result` tensor which is
 a mul operation and has `a` and `b` it's parents (srcs).
+
 So this will first call `ggml_galllocr_hash_get` for `a` and we know that `a`
 has already been added as we went through the leafs before.
 ```console
 (gdb) p *ggml_gallocr_hash_get(galloc, src)
 $148 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
 ```
-So the above is incrementing/setting the number of children for `a` to 1. Recall
-that when we have something like `result = a * b` the `result` tensor will have
-a and b as parents. So a would have `result` as its child and this is what this
-value is for.
-```console
-(gdb) p galloc->hash_values[1]
-$150 = {n_children = 1, n_views = 0, buffer_id = 0, offset = 32, allocated = true}
-(gdb) p galloc->hash_values[2]
-$151 = {n_children = 1, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
+So the above is incrementing/setting the number of children for `a` to 1.  I
+believe that this is used for reference counting. Since the `a` tensor is used
+by the `result` it is being referenced so the number of children is incremented.
+And the same will happen for `b`.
+
+
+```c
+static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc,
+    struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
+    ...
+    // allocate tensors
+    for (int i = 0; i < graph->n_nodes; i++) {
+        ...
+
+        // allocate node
+        ggml_gallocr_allocate_node(galloc, node, buffer_id);
+}
 ```
+One thing that I missed initially going through this is that this function will
+return if it can reuse the parent tensor.
+```c
+                    } else {
+                        AT_PRINTF("reusing parent %s for %s\n", parent->name, node->name);
+                        hn->buffer_id = p_hn->buffer_id;
+                        hn->offset = p_hn->offset;
+                        p_hn->allocated = false; // avoid freeing the parent
+                        return;
+                    }
+```
+At this point the leaf nodes have been allocated/processed:
+```console
+(gdb) p galloc->hash_set.keys[1]->name
+$501 = "b", '\000' <repeats 62 times>
+
+(gdb) p *ggml_gallocr_hash_get(galloc, galloc->hash_set->keys[1])
+$505 = {n_children = 1, n_views = 0, buffer_id = 0, offset = 32, allocated = true}
+
+(gdb) p galloc->hash_set.keys[2]->name
+$502 = "a", '\000' <repeats 62 times>
+
+(gdb) p *ggml_gallocr_hash_get(galloc, galloc->hash_set->keys[2])
+$506 = {n_children = 1, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
+```
+There was a previous count of all the nodes and there parents in the computation
+graphs and the number of times a tensor is used as a parent(src) was stored in
+the `n_children` field of the hash node. So this is the number of times a tensor
+is used as a parent in the graph.
+
+And the above will now process the `result` tensor.
+```console
+(gdb) p galloc->hash_set.keys[0]->name
+$508 = "result", '\000' <repeats 57 times>
+
+(gdb) p *ggml_gallocr_hash_get(galloc, galloc->hash_set->keys[0])
+$507 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
+```
+At this point we have processes the `result` tensor and we will now update the
+parents of this tensor.
+```c
+        // update parents
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            struct ggml_tensor * parent = node->src[j];
+            if (parent == NULL) {
+                continue;
+            }
+            struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent);
+            p_hn->n_children -= 1;
+```
+This is decrementing the parent hash nodes `n_children` field by 1 which means
+that the current node has been allocated and its parent nodes have been
+processed as part of that. So this is indicating that the parent tensor is no
+longer needed by the current tensor.
+
+Now, after this decrement if the `n_children` field is 0 then the parent tensor
+can be freed. Note that for the `a` tensor this will not happen as its allocated
+field has set to false in `ggml_gallocr_allocate_node` as part of the reuse 
+(in-place optimization):
+```c
+                        hn->buffer_id = p_hn->buffer_id;
+                        hn->offset = p_hn->offset;
+                        p_hn->allocated = false; // avoid freeing the parent
+                        return;
+```
+This makes sense because if the `result` tensor wil be using the same memory
+block as `a` then we cannot free that block.
+
+So calling `ggml_gallocr_free_node` will not free the `a` tensor. But for tensor
+`b` this will free the node:
+```c
+            if (p_hn->n_children == 0) {
+                ggml_gallocr_free_node(galloc, parent);
+            }
+        }
+    }
+}
+```
+```c
+    ggml_gallocr_free_node(galloc, parent);
+```
+```c
+static void ggml_gallocr_free_node(ggml_gallocr_t galloc, struct ggml_tensor * node) {
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+    size_t offset = hn->offset;
+    int buffer_id = hn->buffer_id;
+    struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
+    ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
+    size_t size = ggml_backend_buft_get_alloc_size(buft, node);
+    ggml_dyn_tallocr_free_tensor(alloc, offset, size, node);
+    hn->allocated = false;
+}
+```
+```console
+(gdb) p *hn
+$529 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = true}
+(gdb) p size
+$530 = 8
+```
+
+```
+block:
+
+   0       31         63                                              SIZE_MAX
+   +---------------------------------------------------------------------+
+   |        |         |       Free block                                 |
+   +---------------------------------------------------------------------+
+                      ↑                                   ↑
+                     offset                              size
+                                                       (SIZE_MAX - 64)
+```
+```c
+static void ggml_dyn_tallocr_free_tensor(struct ggml_dyn_tallocr * alloc, size_t offset, size_t size, const struct ggml_tensor * tensor) {
+    size = aligned_offset(NULL, size, alloc->alignment);
+
+    // see if we can merge with an existing block
+    for (int i = 0; i < alloc->n_free_blocks; i++) {
+        struct free_block * block = &alloc->free_blocks[i];
+        ...
+
+        // check if ptr is at the beginning of the block
+        if (offset + size == block->offset) {
+            block->offset = offset;
+            block->size += size;
+            // check if we can merge with the previous block
+            if (i > 0 && alloc->free_blocks[i-1].offset + alloc->free_blocks[i-1].size == block->offset) {
+                alloc->free_blocks[i-1].size += block->size;
+                alloc->n_free_blocks--;
+                for (int j = i; j < alloc->n_free_blocks; j++) {
+                    alloc->free_blocks[j] = alloc->free_blocks[j+1];
+                }
+            }
+            return;
+        }
+    }
+```
+```console
+(gdb) p size
+$531 = 32
+(gdb) p alloc->n_free_blocks
+$532 = 1
+
+(gdb) p *block
+$534 = {offset = 64, size = 9223372036854775743}
+```
+So the block offset will be set to the offset (32) and the size will be
+incremented by size (32). This will result in something like this:
+```
+block:
+
+   0       31         63                                              SIZE_MAX
+   +---------------------------------------------------------------------+
+   |        |         |       Free block                                 |
+   +---------------------------------------------------------------------+
+            ↑                                                      ↑
+           offset                                                size
+                                                             (old size + 32)
+```
+The above function will then return. And now the next free block will start
+at 32 instead of 64 and available for other tensors to use.
+Keep in mind that there was not been any memory allocated yet, this will happen
+later when we return to `ggml_gallocr_alloc_graph`.  This is only "simulating"
+or tracking how memory wil be used to optimize the memory usage. Like the
+free block struct only has an offset and a size field and we build up and
+array of blocks where tensors are to be allocated later by an actual backend.
+
 Following that we have:
 ```c
     // allocate tensors
@@ -6177,7 +6318,8 @@ checking the hash node for the tensor has its allocated field set to true.
 (gdb) p galloc->hash_values[2]
 $167 = {n_children = 1, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
 ```
-Next there is a chech if the `GGML_TENSOR_FLAG_INPUT` flag is set for the parent:
+Next there is a check if the `GGML_TENSOR_FLAG_INPUT` flag is set for the
+parent:
 ```c
                 // outputs cannot be reused
                 if (parent->flags & GGML_TENSOR_FLAG_OUTPUT ||
@@ -6221,6 +6363,7 @@ static bool ggml_are_same_layout(const struct ggml_tensor * a, const struct ggml
 So this is checking the types are the same, and that the number of elements and
 the strides match. This is the case for `a` and `result` so this will return
 true. So that warning will not be displayed.
+
 Then we have the following:
 ```c
     struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent);
@@ -6257,7 +6400,11 @@ Next the `n_children` field is used which I've been curious about:
 ```
 The else clause will be taken as node a is not a view. Now, `hn` is the hash
 node for `result` and `p_hn` is the hash node for `a`. So this is updating
-the `result` hash node to have the same buffer id and offset as `a`.
+the `result` hash node to have the same buffer id and offset as `a` and then
+setting `a`s hash node to not be allocated.
+So for the result tensor if we look up the hash node is will now have the same
+buffer id and offset as `a`. So result will reuse the buffer of `a`?
+
 This will then return us back to `ggml_gallocr_alloc_graph_impl`:
 ```c
         for (int j = 0; j < GGML_MAX_SRC; j++) {
