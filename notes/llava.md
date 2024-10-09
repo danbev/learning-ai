@@ -748,7 +748,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_RESAMPLER, "resampler"},
 };
 ```
-So these different types of approches to mapping the image embeddings into a
+So these are different types of approches to mapping the image embeddings into a
 space that can be processed along side text token embeddings.
 * MPL
 is a multi-layer perceptron which is a feedforward neural network which
@@ -809,6 +809,7 @@ After that we have the loading of tensors:
 Notice where that `no_alloc` is set to true which means that data for the tensor
 will not be allocated. See [ggml.md](./ggml.md#no_alloc) for more details on
 this.
+
 Then we open an input file stream to `models/mmproj-vicuna7b-f16.gguf`:
 ```c++
         auto fin = std::ifstream(fname, std::ios::binary);
@@ -855,6 +856,7 @@ $21 = 0x555556b328a8 "CUDA0"
 ```
 And the allocation is done like this:
 ```c++
+        // alloc memory and offload data
         new_clip->params_buffer = ggml_backend_alloc_ctx_tensors(new_clip->ctx_data, new_clip->backend);
 ```
 ```c++
@@ -867,6 +869,10 @@ end up in ggml-alloc.c:
 ```c
 ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx,
     ggml_backend_buffer_type_t buft) {
+    GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
+
+    size_t alignment = ggml_backend_buft_get_alignment(buft);
+    size_t max_size = ggml_backend_buft_get_max_size(buft);
     GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
 ```
 And notice here that the assert is checking that `no_alloc` is set to true which
@@ -899,7 +905,7 @@ size of the buffer required to store all the tensors:
 ```
 Notice that this will iterate over the tensors and calculate the size of the
 buffer required to store all the tensors. If the size of the buffer is greater
-than the maximum size then then tensors up to the current tensor will be
+than the maximum size then the tensors up to the current tensor will be
 allocated on the CUDA device by calling `alloc_tensor_range`.
 ```c
     // allocate remaining tensors
@@ -1070,7 +1076,8 @@ void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor 
     ggml_backend_buffer_init_tensor(buffer, tensor);
 }
 ```
-Notice that this is updating the buffer field and the data field of the tensor.
+Notice that this is updating the buffer field and the data field is set to the
+memory address on the CUDA device.
 
 And `ggml_backend_buffer_init_tensor`
 ```c
@@ -1099,6 +1106,10 @@ GGML_CALL static void ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t
         }
     }
 }
+```
+```console
+(gdb) p *ctx
+$5 = {device = 0, dev_ptr = 0x7ffdc6000000, name = "CUDA0"}
 ```
 In our case the above will do nothing as the tensor is not quantized.
 And all of the tensors will go through the same process where they will have
@@ -1145,7 +1156,7 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
 }
 ```
 And we have seen most of this apart from the last three lines. Recall that this
-function was called when `max_size` was reached and the `realloc` is adding a
+function was called when `max_size` was reached, and the `realloc` is adding a
 the new buffer we created at the start of this function. Realloc will behave
 like malloc if `*buffers` is null, otherwise if there is not enough space it
 will copy the old buffer to a new location and free the old buffer.
@@ -1251,7 +1262,7 @@ the the file into a buffer and then passed to this function. Notice that the
 destionation is the tensor data pointer which is on the CUDA device. 
 And this is done for all the tensors.
 
-Next we have the vision model loading:
+Next we have the vision model loading (in clip.cpp):
 ```c++
     // vision model
     if (new_clip->has_vision_encoder) {
@@ -1301,8 +1312,8 @@ Now, we we inspect the output of the model we can see the following:
      20: [INT32]    |       10 | clip.vision.image_grid_pinpoints
  ```
  This is an array of 10 integers representing something called pin points.
- A vision model will often divide an image into a grid of cells/patches. The grid
- enables a systemactic way of processing the image.
+ A vision model will often divide an image into a grid of cells/patches. The
+ grid enables a systemactic way of processing the image.
 ```console
 pinpoints[0] = 336
 pinpoints[1] = 672
@@ -1483,7 +1494,7 @@ Next, we have a number of tensor that will be set on the vision model
             new_clip->has_class_embedding = false;
         }
 ```
-This is the class token which aggragates information from all patches and is
+This is the class token which aggregates information from all patches and is
 used for classification.
 ```console
 (gdb) p *vision_model.class_embedding
@@ -1509,6 +1520,7 @@ $10 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555c
     4096}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
     0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x7ffdc8a53800, name = "v.pre_ln.weight", '\000' <repeats 48 times>,
   extra = 0x0}
+
 (gdb) p *vision_model.pre_ln_b
 $11 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555cc12e0, ne = {1024, 1, 1, 1}, nb = {4, 4096, 4096,
     4096}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -1609,7 +1621,7 @@ type = struct clip_layer {
     ggml_tensor *ln_2_b;
 }
 ```
-These layers will get populated clip context.
+These layers will get populated by the clip context.
 
 After that the current `gguf` context is set on the clip context:
 ```c++
@@ -1630,51 +1642,6 @@ And the last things that happen before returning the clip context is:
     }
 ```
 
-```c++
-ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
-    return ggml_gallocr_new_n(&buft, 1);
-}
-
-ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
-    ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
-    GGML_ASSERT(galloc != NULL);
-
-    galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
-    GGML_ASSERT(galloc->bufts != NULL);
-
-    galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t));
-    GGML_ASSERT(galloc->buffers != NULL);
-
-    galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
-    GGML_ASSERT(galloc->buf_tallocs != NULL);
-
-    for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = bufts[i];
-        galloc->buffers[i] = NULL;
-
-        // check if the same buffer type is used multiple times and reuse the same allocator
-        for (int j = 0; j < i; j++) {
-            if (bufts[i] == bufts[j]) {
-                galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
-                break;
-            }
-        }
-
-        if (galloc->buf_tallocs[i] == NULL) {
-            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
-            galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment);
-        }
-    }
-    galloc->n_buffers = n_bufs;
-
-    return galloc;
-}
-```
-So the `ggml_backend_buffer_type_t` is
-`ggml_backend_cuda_buffer_type::ggml_backend_cuda_buffer_types` in our case and
-`n_bufs` is 1. We can see that calloc (allocate and clear memory) is used to
-create a `ggml_gallocr` struct which I think is similar to the `ggml_tallocr`
-but for computation graphs (not sure yet).
 After the computation graph allocator has been created we have the following:
 ```c++
         clip_image_f32_batch batch;
@@ -1774,13 +1741,13 @@ the kernels. And we have 0 padding for x and y. The last two arguments are the
 dilation of x and y which is 1 which means that the kernel is not dilated (does
 not have any gaps).
 
-So, what we are doing here is that we dividing the input image into patches and
-then embedding each patch into a high-dimensional space, which is 1024 in this
-case. We can think of each patch as a token in an NLP model, where each token
-needs to get a token embedding. The embedding process for these patches, using
-convolution in this case, is analogous to word embeddings in NLP. It transforms
-the raw pixel data into a format that the transformer can process, just like
-word embeddings transform words into vector representations.
+So, what we are doing here is that we are dividing the input image into patches
+and then embedding each patch into a high-dimensional space, which is 1024 in
+this case. We can think of each patch as a token in an NLP model, where each
+token needs to get a token embedding. The embedding process for these patches,
+using convolution in this case, is analogous to word embeddings in NLP. It
+transforms the raw pixel data into a format that the transformer can process,
+just like word embeddings transform words into vector representations.
 
 After the convolution we have:
 ```console
@@ -2030,11 +1997,9 @@ Next we have a layer normalization, and then a multiplication with the
     }
 ```
 This is the pre-layer normalization which is applied before the transformer.
-Is the last multiplication and addition called a linear layer? I think it is
-because we are multiplying the embeddings with a weight matrix and then adding
-a bias vector. This is a linear transformation and is used to project the
-embeddings into a different space. This is a common operation in neural
-networks and is used to learn a mapping from one space to another. In this case
+This is a linear transformation and is used to project the embeddings into a
+different space. This is a common operation in neural networks and is used to
+learn a mapping from one space to another. 
 
 Following that there is a loop over all the layers in the model, which there are
 23 of in this model. At this point the embeddings have the shape:
@@ -2042,8 +2007,8 @@ Following that there is a loop over all the layers in the model, which there are
 (gdb) p embeddings->ne
 $3 = {1024, 577, 1, 1}
 ```
-So these is one row (token) for each patch plus one row (token for the class
-token.
+So these is one row (token) for each patch plus one row (patch/token for the
+class token).
 ```c
     for (int il = 0; il < n_layer - 1; il++) {
         struct ggml_tensor * cur = embeddings; // embeddings = residual, cur = hidden_states
@@ -2072,6 +2037,7 @@ Where:
 - γ is the scale parameter (model.layers[i].ln_1_w)
 - β is the shift parameter (model.layers[i].ln_1_b)
 
+This becomes something like this in the code above:
 cur = model.layers[i].ln_1_w * cur + model.layers[i].ln_1_b
 ```
 Notice that the `ln_1_w` and `ln_1_b` are specific for each layer, so each layer
@@ -2134,7 +2100,7 @@ $13 = 1024
        ...                  
 1023   [0    ...   1023]
 ```
-Now, notice that the dimensios of `cur` don't add up to the dimensions of
+Now, notice that the dimensions of `cur` don't add up to the dimensions of
 the weight matrix `model.layers[il].q_w`. I usually think of the weight matrix
 as functions on each row and they take a number of parameters, and when we
 perform matrix multiplication we take a column from the other matrix and pass
@@ -2250,7 +2216,7 @@ memory as well.
 
 
 Now, this is nice because we can think of having 16 (64x577) matrices which 
-can be computed in parallel. We will see this later when we look at the Key
+can be computed in parallel. We will see this later when we look at the key
 matrix K but one way to think of this might be:
 ```
 Head1:
@@ -2402,7 +2368,7 @@ And finally embeddings is set to the current tensor for the next iteration:
 ```
 And that is a complete layer!
 
-To the input was the image divided into patches and then embedded into a
+So the input was the image divided into patches and then embedded into a
 high-dimensional space. The embeddings were then reshaped and permuted and
 class embeddings and positional embeddings were added. The embeddings were then
 passed through a series of transformer layers where each layer consists of a
@@ -2429,7 +2395,7 @@ First a tensor is created for the patches (576):
         ggml_set_name(patches, "patches");
         ggml_set_input(patches);
 ```
-Next, an operation is created to extract/get rows from the embeddins tensor
+Next, an operation is created to extract/get rows from the embeddings tensor
 for the indices given by the patches tensor:
 ```c++
         embeddings = ggml_get_rows(ctx0, embeddings, patches);
@@ -2476,9 +2442,10 @@ After these operations the embeddings tensor will have the shape:
 (gdb) p embeddings->ne
 $58 = {4096, 576, 1, 1}
 ```
-So my understanding of this is that it is taking the embeddings from output
-self-attention block and projecting them into the embedding space of the LLM
-model. And for this model that is the last thing done for building the graph.
+So my understanding of this is that it is taking the embeddings from the output
+of the self-attention block and projecting them into the embedding space of the
+LLM model. And for this model that is the last thing done for building the
+graph.
 ```c++
     // build the graph
     ggml_build_forward_expand(gf, embeddings);
@@ -2500,48 +2467,13 @@ So that will returns us back in `clip_model_load`.
         ggml_gallocr_reserve(new_clip->compute_alloc, gf);
         size_t compute_memory_buffer_size = ggml_gallocr_get_buffer_size(new_clip->compute_alloc, 0);
         LOG_INF("%s: compute allocated memory: %.2f MB\n", __func__, compute_memory_buffer_size /1024.0/1024.0);
-```
-So lets look closer at `ggml_gallocr_reserve`:
-```c
-bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
-    return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
-}
-```
-Notice that this returns a boolean value and that it is not checked in the
-code above.
-`galloc` looks like this at this point:
-```console
-(gdb) p *galloc
-$63 = {
-    bufts = 0x555555cc1ef0, buffers = 0x555555cc1f10,
-    buf_tallocs = 0x555555cc1f30, n_buffers = 1,
-    hash_set = {size = 0, used = 0x0, keys = 0x0},
-    hash_values = 0x0, node_allocs = 0x0, n_nodes = 0, leaf_allocs = 0x0,
-    n_leafs = 0
-}
-```
-
-```c++
-bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph,
-    const int * node_buffer_ids, const int * leaf_buffer_ids) {
-    size_t min_hash_size = graph->n_nodes + graph->n_leafs;
-    // add 25% margin to avoid hash collisions
-    min_hash_size += min_hash_size / 4;
-    ...
-}
-```
-```c++
-    // initialize hash table
-    if (galloc->hash_set.size < min_hash_size) {
-        ggml_hash_set_free(&galloc->hash_set);
-        galloc->hash_set = ggml_hash_set_new(min_hash_size);
-        GGML_ASSERT(galloc->hash_set.keys != NULL);
-
-        free(galloc->hash_values);
-        galloc->hash_values = malloc(sizeof(struct hash_node) * galloc->hash_set.size);
-        GGML_ASSERT(galloc->hash_values != NULL);
     }
+
+    return new_clip;
 ```
+The graph allocator is something that I've written about, actually I stopped
+here to write about it and the notes can be found in [ggml.md](./ggml.md/#graph-allocator).
+And after that the `clip_ctx` is returned from `clip_model_load`.
 
 
 <a name="wip"></a>
