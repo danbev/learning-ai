@@ -2779,6 +2779,171 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, cli
 ```
 Here we can see how the pinpoints are used which I was not 100% sure about
 above. First the possible resolutions are extracted from the pinpoints.
+```console
+(gdb) p params.image_grid_pinpoints
+$17 = {336, 672, 672, 336, 672, 672, 1008, 336, 336, 1008, 0 <repeats 22 times>}
+
+(gdb) p possible_resolutions
+$19 = std::vector of length 5, capacity 8 = {
+{first = 336, second = 672},
+{first = 672, second = 336},
+{first = 672, second = 672},
+{first = 1008, second = 336},
+{first = 336, second = 1008}}
+
+(gdb) p img->nx
+$20 = 800
+(gdb) p img->ny
+$21 = 663
+```
+These will be passed to  `select_best_resolution` which will try to figure out
+how the input image can be resized to fit a image resolution that this clip
+model can support.
+```c++
+static std::pair<int, int> select_best_resolution(const std::pair<int, int> & original_size,
+    const std::vector<std::pair<int, int>> & possible_resolutions) {
+
+    int original_width = original_size.first;
+    int original_height = original_size.second;
+    std::pair<int, int> best_fit;
+    int max_effective_resolution = 0;
+    int min_wasted_resolution = std::numeric_limits<int>::max();
+
+    for (const auto& resolution : possible_resolutions) {
+        int width = resolution.first;
+        int height = resolution.second;
+        float scale = std::min(static_cast<float>(width) / original_width, static_cast<float>(height) / original_height);
+        int downscaled_width = static_cast<int>(original_width * scale);
+        int downscaled_height = static_cast<int>(original_height * scale);
+        int effective_resolution = std::min(downscaled_width * downscaled_height, original_width * original_height);
+        int wasted_resolution = (width * height) - effective_resolution;
+        if (effective_resolution > max_effective_resolution || (effective_resolution == max_effective_resolution && wasted_resolution < min_wasted_resolution)) {
+            max_effective_resolution = effective_resolution;
+            min_wasted_resolution = wasted_resolution;
+            best_fit = resolution;
+        }
+    }
+    return best_fit;
+}
+```
+So in our case the above will calculate how we can resize the input image
+to a resolution that is supported by the clip model. The best resolution is
+the one that will result in the least wasted resolution.
+This is what we want to do:
+```
+   original image                         rescaled image suggestion for 
+                                          first possible resolution
+
+             800                               336
+  +-------------------------+            +--------------+
+  |                         |            |              |
+  |                         |  663       |              |  672
+  |                         |      =>    |              |
+  |                         |            |              |
+  |                         |            |              |
+  |                         |            |              |
+  +-------------------------+            |              |
+                                         +--------------+
+```
+```
+original_width  = 800  (img->nx)
+original_height = 663  (img->ny)
+
+width x height
+ 336  x 672: 
+  scale = min(336 / 800, 672 / 663) = min(0.42, 1.01) = 0.42 
+  downscaled_width  = 800 * 0.42 = 336
+  downscaled_height = 663 * 0.42 = 279
+```
+So this is scaling the image to fit the resolution 336x672 which will result
+in a 336x279 image if the first resolution is used.
+```
+  effective_resolution_new = 336 * 279 = 93624
+  effective_resolution_org = 800 * 663 = 530400
+  effective_resolution = min(93624, 530400) = 93624
+
+  int wasted_resolution = (width * height) - effective_resolution;
+  wasted_resolution = (336 * 672) - 93624 = 225168
+```
+Wasted resolution in this case would look something like this:
+```
+Possible resolution (336x672)
+   +-------------------+
+   |                   |
+   |  +-------------+  |
+   |  |    336x279  |  |
+   |  | (Effective  |  |
+   |  | Resolution) |  |
+   |  |             |  |
+   |  +-------------+  |
+   |                   |
+   |  Wasted Resolution|
+   |                   |
+   +-------------------+
+```
+So the effective resolution is the area used up by the rescaled image. The
+wasted resolution is the space outside which is just unused pixels.
+So we want a large effective resolution and a small wasted resolution.
+
+So the above functions job is to find the resolution that will result in the
+least wasted resolution.
+```c++
+if (effective_resolution > max_effective_resolution ||
+    (effective_resolution == max_effective_resolution && wasted_resolution < min_wasted_resolution)) {
+```
+I can understand this part of the first check if the effective resolution is
+larger than the previous max effective resolution then we have a new best fit.
+But I'm not sure I understand how the effective resolution can be the same as
+the max effective resolution and the wasted resolution less than the min wasted
+resolution?  
+This can happen, for example:
+```
+Scale factor = min(400/800, 400/600) = min(0.5, 0.6667) = 0.5
+
+Downscaled width  = 800 * 0.5 = 400
+Downscaled height = 600 * 0.5 = 300
+
+Effective resolution = 400 * 300 = 120,000 pixels
+
+Scale factor = min(400/800, 300/600) = min(0.5, 0.5) = 0.5
+
+Downscaled width  = 800 * 0.5 = 400
+Downscaled height = 600 * 0.5 = 300
+
+Effective resolution = 400 * 300 = 120,000 pixels
+
+Original Image (800x600)
++------------------------+
+|                        |
+|                        |
+|                        |
+|    800 x 600           |
+|                        |
+|                        |
++------------------------+
+
+Resolution A (400x400)        Resolution B (400x300)
++------------------+          +------------------+
+|  +------------+  |          |                  |
+|  |            |  |          |     400x300      |
+|  | (Effective)|  |          |    (Effective)   |
+|  |            |  |          |                  |
+|  |            |  |          |                  |
+|  +------------+  |          +------------------+
+|                  |
+|  Wasted Space    |
+|                  |
++------------------+
+
+Effective Resolution (both): 400 * 300 = 120,000 pixels
+Wasted Resolution A: (400 * 400) - 120,000 = 40,000 pixels
+Wasted Resolution B: (400 * 300) - 120,000 = 0 pixels
+```
+In this case the best fit will be:
+```
+(gdb) p best_resolution 
+$31 = {first = 672, second = 672}
+```
 
 ```c++
             // clip_image_save_to_bmp(*img, "input.bmp");
@@ -2808,9 +2973,6 @@ above. First the possible resolutions are extracted from the pinpoints.
             clip_image_u8_free(temp);
 
             return true;
-```
-```console
-
 ```
 
 <a name="wip"></a>
