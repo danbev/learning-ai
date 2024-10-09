@@ -1351,8 +1351,8 @@ And we have 24x24=576 boxes in total
 576 * 196     = 112896
 336 * 336     = 112896
 ```
-The values in the pinpoints array are coordinates in the image grid that the
-model will focus more on (I think).
+The values in the pinpoints array are possible resolutions to use for
+processing high resolution images.
 ```
 (336, 672)
 (672, 672)
@@ -1360,43 +1360,6 @@ model will focus more on (I think).
 (336, 336)
 (336, 1008)
 ```
-We can think of these as regions/tiles in the patch.
-```console
-0
-+-------------------------------------------------------------> x
-| [ (0,0)      ] [ (336,0)    ] [ (672,0)    ] [ (1008,0)   ]
-| [            ] [            ] [            ] [            ]
-| [------------] [------------] [------------] [------------]
-| [ (0,336)    ] [ (336,336)  ] [ (672,336)  ] [ (1008,336) ]
-| [            ] [            ] [            ] [            ]
-| [------------] [------------] [------------] [------------]
-| [ (0,672)    ] [ (336,672)  ] [ (672,672)  ] [ (1008,672) ]
-| [            ] [            ] [            ] [            ]
-| [------------] [------------] [------------] [------------]
-| [ (0,1008)   ] [ (336,1008) ] [ (672,1008) ] [ (1008,1008)]
-| [            ] [            ] [            ] [            ]
-↓
-y
-
-0
-+-------------------------------------------------------------> x
-| [ (0,0)      ] [ (336,0)    ] [ (672,0)    ] [ (1008,0)   ]
-| [            ] [            ] [            ] [            ]
-| [------------] [------------] [------------] [------------]
-| [ (0,336)    ] [XXXXXXXXXXXX] [ (672,336)  ] [ (1008,336) ]
-| [            ] [XXXXXXXXXXXX] [            ] [            ]
-| [------------] [------------] [------------] [------------]
-| [ (0,672)    ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [ (1008,672) ]
-| [            ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [            ]
-| [------------] [------------] [------------] [------------]
-| [ (0,1008)   ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [ (1008,1008)]
-| [            ] [XXXXXXXXXXXX] [XXXXXXXXXXXX] [            ]
-↓
-y
-```
-This could be a way to focus on specific regions of the image and we can see
-that the center of the image is focused on more than the edges and this makes
-sense I guess as most subjects of images are in the center.
 
 Next we have the merge type:
 ```
@@ -2475,6 +2438,380 @@ The graph allocator is something that I've written about, actually I stopped
 here to write about it and the notes can be found in [ggml.md](./ggml.md/#graph-allocator).
 And after that the `clip_ctx` is returned from `clip_model_load`.
 
+As a reminder, a `llava_context` is defined as:
+```c++
+struct llava_context {
+    struct clip_ctx * ctx_clip = NULL;
+    struct llama_context * ctx_llama = NULL;
+    struct llama_model * model = NULL;
+};
+```
+The clip context is the what we have seen be populated this far in this section
+and represents the image encoder part in CLIP. The llama context is the for the
+Vicuna model which is the LLM part of the model. 
+
+So we are still in the function `llava_init_context` and we have the following:
+```c++
+    llama_context_params ctx_params = llama_context_params_from_gpt_params(*params);
+    ctx_params.n_ctx = params->n_ctx < 2048 ? 2048 : params->n_ctx;
+
+    llama_context * ctx_llama = llama_new_context_with_model(model, ctx_params);
+```
+This are the "normal" llama contex params we have seen in other examples ad
+we are creating a `llama_context` using the model (`vicuna-7b-q5_k.gguf`)
+
+The a llava context will be malloced and populated with the llama context, the
+clip context and the model:
+```c++
+    auto * ctx_llava = (struct llava_context *)malloc(sizeof(llava_context));
+
+    ctx_llava->ctx_llama = ctx_llama;
+    ctx_llava->ctx_clip = ctx_clip;
+    ctx_llava->model = model;
+    return ctx_llava;
+}
+```
+This will return us to `main`:
+```c++
+        for (auto & image : params.image) {
+            auto * ctx_llava = llava_init_context(&params, model);
+
+---->       auto * image_embed = load_image(ctx_llava, &params, image);
+            if (!image_embed) {
+                LOG_ERR("%s: failed to load image %s. Terminating\n\n", __func__, image.c_str());
+                return 1;
+            }
+```
+This is loading the embeddings for the image and notice tat the llava context
+is passed in here to it has access to the image encoder.
+```c++
+static struct llava_image_embed * load_image(llava_context * ctx_llava, gpt_params * params, const std::string & fname) {
+
+    // load and preprocess the image
+    llava_image_embed * embed = NULL;
+    auto prompt = params->prompt;
+    if (prompt_contains_image(prompt)) {
+        if (!params->image.empty()) {
+            LOG_INF("using base64 encoded image instead of command line image path\n");
+        }
+        embed = llava_image_embed_make_with_prompt_base64(ctx_llava->ctx_clip, params->cpuparams.n_threads, prompt);
+        if (!embed) {
+            LOG_ERR("%s: can't load image from prompt\n", __func__);
+            return NULL;
+        }
+        params->prompt = remove_image_from_prompt(prompt);
+    } else {
+--->    embed = llava_image_embed_make_with_filename(ctx_llava->ctx_clip, params->cpuparams.n_threads, fname.c_str());
+        if (!embed) {
+            fprintf(stderr, "%s: is %s really an image file?\n", __func__, fname.c_str());
+            return NULL;
+        }
+    }
+
+    return embed;
+}
+```
+And in our case this will invoke `llava_image_embed_make_with_filename` and
+notice that the clip context is passed in here.
+```c++
+struct llava_image_embed * llava_image_embed_make_with_filename(struct clip_ctx * ctx_clip, int n_threads, const char * image_path) {
+    unsigned char* image_bytes;
+    long image_bytes_length;
+    auto loaded = load_file_to_bytes(image_path, &image_bytes, &image_bytes_length);
+    if (!loaded) {
+        LOG_ERR("%s: failed to load %s\n", __func__, image_path);
+        return NULL;
+    }
+
+    llava_image_embed *embed = llava_image_embed_make_with_bytes(ctx_clip, n_threads, image_bytes, image_bytes_length);
+    free(image_bytes);
+
+    return embed;
+}
+```
+`load_file_to_bytes` is a function that reads a file into a buffer and returns
+the buffer and the length of the buffer (inout parameters). So lets focus on
+the function `llava_image_embed_make_with_bytes`:
+```c++
+struct llava_image_embed * llava_image_embed_make_with_bytes(struct clip_ctx * ctx_clip,
+int n_threads, const unsigned char * image_bytes, int image_bytes_length) {
+    clip_image_u8 * img = clip_image_u8_init();
+    if (!clip_image_load_from_bytes(image_bytes, image_bytes_length, img)) {
+        clip_image_u8_free(img);
+        LOG_ERR("%s: can't load image from bytes, is it a valid image?", __func__);
+        return NULL;
+    }
+
+    float* image_embed = NULL;
+    int n_image_pos = 0;
+    bool image_embed_result = llava_image_embed_make_with_clip_img(ctx_clip, n_threads, img, &image_embed, &n_image_pos);
+    if (!image_embed_result) {
+        clip_image_u8_free(img);
+        LOG_ERR("%s: coulnd't embed the image\n", __func__);
+        return NULL;
+    }
+
+    clip_image_u8_free(img);
+    auto result = (llava_image_embed*)malloc(sizeof(llava_image_embed));
+    result->embed = image_embed;
+    result->n_image_pos = n_image_pos;
+    return result;
+}
+```
+A `clip_image_u8` is created to hold the loaded image in memory:
+```c++
+struct clip_image_u8 * clip_image_u8_init() {
+    return new clip_image_u8();
+}
+
+// RGB uint8 image
+struct clip_image_u8 {
+    int nx;
+    int ny;
+
+    std::vector<uint8_t> buf;
+};
+```
+And this will be passed to `clip_image_load_from_bytes`:
+```c++
+bool clip_image_load_from_bytes(const unsigned char * bytes, size_t bytes_length, struct clip_image_u8 * img) {
+    int nx, ny, nc;
+    auto * data = stbi_load_from_memory(bytes, bytes_length, &nx, &ny, &nc, 3);
+    if (!data) {
+        LOG_ERR("%s: failed to decode image bytes\n", __func__);
+        return false;
+    }
+
+    build_clip_img_from_data(data, nx, ny, img);
+    stbi_image_free(data);
+    return true;
+}
+```
+This is using the [`stb_image`](#std_image) library to load the image from the
+bytes into the `clip_image_u8` struct. The image is then embedded using the
+
+```c++
+static void build_clip_img_from_data(const stbi_uc * data, int nx, int ny, clip_image_u8 * img) {
+    img->nx = nx;
+    img->ny = ny;
+    img->buf.resize(3 * nx * ny);
+    memcpy(img->buf.data(), data, img->buf.size());
+}
+```
+
+```console
+(gdb) p *img
+$2 = {nx = 800, ny = 663, buf = std::vector of length 1591200, capacity 1591200 = {0 '\000'
+...
+```
+
+```c++
+struct llava_image_embed * llava_image_embed_make_with_bytes(struct clip_ctx * ctx_clip,
+int n_threads, const unsigned char * image_bytes, int image_bytes_length) {
+    ...
+
+    float* image_embed = NULL;
+    int n_image_pos = 0;
+    bool image_embed_result = llava_image_embed_make_with_clip_img(ctx_clip, n_threads, img, &image_embed, &n_image_pos);
+    if (!image_embed_result) {
+        clip_image_u8_free(img);
+        LOG_ERR("%s: coulnd't embed the image\n", __func__);
+        return NULL;
+    }
+
+    clip_image_u8_free(img);
+    auto result = (llava_image_embed*)malloc(sizeof(llava_image_embed));
+    result->embed = image_embed;
+    result->n_image_pos = n_image_pos;
+    return result;
+}
+```
+```c++
+bool llava_image_embed_make_with_clip_img(clip_ctx * ctx_clip, int n_threads,
+    const clip_image_u8 * img, float ** image_embd_out, int * n_img_pos_out) {
+
+    int num_max_patches = 6;
+    if (clip_is_minicpmv(ctx_clip)) {
+        num_max_patches = 10;
+    }
+    float * image_embd = (float *)malloc(clip_embd_nbytes(ctx_clip)*num_max_patches); // TODO: base on gridsize/llava model
+    if (!image_embd) {
+        LOG_ERR("Unable to allocate memory for image embeddings\n");
+        return false;
+    }
+
+    int n_img_pos;
+    if (!encode_image_with_clip(ctx_clip, n_threads, img, image_embd, &n_img_pos)) {
+        LOG_ERR("%s: cannot encode image, aborting\n", __func__);
+        free(image_embd);
+        return false;
+    }
+    *image_embd_out = image_embd;
+    *n_img_pos_out = n_img_pos;
+
+    return true;
+}
+```
+
+```c++
+size_t clip_embd_nbytes(const struct clip_ctx * ctx) {
+    return clip_n_patches(ctx) * clip_n_mmproj_embd(ctx) * sizeof(float);
+}
+
+int clip_n_patches(const struct clip_ctx * ctx) {
+    const auto & params = ctx->vision_model.hparams;
+
+    int n_patches = (params.image_size / params.patch_size) * (params.image_size / params.patch_size);
+
+    if (ctx->proj_type == PROJECTOR_TYPE_LDP || ctx->proj_type == PROJECTOR_TYPE_LDPV2) {
+        n_patches /= 4;
+    } else if (ctx->proj_type == PROJECTOR_TYPE_RESAMPLER) {
+        if (ctx->minicpmv_version == 2) {
+            n_patches = 96;
+        }
+        else if (ctx->minicpmv_version == 3) {
+            n_patches = 64;
+        }
+    }
+
+    return n_patches;
+}
+```
+```console
+(gdb) p params.image_size
+$8 = 336
+(gdb) p params.patch_size
+$9 = 14
+(gdb) p params.image_size / params.patch_size
+$10 = 24
+(gdb) p n_patches
+$12 = 576
+```
+So 576 will be returned from `clip_n_patches`.
+```c++
+int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
+    if (ctx->proj_type == PROJECTOR_TYPE_LDP) {
+        return ctx->vision_model.mm_model_block_1_block_2_1_b->ne[0];
+    }
+    if (ctx->proj_type == PROJECTOR_TYPE_LDPV2) {
+        return ctx->vision_model.mm_model_peg_0_b->ne[0];
+    }
+    if (ctx->proj_type == PROJECTOR_TYPE_MLP) {
+        return ctx->vision_model.mm_2_b->ne[0];
+    }
+    if (ctx->proj_type == PROJECTOR_TYPE_MLP_NORM) {
+        return ctx->vision_model.mm_3_b->ne[0];
+    }
+    if (ctx->proj_type == PROJECTOR_TYPE_RESAMPLER) {
+        if (ctx->minicpmv_version == 2) {
+            return 4096;
+        }
+        else if (ctx->minicpmv_version == 3) {
+            return 3584;
+        }
+    }
+
+    std::string proj_type = PROJECTOR_TYPE_NAMES[ctx->proj_type];
+    throw std::runtime_error(format("%s: don't support projector with: %s currently\n", __func__, proj_type.c_str()));
+}
+```
+```console
+(gdb) p ctx->vision_model.mm_2_b->ne[0]
+$13 = 4096
+```
+So `clip_embd_nbytes` will return 576 * 4096 = 2359296 which will be used with
+malloc as the size to allocate.
+
+Next we have:
+```c++
+    int n_img_pos;
+    if (!encode_image_with_clip(ctx_clip, n_threads, img, image_embd, &n_img_pos)) {
+        LOG_ERR("%s: cannot encode image, aborting\n", __func__);
+        free(image_embd);
+        return false;
+    }
+    *image_embd_out = image_embd;
+    *n_img_pos_out = n_img_pos;
+
+    return true;
+}
+```
+```c++
+static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads,
+    const clip_image_u8 * img, float * image_embd, int * n_img_pos) {
+
+    clip_image_f32_batch img_res_v;
+    img_res_v.size = 0;
+    img_res_v.data = nullptr;
+    if (!clip_image_preprocess(ctx_clip, img, &img_res_v)) {
+        LOG_ERR("%s: unable to preprocess image\n", __func__);
+        delete[] img_res_v.data;
+        return false;
+    }
+```
+
+This will call `clip_image_preprocess` which is a pretty big/long function but
+I'll try to go over the parts that are relevant to this session and also
+connect things back to the earlier parts of the code:
+```c++
+bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, clip_image_f32_batch * res_imgs) {
+    ...
+
+    bool pad_to_square = true;
+    ...
+    if (strcmp(params.mm_patch_merge_type, "spatial_unpad") == 0) {
+        pad_to_square = false;
+    }
+
+    clip_image_u8 * temp = clip_image_u8_init(); // we will keep the input image data here temporarily
+    ...
+
+    } else {
+        if (params.image_grid_pinpoints[0] != 0) {
+
+            // "spatial_unpad" with "anyres" processing for llava-1.6
+            std::vector<std::pair<int, int>> possible_resolutions;
+            for (int i = 0; i < 32 && params.image_grid_pinpoints[i] != 0; i+=2) {
+                possible_resolutions.push_back({params.image_grid_pinpoints[i], params.image_grid_pinpoints[i+1]});
+            }
+            std::pair<int, int> best_resolution = select_best_resolution({img->nx, img->ny}, possible_resolutions);
+
+```
+Here we can see how the pinpoints are used which I was not 100% sure about
+above. First the possible resolutions are extracted from the pinpoints.
+
+```c++
+            // clip_image_save_to_bmp(*img, "input.bmp");
+            resize_and_pad_image(*img, *temp, best_resolution);  // we do not pad with mean-bg color anymore in llava-1.6
+
+            // prepare spatial sorted main patches of image_size each (336 in llava-1.6)
+            std::vector<clip_image_u8 *> patches = divide_to_patches_u8(*temp, params.image_size);
+
+            clip_image_u8 *image_original_resize = clip_image_u8_init();
+            // bilinear_resize(*img, *image_original_resize, params.image_size, params.image_size); // in python this is "shortest_edge", but all CLIP are square
+            bicubic_resize(*img, *image_original_resize, params.image_size, params.image_size); // in python this is "shortest_edge", but all CLIP are square
+            patches.insert(patches.begin(), image_original_resize);
+            // clip_image_f32_batch_init(patches.size());
+            res_imgs->size = patches.size();
+            res_imgs->data = new clip_image_f32[res_imgs->size];
+            int num=0;
+            for (auto& patch : patches) {
+                normalize_image_u8_to_f32(patch, &res_imgs->data[num], ctx->image_mean, ctx->image_std);
+                num++;
+            }
+
+            for (size_t i = 0; i < patches.size(); i++) {
+                // LOG_DBG("patch %d: %d %d\n", i, patches[i]->nx, patches[i]->ny);
+                clip_image_u8_free(patches[i]);
+            }
+
+            clip_image_u8_free(temp);
+
+            return true;
+```
+```console
+
+```
 
 <a name="wip"></a>
 _wip_
