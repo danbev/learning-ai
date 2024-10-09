@@ -2944,19 +2944,73 @@ In this case the best fit will be:
 (gdb) p best_resolution 
 $31 = {first = 672, second = 672}
 ```
+Next, well use the best resolution to actually resize the input image:
+```c+++
+            resize_and_pad_image(*img, *temp, best_resolution);  // we do not pad with mean-bg color anymore in llava-1.6
+```
+This will produce a resized image, something like this:
+```
+Original Image         Resized Image       Padded Output
++-------------+        +----------+        +-------------+
+|             |        |          |        |    black    |
+|             |        |          |        | +---------+ |
+|             |   =>   |          |   =>   | | resized | |
+|             |        |          |        | |  image  | |
+|             |        |          |        | +---------+ |
++-------------+        +----------+        |    black    |
+                                           +-------------+
+```
+This approach is common in image processing for machine learning models, as it
+ensures all images are the same size without distorting their content.
+
+TODO: Get familiar with the `resize_and_pad_image` function and how this
+actually works.
+
+Next we the image is going to be split into patches:
+```c++
+    // prepare spatial sorted main patches of image_size each (336 in llava-1.6)
+    std::vector<clip_image_u8 *> patches = divide_to_patches_u8(*temp, params.image_size); 
+```
 
 ```c++
-            // clip_image_save_to_bmp(*img, "input.bmp");
-            resize_and_pad_image(*img, *temp, best_resolution);  // we do not pad with mean-bg color anymore in llava-1.6
+static std::vector<clip_image_u8*> divide_to_patches_u8(const clip_image_u8 & image, int patch_size) {
+    std::vector<clip_image_u8*> patches;
+    int width = image.nx;
+    int height = image.ny;
+    for (int i = 0; i < height; i += patch_size) {
+        for (int j = 0; j < width; j += patch_size) {
+            clip_image_u8 *patch = clip_image_u8_init();
+            patch->nx = std::min(patch_size, width - j);
+            patch->ny = std::min(patch_size, height - i);
+            patch->buf.resize(3 * patch->nx * patch->ny);
+            for (int y = 0; y < patch->ny; ++y) {
+                for (int x = 0; x < patch->nx; ++x) {
+                    for (int c = 0; c < 3; ++c) {
+                        patch->buf[3 * (y * patch->nx + x) + c] = image.buf[3 * ((i + y) * width + (j + x)) + c];
+                    }
+                }
+            }
+            patches.push_back(patch);
+        }
+    }
+    return patches;
+}
+```
+So this will split the image which is 672x672 into 336x336 patches, which
+results in 4 patches.
 
-            // prepare spatial sorted main patches of image_size each (336 in llava-1.6)
-            std::vector<clip_image_u8 *> patches = divide_to_patches_u8(*temp, params.image_size);
-
+Now, next we will resize the original image into a 336x336 image, and then
+insert this as an additional patch to the beginning of the patches.
+```c++
             clip_image_u8 *image_original_resize = clip_image_u8_init();
-            // bilinear_resize(*img, *image_original_resize, params.image_size, params.image_size); // in python this is "shortest_edge", but all CLIP are square
-            bicubic_resize(*img, *image_original_resize, params.image_size, params.image_size); // in python this is "shortest_edge", but all CLIP are square
+            bicubic_resize(*img, *image_original_resize, params.image_size, params.image_size);
             patches.insert(patches.begin(), image_original_resize);
-            // clip_image_f32_batch_init(patches.size());
+```
+So we will now have 5 patches, the first being the resized original image and
+the rest being the patches of the rescaled image using the best resolution.
+
+Next the `res_imgs` which is of type `clip_image_f32_batch` has its fields set:
+```c++
             res_imgs->size = patches.size();
             res_imgs->data = new clip_image_f32[res_imgs->size];
             int num=0;
@@ -2964,15 +3018,295 @@ $31 = {first = 672, second = 672}
                 normalize_image_u8_to_f32(patch, &res_imgs->data[num], ctx->image_mean, ctx->image_std);
                 num++;
             }
+```
+The function `normalize_image_u8_to_f32` will convert the image from uint8 to
+float32 and normalize it using the mean and standard deviation of the image
+data. Notice that this function used the `image_mean` and `image_std` which we
+saw previously, and now we can see how they are used. And recall that these are
+arrays of size 3:
+For for each patch the following will be performed:
+```c++
+static void normalize_image_u8_to_f32(const clip_image_u8* src, clip_image_f32* dst, const float mean[3], const float std[3]) {
+    dst->nx = src->nx;
+    dst->ny = src->ny;
+    dst->buf.resize(src->buf.size());
 
-            for (size_t i = 0; i < patches.size(); i++) {
-                // LOG_DBG("patch %d: %d %d\n", i, patches[i]->nx, patches[i]->ny);
-                clip_image_u8_free(patches[i]);
+    for (size_t i = 0; i < src->buf.size(); ++i) {
+        int c = i % 3; // rgb
+        dst->buf[i] = (static_cast<float>(src->buf[i]) / 255.0f - mean[c]) / std[c];
+    }
+}
+// normalized_value = (pixel_value / 255.0 - mean) / std
+```
+So prior to the normalization a single entry in the u8 image buffer represents
+one pixel, and they are groupds in three for the RGB channels. We are taking
+each pixel value which is in u8, so a value between 0-255, and dividing it by
+a float 255.0 to get a value between 0-1. This is then normalized by subtracting
+the mean and dividing by the standard deviation for the specific channel that
+is being processed. This will prepare the data to be able to be processed by
+a neural network. Even though we have normalized the data, the pixel values
+relationships are preserved.
+
+After this the patches are freed and the function returns true. The normalized
+patches are now in the in-out parameter `res_imgs`.
+
+So this will bring us back into `encode_image_with_clip` in llava.cpp:
+```c++
+    const int64_t t_img_enc_start_us = ggml_time_us();
+
+    const char * mm_patch_merge_type = clip_patch_merge_type(ctx_clip);
+    if (clip_is_minicpmv(ctx_clip)) {
+        ...
+    }
+    ...
+    else {
+        // spatial_unpad llava-1.6 type embedding
+        std::vector<float *> image_embd_v;
+        image_embd_v.resize(img_res_v.size);
+
+        for (size_t i = 0; i < img_res_v.size; i++) {
+            image_embd_v[i] = (float *) malloc(clip_embd_nbytes(ctx_clip)); // 576 patches * 4096 embeddings * 4 bytes = 9437184
+            const bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[i], image_embd_v[i]);
+            if (!encoded) {
+                LOG_ERR("Unable to encode image - spatial_unpad - subimage %d of %d\n", (int) i+1, (int) img_res_v.size);
+                return false;
             }
+        }
+```
 
-            clip_image_u8_free(temp);
+So the above will create a vector of float pointers which will hold 5 elements.
+Then it will loop over all the normalized patches and encode them using the
+`clip_image_encode` function.
+```c++
+bool clip_image_encode(struct clip_ctx * ctx, const int n_threads, clip_image_f32 * img, float * vec) {
+    clip_image_f32_batch imgs{};
+    imgs.size = 1;
+    imgs.data = img;
+    return clip_image_batch_encode(ctx, n_threads, &imgs, vec);
+}
+```
 
-            return true;
+```c++
+bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_image_f32_batch * imgs, float * vec) {
+    if (!ctx->has_vision_encoder) {
+        LOG_ERR("This gguf file seems to have no vision encoder\n");
+        return false;
+    }
+    int batch_size = imgs->size;
+
+    ggml_cgraph * gf = clip_image_build_graph(ctx, imgs, ctx->load_image_size, true);
+    ggml_gallocr_alloc_graph(ctx->compute_alloc, gf);
+```
+Now, we have gone through `clip_image_build_graph` before, but this time we are
+passing in the normalized patches.
+
+Next the inputs will be set:
+```c++
+    const auto & model = ctx->vision_model;
+    const auto & hparams = model.hparams;
+
+    const int image_size = hparams.image_size;
+    int image_size_width  = image_size;
+    int image_size_height = image_size;
+
+```
+Lets inspect some of these values so we know what they are later if needed:
+```console
+(gdb) p image_size
+$79 = 336
+(gdb) p image_size_width 
+$80 = 336
+(gdb) p image_size_height 
+$81 = 336
+(gdb) p patch_size 
+$82 = 14
+(gdb) p num_patches 
+$83 = 576
+(gdb) p num_positions 
+$84 = 577
+```
+Next we have:
+```c++
+    if(ctx->load_image_size==nullptr){
+        ctx->load_image_size= clip_image_size_init();
+    }
+    const int pos_w = ctx->load_image_size->width/patch_size;
+    const int pos_h = ctx->load_image_size->height/patch_size;
+```
+This is statement is true and will create a new `clip_image_size` struct:
+```console
+(gdb) p *ctx->load_image_size
+$87 = {width = 448, height = 448}
+```
+This the load image size, what is this about?  We already loaded the image but
+perhaps this is something else and lets see how it is used later.
+
+Next we will get the tensor `inp_raw` from the computation graph:
+```c++
+        struct ggml_tensor * inp_raw = ggml_graph_get_tensor(gf, "inp_raw");
+        float * data = (float *)malloc(ggml_nbytes(inp_raw));
+```
+And we are now going to populate this tensors data with the normalized patches.
+Lets just first take a look at `imgs`:
+```console
+(gdb) p imgs->size
+$98 = 1
+(gdb) p imgs->data[0]
+$99 = {nx = 336, ny = 336, buf = std::vector of length 338688, capacity 338688 = {-1.79226255, -1.73708928, -1.39489937, 
+    -1.79226255, -1.73708928, -1.39489937, -1.79226255, -1.73708928, -1.39489937, -1.79226255, -1.73708928, -1.39489937, 
+    ...
+
+(gdb) p batch_size
+$102 = 1
+```
+
+So the following will loop over the single normalized patch:
+```c++
+        for (size_t i = 0; i < imgs->size; i++) { // could be batch_size for clarity perhaps?
+            const int nx = imgs->data[i].nx;
+            const int ny = imgs->data[i].ny;
+
+            const int n = nx * ny;
+
+            for (int b = 0; b < batch_size; b++) {
+                for (int k = 0; k < 3; k++) {
+                    for (int y = 0; y < ny; y++) {
+                        for (int x = 0; x < nx; x++) {
+                            data[(b * 3 * n) + k * n + y * nx + x] = imgs->data[b].buf[3 * (y * nx + x) + k];
+                        }
+                    }
+                }
+            }
+        }
+        ggml_backend_tensor_set(inp_raw, data, 0, ggml_nbytes(inp_raw));
+        free(data);
+```
+So the for loop (the first inner one) will iterate over the batches which is
+just one at the momemt. The second for loop (k) will iterator over the RGB
+channels. The for loop with y is the height of the image and the for loop with
+x is the width of the image.
+The actual setting is done by this line:
+```c++
+data[(b * 3 * n) + k * n + y * nx + x] = imgs->data[b].buf[3 * (y * nx + x) + k];
+
+(b * 3 * n) moves to the start of the current image in the batch. Will always be 0 in this case.
+k * n       selects the current color channel (k), and n is size of one channel (nx * ny).
+y * nx      selects the current row, and nx is the width of the image (336 in this case).
++ x         selects the current column within the row.
+```
+Lets take a look at a simpler example to understand this better:
+```
+3x3 image with 3 channels (RGB):
+
+R G B | R G B | R G B
+R G B | R G B | R G B
+R G B | R G B | R G B
+
+Same with numbers so we can reference them below:
+R1 G1 B1 | R2 G2 B2 | R3 G3 B3
+R4 G4 B4 | R5 G5 B5 | R6 G6 B6
+R7 G7 B7 | R8 G8 B8 | R9 G9 B9
+
+Idx = 3 * (y * nx + x) + k
+3 = channels (Red Green Blue)
+y  = 0-2 (row)
+nx = 3 (width)
+k  = 0-2 (channel, where 0=R, 1=G, 2=B)
+         y  nx   x    k   idx
+R1: 3 * (0 * 3 + 0) + 0 = 0
+G1: 3 * (0 * 3 + 0) + 1 = 1
+B1: 3 * (0 * 3 + 0) + 2 = 2
+
+R2: 3 * (0 * 3 + 1) + 0 = 3
+G2: 3 * (0 * 3 + 1) + 1 = 4
+B2: 3 * (0 * 3 + 1) + 2 = 5
+
+R3: 3 * (0 * 3 + 2) + 0 = 6
+G3: 3 * (0 * 3 + 2) + 1 = 7
+B3: 3 * (0 * 3 + 2) + 2 = 8
+
+R4: 3 * (1 * 3 + 0) + 0 = 9
+G4: 3 * (1 * 3 + 0) + 1 = 10
+B4: 3 * (1 * 3 + 0) + 2 = 11
+
+R5: 3 * (1 * 3 + 1) + 0 = 12
+G5: 3 * (1 * 3 + 1) + 1 = 13
+B5: 3 * (1 * 3 + 1) + 2 = 14
+
+R6: 3 * (1 * 3 + 2) + 0 = 15
+G6: 3 * (1 * 3 + 2) + 1 = 16
+B6: 3 * (1 * 3 + 2) + 2 = 17
+
+R7: 3 * (2 * 3 + 0) + 0 = 18
+G7: 3 * (2 * 3 + 0) + 1 = 19
+B7: 3 * (2 * 3 + 0) + 2 = 20
+
+R8: 3 * (2 * 3 + 1) + 0 = 21
+G8: 3 * (2 * 3 + 1) + 1 = 22
+B8: 3 * (2 * 3 + 1) + 2 = 23
+
+R9: 3 * (2 * 3 + 2) + 0 = 24
+G9: 3 * (2 * 3 + 2) + 1 = 25
+B9: 3 * (2 * 3 + 2) + 2 = 26
+
+
+Reorganized 3x3 image with 3 channels (RGB):
+
+R R R | R R R | R R R
+G G G | G G G | G G G
+B B B | B B B | B B B
+
+With numbers:
+R1 R2 R3 | R4 R5 R6 | R7 R8 R9
+G1 G2 G3 | G4 G5 G6 | G7 G8 G9
+B1 B2 B3 | B4 B5 B6 | B7 B8 B9
+
+Index = (0 * 3 * 9) + k * 9 + y * 3 + x
+
+R1: (0 * 3 * 9) + 0 * 9 + 0 * 3 + 0 = 0
+R2: (0 * 3 * 9) + 0 * 9 + 0 * 3 + 1 = 1
+R3: (0 * 3 * 9) + 0 * 9 + 0 * 3 + 2 = 2
+R4: (0 * 3 * 9) + 0 * 9 + 1 * 3 + 0 = 3
+R5: (0 * 3 * 9) + 0 * 9 + 1 * 3 + 1 = 4
+R6: (0 * 3 * 9) + 0 * 9 + 1 * 3 + 2 = 5
+R7: (0 * 3 * 9) + 0 * 9 + 2 * 3 + 0 = 6
+R8: (0 * 3 * 9) + 0 * 9 + 2 * 3 + 1 = 7
+R9: (0 * 3 * 9) + 0 * 9 + 2 * 3 + 2 = 8
+
+G1: (0 * 3 * 9) + 1 * 9 + 0 * 3 + 0 = 9
+G2: (0 * 3 * 9) + 1 * 9 + 0 * 3 + 1 = 10
+G3: (0 * 3 * 9) + 1 * 9 + 0 * 3 + 2 = 11
+G4: (0 * 3 * 9) + 1 * 9 + 1 * 3 + 0 = 12
+G5: (0 * 3 * 9) + 1 * 9 + 1 * 3 + 1 = 13
+G6: (0 * 3 * 9) + 1 * 9 + 1 * 3 + 2 = 14
+G7: (0 * 3 * 9) + 1 * 9 + 2 * 3 + 0 = 15
+G8: (0 * 3 * 9) + 1 * 9 + 2 * 3 + 1 = 16
+G9: (0 * 3 * 9) + 1 * 9 + 2 * 3 + 2 = 17
+
+B1: (0 * 3 * 9) + 2 * 9 + 0 * 3 + 0 = 18
+B2: (0 * 3 * 9) + 2 * 9 + 0 * 3 + 1 = 19
+B3: (0 * 3 * 9) + 2 * 9 + 0 * 3 + 2 = 20
+B4: (0 * 3 * 9) + 2 * 9 + 1 * 3 + 0 = 21
+B5: (0 * 3 * 9) + 2 * 9 + 1 * 3 + 1 = 22
+B6: (0 * 3 * 9) + 2 * 9 + 1 * 3 + 2 = 23
+B7: (0 * 3 * 9) + 2 * 9 + 2 * 3 + 0 = 24
+B8: (0 * 3 * 9) + 2 * 9 + 2 * 3 + 1 = 25
+B9: (0 * 3 * 9) + 2 * 9 + 2 * 3 + 2 = 26
+```
+Notice that the for loops is doing the following in the inner most loop:
+```c++
+    for (int x = 0; x < nx; x++) {
+        data[(b * 3 * n) + k * n + y * nx + x] = imgs->data[b].buf[3 * (y * nx + x) + k];
+    }
+
+k = 1
+  data[(0 * 3 * n) + 1 * n + y * nx + x] = imgs->data[b].buf[3 * (y * nx + x) + 1];
+  data[(0 * 3 * n) + 1 * n + y * nx + x] = imgs->data[b].buf[3 * (0 * 3 + 0) + 1];
+  data[(0 * 3 * 9) + 1 * 9 + 0 * 3 + 0] = imgs->data[b].buf[1];
+  data[9] = imgs->data[b].buf[1];
+
+Org G1  : 3 * (0 * 3 + 0) + 1 = 1
+Reorg G1: (0 * 3 * 9) + 1 * 9 + 0 * 3 + 0 = 9
 ```
 
 <a name="wip"></a>
