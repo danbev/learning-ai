@@ -6,6 +6,18 @@ int main() {
     cudaError_t err = cudaSuccess;
     int count = 0;
 
+    int runtimeVersion = 0;
+
+    // Get CUDA runtime version
+    err = cudaRuntimeGetVersion(&runtimeVersion);
+    if (err != cudaSuccess) {
+        printf("cudaRuntimeGetVersion failed: %s\n", cudaGetErrorString(err));
+        return 1;
+    }
+
+    printf("CUDA Runtime version: %d.%d\n", runtimeVersion / 1000, (runtimeVersion % 100) / 10);
+
+
     err = cudaGetDeviceCount(&count);
     if (err != cudaSuccess) {
         printf("cudaGetDeviceCount failed: %s\n", cudaGetErrorString(err));
