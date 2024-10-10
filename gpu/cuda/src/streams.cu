@@ -31,14 +31,6 @@ int main() {
         h_a[i] = i+1;
         h_b[i] = i+1;
     }
-    printf("A array:\n");
-    for (int i = 0; i < N; i++) {
-        printf("%.2f\n", h_a[i]);
-    }
-    printf("B array:\n");
-    for (int i = 0; i < N; i++) {
-        printf("%.2f\n", h_b[i]);
-    }
 
     // Create streams
     for (int i = 0; i < STREAMS; i++) {
@@ -46,16 +38,18 @@ int main() {
     }
 
     // Divide work among streams
-    int shared_mem = 0;
-    int threads_per_block = 256;
     int streamSize = N / STREAMS;
-    int n_blocks = (streamSize + threads_per_block - 1) / threads_per_block;
+
+    int shared_mem = 0;
+    int block_dim = 256;
+    int grid_dim = (streamSize + 255) / block_dim;
+
     for (int i = 0; i < STREAMS; i++) {
         int offset = i * streamSize;
         cudaMemcpyAsync(&d_a[offset], &h_a[offset], streamSize * sizeof(float), cudaMemcpyHostToDevice, streams[i]);
         cudaMemcpyAsync(&d_b[offset], &h_b[offset], streamSize * sizeof(float), cudaMemcpyHostToDevice, streams[i]);
         
-        vector_add<<<(n_blocks, threads_per_block, shared_mem, streams[i]>>>(&d_a[offset], &d_b[offset], &d_c[offset], streamSize);
+        vector_add<<<grid_dim, block_dim, shared_mem, streams[i]>>>(&d_a[offset], &d_b[offset], &d_c[offset], streamSize);
         
         cudaMemcpyAsync(&h_c[offset], &d_c[offset], streamSize * sizeof(float), cudaMemcpyDeviceToHost, streams[i]);
     }
