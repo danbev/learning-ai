@@ -45,6 +45,25 @@ int main() {
         }
     }
 
+    // Get and print information for each device
+    for (int i = 0; i < count; i++) {
+        cudaDeviceProp prop;
+        err = cudaGetDeviceProperties(&prop, i);
+        if (err != cudaSuccess) {
+            printf("cudaGetDeviceProperties failed for device %d: %s\n", i, cudaGetErrorString(err));
+            continue;
+        }
+
+        printf("\nDevice %d:\n", i);
+        printf("  Name: %s\n", prop.name);
+        printf("  Compute Capability: %d.%d\n", prop.major, prop.minor);
+        printf("  Multiprocessors: %d\n", prop.multiProcessorCount);
+        printf("  Clock Rate: %.0f MHz\n", prop.clockRate * 1e-3f);
+        printf("  Total Global Memory: %.2f GB\n", prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0));
+        printf("  L2 Cache Size: %.2f MB\n", prop.l2CacheSize / (1024.0 * 1024.0));
+    }
+
+
     myKernel<<<1,1>>>();
     err = cudaGetLastError();
     if (err != cudaSuccess) {
