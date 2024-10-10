@@ -3308,6 +3308,91 @@ k = 1
 Org G1  : 3 * (0 * 3 + 0) + 1 = 1
 Reorg G1: (0 * 3 * 9) + 1 * 9 + 0 * 3 + 0 = 9
 ```
+This data is then set on the backend tensor (device memory):
+```c++
+        ggml_backend_tensor_set(inp_raw, data, 0, ggml_nbytes(inp_raw));
+        free(data);
+```
+Next we have the class embedding which recall is the classification token and
+this is initalized to zero which makes sense as it will be populated during
+inference:
+```c++
+        {
+            if (ctx->has_class_embedding) {
+                struct ggml_tensor * embeddings = ggml_graph_get_tensor(gf, "embeddings");
+
+                void* zero_mem = malloc(ggml_nbytes(embeddings));
+                memset(zero_mem, 0, ggml_nbytes(embeddings));
+                ggml_backend_tensor_set(embeddings, zero_mem, 0, ggml_nbytes(embeddings));
+                free(zero_mem);
+            }
+        }
+```
+Next we have the positions tensor which will get populated by the positions from
+0 to `num_positions` (577):
+```c++
+        {
+            struct ggml_tensor * positions = ggml_graph_get_tensor(gf, "positions");
+
+            int* positions_data = (int*)malloc(ggml_nbytes(positions));
+            for (int i = 0; i < num_positions; i++) {
+                positions_data[i] = i;
+            }
+            ggml_backend_tensor_set(positions, positions_data, 0, ggml_nbytes(positions));
+            free(positions_data);
+        }
+```
+
+Next we have patches which also initialized in a similar way to the positions
+but where the first value is skipped as it is the class token:
+```c++
+        {
+            struct ggml_tensor * patches = ggml_graph_get_tensor(gf, "patches");
+            int* patches_data = (int*)malloc(ggml_nbytes(patches));
+            for (int i = 0; i < num_patches; i++) {
+                patches_data[i] = i + 1;
+            }
+            ggml_backend_tensor_set(patches, patches_data, 0, ggml_nbytes(patches));
+            free(patches_data);
+        }
+```
+If I recall correctly I think patches is used with a `get_rows` operation.
+
+Next for CPU backends we set the threads to be used:
+```c++
+    if (ggml_backend_is_cpu(ctx->backend)) {
+        ggml_backend_cpu_set_n_threads(ctx->backend, n_threads);
+    }
+```
+Then we compute the graph:
+```c++
+
+    ggml_backend_graph_compute(ctx->backend, gf);
+```
+This will perform the forward pass of the graph that was built previously.
+```c
+static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+
+    ggml_cuda_set_device(cuda_ctx->device);
+```
+TODO: Continue with the `ggml_backend_cuda_graph_compute` function.
+
+
+All the operations will be executed and the output tensor will be populated
+with the embeddings. This will now be an embedding fo the image patches suitable
+for handing of to an LLM (together with text tokens for example).
+```c++
+
+    // the last node is the embedding tensor
+    struct ggml_tensor * embeddings = ggml_graph_node(gf, -1);
+
+    // copy the embeddings to the location passed by the user
+    ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
+
+    return true;
+```
+
 
 <a name="wip"></a>
 _wip_
