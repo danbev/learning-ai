@@ -24,6 +24,9 @@ array-add: src/array-add.cu
 streams: src/streams.cu
 	nvcc -lnppc -o $@ $<
 
+graphs: src/graphs.cu
+	nvcc -lnppc -o $@ $<
+
 .PHONY: clean
 clean:
-	${RM} hello-world threads inc hello-world.ptx minimal wmma streams
+	${RM} hello-world threads inc hello-world.ptx minimal wmma streams graphs array-add
