@@ -3,7 +3,7 @@
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-	// Metal Shading Language (MSL) Device
+	// Metal (MLT) Device
 	NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
 	id<MTLDevice> device = nil;
 	for (id<MTLDevice> availableDevice in devices) {
@@ -36,6 +36,7 @@ int main(int argc, const char * argv[]) {
             NSLog(@"Failed to find the kernel function.");
             return -1;
         }
+	NSLog(@"Kernel function: %@", kernelFunction.name);
 
         id<MTLComputePipelineState> computePipelineState = [device newComputePipelineStateWithFunction:kernelFunction error:&error];
         if (!computePipelineState) {
