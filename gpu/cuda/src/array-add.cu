@@ -22,12 +22,12 @@ int main() {
 
     printf("array a:\n");
     for (int i = 0; i < N; i++) {
-	printf("%d ", h_a[i]);
+        printf("%d ", h_a[i]);
     }
     printf("\n");
     printf("array b:\n");
     for (int i = 0; i < N; i++) {
-	printf("%d ", h_b[i]);
+        printf("%d ", h_b[i]);
     }
     printf("\n");
 
@@ -58,7 +58,7 @@ int main() {
 
     printf("Added on GPU:\n");
     for (int i = 0; i < N; i++) {
-	printf("%d ", h_c[i]);
+        printf("%d ", h_c[i]);
     }
     printf("\n");
 

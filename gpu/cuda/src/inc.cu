@@ -41,7 +41,7 @@ int main() {
 
     printf("Incremented on GPU:\n");
     for (int i = 0; i < N; i++) {
-	printf("%d ", h_array[i]);
+        printf("%d ", h_array[i]);
     }
     printf("\n");
 
