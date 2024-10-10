@@ -26,6 +26,10 @@ int main(int argc, const char * argv[]) {
             NSLog(@"Failed to load the library. Error: %@", error.localizedDescription);
             return -1;
         }
+	NSLog(@"Functions in library:");
+	for (NSString *name in defaultLibrary.functionNames) {
+	    NSLog(@"    %@", name);
+	}
 
         id<MTLFunction> kernelFunction = [defaultLibrary newFunctionWithName:@"simpleMultiply"];
         if (!kernelFunction) {
@@ -71,7 +75,7 @@ int main(int argc, const char * argv[]) {
 
         memcpy(outputData, [outputBuffer contents], dataSize * sizeof(float));
         for (NSUInteger i = 0; i < dataSize; i++) {
-            NSLog(@"Output[%lu] = %f", (unsigned long)i, outputData[i]);
+            //NSLog(@"Output[%lu] = %f", (unsigned long)i, outputData[i]);
         }
 
         free(inputData);
