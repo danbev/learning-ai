@@ -5,10 +5,10 @@ METAL = xcrun metal
 
 all: simple
 
-simple: src/main.mm src/compute.cpp src/kernel.metal
+simple: src/main.mm src/kernel.metal
 	$(METAL) -c src/kernel.metal -o kernel.air
 	xcrun metallib kernel.air -o kernel.metallib
-	$(CC) $(CFLAGS) src/main.mm src/compute.cpp -o simple
+	$(CC) $(CFLAGS) src/main.mm -o simple
 
 clean:
 	rm -f simple *.air *.metallib
