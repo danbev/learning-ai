@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+
 #include <stdio.h>
 
 __global__ void myKernel() {}
@@ -31,6 +32,18 @@ int main() {
     }
 
     printf("CUDA device count: %d\n", count);
+
+    // Get and print total VRAM for each device
+    for (int i = 0; i < count; i++) {
+        cudaSetDevice(i);
+        size_t free_mem, total_mem;
+        err = cudaMemGetInfo(&free_mem, &total_mem);
+        if (err != cudaSuccess) {
+            printf("cudaMemGetInfo failed for device %d: %s\n", i, cudaGetErrorString(err));
+        } else {
+            printf("Device %d - Total VRAM: %.2f GB\n", i, total_mem / (1024.0 * 1024.0 * 1024.0));
+        }
+    }
 
     myKernel<<<1,1>>>();
     err = cudaGetLastError();
