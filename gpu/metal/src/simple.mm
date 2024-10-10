@@ -3,15 +3,16 @@
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-    NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
-        id<MTLDevice> device = nil;
-        for (id<MTLDevice> availableDevice in devices) {
-            if ([availableDevice.name isEqualToString:@"Apple M3"]) {
-                device = availableDevice;
-                NSLog(@"Using Metal device: %@", device.name);
-                break;
-            }
-        }
+	// Metal Shading Language (MSL) Device
+	NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
+	id<MTLDevice> device = nil;
+	for (id<MTLDevice> availableDevice in devices) {
+	    if ([availableDevice.name isEqualToString:@"Apple M3"]) {
+		device = availableDevice;
+		NSLog(@"Using Metal device: %@", device.name);
+		break;
+	    }
+	}
 
         if (!device) {
             NSLog(@"Apple M3 GPU is not available.");
@@ -19,7 +20,7 @@ int main(int argc, const char * argv[]) {
         }
 
         NSError *error = nil;
-        NSString *libraryPath = @"/Users/danbev/work/ai/learning-ai/gpu/mlx/kernel.metallib";
+        NSString *libraryPath = @"/Users/danbev/work/ai/learning-ai/gpu/metal/kernel.metallib";
         id<MTLLibrary> defaultLibrary = [device newLibraryWithFile:libraryPath error:&error];
         if (!defaultLibrary) {
             NSLog(@"Failed to load the library. Error: %@", error.localizedDescription);
