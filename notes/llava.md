@@ -3376,22 +3376,289 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
 
     ggml_cuda_set_device(cuda_ctx->device);
 ```
-TODO: Continue with the `ggml_backend_cuda_graph_compute` function.
+Lets start by inspecting the backend cuda context:
+```console
+(gdb) p *cuda_ctx
+$2 = {
+device = 0, name = "CUDA0", copy_event = 0x0,
+streams = {{0x5555566d1690, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0} <repeats 15 times>},
+cublas_handles = {0x555557534530, 0x0 <repeats 15 times>},
+cuda_graph = std::unique_ptr<ggml_cuda_graph> = {
+    get() = 0x555556a4d560},
+    pools = {std::unique_ptr<ggml_cuda_pool> = {
+        get() = 0x5555573e8620},
+        std::unique_ptr<ggml_cuda_pool> = {
+            get() = 0x0
+        } <repeats 15 times>
+    }
+}
 
+(gdb) ptype ggml_cuda_graph
+type = struct ggml_cuda_graph {
+    cudaGraph_t graph;
+    cudaGraphExec_t instance;
+    size_t num_nodes;
+    std::vector<CUgraphNode_st*> nodes;
+    std::vector<cudaKernelNodeParams> params;
+    bool disable_due_to_gpu_arch;
+    bool disable_due_to_too_many_updates;
+    bool disable_due_to_failed_graph_capture;
+    int number_consecutive_updates;
+    std::vector<ggml_graph_node_properties> ggml_graph_properties;
+    std::vector<char**> updated_kernel_arg;
 
-All the operations will be executed and the output tensor will be populated
-with the embeddings. This will now be an embedding fo the image patches suitable
-for handing of to an LLM (together with text tokens for example).
+    ~ggml_cuda_graph(void);
+}
+
+(gdb) ptype ggml_cuda_pool
+type = struct ggml_cuda_pool {
+
+    ~ggml_cuda_pool(void);
+    virtual void * alloc(size_t, size_t *);
+    virtual void free(void *, size_t);
+}
+```
+These structs are defined in `ggml/src/ggml-cuda/common.cuh`.
+So above we can see that the cuda device is set. This is done incase a different
+device it to be used and a check if the device passed in is the same as the
+current and if that is the case then nothing is done.
 ```c++
+#ifdef USE_CUDA_GRAPH
+    static const bool disable_cuda_graphs_due_to_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
 
-    // the last node is the embedding tensor
-    struct ggml_tensor * embeddings = ggml_graph_node(gf, -1);
+    // Objects required for CUDA Graph
+    if (cuda_ctx->cuda_graph == nullptr) {
+        cuda_ctx->cuda_graph.reset(new ggml_cuda_graph());
+    }
 
-    // copy the embeddings to the location passed by the user
-    ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
+    bool use_cuda_graph = true;
+    bool cuda_graph_update_required = false;
+    // vector of pointers to CUDA cpy kernels, which are required to identify
+    // kernel parameters which need updated in the graph for each token
+    std::vector<void *> ggml_cuda_cpy_fn_ptrs;
+```
+In our case `USE_CUDA_GRAPHS` is defined so we will use CUDA graphs.
+Next we have:
+```c++
+    if (cuda_ctx->cuda_graph->graph == nullptr) {
+        if (ggml_cuda_info().devices[cuda_ctx->device].cc < CC_AMPERE) {
+            cuda_ctx->cuda_graph->disable_due_to_gpu_arch = true;
+#ifndef NDEBUG
+            GGML_LOG_WARN("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
+#endif
+        }
+    }
+```
+The above is using `ggml_cuda_info()` which returns the following:
+```console
+(gdb) p ggml_cuda_info()
+$7 = (const ggml_cuda_device_info &) @0x7ffff78ec120: {
+device_count = 1,
+devices = {
+  {cc = 890, nsm = 46, smpb = 49152, smpbo = 101376, vmm = true, vmm_granularity = 2097152, total_vram = 0},
+  {cc = 0, nsm = 0, smpb = 0, smpbo = 0, vmm = false, vmm_granularity = 0, total_vram = 0} <repeats 15 times>},
+  default_tensor_split = {_M_elems = {0 <repeats 16 times>}}}
+```
+* `cc` is the compute capabily of the GPU. 8.9 in this case matches the NVIDIA GeForce RTX 4070 that I have.
+* `nsm` is the number of streaming multiprocessors. 
+* `smpbo` shared memory per block.
+* `vvm` is the virtual memory management.
+* `vmm_granularity` is the granularity of the virtual memory management.
+* `total_vram` is the total video memory. Strange that this is zero?
+I added the the total memory of my GPU to [minimal.cu](../gpu/cuda/src/minimal.cu)
+and it prints the following information:
+```console
+ ./minimal
+CUDA Runtime version: 12.6
+CUDA Driver version: 12.6
+CUDA device count: 1
+Device 0 - Total VRAM: 11.62 GB
+
+Device 0:
+  Name: NVIDIA GeForce RTX 4070
+  Compute Capability: 8.9
+  Multiprocessors: 46
+  Clock Rate: 2505 MHz
+  Total Global Memory: 11.62 GB
+  L2 Cache Size: 36.00 MB
+```
+So the above check for `.cc` is getting the compute capability of the GPU and
+checking if it is less than `CC_AMPERE` in which case graphs are not supported
+so they are disabled. 
+```c++
+#define CC_PASCAL     600
+#define MIN_CC_DP4A   610 // minimum compute capability for __dp4a, an intrinsic for byte-wise dot products
+#define CC_VOLTA      700
+#define CC_TURING     750
+#define CC_AMPERE     800
+```
+```c++
+    if (disable_cuda_graphs_due_to_env
+        || cuda_ctx->cuda_graph->disable_due_to_gpu_arch
+        || cuda_ctx->cuda_graph->disable_due_to_too_many_updates
+        || cuda_ctx->cuda_graph->disable_due_to_failed_graph_capture) {
+        use_cuda_graph = false;
+    }
+```
+
+The following will iterate over all the nodes in the compute graph propertis.
+This is not something I've seen before so lets take a look at the
+`ggml_graph_node_properties` struct:
+```c++
+struct ggml_graph_node_properties {
+    void * node_address;
+    ggml_op node_op;
+    int64_t ne[GGML_MAX_DIMS];
+    size_t nb[GGML_MAX_DIMS];
+    void * src_address[GGML_MAX_SRC];
+    int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+};
+```
+
+So the following will use the tensor information to set these properties:
+```c++
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            bool has_matching_properties = true;
+            if (!cuda_graph_update_required) {
+                has_matching_properties = ggml_graph_node_has_matching_properties(cgraph->nodes[i], &cuda_ctx->cuda_graph->ggml_graph_properties[i]);
+            }
+            if (!has_matching_properties) {
+                cuda_graph_update_required = true;
+            }
+            set_ggml_graph_node_properties(cgraph->nodes[i], &cuda_ctx->cuda_graph->ggml_graph_properties[i]);
+        }
+
+#ifdef USE_CUDA_GRAPH
+static void set_ggml_graph_node_properties(ggml_tensor * node, ggml_graph_node_properties * graph_node_properties) {
+    graph_node_properties->node_address = node->data;
+    graph_node_properties->node_op = node->op;
+    for (int i = 0; i < GGML_MAX_DIMS; i++) {
+        graph_node_properties->ne[i] = node->ne[i];
+        graph_node_properties->nb[i] = node->nb[i];
+    }
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        graph_node_properties->src_address[i] = node->src[i] ? node->src[i]->data : nullptr;
+    }
+    memcpy(graph_node_properties->op_params, node->op_params, GGML_MAX_OP_PARAMS);
+}
+```
+Notice that the above is using `node->data` which is the data pointer of the
+tensor and setting that as the node address. I'm not sure how this information
+is used yet but hopefully this will become clear later.
+
+Next there is another loop over all the nodes in the compute graph:
+```c++
+        // Loop over nodes in GGML graph to obtain info needed for CUDA graph
+        cuda_ctx->cuda_graph->updated_kernel_arg.clear();
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            ggml_tensor * node = cgraph->nodes[i];
+
+            if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE ||
+                node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW ||
+                node->op == GGML_OP_PERMUTE || node->op == GGML_OP_NONE) {
+                continue;
+            }
+
+            if (node->src[0] && node->src[0]->buffer && ggml_backend_buffer_is_cuda_split(node->src[0]->buffer)) {
+                use_cuda_graph = false; // Split buffers are not supported by CUDA graph capture
+#ifndef NDEBUG
+                GGML_LOG_WARN("%s: disabling CUDA graphs due to split buffer\n", __func__);
+#endif
+            }
+
+            if (node->op == GGML_OP_MUL_MAT_ID) {
+                use_cuda_graph = false; // This node type is not supported by CUDA graph capture
+                GGML_LOG_WARN("%s: disabling CUDA graphs due to mul_mat_id\n", __func__);
+            }
+```
+`updated_kernel_arg` is a vector of char pointers:
+```c++
+struct ggml_cuda_graph {
+#ifdef USE_CUDA_GRAPH
+    ~ggml_cuda_graph() {
+        if (instance != nullptr) {
+            CUDA_CHECK(cudaGraphExecDestroy(instance));
+        }
+        if (graph != nullptr) {
+            CUDA_CHECK(cudaGraphDestroy(graph));
+        }
+    }
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t instance = nullptr;
+    size_t num_nodes = 0;
+    std::vector<cudaGraphNode_t> nodes;
+    std::vector<cudaKernelNodeParams> params;
+    bool disable_due_to_gpu_arch = false;
+    bool disable_due_to_too_many_updates = false;
+    bool disable_due_to_failed_graph_capture = false;
+    int number_consecutive_updates = 0;
+    std::vector<ggml_graph_node_properties> ggml_graph_properties;
+    std::vector<char **> updated_kernel_arg;
+#endif
+};
+```
+Skipping ahead...
+```c++
+                bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
+```
+```console
+(gdb) p node->src[0]->name
+$8 = "embeddings", '\000' <repeats 53 times>
+(gdb) p node->src[1]->name
+$9 = "v.class_embd", '\000' <repeats 51 times>
+(gdb) p node->op
+$10 = GGML_OP_ACC
+```
+```c++
+static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
+    // why is this here instead of mul_mat?
+    if (dst->src[0] != nullptr && ggml_backend_buffer_is_cuda_split(dst->src[0]->buffer)) {
+        ggml_cuda_set_peer_access(dst->src[1]->ne[1], ctx.device);
+    }
+
+    switch (dst->op) {
+        ...
+        case GGML_OP_ACC:
+            ggml_cuda_op_acc(ctx, dst);
+            break;
+        ...
+    }
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        GGML_LOG_ERROR("%s: %s failed\n", __func__, ggml_op_desc(dst));
+        CUDA_CHECK(err);
+    }
 
     return true;
 ```
+This will land in `ggml/src/ggml-cuda/acc.cu`:
+```c++
+void ggml_cuda_op_acc(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+    const float * src0_d = (const float *)src0->data;
+    const float * src1_d = (const float *)src1->data;
+    float * dst_d = (float *)dst->data;
+    cudaStream_t stream = ctx.stream();
+
+    int nb1 = dst->op_params[0] / 4; // 4 bytes of float32
+    int nb2 = dst->op_params[1] / 4; // 4 bytes of float32
+    int offset = dst->op_params[3] / 4; // offset in bytes
+
+    acc_f32_cuda(src0_d, src1_d, dst_d, ggml_nelements(dst), src1->ne[0], src1->ne[1], src1->ne[2], nb1, nb2, offset, stream);
+}
+
+static void acc_f32_cuda(const float * x, const float * y, float * dst, const int n_elements,
+    const int ne10, const int ne11, const int ne12,
+    const int nb1, const int nb2, const int offset, cudaStream_t stream) {
+    int num_blocks = (n_elements + CUDA_ACC_BLOCK_SIZE - 1) / CUDA_ACC_BLOCK_SIZE;
+    acc_f32<<<num_blocks, CUDA_ACC_BLOCK_SIZE, 0, stream>>>(x, y, dst, n_elements, ne10, ne11, ne12, nb1, nb2, offset);
+}
+```
+Notice that this is launching a CUDA kernel `acc_f32` and that a CUDA stream is
+being specified and this is an async call and this will place this launch
+operation into the stream (command/operation queue thing).
 
 
 <a name="wip"></a>
