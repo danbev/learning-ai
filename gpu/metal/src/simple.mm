@@ -20,7 +20,7 @@ int main(int argc, const char * argv[]) {
         }
 
         NSError *error = nil;
-        NSString *libraryPath = @"/Users/danbev/work/ai/learning-ai/gpu/metal/kernel.metallib";
+        NSString *libraryPath = @"kernel.metallib";
         id<MTLLibrary> defaultLibrary = [device newLibraryWithFile:libraryPath error:&error];
         if (!defaultLibrary) {
             NSLog(@"Failed to load the library. Error: %@", error.localizedDescription);
