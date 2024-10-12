@@ -153,7 +153,12 @@ download-jina: | models
 	cd models && \
 	wget https://huggingface.co/djuna/jina-embeddings-v2-small-en-Q5_K_M-GGUF/resolve/main/jina-embeddings-v2-small-en-q5_k_m.gguf
 
+download-mixtral: | models
+	cd models && \
+	wget https://huggingface.co/TheBloke/Mixtral-8x7B-v0.1-GGUF/resolve/main/mixtral-8x7b-v0.1.Q2_K.gguf
+
 .PHONY models:
+
 models:
 	mkdir -p models
 
