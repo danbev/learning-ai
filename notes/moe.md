@@ -41,8 +41,8 @@ token length 4, embedding dimension 4096, and a hidden dimension of size 11008:
 Each row of the matrix H is a token embedding. So the feed-forward layer will
 operate on one of these at a time. 
 
-So it will take expand from [1, 4096] x [4096, 11008] = [1, 11008], perform the
-non-linear operation and then reduce it back to [1, 4096].
+So it will take this matrix and expand it from [1, 4096] x [4096, 11008] = [1, 11008],
+perform the non-linear operation and then reduce it back to [1, 4096].
 
 Now, 11008 specifies the number of dimensions, and each dimension holds a
 value (parameter/weight). The size of this value can be Float32, Float16, or
@@ -64,12 +64,12 @@ feed-forward layer is:
 
 I hadn't thought about this before but in the feed-forward layer the tokens in
 the sequence are passed through as individual tokens and they don't "interact"
-with other tokens in the sequence. So they these operation could be different
+with other tokens in the sequence. So these operations could be different
 feed-forward layers which could also be on different machines to distribute the
 operations and memory requirements.
 
-And if we recall from the [transformer](./transformer.md) document the
-feed-forward layer consists of an operation that expands the dimensionality of
+And if we recall from the [transformer](./architectures/transformer.md) document
+the feed-forward layer consists of an operation that expands the dimensionality of
 the input tokens and then performs a non-linear operation on the expanded
 tokens, and then reduces their embedding back to the original.
 
@@ -109,6 +109,165 @@ used for each token. These top K scores are then typically passed through a
 softmax function to create a probability distribution over the selected
 experts.
 
-With that knowledge we might be able to make sense of the tensors in llama.cpp
-for the llama2 model.
-TODO: add tenors and explain their usage and link back to the math above.
+### Mixture of Experts in llama.cpp
+In this section we will be looking at the compute graph that is built up
+in llama.cpp for Mixtral 8x7b Model of Experts. I'm not sure I'll be able to
+actually run this but it would be enough to inspect the building of the
+graphs for get a better understanding of how the model.
+
+```console
+lldb ./build/bin/llama-cli -- -m models/mixtral-8x7b-v0.1.Q2_K.gguf --no-warmup -ngl 10 -p "What is LoRA?" -n 10
+(lldb) br set -f llama.cpp -l 10594
+
+```
+Lets start in `build_llama` and the block for MoE):
+
+So just to recap we first have the standard self-attention which is usually followed
+by a feed-forward layer. In the MoE architecture the feed-forward layer is replaced
+by a mixture of experts.
+
+So this starts with a normalization layer using RMSNorm which follows the self-attention
+layer.
+```c++
+                // MoE branch
+                cur = llm_build_norm(ctx0, ffn_inp, hparams,
+                        model.layers[il].ffn_norm, NULL,
+                        LLM_NORM_RMS, cb, il);
+                cb(cur, "ffn_norm", il);
+```
+We can inspect the shape for the current tensor:
+```console
+(lldb) p cur->name
+(char[64]) "ffn_norm-0"
+(lldb) p cur->ne
+(int64_t[4])  ([0] = 4096, [1] = 512, [2] = 1, [3] = 1)
+```
+So we have 512 rows (token embeddings) and 4096 columns/dimensions (embedding dim).
+This will be passed into the gate network:
+```console
+                cur = llm_build_moe_ffn(ctx0, lctx, cur,
+                        model.layers[il].ffn_gate_inp,
+                        model.layers[il].ffn_up_exps,
+                        model.layers[il].ffn_gate_exps,
+                        model.layers[il].ffn_down_exps,
+                        n_expert, n_expert_used,
+                        LLM_FFN_SILU, true,
+                        false, 0.0,
+                        cb, il);
+                cb(cur, "ffn_moe_out", il);
+```
+
+```c++
+static struct ggml_tensor * llm_build_moe_ffn(
+        struct ggml_context * ctx,
+       struct llama_context & lctx,
+         struct ggml_tensor * cur,
+         struct ggml_tensor * gate_inp,
+         struct ggml_tensor * up_exps,
+         struct ggml_tensor * gate_exps,
+         struct ggml_tensor * down_exps,
+                    int64_t   n_expert,
+                    int64_t   n_expert_used,
+            llm_ffn_op_type   type_op,
+                       bool   norm_w,
+                       bool   scale_w,
+                      float   w_scale,
+         const llm_build_cb & cb,
+                        int   il) {
+    int64_t n_embd = cur->ne[0];
+    int64_t n_tokens = cur->ne[1];
+
+    ggml_tensor * logits = llm_build_lora_mm(lctx, ctx, gate_inp, cur); // [n_expert, n_tokens]
+    cb(logits, "ffn_moe_logits", il);
+```
+Lets take a look at the `gate_inp` tensor:
+```console
+(lldb) p gate_inp->ne
+(int64_t[4])  ([0] = 4096, [1] = 8, [2] = 1, [3] = 1)
+
+(lldb) p cur->ne
+(int64_t[4])  ([0] = 4096, [1] = 512, [2] = 1, [3] = 1)
+```
+This learned matrix `gate_inp`  will be multiplied by the current tensor above, and recall that
+in ggml the second tenors of a matrix multiplication are transposed:
+```
+    ffn_gate_inp           cur
+
+0  [0 ... 4095]       0   [0 ... 511]     0  [0 ... 511]
+      ...                   ...
+      ...         x         ...       =
+7  [0 ... 4095]                           7  [0 ... 511]
+                     4095 [0 ... 511]
+```
+So this will produce a 8x512 matrix. We have 8 experts and 512 token embeddings which indicate
+how suitable each expert is for handling each token.
+
+This tensor will then be passed through a softmax function to produce a probability
+distribution over the experts:
+```c++
+    ggml_tensor * probs = ggml_soft_max(ctx, logits);
+    cb(probs, "ffn_moe_probs", il);
+```
+Then we have the actualy selection of the expert(s):
+```c++
+    // select experts
+    ggml_tensor * selected_experts = ggml_top_k(ctx, probs, n_expert_used);
+```
+```console
+(lldb) p n_expert_used
+(int64_t) 2
+```
+So that will produce a 2x512 matrix:
+```console
+(lldb) p selected_experts->ne
+(int64_t[4])  ([0] = 2, [1] = 512, [2] = 1, [3] = 1)
+```
+```
+ 0    [0 .. 1] 
+ ...
+ 
+ 511  [0 .. 1]
+```
+So this will have a row for each token and we have two experts that will be used, to the
+values will be the index of the experts selected.
+
+
+Next we have the following callback invocations, and I'm a little curious about the 
+first naming of the src tensor setting it to `ffn_moe_argsort` instead of using `ffn_moe_propbs`:
+```c++
+    cb(selected_experts->src[0], "ffn_moe_argsort", il);
+    cb(selected_experts, "ffn_moe_topk", il);
+```
+I was a little confused about the `src[0]` tensor and the setting of the name to `ffn_moe_argsort`
+as I though that it would have the name of the `probs` tensor. But if we look at the `ggml_top_k`
+we can see the following:
+```c
+// ggml_top_k
+
+struct ggml_tensor * ggml_top_k(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   k) {
+    GGML_ASSERT(a->ne[0] >= k);
+
+    struct ggml_tensor * result = ggml_argsort(ctx, a, GGML_SORT_ORDER_DESC);
+
+    result = ggml_view_4d(ctx, result,
+                k, result->ne[1], result->ne[2], result->ne[3],
+                   result->nb[1], result->nb[2], result->nb[3],
+                0);
+
+    return result;
+}
+```
+And I think this makes sense as `top_k` will select the top k values and having a sorting
+operation makes sense.
+
+__wip__
+
+```c++
+    ggml_tensor * weights = ggml_get_rows(ctx,
+            ggml_reshape_3d(ctx, probs, 1, n_expert, n_tokens), selected_experts);
+    cb(weights, "ffn_moe_weights", il);
+```
+
