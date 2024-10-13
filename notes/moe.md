@@ -447,6 +447,9 @@ The gate is what will contain the logits for the two selected experts.
 (lldb) p gate->ne
 (int64_t[4])  ([0] = 14336, [1] = 2, [2] = 512, [3] = 1)
 ```
+There is a standalone example of the `ggml_mul_mat_id` which is what `llm_build_lora_mm_id`
+calls in [mul-mat-id.cpp](./../fundamentals/ggml/src/mul-mat-id.c).
+
 Next we have a SILU operation which recall we would have something similar in a normal
 feed-forward layer as well:
 ```c++
