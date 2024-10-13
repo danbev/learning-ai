@@ -263,11 +263,240 @@ struct ggml_tensor * ggml_top_k(
 And I think this makes sense as `top_k` will select the top k values and having a sorting
 operation makes sense.
 
-__wip__
+Next we will extract the propbabilites from the `probs` tensor using `ggml_get_rows` but 
+first there is a reshaping:
+```console
+(lldb) p probs->ne
+(int64_t[4])  ([0] = 8, [1] = 512, [2] = 1, [3] = 1)
+
+(lldb) p ggml_reshape_3d(ctx, probs, 1, n_expert, n_tokens)->ne
+(int64_t[4])  ([0] = 1, [1] = 8, [2] = 512, [3] = 1)
+```
+We can try to visualize this:
+```
+x = 1, y = 8, z = 512
+
+z0
+    y0    [0]
+    y1    [0]
+    y2    [0]
+    y3    [0]
+    y4    [0]
+    y5    [0]
+    y6    [0]
+...
+
+z511
+    y0    [0]
+    y1    [0]
+    y2    [0]
+    y3    [0]
+    y4    [0]
+    y5    [0]
+    y6    [0]
+```
+Now, `selected_experts` has a shape of:
+```console
+(lldb) p selected_experts->ne
+(int64_t[4])  ([0] = 2, [1] = 512, [2] = 1, [3] = 1)
+```
+```
+   selected_experts
+   0    [0...1]
+   ...
+   511  [0...1]
+
+```
+Now, each row in `selected_experts` will have two columns one for each expert selected for
+that token.
+For each of the 512 tokens in `selected_experts` this will look up the two values in each row
+and use them as indices into the reshaped `probs` tensor to extract the probabilities for the
+So for token 0 in `selected_experts` take the two values in that row (lets say the values are 3
+and 7), and look those rows up in `reshaped_probs` and extract the values at those rows (only one
+row each of 512 dimensions (the z dimension).
 
 ```c++
     ggml_tensor * weights = ggml_get_rows(ctx,
             ggml_reshape_3d(ctx, probs, 1, n_expert, n_tokens), selected_experts);
     cb(weights, "ffn_moe_weights", il);
 ```
+The resulting tensor will have the following shape:
+```console
+(lldb) p weights->ne
+(int64_t[4])  ([0] = 1, [1] = 2, [2] = 512, [3] = 1)
+```
+We can visualize this as follows:
+```
+x = 1, y = 2, z = 512
 
+z0
+    y0    [0]
+    y1    [1]
+...
+z511
+    y0    [0]
+    y1    [1]
+```
+So each row is an expert and there is one value for each export per token. Where the value
+is probability of the expert being selected for that specific token. This probability is
+later used to calculate the weighted sum of the expert outputs. So the output of the expert
+that has a higher probability will have a higher weight in the weighted sum.
+
+Next, in the function is the following:
+```c++
+    if (norm_w) {
+        weights = ggml_reshape_2d(ctx, weights, n_expert_used, n_tokens);
+
+        ggml_tensor * weights_sum = ggml_sum_rows(ctx, weights); // [1, n_tokens]
+        cb(weights_sum, "ffn_moe_weights_sum", il);
+
+        weights = ggml_div(ctx, weights, weights_sum); // [n_expert_used, n_tokens]
+        cb(weights, "ffn_moe_weights_norm", il);
+
+        weights = ggml_reshape_3d(ctx, weights, 1, n_expert_used, n_tokens);
+    }
+```
+And `norm_w` is true in this case to this block will be executed. We can see that the `weights`
+are reshaped into a 2d tensor 2x512, which are then summed and the the `weights` tensor is divided
+by the sum to normalize the weights. The tensor is then reshaped back to 3d. So this block will simply
+normalize the weights for each token.
+
+Next we have the following:
+```c++
+    cur = ggml_reshape_3d(ctx, cur, n_embd, 1, n_tokens);
+```
+Notice that is reshaping cur which is currently:
+```console
+(lldb) p cur->ne
+(int64_t[4])  ([0] = 4096, [1] = 512, [2] = 1, [3] = 1)
+(lldb) p cur->name
+(char[64]) "ffn_norm-0"
+(lldb) p n_embd
+(int64_t) 4096
+(lldb) p n_tokens
+(int64_t) 512
+```
+So this cur will become:
+```console
+(lldb) p cur->ne
+(int64_t[4])  ([0] = 4096, [1] = 1, [2] = 512, [3] = 1)
+
+z0
+ [1]  [0 ... 4095]
+...
+
+z511
+ [1]  [0 ... 4095]
+```
+Following that we have the operation:
+```c++
+    ggml_tensor * up = llm_build_lora_mm_id(lctx, ctx, up_exps, cur, selected_experts);
+    cb(up, "ffn_moe_up", il);
+```
+We can inspect `up_exps`:
+```console
+(lldb) p up_exps->ne
+(int64_t[4])  ([0] = 4096, [1] = 14336, [2] = 8, [3] = 1)
+y0
+  0     [0 ... 4095]
+  ...
+  14335 [0 ... 4095]
+
+...
+
+y7
+  0     [0 ... 4095]
+  ...
+  14335 [0 ... 4095]
+```
+Notice that the number of dimensions in y is `14336` which is the same as the number of dimensions
+of the inner dimension for the feed forward layer of this model:
+```console
+llama.feed_forward_length
+(lldb) p lctx.model.gguf_kv
+(const std::unordered_map<std::string, std::string>) size=22 {
+  ...
+  [15] = {
+    __cc_ = (first = "llama.feed_forward_length", second = "14336")
+  }
+}
+```
+So the first tensor argument to `llm_build_lora_mm_id` is the experts tensor matrices. So we have
+one 4096x14336 metric for each expert. The second argument is the input, the `cur` tensor which is
+```console
+(lldb) p cur->ne
+(int64_t[4])  ([0] = 4096, [1] = 1, [2] = 512, [3] = 1)
+```
+And the last argument is the tensor that specifies which expert to use for each token.
+This operation will result in a tensor with the following shape:
+```console
+(lldb) p up->ne
+(int64_t[4])  ([0] = 14336, [1] = 2, [2] = 512, [3] = 1)
+```
+Just note that this up tensor is not used until later but the `cur` tensor is updated so this
+operation is performed as this stage (is built).
+
+So this is increasing the dimensionality which is now 14336.
+Following that we have another `llm_build_lora_mm_id` operation:
+```c++
+    ggml_tensor * gate = llm_build_lora_mm_id(lctx, ctx, gate_exps, cur, selected_experts);
+    cb(gate, "ffn_moe_gate", il);
+```
+The gate is what will contain the logits for the two selected experts.
+```console
+(lldb) p gate->ne
+(int64_t[4])  ([0] = 14336, [1] = 2, [2] = 512, [3] = 1)
+```
+Next we have a SILU operation which recall we would have something similar in a normal
+feed-forward layer as well:
+```c++
+    switch (type_op) {
+        case LLM_FFN_SILU:
+            {
+                gate = ggml_silu(ctx, gate);
+                cb(gate, "ffn_moe_silu", il);
+            } break;
+```
+And next is where we use the `up` tensor from above and this is element-wise multiplied
+with the gate tensor which was passed through the SILU operation:
+```c++
+    ggml_tensor * par = ggml_mul(ctx, up, gate);
+    cb(par, "ffn_moe_gate_par", il);
+```
+Notice that this is an element-wise multiplication and not a matrix multiplication.
+
+Next, we perform the down
+```c++
+    ggml_tensor * experts = llm_build_lora_mm_id(lctx, ctx, down_exps, par, selected_experts);
+    cb(experts, "ffn_moe_down", il);
+```
+
+This is followed by a elememt-wise multiplication of the weights for each expert:
+```c++
+    experts = ggml_mul(ctx, experts, weights);
+```
+This will scale the results according to the weights for each expert. So if one of the experts
+has a higher weight then the output of that expert will have a higher weight in the final output.
+
+Next the output of the experts are added:
+```c++
+    // aggregate experts
+    ggml_tensor * moe_out = nullptr;
+    for (int i = 0; i < n_expert_used; ++i) {
+        ggml_tensor * cur_expert = ggml_view_2d(ctx, experts, n_embd, n_tokens,
+                experts->nb[2], i*experts->nb[1]);
+
+        if (i == 0) {
+            moe_out = cur_expert;
+        } else {
+            moe_out = ggml_add(ctx, moe_out, cur_expert);
+        }
+    }
+
+    if (n_expert_used == 1) {
+        // avoid returning a non-contiguous tensor
+        moe_out = ggml_cont(ctx, moe_out);
+    }
+
+    return moe_out;
+```
