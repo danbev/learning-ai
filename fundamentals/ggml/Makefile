@@ -1,6 +1,16 @@
-CC = g++
-CXX = g++
-CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable
+DEFCC  := cc
+DEFCXX := c++
+
+# Use default compilers if CC or CXX are not explicitly set
+ifeq ($(origin CC),default)
+CC  := $(DEFCC)
+endif
+ifeq ($(origin CXX),default)
+CXX := $(DEFCXX)
+endif
+
+CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -fPIC
+CXXFLAGS += -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -std=c++11 -fPIC 
 LDFLAGS = -Lggml/build/src/
 
 OS := $(shell uname -s)
@@ -29,6 +39,7 @@ CFLAGS += -fopenmp
 WHOLE_ARCHIVE = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
+CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 WHOLE_ARCHIVE = -Wl,-force_load,ggml/build/src/libggml.a
 endif
 
@@ -39,12 +50,12 @@ all: $(TARGETS_C)
 ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
 
 $(TARGETS_C): % : $(SRCDIR)/%.c | bindir
-	$(CXX) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
+	$(CXX) $(CXXFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
 	$(WHOLE_ARCHIVE) \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
 $(TARGETS_CPP): % : $(SRCDIR)/%.cpp | bindir
-	$(CXX) $(CFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
+	$(CXX) $(CXXFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
 	$(WHOLE_ARCHIVE) \
 	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
@@ -60,11 +71,11 @@ pre-ggml.c:
 
 #.PHONY: backend-cuda
 backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
-backend-cuda: CC = g++
+backend-cuda: CC = $(CXX)
 backend-cuda: backend
 
 backend-vulkan: VULKAN_FLAGS := -Wl,--whole-archive -lvulkan -Wl,--no-whole-archive
-backend-vulkan: CC = g++
+backend-vulkan: CC = $(CXX)
 backend-vulkan: backend
 
 .PHONY: run-backend-vulkan
