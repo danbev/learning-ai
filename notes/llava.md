@@ -1683,7 +1683,7 @@ op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, grad = 0x0, sr
 ```
 Next we have a convolution operation. I was not familiar with the `ggml_conv_2d`
 function and I had to take a breif detour to understand what it does and the
-notes and examples can be found in [ggml.md](./ggml.md#conv2d).
+notes and examples can be found in [ggml.md](./ggml.md#ggml_conv_2d).
 ```console
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 ```
