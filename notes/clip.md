@@ -79,7 +79,7 @@ embeddings  +---+---+---+---+---+---+---+---+--+
             |PₘT₁|PₘT₂|  ...              |PₘTₙ|
             +---+---+---+---+---+---+---+---+--+
 ```
-The goal of training is to have the hightest cosine similarity between the
+The goal of training is to have the highest cosine similarity between the
 correct image-text pair and the lowest cosine similarity between the incorrect
 image-text pairs. So this means that the diagonal of the matrix of cosine
 similarities should be the highest and the off-diagonal elements should be the
