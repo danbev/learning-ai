@@ -1683,7 +1683,7 @@ op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, grad = 0x0, sr
 ```
 Next we have a convolution operation. I was not familiar with the `ggml_conv_2d`
 function and I had to take a breif detour to understand what it does and the
-notes and examples can be found in [ggml.md](./ggml.md#ggml_conv_2d).
+notes and examples can be found in [ggml.md](./ggml.md#ggml_conv_2dd).
 ```console
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 ```
@@ -1831,7 +1831,7 @@ token 0   : [0       ...           1023]
 ...
 token 576 : [0       ...           1023]
 
-Visiion:
+Vision:
 patch 0   : [0       ...           1023]
 ```
 patch 576 : [0       ...           1023]
@@ -1896,7 +1896,7 @@ the 4096th element.
             embeddings = ggml_acc(ctx0, embeddings, inp,
                     embeddings->nb[1], embeddings->nb[2], embeddings->nb[3], model.class_embedding->nb[1]);
 ```
-But in summary this will create a new tensor and assigning it to embeddings
+In summary this will create a new tensor and assigning it to embeddings
 and it will have the class embeddings first and then the input embeddings.
 ```
 [CLASS_TOKEN] [PATCH_1] [PATCH_2] ... [PATCH_N]
@@ -1933,7 +1933,7 @@ encoded? Is it that during training this has been learned and a patch will be
 "moved in the embedding dimension space" approprieately for it to understand
 that this is the top left, top right etc?
 I think that this might be a way of imaging what is happending. So each
-patch/token start with its own embedding which is a unique vector in the
+patch/token starts with its own embedding which is a unique vector in the
 embedding space. Then the positional encoding is added to this vector and this
 will move the vector in the embedding space. During training the model learns to
 assign unique vectors to each position (the x y grid or patches). It can also
@@ -2457,10 +2457,10 @@ So we are still in the function `llava_init_context` and we have the following:
 
     llama_context * ctx_llama = llama_new_context_with_model(model, ctx_params);
 ```
-This are the "normal" llama contex params we have seen in other examples ad
+This is the "normal" llama context params we have seen in other examples ad
 we are creating a `llama_context` using the model (`vicuna-7b-q5_k.gguf`)
 
-The a llava context will be malloced and populated with the llama context, the
+The llava context will be malloced and populated with the llama context, the
 clip context and the model:
 ```c++
     auto * ctx_llava = (struct llava_context *)malloc(sizeof(llava_context));
@@ -3099,6 +3099,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 ```
 Now, we have gone through `clip_image_build_graph` before, but this time we are
 passing in the normalized patches.
+And recall that this is the computation graph for images.
 
 Next the inputs will be set:
 ```c++
@@ -3133,12 +3134,12 @@ Next we have:
     const int pos_w = ctx->load_image_size->width/patch_size;
     const int pos_h = ctx->load_image_size->height/patch_size;
 ```
-This is statement is true and will create a new `clip_image_size` struct:
+This statement is true and will create a new `clip_image_size` struct:
 ```console
 (gdb) p *ctx->load_image_size
 $87 = {width = 448, height = 448}
 ```
-This the load image size, what is this about?  We already loaded the image but
+This load image size, what is this about?  We already loaded the image but
 perhaps this is something else and lets see how it is used later.
 
 Next we will get the tensor `inp_raw` from the computation graph:
@@ -3660,6 +3661,415 @@ Notice that this is launching a CUDA kernel `acc_f32` and that a CUDA stream is
 being specified and this is an async call and this will place this launch
 operation into the stream (command/operation queue thing).
 
+After all the computation has been performed will will be back in
+`clip_image_batch_encode`:
+```c++
+    ggml_backend_graph_compute(ctx->backend, gf);
+
+    // the last node is the embedding tensor
+--> struct ggml_tensor * embeddings = ggml_graph_node(gf, -1);
+
+    // copy the embeddings to the location passed by the user
+    ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
+
+    return true;
+}
+```
+The above will get the last node in the graph which is the embeddings tensor, so
+this is the embeddings for the image:
+```console
+(gdb) p embeddings->ne
+$7 = {4096, 576, 1, 1}
+```
+And we copying the data from this tensor which is on the backend device into the
+passed in `vec` pointer. So after this the embeddings for the image will be in
+the `vec` pointer. This will the return true to:
+```c++
+bool clip_image_encode(struct clip_ctx * ctx, const int n_threads, clip_image_f32 * img, float * vec) {
+    ```
+
+    return clip_image_batch_encode(ctx, n_threads, &imgs, vec);
+}
+```
+Which in turn will return to `llava.cpp`. And recalls that we have 5 patches
+which we now have iterated over the first one, and will continue with the rest
+which will all populate `image_embd_v`:
+```console
+(gdb) p image_embd_v
+$10 = std::vector of length 5, capacity 5 = {0x7fffb4200010, 0x0, 0x0, 0x0, 0x0}
+(gdb) p image_embd_v[0]
+$11 = (float *) 0x7fffb4200010
+(gdb) p image_embd_v[1]
+$12 = (float *) 0x0
+```
+```c++
+        for (size_t i = 0; i < img_res_v.size; i++) {
+            image_embd_v[i] = (float *)malloc(clip_embd_nbytes(ctx_clip));
+            const bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[i], image_embd_v[i]);
+            if (!encoded) {
+                LOG_ERR("Unable to encode image - spatial_unpad - subimage %d of %d\n", (int) i+1, (int) img_res_v.size);
+                return false;
+            }
+        }
+```
+Lets skip over the rest and continue the exploration:
+```console
+(gdb) until 326
+
+encode_image_with_clip: 5 segments encoded in 1284690.74 ms
+
+Thread 1 "llama-llava-cli" hit Breakpoint 7, encode_image_with_clip (ctx_clip=0x555555bf1380, n_threads=4, img=0x5555567dee50,
+    image_embd=0x7ffd1a800010, n_img_pos=0x7fffffffc5a8) at /home/danbev/work/ai/llama.cpp/examples/llava/llava.cpp:329
+329	        const int32_t * image_grid = clip_image_grid(ctx_clip)
+```
+This getting the pinpoints from the model and storing a pointer to them in 
+`image_grid`. These will then be stored as pairs in a vector:
+```c++
+        std::vector<std::pair<int, int>> grid_pinpoints;
+        for (int i = 0; i < 32 && image_grid[i] != 0; i += 2) {
+            grid_pinpoints.push_back({image_grid[i], image_grid[i+1]});
+        }
+```
+```console
+(gdb) p grid_pinpoints
+$16 = std::vector of length 5, capacity 8 = {{first = 336, second = 672}, {first = 672, second = 336}, {first = 672, second = 672}, {
+    first = 1008, second = 336}, {first = 336, second = 1008}}
+```
+
+I'm was a little confused that the pinpoints are used again as I thought that
+perhaps they would only be used in the `pre-processing` stage of the image
+processing. Perhaps this will make more sense when we see how this is used
+in `clip_image_grid_shape`:
+```c++
+        const int32_t image_size = clip_image_size(ctx_clip);
+
+        struct clip_image_grid_shape grid_shape = get_anyres_image_grid_shape({img->nx,img->ny}, grid_pinpoints, image_size);
+
+        int n_img_pos_out;
+        clip_llava_handle_patches(ctx_clip, image_embd_v, grid_shape, image_embd, &n_img_pos_out);
+        *n_img_pos = n_img_pos_out;
+```
+```console
+(gdb) p grid_shape 
+$24 = {first = 2, second = 2}
+```
+
+```c++
+static bool clip_llava_handle_patches(clip_ctx * ctx_clip,
+    std::vector<float *> & image_embd_v,
+    struct clip_image_grid_shape grid_shape,
+    float * image_embd_out,
+    int * n_img_pos_out) {
+    struct {
+        struct ggml_context * ctx;
+    } model;
+
+    const int32_t image_size = clip_image_size(ctx_clip);
+    const int32_t patch_size = clip_patch_size(ctx_clip);
+    int32_t num_patches_per_side = image_size / patch_size;
+```
+So we have the following patch embeddings:
+```console
+(gdb) p image_embd_v
+$45 = std::vector of length 5, capacity 5 = {0x7fffb4200010, 0x7fff9ac00010, 0x7fff9a200010, 0x7fff97600010, 0x7fff96c00010}
+```
+The first one is the embedding for the class "token" and the rest are the
+embeddings for the image patches. 
+
+So the patch embeddings look something like this in the `image_embd_v` vector:
+```
+   image_embd_v[0] =  0    [0 ... 4095]          (class "token")
+                      ...
+                      575  [0 ... 4095]
+
+   image_embd_v[1] =  0    [0 ... 4095]          (patch embedding 1)
+                      ...
+                      575  [0 ... 4095]
+
+   image_embd_v[2] =  0    [0 ... 4095]          (patch embedding 2)
+                      ...
+                      575  [0 ... 4095]
+
+   image_embd_v[3] =  0    [0 ... 4095]          (patch embedding 3)
+                      ...
+                      575  [0 ... 4095]
+
+   image_embd_v[4] =  0    [0 ... 4095]          (patch embedding 4)
+                      ...
+                      575  [0 ... 4095]
+```
+
+```console
+(gdb) p image_size
+$17 = 336
+(gdb) p patch_size 
+$22 = 14
+(gdb) p num_patches_per_side
+$23 = 24
+```
+
+Next we have:
+```
+    int num_patches_width  = grid_shape.first;  // grid 1-4
+    int num_patches_height = grid_shape.second; // grid 1-4
+
+    const size_t num_images = num_patches_width * num_patches_height + 1;
+```
+```console
+(gdb) p num_patches_width
+$25 = 2
+(gdb) p num_patches_height
+$26 = 2
+(gdb) p num_images
+$27 = 5
+```
+```c++
+    size_t ctx_size = 0;
+
+    {
+        ctx_size += clip_embd_nbytes(ctx_clip) * num_images * 8; // image_features
+        ctx_size += 1024*1024 * ggml_type_size(GGML_TYPE_F32);
+    }
+
+    struct ggml_init_params params {
+        /*.mem_size   =*/ ctx_size,
+        /*.mem_buffer =*/ NULL,
+        /*.no_alloc   =*/ false, // NOTE: this should be false when using the legacy API
+    };
+
+    model.ctx = ggml_init(params);
+    struct ggml_tensor * image_features = ggml_new_tensor_3d(model.ctx, GGML_TYPE_F32,
+        clip_n_mmproj_embd(ctx_clip), clip_n_patches(ctx_clip), num_images - 1);
+``` 
+
+
+```console
+(gdb) p clip_n_mmproj_embd(ctx_clip)
+$30 = 4096
+(gdb) p clip_n_patches(ctx_clip)
+$31 = 576
+
+(gdb) p image_features->ne
+$33 = {4096, 576, 4, 1}
+```
+Next we will iterate over the image patch embeddings (4 in this case and we
+skip the first class patch embedding which is not part of the image) and
+setting the data of the above created tensor:
+```c++
+    for (size_t i = 1; i < num_images; i++) {
+        size_t offset = (i-1) * clip_embd_nbytes(ctx_clip);
+        memcpy((uint8_t *)(image_features->data) + offset, image_embd_v[i], clip_embd_nbytes(ctx_clip));
+    }
+```
+So we have something like this:
+```
+z0
+  0    [0 ...    4095]
+  ...
+  575  [0 ...    4095]
+
+z1
+  0    [0 ...    4095]
+  ...
+  575  [0 ...    4095]
+
+z2
+  0    [0 ...    4095]
+  ...
+  575  [0 ...    4095]
+
+z3
+  0    [0 ...    4095]
+  ...
+  575  [0 ...    4095]
+```
+So we have 4 patches (z), and each patch is 576 embeddings (y) (the image size
+is 336x336 and each patch is 14x14, and 336/14=24, and 24x24=576) and each
+embedding has 4096 features/dimensions (x).
+
+Then we can see that a computation graph is created.
+```c++
+    struct ggml_cgraph  * gf = ggml_new_graph(model.ctx);
+    size_t size_ele = ggml_type_size(GGML_TYPE_F32);
+
+    struct ggml_tensor *image_features_patchview = ggml_view_4d(model.ctx, image_features,
+                                                                num_patches_per_side * clip_n_mmproj_embd(ctx_clip),
+                                                                num_patches_per_side,
+                                                                num_patches_width,
+                                                                num_patches_height,
+                                                                size_ele * num_patches_per_side * clip_n_mmproj_embd(ctx_clip),
+                                                                size_ele * num_patches_per_side * clip_n_mmproj_embd(ctx_clip) * num_patches_per_side,
+                                                                size_ele * num_patches_per_side * clip_n_mmproj_embd(ctx_clip) * num_patches_per_side * num_patches_width, 0);
+```
+
+```console
+(gdb) p num_patches_per_side
+$38 = 24
+(gdb) p clip_n_mmproj_embd(ctx_clip)
+$40 = 4096
+
+(gdb) p image_features_patchview->ne
+$41 = {98304, 24, 2, 2}
+```
+Now, we have a spatial grid of 2x2 patches which we can visualize like this:
+```
+q0
+  z0 
+    0  [0 ... 98303]
+    ...
+    23 [0 ... 98303]
+
+  z1 
+    0  [0 ... 98303]
+    ...
+    23 [0 ... 98303]
+
+q1
+  z0 
+    0  [0 ... 98303]
+    ...
+    23 [0 ... 98303]
+  z1 
+    0  [0 ... 98303]
+    ...
+    23 [0 ... 98303]
+
+   +-------+--------+
+   |q0 z0  | q0 z1  |
+   +----------------+
+   |q1 z0  | q1 z1  |
+   +-------+--------+
+
+q0 z0 = represents a patch embedding 1: 24x24 patches each with 4096 features.
+q0 z1 = represents a patch embedding 2: 24x24 patches each with 4096 features.
+q1 z0 = represents a patch embedding 3: 24x24 patches each with 4096 features.
+q1 z1 = represents a patch embedding 4: 24x24 patches each with 4096 features.
+```
+So we are preserving the spatial arragement of the patches in the image which
+is something that we need to do for the LLM to understand the visual context.
+Buy preserving the 2x2 grid of patch embeddings this spatial arrangement allows
+the LLM to understand not just each image individually, but also how they relate
+to each other in the grid. This can be crucial for tasks that require
+understanding the context across multiple patch embeddings.
+
+Next the `image_features_patchview` tensor is permuted and made contiguous:
+```c++
+    struct ggml_tensor *permuted_cont = ggml_cont(model.ctx, ggml_permute(model.ctx, image_features_patchview, 0, 2, 1, 3));
+```
+Notice that the permuation is swapping the second and third dimensions.
+
+So we go from a grid something like this:
+```
+ [patch1  row1] [patch2 row  1]
+ [patch1  row2] [patch2 row  2]
+ ...
+ [patch1 row24] [patch2 row 24]
+
+ [patch3  row1] [patch4 row  1]
+ [patch3  row2] [patch4 row  2]
+ ...
+ [patch3 row24] [patch4 row 24]
+```
+To something like this:
+```
+ [patch1  row1] [patch2 row  1]
+ [patch3  row1] [patch4 row  1]
+
+ [patch1  row2] [patch2 row  2]
+ [patch3  row2] [patch4 row  2]
+
+ [patch1  row3] [patch2 row  3]
+ [patch3  row2] [patch4 row  3]
+ ...
+
+ [patch1  row24] [patch2 row  24]
+ [patch3  row24] [patch4 row  24]
+```
+Notice that this rearrangement still preserves the spatial arrangement, for
+example patch1 row1 and patch2 row1 are still next to each other, and likewise
+for patch3 row1 and patch4 row1.
+
+The permuted shape will be:
+```console
+(gdb) p permuted_cont->ne
+$43 = {98304, 2, 24, 2}
+q0
+  y0
+    0  [0 ... 98303]
+    1  [0 ... 98303]
+    ...
+  y23
+    0  [0 ... 98303]
+    1  [0 ... 98303]
+
+q1
+  y0
+    0  [0 ... 98303]
+    1  [0 ... 98303]
+    ...
+  y23
+    0  [0 ... 98303]
+    1  [0 ... 98303]
+```
+
+This will then be flattened into a 2d tensor:
+```c++
+    struct ggml_tensor *flatten = ggml_view_2d(model.ctx, permuted_cont, clip_n_mmproj_embd(ctx_clip), num_patches_height * num_patches_width * num_patches_per_side * num_patches_per_side,  size_ele * clip_n_mmproj_embd(ctx_clip), 0);
+```
+The flattened shape will be:
+```console
+(gdb) p flatten->ne
+$44 = {4096, 2304, 1, 1}
+
+   0  [0 ... 4095]
+   ...
+   ...
+2303  [0 ... 4095]  
+```
+There are 24x24 patches per patch embedding, and we have 4 patch embeddings so
+24x24x4=2304. Each patch embedding has 4096 features.
+And recall that the previous permutation looked something like this:
+```
+ [patch1  row1] [patch2 row1]
+ [patch3  row1] [patch4 row1]
+
+ [patch1  row2] [patch2 row2]
+ [patch3  row2] [patch4 row2]
+
+ [patch1  row3] [patch2 row3]
+ [patch3  row2] [patch4 row3]
+ ...
+
+ [patch1  row24] [patch2 row24]
+ [patch3  row24] [patch4 row24]
+ ```
+ And with this flatting it becomes something like this:
+ ```
+     0         4095
+0    [patch1  row1]
+     [patch2  row1]
+     [patch3  row1]
+     [patch4  row1]
+     [patch1  row2]
+     [patch2  row2]
+     [patch3  row2]
+     [patch4  row2]
+     ...
+     [patch1  row24]
+     [patch2  row24]
+     [patch3  row24]
+2303 [patch4  row24]
+```
+Notice how this resembles the shape of inputs to a LLM model where each row
+would represent a token embedding in a sequence.
+Each row in the final flattened representation contains information from the
+same row across all four patch embeddings.
+
+```c++
+    ggml_build_forward_expand(gf, flatten);
+    ggml_graph_compute_with_ctx(model.ctx, gf, 1);
+    struct ggml_tensor* result = ggml_graph_node(gf, -1);
+```
 
 <a name="wip"></a>
 _wip_
