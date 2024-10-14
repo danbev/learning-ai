@@ -36,6 +36,7 @@ TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 
 ifeq ($(OS),Linux)
 CFLAGS += -fopenmp
+CXXFLAGS += -fopenmp
 WHOLE_ARCHIVE = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
