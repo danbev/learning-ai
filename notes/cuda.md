@@ -170,3 +170,21 @@ happen on the GPU. The weights aren't constantly moved back and forth between
 the host and the GPU.
 It's only if you need to save the model's weights or inspect them on the CPU
 that you'd transfer them back to the host's memory.
+
+### Streams
+A stream in CUDA is a sequence of commands that execute in order. It is like a
+queue of commands that are executed one after the other. Now, what I've been 
+doing in my examples is just using synchronous commands, like `cudaMemcpy` and
+and not specifying a stream when calling a kernel. When we call a function
+like `cudaMemcpy` this is a synchronous operation, the host program will not
+progress (it will block) until the entire memory transfer is complete.
+When we call `cudaMemcpy` this function is added to the default CUDA stream. The
+default stream operations are all executed in the order they are called/added.
+In this wasy `cudaMemcpy` acts as a synchronization point between the host and
+the device.
+
+
+When using streams we use the async version of memcpy, like `cudaMemcpyAsync`,
+and for launching a kernel we specify a stream as an argument.
+
+An example can be found in [streams.cu](../gpu/cuda/src/streams.cu).
