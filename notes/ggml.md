@@ -4616,7 +4616,7 @@ $8 = (char (*)[1024]) 0x7fffffffd5e0
 
 ### `ggml_conv_2d`
 This is a convolution of a 2d tensor in GGML. So we have a kernel which slides
-over the input tensor and an element wise multiplication the kernel and the
+over the input tensor and an element wise multiplication of the kernel and the
 input tensor is calculated at each position of the kernel and then summing.
 ```console
 Input Tensor (8x2):                Kernel (2x2):
