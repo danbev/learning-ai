@@ -4668,10 +4668,6 @@ So if we
 
 An example can be found in [conv2d.c](../fundamentals/ggml/src/conv2d.c).
 
-
-If we take a closer look at how conv2d is implemented in GGML we can see that
-it looks like this.
-
 Our input tensor and kernel will look like this:
 ```console
 
@@ -4805,7 +4801,8 @@ I'm thinking this might look something like this in ggml:
 This is a common technique used in convolutional neural networks (CNN). The idea
 is to transform image data, or more generally a multi-dimensional tensor, into a
 format that allows for efficient computation of the convolution operation using
-matrix multiplication.
+matrix multiplication. So we might have as input a 3d image and we want to turn
+this into a 2d array that we can treat like a matrix.
 
 This works by taking patches of the input tensor and reshaping them into columns.
 ```
