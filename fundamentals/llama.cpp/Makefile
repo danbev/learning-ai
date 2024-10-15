@@ -390,3 +390,13 @@ tokenize: src/tokenize.cpp
 	#$(CXX) $(CXXFLAGS) -framework Metal -framework Foundation -framework MetalKit -framework Accelerate $^ -o $@ $(OBJ) $(OBJ) $(OBJ_COMMON) $(LIBS)
 	echo $(OBJ)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ) $(OBJ_GGML) $(OBJ_COMMON) $(LIBS)
+
+simple-dyn-link: LDFLAGS = -Lllama.cpp/build/src -Lllama.cpp/build/ggml/src -lllama -lggml
+simple-dyn-link:
+	echo "Compiling..."
+	cd llama.cpp && cmake -S . -B build -DLLAMA_CURL=ON && cmake --build build
+	$(CXX) $(CXXFLAGS) llama.cpp/examples/simple/simple.cpp -o $@ -Lllama.cpp/build/src -Lllama.cpp/build/ggml/src -lllama -lggml
+
+run-simple-dyn-link:
+	env LD_LIBRARY_PATH=llama.cpp/build/src:llama.cpp/build/ggml/src \
+	./simple-dyn-link -m models/llama-2-7b.Q4_K_M.gguf -n 10 -ngl 33 "What is LoRA?"
