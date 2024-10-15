@@ -392,11 +392,23 @@ tokenize: src/tokenize.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ) $(OBJ_GGML) $(OBJ_COMMON) $(LIBS)
 
 simple-dyn-link: LDFLAGS = -Lllama.cpp/build/src -Lllama.cpp/build/ggml/src -lllama -lggml
-simple-dyn-link:
+simple-dyn-link: llama.cpp/examples/simple/simple.cpp
 	echo "Compiling..."
 	cd llama.cpp && cmake -S . -B build -DLLAMA_CURL=ON && cmake --build build
 	$(CXX) $(CXXFLAGS) llama.cpp/examples/simple/simple.cpp -o $@ -Lllama.cpp/build/src -Lllama.cpp/build/ggml/src -lllama -lggml
 
+ifeq ($(OS),Darwin)
+LD_VARNAME := DYLD_LIBRARY_PATH
+MODEL_PATH := models/llama-2-7b.Q4_0.gguf
+else
+LD_VARNAME := LD_LIBRARY_PATH
+MODEL_PATH := models/llama-2-7b.Q4_K_M.gguf
+endif
+
 run-simple-dyn-link:
-	env LD_LIBRARY_PATH=llama.cpp/build/src:llama.cpp/build/ggml/src \
-	./simple-dyn-link -m models/llama-2-7b.Q4_K_M.gguf -n 10 -ngl 33 "What is LoRA?"
+	env ${LD_VARNAME}=llama.cpp/build/src:llama.cpp/build/ggml/src \
+	./simple-dyn-link -m ${MODEL_PATH} -n 10 -ngl 33 "What is LoRA?"
+
+debug-simple-dyn-link:
+	env ${LD_VARNAME}=llama.cpp/build/src:llama.cpp/build/ggml/src \
+	gdb --args ./simple-dyn-link -m ${MODEL_PATH} -n 10 -ngl 33 "What is LoRA?"
