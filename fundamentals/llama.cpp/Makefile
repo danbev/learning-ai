@@ -410,5 +410,10 @@ run-simple-dyn-link:
 	./simple-dyn-link -m ${MODEL_PATH} -n 10 -ngl 33 "What is LoRA?"
 
 debug-simple-dyn-link:
+ifeq ($(OS),Darwin)
+	lldb -o 'settings set target.env-vars DYLD_LIBRARY_PATH=llama.cpp/build/src:llama.cpp/build/ggml/src' \
+	./simple-dyn-link -- -m ${MODEL_PATH} -n 10 -ngl 33 "What is LoRA?"
+else
 	env ${LD_VARNAME}=llama.cpp/build/src:llama.cpp/build/ggml/src \
-	gdb --args ./simple-dyn-link -m ${MODEL_PATH} -n 10 -ngl 33 "What is LoRA?"
+	gdb --args ./simple-dyn-link -- -m ${MODEL_PATH} -n 10 -ngl 33 "What is LoRA?"
+endif
