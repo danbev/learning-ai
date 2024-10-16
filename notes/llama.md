@@ -4445,8 +4445,12 @@ any fine tuning of the model.
 More notes can be found in [control_vectors.md](control-vectors.md).
 
 ### Eval properties
-A `llama_context` as two properties named `n_eval` and `n_p_eval` which are
-used to keep track of the number of tokens used for evaluation.
+A `llama_context` as two properties named `n_eval` and `n_p_eval` (number of
+prompt evals) which are used to keep track of the number of tokens used for
+evaluation.
+
+The `n_eval` property is used to keep track of the number of tokens used for
+evaluations other than the initial prompt, it is used when the batch size is 1.
 
 ```c++
 struct llama_context {
@@ -4463,7 +4467,7 @@ the `n_queued_tokens` property:
     lctx.n_queued_tokens += n_tokens_all;
 ```
 I found the naming a little confusing and perhaps this could be changed to
-simple `n_tokens`.
+simple `n_tokens` instead of `n_tokens_all`.
 
 ```c++
 static int llama_decode_internal(
@@ -4473,6 +4477,7 @@ static int llama_decode_internal(
 ```
 Now, decode is strictly involved with performing the forward pass of the model
 and this will generate logits for the tokens in the batch in this case.
+
 For example, we might have the first call to decode if warmup is set to true
 in which case only two tokens will be passed.
 ```console
@@ -5464,3 +5469,135 @@ is supported the compiler will add flags to enable those features.
 ```console
 $ g++ -mno-f16c -mno-fma -mavx -mno-avx2 -O0 -g -E ggml.c -o ggml.pre
 ```
+
+### `batch` vs `u_batch`
+`llama_decode` takes a `llama_batch` as input:
+```c++
+int32_t llama_decode(
+        struct llama_context * ctx,
+          struct llama_batch   batch) {
+    const int ret = llama_decode_internal(*ctx, batch);
+    if (ret < 0) {
+        LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
+    }
+
+    return ret;
+}
+```
+```c++
+static int llama_decode_internal(
+         llama_context & lctx,
+           llama_batch   batch_all) { // TODO: rename back to batch
+
+    ...
+    const auto n_ubatch = cparams.n_ubatch;
+
+```
+This ubatch value is used to enable pipeline parallelism. If an a batch of size
+4096 is passed to `llama_decode` then it will be split into 8 batches and
+evaluated as a pipeline in parallel between the available GPUs.
+The default size of an ubatch is 512, but this a context parameter which can be
+changed.
+```console
+(gdb) p n_ubatch
+$43 = 512
+```
+This compute parameter is set in
+```c++
+struct llama_context * llama_new_context_with_model(
+                 struct llama_model * model,
+        struct llama_context_params   params) {
+    ...
+    cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
+    ..
+}
+```
+The default value is set in `llama_context_default_params`:
+```c++
+struct llama_context_params llama_context_default_params() {
+    struct llama_context_params result = {
+        /*.n_ctx                       =*/ 512,
+        /*.n_batch                     =*/ 2048,
+        /*.n_ubatch                    =*/ 512,
+        /*.n_seq_max                   =*/ 1,
+        /*.n_threads                   =*/ GGML_DEFAULT_N_THREADS, // TODO: better default
+        /*.n_threads_batch             =*/ GGML_DEFAULT_N_THREADS,
+        /*.rope_scaling_type           =*/ LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED,
+        /*.pooling_type                =*/ LLAMA_POOLING_TYPE_UNSPECIFIED,
+        /*.attention_type              =*/ LLAMA_ATTENTION_TYPE_UNSPECIFIED,
+        /*.rope_freq_base              =*/ 0.0f,
+        /*.rope_freq_scale             =*/ 0.0f,
+        /*.yarn_ext_factor             =*/ -1.0f,
+        /*.yarn_attn_factor            =*/ 1.0f,
+        /*.yarn_beta_fast              =*/ 32.0f,
+        /*.yarn_beta_slow              =*/ 1.0f,
+        /*.yarn_orig_ctx               =*/ 0,
+        /*.defrag_thold                =*/ -1.0f,
+        /*.cb_eval                     =*/ nullptr,
+        /*.cb_eval_user_data           =*/ nullptr,
+        /*.type_k                      =*/ GGML_TYPE_F16,
+        /*.type_v                      =*/ GGML_TYPE_F16,
+        /*.logits_all                  =*/ false,
+        /*.embeddings                  =*/ false,
+        /*.offload_kqv                 =*/ true,
+        /*.flash_attn                  =*/ false,
+        /*.no_perf                     =*/ true,
+        /*.abort_callback              =*/ nullptr,
+        /*.abort_callback_data         =*/ nullptr,
+    };
+
+    return result;
+}
+```
+
+### sbatch (sequence-length-aware batch)
+In `llama_decode_internal` we have the following code:
+```c++
+    ...
+    lctx.sbatch.from_batch(batch, n_embd,
+        /* simple_split */ !kv_self.recurrent,
+        /* logits_all   */ n_outputs == n_tokens_all);
+```
+
+`sbatch from_batch` is a function of the `llama_sbatch` struct so lets get
+an overview of it as this function will fields/members of this struct:
+```c++
+// sequence-length-aware batch splitting
+struct llama_sbatch {
+    // tokens left in this batch
+    size_t n_tokens;
+
+    size_t n_embd;
+
+    bool logits_all; // TODO: remove once lctx.logits_all is removed too
+
+    // sorted indices into the batch
+    std::vector<size_t> ids;
+    // batch indices of the output
+    std::vector<size_t> out_ids;
+    std::vector<llama_sbatch_seq> seq;
+    const llama_batch * batch = nullptr;
+
+    // buffers for the ubatch
+    std::vector<llama_token>    ubatch_token;
+    std::vector<float>          ubatch_embd;
+    std::vector<llama_pos>      ubatch_pos;
+    std::vector<int32_t>        ubatch_n_seq_id;
+    std::vector<llama_seq_id *> ubatch_seq_id;
+    std::vector<int8_t>         ubatch_output;
+    ...
+```
+So lets now looks closer at `from_batch`:
+```
+    void from_batch(const llama_batch & batch,
+        const size_t n_embd,
+        const bool simple_split = false,
+        const bool logits_all = false) {
+
+        GGML_ASSERT(batch.n_tokens >= 0);
+        this->batch = &batch;
+        this->n_embd = n_embd;
+        this->logits_all = logits_all;
+```
+
+_wip_
