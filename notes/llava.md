@@ -4065,11 +4065,132 @@ would represent a token embedding in a sequence.
 Each row in the final flattened representation contains information from the
 same row across all four patch embeddings.
 
+So next we forward expand the nodes in the graph and then execute the graph.
 ```c++
     ggml_build_forward_expand(gf, flatten);
     ggml_graph_compute_with_ctx(model.ctx, gf, 1);
     struct ggml_tensor* result = ggml_graph_node(gf, -1);
 ```
+And we can inspect the shape of the result tensor using:
+```console
+(gdb) p result->ne
+$64 = {4096, 2304, 1, 1}
+(gdb) p gf->nodes[gf->n_nodes-1]->ne
+$69 = {4096, 2304, 1, 1}
+
+(gdb) p gf->nodes[gf->n_nodes-1]
+$70 = (ggml_tensor *) 0x7ffd08210880
+(gdb) p result
+$71 = (ggml_tensor *) 0x7ffd08210880
+```
+Following that we have:
+```c++
+    memcpy(image_embd_out, image_embd_v[0], clip_embd_nbytes(ctx_clip)); // main image as global context
+```
+Recall that the original image (scaled down to 224x224) was encoded and stored
+in the first element of the `image_embd_v` vector (TODO: double check this) and
+the above is copying this into `image_embed_out`.
+
+Nex we copy data from the result tensor:
+```c++
+    memcpy(image_embd_out + clip_n_patches(ctx_clip) * clip_n_mmproj_embd(ctx_clip),
+        (float*)result->data,
+        clip_embd_nbytes(ctx_clip) * (num_images-1));
+    *n_img_pos_out = static_cast<int>(result->ne[1]+clip_n_patches(ctx_clip));
+
+    ggml_free(model.ctx);
+    return true;
+}
+```
+```console
+(gdb) p clip_n_patches(ctx_clip)
+$73 = 576
+(gdb) p clip_n_mmproj_embd(ctx_clip)
+$74 = 4096
+```
+The above return will return us to `encode_image_with_clip`:
+```c++
+        clip_llava_handle_patches(ctx_clip, image_embd_v, grid_shape, image_embd, &n_img_pos_out);
+--->    *n_img_pos = n_img_pos_out;
+
+        for (size_t i = 0; i < image_embd_v.size(); i++) {
+            free(image_embd_v[i]);
+        }
+        image_embd_v.clear();
+    }
+
+    LOG_INF("%s: image embedding created: %d tokens\n", __func__, *n_img_pos);
+    return true;
+}
+```
+```console
+encode_image_with_clip: image embedding created: 2880 tokens
+```
+And the return us to `llava_image_embed_make_with_clip_img`:
+```c++
+    if (!encode_image_with_clip(ctx_clip, n_threads, img, image_embd, &n_img_pos)) {
+        LOG_ERR("%s: cannot encode image, aborting\n", __func__);
+        free(image_embd);
+        return false;
+    }
+--> *image_embd_out = image_embd;
+    *n_img_pos_out = n_img_pos;
+
+    return true;
+}
+```
+And this will return us to `llava_image_embed_make_with_bytes`:
+```c++
+struct llava_image_embed * llava_image_embed_make_with_bytes(struct clip_ctx * ctx_clip, int n_threads, const unsigned char * image_bytes, int image_bytes_length) {
+    ...
+
+    bool image_embed_result = llava_image_embed_make_with_clip_img(ctx_clip, n_threads, img, &image_embed, &n_image_pos);
+--> if (!image_embed_result) {
+        clip_image_u8_free(img);
+        LOG_ERR("%s: coulnd't embed the image\n", __func__);
+        return NULL;
+    }
+
+    clip_image_u8_free(img);
+    auto result = (llava_image_embed*)malloc(sizeof(llava_image_embed));
+    result->embed = image_embed;
+    result->n_image_pos = n_image_pos;
+    return result;
+}
+```
+And that will return us to `llava_image_embed_make_with_filename`:
+```c++
+    llava_image_embed *embed = llava_image_embed_make_with_bytes(ctx_clip, n_threads, image_bytes, image_bytes_length);
+--> free(image_bytes);
+
+    return embed;
+}
+```
+And this will return to `load_image` in `llava-cli.cpp`:
+```c++
+        if (!embed) {
+            fprintf(stderr, "%s: is %s really an image file?\n", __func__, fname.c_str());
+            return NULL;
+        }
+    }
+
+    return embed;
+}
+```
+And that will return us to the `main` function in `llava-cli.cpp`:
+```c++
+            auto * image_embed = load_image(ctx_llava, &params, image);
+            if (!image_embed) {
+                LOG_ERR("%s: failed to load image %s. Terminating\n\n", __func__, image.c_str());
+                return 1;
+            }
+
+            // process the prompt
+            process_prompt(ctx_llava, image_embed, &params, params.prompt);
+```
+So we can now see that all that we have gone through is to load the image and
+generate the patch embeddings for the image and the class token embedding. We
+will now pass the patch embeddings to `process_prompt`.
 
 <a name="wip"></a>
 _wip_
