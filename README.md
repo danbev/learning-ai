@@ -4,6 +4,7 @@ This repository contains notes and code examples related to AI.
 ### In-progress
 
 * [Llava](./notes/llava.md#user-content-wip) Llava exploration
+* [llama.cpp server](./notes/llama-server.md) llama.cpp server exploration
 
 ### Topics
 
