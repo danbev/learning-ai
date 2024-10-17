@@ -30,6 +30,7 @@ std::vector<llama_token> tokenize_prompt(llama_model* model, std::string prompt)
     }
     return input_tokens;
 }
+
 llama_batch create_batch(int size, std::vector<std::vector<llama_token>> input_tokens) {
     int n_prompts = input_tokens.size();
     printf("Creating new llama_batch with %d sequences\n", n_prompts);
@@ -46,13 +47,12 @@ llama_batch create_batch(int size, std::vector<std::vector<llama_token>> input_t
             batch.pos[idx] = i,
             batch.n_seq_id[idx] = 1;
             batch.seq_id[idx][0] = p;  // the sequence id
-            batch.logits[idx] = false;
+            batch.logits[idx] = i == prompt_tokens.size() - 1;
 
             batch.n_tokens++;
-            printf("idx: %4d, token: %6d, seq_id: %ld\n", idx, prompt_tokens[i], p);
+            printf("idx: %4d, token: %6d, seq_id: %ld, logits: %d\n", idx, prompt_tokens[i], p, batch.logits[idx]);
         }
     }
-    batch.logits[batch.n_tokens - 1] = true;
     return batch;
 }
 
