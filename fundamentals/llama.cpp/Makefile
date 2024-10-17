@@ -101,6 +101,8 @@ simple-prompt-multi: src/simple-prompt-multi.cpp
 	echo $(OBJ_GGML)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
 
+batch: src/batch.cpp
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
 
 run-simple-prompt: simple-prompt
 	./simple-prompt
@@ -176,6 +178,10 @@ download-shakespeare:
 download-llama-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Llama-2-7b
+
+download-llama-3-model:
+	cd .. && git clone --branch main --single-branch --depth 1 \
+	https://huggingface.co/meta-llama/Meta-Llama-3-8B
 
 ### open-llama targets
 download-open_llama-model:
