@@ -929,7 +929,9 @@ sentiment analysis where we have a sequence of tokens and we want to classify
 the sentiment of the text. For this we might use MAIN or CLS pooling. What
 happens is that the ouput of the transformer is a single vector with dimensions
 size of the embedding but the values will be the mean in the case of the MEAN
-type.
+type. So I think this is only applicable when we are generating embeddings
+(cparams.embeddings).
+
 ```
   token0  [1   2  3  4  5]
   token1  [6   7  8  9 10]
@@ -955,8 +957,8 @@ is the "token" vector for the CLS:
 ```
 
 ### tensor-split
-There is model_param value which is a pointer to floats and the size of this
-array is the value of LLAMA_MAX_DEVICES. This value is defined in llama.h:
+There is `model_param` value which is a pointer to floats and the size of this
+array is the value of `LLAMA_MAX_DEVICES`. This value is defined in llama.h:
 ```c++
 
 #ifdef GGML_USE_CUBLAS                                                             
@@ -983,7 +985,7 @@ example [0.7, 0.3] would mean that 70% of the layers should be stored on the
 first device and 30% on the second device.
 
 
-The llama_batch struct looks like this:
+The `llama_batch` struct looks like this:
 ```c++
    // Input data for llama_decode
     // A llama_batch object can contain input about one or many sequences
@@ -5599,5 +5601,136 @@ So lets now looks closer at `from_batch`:
         this->n_embd = n_embd;
         this->logits_all = logits_all;
 ```
+So that is just setting the members. `this` is used because these fields have the
+same name as the parameters that this function takes.
+
+Next the vector of ids (token indices not sequence ids I think?) is resized to the
+number of tokens:
+```c++
+    n_tokens = batch.n_tokens;
+    ids.resize(n_tokens);
+    std::vector<size_t> out_ids;
+    std::vector<llama_sbatch_seq> seq;
+```
+Now, `seq` is a vector of sequences. A batch can have tokens that belong to different
+sequences. So for each sequence in the batch there will be an entry in the `seq` vector
+of type:
+```c++
+struct llama_sbatch_seq {
+    int32_t n_seq_id;
+    llama_seq_id * seq_id;
+    size_t offset;
+    size_t length;
+
+    // helper for smoother batch API transition -- can be deprecated in the future
+    llama_seq_id all_seq_id; // used if seq_id == NULL
+};
+```
+After that the ids vector will be populated with the indices of the tokens in the batch:
+```c++
+        for (size_t i = 0; i < n_tokens; ++i) {
+            ids[i] = i;
+        }
+```
+```console
+(lldb) p ids
+(std::vector<unsigned long>) size=6 {
+  [0] = 0
+  [1] = 1
+  [2] = 2
+  [3] = 3
+  [4] = 4
+  [5] = 5
+}
+```
+And by the way the batch in this case looks like this:
+```console
+(lldb) expr batch
+(const llama_batch) $5 = {
+  n_tokens = 6
+  token = 0x00006000039761c0
+  embd = 0x0000000000000000
+  pos = 0x0000000000000000
+  n_seq_id = 0x0000000000000000
+  seq_id = 0x0000000000000000
+  logits = 0x0000000000000000
+  all_pos_0 = 0
+  all_pos_1 = 1
+  all_seq_id = 0
+}
+(lldb) up
+(lldb) expr lctx.model.vocab.id_to_token[1724]
+(const std::vector<llama_vocab::token_data>::value_type) $13 = (text = "▁What", score = -1465, attr = LLAMA_TOKEN_ATTR_NORMAL)
+(lldb) expr lctx.model.vocab.id_to_token[338]
+(const std::vector<llama_vocab::token_data>::value_type) $14 = (text = "▁is", score = -79, attr = LLAMA_TOKEN_ATTR_NORMAL)
+(lldb) expr lctx.model.vocab.id_to_token[4309]
+(const std::vector<llama_vocab::token_data>::value_type) $15 = (text = "▁Lo", score = -4050, attr = LLAMA_TOKEN_ATTR_NORMAL)
+(lldb) expr lctx.model.vocab.id_to_token[4117]
+(const std::vector<llama_vocab::token_data>::value_type) $16 = (text = "cat", score = -3858, attr = LLAMA_TOKEN_ATTR_NORMAL)
+(lldb) expr lctx.model.vocab.id_to_token[4717]
+(const std::vector<llama_vocab::token_data>::value_type) $17 = (text = "RA", score = -4458, attr = LLAMA_TOKEN_ATTR_NORMAL)
+(lldb) expr lctx.model.vocab.id_to_token[29973]
+(const std::vector<llama_vocab::token_data>::value_type) $18 = (text = "?", score = -29714, attr = LLAMA_TOKEN_ATTR_NORMAL)
+```
+Next we have the following, and in this case `simple_split` is true:
+```c++
+        if (simple_split) {
+            seq.resize(1);
+            llama_sbatch_seq & s = seq[0];
+            s.n_seq_id = 0;
+            s.seq_id = nullptr;
+            s.offset = 0;
+            s.length = n_tokens;
+            s.all_seq_id = batch.all_seq_id;
+            return;
+        }
+```
+So this will resize the seq vector to 1, and then populate that first entry with 
+the `llama_sbatch_seq` struct:
+```console
+(lldb) expr s
+(llama_sbatch_seq) $21 = {
+  n_seq_id = 0
+  seq_id = 0x0
+  offset = 0
+  length = 6
+  all_seq_id = 0
+}
+```
+So this will be a single sequence which includes all the tokens in the batch.
+```c++
+    while (lctx.sbatch.n_tokens > 0) {
+        llama_ubatch ubatch;
+        if (kv_self.recurrent) {
+            if (embd_pooled) {
+                // Pooled embeddings cannot be split across ubatches (yet)
+                ubatch = lctx.sbatch.split_seq(n_ubatch);
+            } else {
+                // recurrent model architectures are easier to implement
+                // with equal-length sequences
+                ubatch = lctx.sbatch.split_equal(n_ubatch);
+            }
+        } else {
+            ubatch = lctx.sbatch.split_simple(n_ubatch);
+        }
+```
+In this session we are not using a recurrent model (like Mamba, RWKV etc) so lets look
+closer at `split_simple` which I've note looked at before:
+```c++
+    // simple split, unknown number of sequences of unequal lengths
+    llama_ubatch split_simple(size_t n_ubatch) {
+        n_ubatch = n_tokens < n_ubatch ? n_tokens : n_ubatch;
+        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr);
+        ubatch.equal_seqs = false;
+        if (!seq.empty()) {
+            llama_sbatch_seq & s = seq[0];
+            size_t length = s.length < n_ubatch ? s.length : n_ubatch;
+            GGML_ASSERT(seq.size() == 1 && s.n_seq_id == 0); // don't mix with other splits
+            add_seq_to_ubatch(ubatch, s, length);
+        }
+        return ubatch;
+    }
+```
+
 
 _wip_
