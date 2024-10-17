@@ -99,8 +99,8 @@ delta = 0.5 / 15
 delta ~ 0.0333
 ```
 This means that all values in my set of floating point numbers will be divided
-by this delta so that they will be able to be represented by one of the number
-in the range from 0-15. And the max value will be mapped to the value 15 because
+by this delta so that they will be able to be represented by one of the numbers
+in the range from 0-15. And the max value will be mapped to the value 15.
 ```
 0.0333 * 15 = 0.4995 ~ 0.5
 ```
@@ -127,6 +127,9 @@ org_value = quantized_value * delta
 9 -> 9 * 0.0333 = 0.2997
 12 -> 12 * 0.0333 = 0.3996
 15 -> 15 * 0.0333 = 0.4995
+
+org_values             = {0.2   , 0.3   , 0.4   , 0.5   }
+quantized->dequantized = {0.1998, 0.2997, 0.3996, 0.4995}
 ```
 So this is how the delta stored in the block struct is used.
 
@@ -159,13 +162,11 @@ Lets take a look at `from_float` which is a function pointer to
 `quantize_row_q4_K` and is defined in `ggml-quants.c`:
 ```c
 void quantize_row_q4_0(const float * restrict x, void * restrict y, int64_t k) {
-    quantize_row_q4_0_reference(x, y, k);
+    quantize_row_q4_0_ref(x, y, k);
 }
 
-void quantize_row_q4_0_reference(const float * restrict x, block_q4_0 * restrict y, int64_t k) {
+void quantize_row_q4_0_ref(const float * restrict x, block_q4_0 * restrict y, int64_t k) {
     static const int qk = QK4_0;
-    printf("k = %ld\n", k);
-    printf("qk = %d\n", qk);
 
     assert(k % qk == 0);
 
@@ -202,8 +203,8 @@ void quantize_row_q4_0_reference(const float * restrict x, block_q4_0 * restrict
 }
 ```
 The first thing to notice is that the value of `k` which is the number of
-elememnt int the x array or floats, which are the float values we want to
-quantize and y is a pointer to the type trait. x has to be divisable by 32 which
+elements in the x array of floats, which are the float values we want to
+quantize, and y is a pointer to the type trait. x has to be divisable by 32 which
 is asserted. Following the number of blocks, `nb`, is calculated and then it
 iterates over the first block.
 
@@ -231,8 +232,8 @@ typedef struct {
 } block_q4_1;
 ```
 So we can now have either a struct of a `ggml_half2` (the same information only
-packed, two ggml_half's, into `ggml_half2` I think) member. The `m` member is
-used to store the smallest value in the block of float values.
+packed, two `ggml_half`'s, into one `ggml_half2` I think) member. The `m` member is
+used to store the smallest value (min) in the block of float values.
 
 So the above is a common patterns where `_0` there is only the one delta value
 but with `_1` there is an additional field to store data which in this case is
@@ -259,6 +260,8 @@ delta ~ 0.02
 0.3 -> (0.3 - 0.2) / 0.02 = 5
 0.4 -> (0.4 - 0.2) / 0.02 = 10
 0.5 -> (0.5 - 0.2) / 0.02 = 15
+
+quantized_values = {0, 5, 10, 15}
 ```
 
 #### Dequantization
@@ -271,6 +274,9 @@ quantized values = {0, 5, 10, 15}
 5 -> (5 * 0.02) + 0.2 = 0.3
 10 -> (10 * 0.02) + 0.2 = 0.4
 15 -> (15 * 0.02) + 0.2 = 0.5
+
+org_values             = {0.2, 0.3, 0.4, 0.5}
+quantized->dequantized = {0.2, 0.3, 0.4, 0.5}
 ```
 
 ### Naming Convention
@@ -295,11 +301,12 @@ Notice that `qs` is in fact the same size as for `block_q4_0` but we have an
 additional field `qh` which has an array of 4 (0-4). This is used to store the
 5th bit of the quantized value.
 
-`qs` is where are quantized values are stored.
+`qs` is where the quantized values are stored.
 So we have a array of 16 elements and notice the type is `uint8_t` which is 1
 byte so each entry can hold 8 bits. Now each quantized value is 4 bits so we can
 store two in each entry in this array:
 ```
+   [ nibble0  ][ nibble1   ]
    +--+--+--+--+--+--+--+--+
 0  |0 |1 |2 |3 |4 |5 |6 |7 |
    +--+--+--+--+--+--+--+--+
@@ -370,11 +377,10 @@ typedef struct {
 This is pretty similar to what we have seen before but notice that the quantized
 values array are now 32 elements long. And the type is `int8_t` which is 1 byte
 and not `uint8_t`. This is because the lower quantization blocks we have seen so
-far is because the values are all positive, like for 4 bits we have 0000b-1111b
+far the values are all positive, like for 4 bits we have 0000b-1111b
 (0-15d). But now we have 8 bits so we can represent negative values as well
 which as another advantage of having symmetric quantization.
 But other than that the quantization is the same as before.
-
 
 ### `block_q8_1`
 ```c
@@ -450,8 +456,6 @@ typedef struct {
 ```
 So x is the weight, a is the scale factor, and b is the minimum value or offset.
 Since we are only using 2 bits we only have 00, 01, 10, 11 quantization levels.
-
-
 
 __wip__
 
