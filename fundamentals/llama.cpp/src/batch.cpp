@@ -3,6 +3,8 @@
 #include <string>
 #include <cstdlib>
 #include <vector>
+#include <unordered_map>
+#include <algorithm>
 
 std::vector<llama_token> tokenize_prompt(llama_model* model, std::string prompt) {
     const int add_bos_token = llama_add_bos_token(model);
@@ -31,9 +33,69 @@ std::vector<llama_token> tokenize_prompt(llama_model* model, std::string prompt)
     return input_tokens;
 }
 
-llama_batch create_batch(int size, std::vector<std::vector<llama_token>> input_tokens) {
+struct token_position {
+    size_t vector_index;
+    size_t token_index;
+    token_position(size_t v, size_t t) : vector_index(v), token_index(t) {}
+};
+
+
+std::vector<std::pair<llama_token, std::vector<token_position>>> find_common_tokens(
+        const std::vector<std::vector<llama_token>>& input_tokens,
+        llama_model* model) {
+    if (input_tokens.empty()) {
+        return {};
+    }
+
+    std::unordered_map<llama_token, std::vector<token_position>> token_positions;
+
+    for (size_t vec_idx = 0; vec_idx < input_tokens.size(); ++vec_idx) {
+        const auto& current_vec = input_tokens[vec_idx];
+        for (size_t token_idx = 0; token_idx < current_vec.size(); ++token_idx) {
+            token_positions[current_vec[token_idx]].push_back(token_position(vec_idx, token_idx));
+        }
+    }
+
+    std::vector<std::pair<llama_token, std::vector<token_position>>> common_tokens;
+
+    std::vector<std::pair<llama_token, std::vector<token_position>>> token_positions_vec(token_positions.begin(), token_positions.end());
+    for (const auto& entry : token_positions_vec) {
+        // Skip the BOS token (assuming it's token 1)
+        if (llama_add_bos_token(model) && entry.first == 1) {
+            continue;
+        }
+        if (entry.second.size() == input_tokens.size()) {
+            common_tokens.push_back(entry);
+        }
+    }
+
+    std::sort(common_tokens.begin(), common_tokens.end(),
+              [](const std::pair<llama_token, std::vector<token_position>>& a,
+                 const std::pair<llama_token, std::vector<token_position>>& b) {
+                  return a.first < b.first;
+              });
+
+    return common_tokens;
+}
+
+llama_batch create_batch(int size, std::vector<std::vector<llama_token>> input_tokens, llama_model* model) {
     int n_prompts = input_tokens.size();
     printf("Creating new llama_batch with %d sequences\n", n_prompts);
+
+    auto common_tokens = find_common_tokens(input_tokens, model);
+    for (const auto& token_info : common_tokens) {
+        const llama_token& token = token_info.first;
+        const std::vector<token_position>& positions = token_info.second;
+
+        printf("Token id [%d] is common at positions:\n", token);
+        for (const auto& pos : positions) {
+            printf("  Sequence %zu, Index %zu\n", pos.vector_index, pos.token_index);
+        }
+        printf("\n");
+    }
+    if (common_tokens.empty()) {
+        printf("No common tokens found. Beginning of Sequence (bos) is not considered\n");
+    }
 
     // Create a single batch for both prompts.
     llama_batch batch = llama_batch_init(size, /*embd*/ 0, /*n_seq_max*/ n_prompts);
@@ -74,7 +136,7 @@ int main(int argc, char** argv) {
     model_params.n_gpu_layers = 0;
 
     std::string prompt1 = "What is LoRA?";
-    std::string prompt2 = "Dan loves ice cream";
+    std::string prompt2 = "is today Friday";
 
     llama_backend_init();
     llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
@@ -90,7 +152,9 @@ int main(int argc, char** argv) {
     ctx_params.n_threads = 1;
     ctx_params.n_threads_batch = 1;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
-    ctx_params.n_seq_max = 6;
+    ctx_params.n_seq_max = 2;
+    //ctx_params.n_batch = 8;
+    //ctx_params.n_batch_max = 4;
 
     llama_context * ctx = llama_new_context_with_model(model, ctx_params);
     if (ctx == NULL) {
@@ -105,9 +169,10 @@ int main(int argc, char** argv) {
     std::vector<llama_token> input_tokens1 = tokenize_prompt(model, prompt1);
     std::vector<llama_token> input_tokens2 = tokenize_prompt(model, prompt2);
 
-    llama_batch batch = create_batch(512, {input_tokens1, input_tokens2});
+    llama_batch batch = create_batch(512, {input_tokens1, input_tokens2}, model);
     print_batch(batch);
 
+    /*
     if (llama_decode(ctx, batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
@@ -118,6 +183,7 @@ int main(int argc, char** argv) {
     for (int i = embd_size - 10; i < embd_size; i++) {
         fprintf(stderr, "logits[%d]: %f\n", i, logits[i]);
     }
+    */
 
     llama_batch_free(batch);
     llama_free(ctx);
