@@ -5737,7 +5737,7 @@ After that the ids vector will be populated with the indices of the tokens in th
 (gdb) p ids
 $12 = std::vector of length 13, capacity 13 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
 ```
-And by the way the batch in this case looks like this:
+And by the way the `llama_batch` in this case looks like this:
 ```console
 (gdb) p batch
 $13 = (const llama_batch &) @0x7fffffffd640: {n_tokens = 13, token = 0x555555b329f0, embd = 0x0, pos = 0x555555b2cff0,
@@ -5792,7 +5792,7 @@ Next we will iterate over the number of tokens in the sequence aware batch:
             ubatch = lctx.sbatch.split_simple(n_ubatch);
         }
 ```
-`llama_ubatch` is a struct similar to the llama_batch struct:
+`llama_ubatch` is a struct similar to the `llama_batch` struct:
 ```c++
 struct llama_batch {
     int32_t n_tokens;
@@ -5853,9 +5853,10 @@ lets look closer at `split_simple` which I've not looked at before:
 ```
 `n_ubatch` will be set to 13 as `n_tokens` is less that `n_ubatch` which is
 512 in this case. Then a ubatch will be reserved, so lets take a closer look
-at what that does. And just clarify that this is a function of the `llama_sbatch`
-struct. Also keep in mind that the `seq` vector will have one entry in our case
-as this was set in `from_batch` earlier (which has a length of 13):
+at what that does. And just to clarify that this is a function of the
+`llama_sbatch` struct. Also keep in mind that the `seq` vector will have one
+entry in our case as this was set in `from_batch` earlier (which has a length of
+13) previously:
 ```c++
     llama_ubatch reserve_ubatch(size_t n_ubatch, bool has_embd = false) {
         // clear empty sequences
@@ -6194,7 +6195,10 @@ neither logits nor embeddings?
 Perhaps for a a warmup phase (warming up the caches) this might be an option.
 Another might be when measuring the performance of the model and you want to
 measure the computation time without the overhead of producing and storing
-outputs.
+outputs. Also I noticed that if we have a `u_nbatch` size that is less that
+a sequence then the first `ubatch` will not have any outputs, for example if
+the `u_nbatch` size is 32 and we have sequence of 69 tokens then the first
+two `ubatch`'s  will not have any outputs.
 
 ```c++
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
@@ -6319,5 +6323,224 @@ name = "inp_out_ids", '\000' <repeats 52 times>, extra = 0x0}
 Notice there is a check to make sure that the buffer is on the host and I think
 this makes sense as it only stores the indices of the tokens that are outputs.
 So the above will set the tensor data to the indices of the output tokens.
+
+I've updated the example so that the initial back consists of two sequences,
+one that is 69 tokens long, and the second one is 6 tokens long. And I've
+set the `llama_context_params` params 
+```c++
+    ctx_params.n_batch = 80;
+    ctx_params.n_ubatch = 32;
+```
+There is a lower limit for these values which can be seen in
+`llama_new_context_with_model` which is why I chose the values (and also it
+makes for some interesting paths in the code): 
+```c++
+    // the batch has to be at least GGML_KQ_MASK_PAD because we will be padding the KQ_mask
+    // this is required by GPU kernels in order to avoid out-of-bounds accesses (e.g. ggml_flash_attn_ext)
+    // ref: https://github.com/ggerganov/llama.cpp/pull/5021
+    if (cparams.n_batch < GGML_KQ_MASK_PAD) {
+        LLAMA_LOG_WARN("%s: n_batch is less than GGML_KQ_MASK_PAD - increasing to %d\n", __func__, GGML_KQ_MASK_PAD);
+        cparams.n_batch = GGML_KQ_MASK_PAD;
+    }
+
+    cparams.n_ubatch         = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
+```
+With that set lets inspect the batch that is passed to `llama_decode`:
+```console
+$31 = {n_tokens = 75, token = 0x5555559da860, embd = 0x0, pos = 0x5555559d1c40, n_seq_id = 0x555555b3cbe0,
+seq_id = 0x5555559db7b0, logits = 0x5555559db500 "", all_pos_0 = 0, all_pos_1 = 0, all_seq_id = 0}
+```
+The last token in both sequences have their logits elements set to true.
+We know that this `llama_batch` will be used to create/initialize a
+`llama_sbatch`:
+```c++ 
+    lctx.sbatch.from_batch(batch_all, n_embd,
+        /* simple_split */ !kv_self.recurrent,
+        /* logits_all   */ n_outputs == n_tokens_all);
+```
+Now, the `llama_batch` will be stored as a member of the `llama_sbatch` so it
+as access to the original batch data:
+```c++
+        this->batch = &batch;
+```
+And the ubatch's `n_tokens` will be initialized to same field of the batch:
+```c++
+        n_tokens = batch.n_tokens;
+```
+```console
+(gdb) p n_tokens
+$7 = 73
+```
+This is done because this will be updated as we will see later.
+```c++
+        ids.resize(n_tokens);
+        out_ids.clear();
+```
+So ids will be of size 73 in this case. And then all the ids will be populated
+using a for loop over the all the 73 tokens.
+```c++
+        for (size_t i = 0; i < n_tokens; ++i) {
+            ids[i] = i;
+        }
+        if (simple_split) {
+            seq.resize(1);
+            llama_sbatch_seq & s = seq[0];
+            s.n_seq_id = 0;
+            s.seq_id = nullptr;
+            s.offset = 0;
+            s.length = n_tokens;
+            s.all_seq_id = batch.all_seq_id;
+            return;
+        }
+```
+This is where `seq` is resized to 1. So there is one `llama_sbatch_seq`
+sequence is how I'm thinking of this and not that we have two sequences
+in the `llama_batch`. And the length of the sequence is set to 73 initially and
+the rest of the fields initialized to 0 or null.
+
+Back in `llama_decode_internal` there is the following while loop which is using
+the `n_tokens` field of the `llama_sbatch` which was set to 73 above:
+```c++
+    while (lctx.sbatch.n_tokens > 0) {
+        llama_ubatch ubatch;
+        ...
+
+            ubatch = lctx.sbatch.split_simple(n_ubatch);
+    }
+```
+Note that a new ubatch is created for each iteration of this loop!
+And, notice `split_simple` is a function/method on sbatch, so lets take a look
+at the state of this instance:
+```console
+(gdb) ptype *this
+type = struct llama_sbatch {
+    size_t n_tokens;
+    size_t n_embd;
+    bool logits_all;
+    std::vector<unsigned long> ids;
+    std::vector<unsigned long> out_ids;
+    std::vector<llama_sbatch_seq> seq;
+    const llama_batch *batch;
+    std::vector<int> ubatch_token;
+    std::vector<float> ubatch_embd;
+    std::vector<int> ubatch_pos;
+    std::vector<int> ubatch_n_seq_id;
+    std::vector<int*> ubatch_seq_id;
+    std::vector<signed char> ubatch_output;
+
+    llama_ubatch reserve_ubatch(size_t, bool);
+    void add_seq_to_ubatch(llama_ubatch &, llama_sbatch_seq &, size_t);
+    llama_ubatch split_simple(size_t);
+    llama_ubatch split_equal(size_t);
+    llama_ubatch split_seq(size_t);
+    void from_batch(const llama_batch &, size_t, bool, bool);
+}
+
+(gdb) p *this
+$20 = {
+n_tokens = 73,
+n_embd = 4096,
+logits_all = false,
+ids = std::vector of length 73, capacity 73 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72},
+out_ids = std::vector of length 0, capacity 0,
+seq = std::vector of length 1, capacity 1 = {{ n_seq_id = 0, seq_id = 0x0, offset = 0, length = 73, all_seq_id = 0}},
+batch = 0x7fffffffd670,
+ubatch_token = std::vector of length 0, capacity 0,
+ubatch_embd = std::vector of length 0, capacity 0,
+ubatch_pos = std::vector of length 0, capacity 0,
+ubatch_n_seq_id = std::vector of length 0, capacity 0,
+ubatch_seq_id = std::vector of length 0, capacity 0,
+ubatch_output = std::vector of length 0, capacity 0}
+```
+So an sbatch is initialized in `llama_decode_internal` by using information for
+the batch that was passed in. This will keep track of the number of tokens that
+have been processed and will be used to create ubatches. 
+
+In this case `n_ubatch` is 32.
+```c++
+    // simple split, unknown number of sequences of unequal lengths
+    llama_ubatch split_simple(size_t n_ubatch) {
+        n_ubatch = n_tokens < n_ubatch ? n_tokens : n_ubatch;
+        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr);
+        ubatch.equal_seqs = false;
+        if (!seq.empty()) {
+            llama_sbatch_seq & s = seq[0];
+            size_t length = s.length < n_ubatch ? s.length : n_ubatch;
+            GGML_ASSERT(seq.size() == 1 && s.n_seq_id == 0); // don't mix with other splits
+            add_seq_to_ubatch(ubatch, s, length);
+        }
+        return ubatch;
+    }
+```
+This time (compared to the previous example where the sequences/propts were much
+smaller) the `n_ubatch` will be changed from 72 to 32 (just the local variable
+that is).
+```console
+(gdb) p n_ubatch
+$18 = 32
+```
+In `add_seq_to_ubatch` we then have:
+```c++
+                ubatch.token = batch->token + seq.offset;
+```
+This is using the `llama_batch` token data and the offset is 0 in this case.
+```c++
+        ...
+
+        if (ubatch.n_tokens == 0 && ubatch.n_seqs == 0) {
+            ubatch.n_seq_tokens = ubatch.equal_seqs ? length : 1;
+        }
+        ubatch.n_tokens += length;
+        ubatch.n_seqs += ubatch.equal_seqs ? 1 : length; // virtual sequences for simple splits
+        seq.offset += length;
+        seq.length -= length;
+        n_tokens -= length;
+```
+So the ubatch `n_tokens` will be updated to 32 and notice that `seq` which is
+a reference passed in will be updated to keep track of the number of tokens
+that have been added to the updata batch but incrementing the offset, and
+decrementing the lenght which is currently 73.
+Also notice that the sbatch `n_tokens` will also be decremented and recall
+that this is the field that is used in the while loop in
+`llama_decode_internal`.
+
+```c++
+struct llama_sbatch_seq {
+    int32_t n_seq_id;
+    llama_seq_id * seq_id;
+    size_t offset;
+    size_t length;
+
+    // helper for smoother batch API transition -- can be deprecated in the future
+    llama_seq_id all_seq_id; // used if seq_id == NULL
+};
+```
+Now, lets take a look at the second iteration of the while loop.
+```c++
+            ubatch = lctx.sbatch.split_simple(n_ubatch);
+```
+This time around `n_tokens` is 41:
+```console
+(gdb) p n_tokens
+$33 = 41
+(gdb) p n_ubatch
+$34 = 32
+```
+```c++
+            add_seq_to_ubatch(ubatch, s, length);
+```
+```console
+(gdb) p seq.offset
+$40 = 32
+
+(gdb) p seq.length
+$43 = 9
+(gdb) p seq.offset
+$44 = 64
+
+(gdb) p n_tokens
+$46 = 9
+```
+
 
 _wip_
