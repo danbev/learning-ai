@@ -6523,24 +6523,126 @@ This time around `n_tokens` is 41:
 ```console
 (gdb) p n_tokens
 $33 = 41
-(gdb) p n_ubatch
+(gdb) p length
 $34 = 32
+(gdb) p seq.offset
+$67 = 32
 ```
+So this time when the updates take place in `add_seq_to_ubatch` the offset will
+be an offset into the original `llama_batch`:
 ```c++
-            add_seq_to_ubatch(ubatch, s, length);
+                ubatch.token = batch->token + seq.offset;
 ```
+The last things to happen in `add_seq_to_ubatch` are:
+```c++
+        ubatch.n_tokens += length;
+        ubatch.n_seqs += ubatch.equal_seqs ? 1 : length; // virtual sequences for simple splits
+```
+```console
+(gdb) p ubatch.n_tokens
+$75 = 32
+(gdb) p ubatch.n_seqs
+$74 = 32
+```
+For some reason I'm not understanding what `n_seqs` is supposed to represent and
+this might be because I've only stepped through an example that uses the
+simple split. TODO: try a recurrent model with the same setting and see if this
+makes more sense then. To me this field seems to specify the number of tokens
+but there already is a field for that `n_tokens` so I'm not sure what this
+field is for.
+
+Then we have the updating of the `seq` reference, and `n_tokens` field of
+`sbatch`:
+```c++
+        seq.offset += length;
+        seq.length -= length;
+        n_tokens -= length;
+        GGML_ASSERT(ubatch.n_tokens == ubatch.n_seq_tokens * ubatch.n_seqs);
+```
+The value of `seq.offset` before the update is:
 ```console
 (gdb) p seq.offset
 $40 = 32
-
 (gdb) p seq.length
-$43 = 9
+$79 = 41
+(gdb) p this.n_tokens
+$81 = 41
+```
+And after the updates:
+```console
 (gdb) p seq.offset
 $44 = 64
-
-(gdb) p n_tokens
-$46 = 9
+(gdb) p seq.length
+$84 = 9
+(gdb) p this.n_tokens
+$83 = 9
 ```
+
+
+Now, lets try the same example but using a Mamba model which is a recurrent
+model to see the difference and perhaps gain a better understanding of the
+sbatch/ubatch fields in the process.
+Using `mamba-1.4b-f16.gguf` we can see that `simple_split` is now false when
+calling `llama_sbatch::from_batch`. This will then cause the following block
+to be executed. And lets first inspect ids which will be used in this block:
+```console
+(gdb) p ids
+$5 = std::vector of length 64, capacity 64 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+  22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+  52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63}
+```
+
+```c++
+        std::sort(ids.begin(), ids.end(),
+            [&batch](size_t a, size_t b) {
+                int32_t n_seq_a = batch.n_seq_id ? batch.n_seq_id[a] : 1;
+                int32_t n_seq_b = batch.n_seq_id ? batch.n_seq_id[b] : 1;
+                // sort by seq_id, then by pos
+                if (n_seq_a == n_seq_b) {
+                    if (batch.seq_id) {
+                        for (int32_t i = 0; i < n_seq_a; ++i) {
+                            llama_seq_id seq_id_a = batch.seq_id[a][i];
+                            llama_seq_id seq_id_b = batch.seq_id[b][i];
+                            // smaller seq_ids go first
+                            if (seq_id_a != seq_id_b) {
+                                return seq_id_a < seq_id_b;
+                            }
+                        }
+                    }
+                    // when all else is equal, sort by pos
+                    if (batch.pos) {
+                        return batch.pos[a] < batch.pos[b];
+                    }
+                    // no pos, sort by id (assuming batch.all_pos_1 is positive)
+                    return a < b;
+                }
+                // shared prompts go first
+                return n_seq_a > n_seq_b;
+            }
+        );
+```
+So this will sort the ids vector using the custom lambda function passing in
+a referece to the `llama_batch`. This is first checking if the number of
+sequence ids that a tokens have are the same and if that is not the case the
+ones with more tokens that belong to more sequences will come before others, the
+lambda will return true in this case. If both tokens have the same number of 
+sequences they belong to, then the above will iterate over all the sequences
+that `a` belongs to. If these differ that is either the first token has tokens
+that belong to other sequences, of the second token has tokens that belong to
+other sequences then the one with the smaller sequence id will come first.
+Else we will sort by the position of the tokens in the batch. And if there are
+not positions then we sort by token id.
+Note that this is an inplace sort so the `ids` vector will be sorted after this
+call to sort.
+This will do nothing for us as we have not set/configured any tokens so the
+belong to multiple sequences:
+```console
+(gdb) p ids
+$23 = std::vector of length 64, capacity 64 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+  51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63}
+```
+Lets try updating the batch example to see how this may work.
 
 
 _wip_
