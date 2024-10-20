@@ -6644,5 +6644,78 @@ $23 = std::vector of length 64, capacity 64 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 ```
 Lets try updating the batch example to see how this may work.
 
+```c++
+        // init seq
+        llama_sbatch_seq * last_seq = nullptr;
+
+        if (batch.n_seq_id != nullptr && batch.seq_id != nullptr) {
+            for (size_t i = 0; i < n_tokens; ++i) {
+                const size_t bi = ids[i];
+                const int32_t n_seqs = batch.n_seq_id[bi];
+                llama_seq_id * seq_ids = batch.seq_id[bi];
+                if (last_seq != nullptr) {
+                    bool same = n_seqs == last_seq->n_seq_id;
+                    for (int32_t j = 0; same && j < n_seqs; ++j) {
+                        if (seq_ids[j] != last_seq->seq_id[j]) {
+                            same = false;
+                        }
+                    }
+                    if (same) {
+                        last_seq->length += 1;
+                        continue;
+                    }
+                }
+                llama_sbatch_seq new_seq = {n_seqs, seq_ids, i, 1, batch.all_seq_id};
+                seq.push_back(new_seq);
+                last_seq = &seq.back();
+            }
+        } else {
+            llama_sbatch_seq new_seq = {1, nullptr, 0, n_tokens, batch.all_seq_id};
+            seq.push_back(new_seq);
+        }
+```
+Lets got through the first token in this case:
+```console
+(lldb) p ids[0]
+(std::vector<unsigned long>::value_type) 1
+
+(lldb) p batch.n_seq_id[1]
+(int32_t) 2
+
+(lldb) p last_seq
+(llama_sbatch_seq *) nullptr
+```
+So in this case there is now `last_seq` and it will be populated by:
+```c++
+                llama_sbatch_seq new_seq = {n_seqs, seq_ids, i, 1, batch.all_seq_id};
+                seq.push_back(new_seq);
+                last_seq = &seq.back();
+```
+This will create a new `llama_sbatch_seq` with 2 as the number of sequences, the pointer
+to the sequenced is that this tokens has, a length of 1 (initially):
+```console
+(lldb) p new_seq
+(llama_sbatch_seq) {
+  n_seq_id = 2
+  seq_id = 0x00006000032257d0
+  offset = 0
+  length = 1
+  all_seq_id = 0
+}
+``
+And then add it to the `seq` vector and then set `last_seq` to point to the last element
+in the vector. 
+
+```c++
+struct llama_sbatch_seq {
+    int32_t n_seq_id;
+    llama_seq_id * seq_id;
+    size_t offset;
+    size_t length;
+
+    // helper for smoother batch API transition -- can be deprecated in the future
+    llama_seq_id all_seq_id; // used if seq_id == NULL
+};
+```
 
 _wip_
