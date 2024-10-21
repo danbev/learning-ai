@@ -166,6 +166,12 @@ std::string token_as_string(llama_model* model, llama_token token) {
     return std::string(piece.data(), piece.size());
 }
 
+const char* RED = "\033[0;31m";
+const char* GREEN = "\033[0;32m";
+const char* BLUE = "\033[0;34m";
+const char* ORANGE = "\033[0;33m";  // Actually yellow, but often appears as orange in many terminals
+const char* RESET = "\033[0m";
+
 int main(int argc, char** argv) {
     fprintf(stdout, "llama.cpp batch exploration\n");
     llama_model_params model_params = llama_model_default_params();
@@ -206,8 +212,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fprintf(stderr, "prompt1: %s\n", prompt1.c_str());
-    fprintf(stderr, "prompt2: %s\n", prompt2.c_str());
+    printf("%sprompt1: %s%s\n", BLUE, prompt1.c_str(), RESET);
+    printf("%sprompt2: %s%s\n", ORANGE, prompt2.c_str(), RESET);
 
     // Tokenize the prompts.
     std::vector<llama_token> input_tokens1 = tokenize_prompt(model, prompt1);
@@ -227,14 +233,14 @@ int main(int argc, char** argv) {
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
 
     llama_token sp_token_seq1 = llama_sampler_sample(sampler, ctx, input_tokens1.size()-1);
-    std::string token_str1 = token_as_string(model, sp_token_seq1);
-    printf("new_token_seq1: %d : token_str1 [%s]\n", sp_token_seq1, token_str1.c_str());
+    std::string sp_str1 = token_as_string(model, sp_token_seq1);
+    printf("%snew_token_seq1: %d : token_str1 [%s]%s\n", BLUE, sp_token_seq1, sp_str1.c_str(), RESET);
 
     llama_sampler_reset(sampler);
 
     llama_token sp_token_seq2 = llama_sampler_sample(sampler, ctx, input_tokens1.size() + input_tokens2.size()-1);
-    std::string token_str2 = token_as_string(model, sp_token_seq2);
-    printf("new_token_seq2: %d : token_str2 [%s]\n", sp_token_seq2, token_str2.c_str());
+    std::string sp_str2 = token_as_string(model, sp_token_seq2);
+    printf("%snew_token_seq2: %d : token_str2 [%s]%s\n", ORANGE, sp_token_seq2, sp_str2.c_str(), RESET);
 
     int decode_calls = 10;
 
@@ -267,25 +273,26 @@ int main(int argc, char** argv) {
         sp_token_seq1 = llama_sampler_sample(sampler, ctx, 0);
         std::string sp_str1 = token_as_string(model, sp_token_seq1);
         seq_1_output.push_back(sp_str1);
-        printf("new_token_seq1: %d : token_str1 [%s]\n", sp_token_seq1, sp_str1.c_str());
+        printf("%snew_token_seq1: %d : token_str1 [%s]%s\n", BLUE, sp_token_seq1, sp_str1.c_str(), RESET);
+        //print_colored_token("prompt1: ", BLUE);
 
         llama_sampler_reset(sampler);
 
         sp_token_seq2 = llama_sampler_sample(sampler, ctx, 1);
         std::string sp_str2 = token_as_string(model, sp_token_seq2);
         seq_2_output.push_back(sp_str2);
-        printf("new_token_seq2: %d : token_str2 [%s]\n", sp_token_seq2, sp_str2.c_str());
+        printf("%snew_token_seq2: %d : token_str2 [%s]%s\n", ORANGE, sp_token_seq2, sp_str2.c_str(), RESET);
 
         llama_batch_free(update_batch);
     }
     printf("sequence 1 output:\n");
     for (size_t i = 0; i < seq_1_output.size(); i++) {
-        printf("%s", seq_1_output[i].c_str());
+        printf("%s%s%s", BLUE, seq_1_output[i].c_str(), RESET);
     }
     printf("\n");
     printf("sequence 2 output:\n");
     for (size_t i = 0; i < seq_2_output.size(); i++) {
-        printf("%s", seq_2_output[i].c_str());
+        printf("%s%s%s", ORANGE, seq_2_output[i].c_str(), RESET);
     }
     printf("\n");
 
