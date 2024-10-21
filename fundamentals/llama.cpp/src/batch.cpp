@@ -1,4 +1,6 @@
 #include "llama.h"
+#include "llama-sampling.h"
+
 #include <cstdio>
 #include <string>
 #include <cstdlib>
@@ -96,44 +98,47 @@ llama_batch create_batch(int size, std::vector<std::vector<llama_token>> input_t
 
     auto common_tokens = find_common_tokens(input_tokens, model);
     if (common_tokens.empty()) {
-        printf("No common tokens found. Beginning of Sequence (bos) is not considered\n");
+        printf("No common tokens found. Beginning of Sequence (BOS) is not considered\n");
     } else {
         print_common_tokens(common_tokens);
     }
+    printf("\n");
 
-    // Create a single batch for both prompts.
+    // Create a single batch for all prompts.
     llama_batch batch = llama_batch_init(size, 0, n_prompts);
 
     for (size_t s = 0; s < input_tokens.size(); s++) {
-        printf("Processing prompt %ld, batch_n_tokens: %d \n", s, batch.n_tokens);
         std::vector<llama_token> prompt_tokens = input_tokens[s];
+        printf("Processing prompt %ld, nr tokens: %ld (batch_n_tokens: %d)\n", s, prompt_tokens.size(),  batch.n_tokens);
         for (size_t i = 0; i < prompt_tokens.size(); i++) {
-	    int token_id = prompt_tokens[i];
+            int token_id = prompt_tokens[i];
             int idx = batch.n_tokens;
+            printf("  idx: %d, token_id: %d \n", idx, token_id);
             batch.token[idx] = token_id;
             batch.pos[idx] = i;
 
-	    auto it = common_tokens.find(token_id);
-	    if (it != common_tokens.end()) {
+            /*
+            auto it = common_tokens.find(token_id);
+            if (it != common_tokens.end()) {
                 std::vector<token_position> tps = it->second;
-		batch.n_seq_id[idx] = tps.size();
-		batch.seq_id[idx][0] = s;
-		for (size_t j = 1; j < tps.size(); j++) {
-		    auto tp = tps[j];
-		    if (tp.seq_id != s) {
-			printf("seq: %zu, token %d: %s \n", s, token_id, tps[j].to_string().c_str());
-			batch.seq_id[idx][j] = tps[j].seq_id;
-		    }
-		}
-	    } else {
-		batch.n_seq_id[idx] = 1;
-		batch.seq_id[idx][0] = s;  // the sequence id
-	    }
+                batch.n_seq_id[idx] = tps.size();
+                for (size_t j = 0; j < tps.size(); j++) {
+                    batch.seq_id[idx][j] = tps[j].seq_id;
+                }
+            } else {
+            */
+                batch.n_seq_id[idx] = 1;
+                batch.seq_id[idx][0] = s;  // the sequence id
+            /*}
+            printf("    n_seq_id: %u\n", batch.n_seq_id[idx]);
+            for (int i = 0; i < batch.n_seq_id[idx]; i++) {
+                printf("    seq_id[%d]: %u\n", i, batch.seq_id[idx][i]);
+            }*/
             batch.logits[idx] = i == prompt_tokens.size() - 1;
-
             batch.n_tokens++;
-            printf("idx: %4d, token: %6d, seq_id: %ld, logits: %d\n", idx, token_id, s, batch.logits[idx]);
+            //printf("idx: %4d, token: %6d, seq_id: %ld, logits: %d\n", idx, token_id, s, batch.logits[idx]);
         }
+        printf("\n");
     }
     return batch;
 }
@@ -147,20 +152,35 @@ void print_batch(llama_batch batch) {
     fprintf(stderr, "]\n");
 }
 
+std::string token_as_string(llama_model* model, llama_token token) {
+    int lsplit = 0;
+    bool special = false;
+    std::vector<char> piece(8, 0);
+    int n_tokens = llama_token_to_piece(model, token, piece.data(), piece.size(), lsplit, special);
+    if (n_tokens < 0) {
+        piece.resize(-n_tokens);
+        llama_token_to_piece(model, token, piece.data(), piece.size(), lsplit, special);
+    } else {
+        piece.resize(n_tokens);
+    }
+    return std::string(piece.data(), piece.size());
+}
+
 int main(int argc, char** argv) {
     fprintf(stdout, "llama.cpp batch exploration\n");
     llama_model_params model_params = llama_model_default_params();
-    //std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
-    std::string model_path = "models/mamba-1.4b-f16.gguf";
+    //std::string model_path = "models/llama-2-7b-chat.Q4_K_M.gguf";
+    std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
+    //std::string model_path = "models/mamba-1.4b-f16.gguf";
 
     model_params.main_gpu = 0;
     model_params.n_gpu_layers = 0;
 
     // This prompt is 69 tokens
     //std::string prompt1 = R"(You are an AI assistant specializing in task completion. Your goal is to provide clear, concise, and accurate responses to user queries. Always maintain a helpful and professional tone. If a request is unclear, ask for clarification. Prioritize user safety and ethical considerations in your answers.)";
-    std::string prompt1 = "Yesterday was Friday";
+    std::string prompt1 = "What is the capital of Sweden?";
     //std::string prompt2 = "How many r's are there in strawberry?";
-    std::string prompt2 = "Tomorrow was Monday";
+    std::string prompt2 = "What is the capital of France?";
 
     llama_backend_init();
     llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
@@ -173,8 +193,8 @@ int main(int argc, char** argv) {
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 1024;
-    ctx_params.n_threads = 1;
-    ctx_params.n_threads_batch = 1;
+    ctx_params.n_threads = 4;
+    ctx_params.n_threads_batch = 4;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
     ctx_params.n_seq_max = 2;
     ctx_params.n_batch = 80;
@@ -196,29 +216,70 @@ int main(int argc, char** argv) {
     llama_batch batch = create_batch(512, {input_tokens1, input_tokens2}, model);
     print_batch(batch);
 
-    /*
     if (llama_decode(ctx, batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
 
-    int embd_size = llama_n_embd(model);
-    printf("logits for prompt1:\n");
-    float* logits1 = llama_get_logits_ith(ctx, input_tokens1.size() - 1);
-    for (int i = embd_size - 10; i < embd_size; i++) {
-        fprintf(stderr, "logits1[%d]: %f\n", i, logits1[i]);
+    auto sparams = llama_sampler_chain_default_params();
+    llama_sampler* sampler = llama_sampler_chain_init(sparams);
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(3));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
+
+    llama_token sp_token_seq1 = llama_sampler_sample(sampler, ctx, input_tokens1.size()-1);
+    std::string token_str1 = token_as_string(model, sp_token_seq1);
+    printf("new_token_seq1: %d : token_str1 [%s]\n", sp_token_seq1, token_str1.c_str());
+
+    llama_sampler_reset(sampler);
+
+    llama_token sp_token_seq2 = llama_sampler_sample(sampler, ctx, input_tokens1.size() + input_tokens2.size()-1);
+    std::string token_str2 = token_as_string(model, sp_token_seq2);
+    printf("new_token_seq2: %d : token_str2 [%s]\n", sp_token_seq2, token_str2.c_str());
+
+    int decode_calls = 10;
+    int n_tokens = batch.n_tokens;
+
+    int pos1 = input_tokens1.size();
+    int pos2 = input_tokens2.size();
+    while (decode_calls--) {
+        llama_batch update_batch = llama_batch_init(2, 0, 2);
+        update_batch.token[0] = sp_token_seq1;
+        update_batch.token[1] = sp_token_seq2;
+        update_batch.pos[0] = pos1++;
+        update_batch.pos[1] = pos2++;
+        update_batch.n_tokens = 2;
+
+        update_batch.n_seq_id[0] = 1;
+        update_batch.seq_id[0][0] = 0;
+        update_batch.logits[0] = true;
+
+        update_batch.n_seq_id[1] = 1;
+        update_batch.seq_id[1][0] = 1;
+        update_batch.logits[1] = true;
+
+        if (llama_decode(ctx, update_batch) != 0) {
+            fprintf(stderr, "llama_decode() failed\n");
+            return 1;
+        }
+
+        sp_token_seq1 = llama_sampler_sample(sampler, ctx, 0);
+        std::string sp_str1 = token_as_string(model, sp_token_seq1);
+        printf("new_token_seq1: %d : token_str1 [%s]\n", sp_token_seq1, sp_str1.c_str());
+
+        llama_sampler_reset(sampler);
+
+        sp_token_seq2 = llama_sampler_sample(sampler, ctx, 1);
+        std::string sp_str2 = token_as_string(model, sp_token_seq2);
+        printf("new_token_seq2: %d : token_str2 [%s]\n", sp_token_seq2, sp_str2.c_str());
+
+        llama_batch_free(update_batch);
     }
-    printf("logits for prompt2:\n");
-    float* logits2 = llama_get_logits_ith(ctx, input_tokens1.size() + input_tokens2.size() - 1);
-    for (int i = embd_size - 10; i < embd_size; i++) {
-        fprintf(stderr, "logits2[%d]: %f\n", i, logits2[i]);
-    }
-    */
 
     llama_batch_free(batch);
     llama_free(ctx);
     llama_free_model(model);
     llama_backend_free();
+    llama_sampler_free(sampler);
 
     return 0;
 }
