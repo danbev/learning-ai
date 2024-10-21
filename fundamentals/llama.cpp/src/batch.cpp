@@ -237,7 +237,6 @@ int main(int argc, char** argv) {
     printf("new_token_seq2: %d : token_str2 [%s]\n", sp_token_seq2, token_str2.c_str());
 
     int decode_calls = 10;
-    int n_tokens = batch.n_tokens;
 
     int pos1 = input_tokens1.size();
     int pos2 = input_tokens2.size();
@@ -280,12 +279,12 @@ int main(int argc, char** argv) {
         llama_batch_free(update_batch);
     }
     printf("sequence 1 output:\n");
-    for (int i = 0; i < seq_1_output.size(); i++) {
+    for (size_t i = 0; i < seq_1_output.size(); i++) {
         printf("%s", seq_1_output[i].c_str());
     }
     printf("\n");
     printf("sequence 2 output:\n");
-    for (int i = 0; i < seq_2_output.size(); i++) {
+    for (size_t i = 0; i < seq_2_output.size(); i++) {
         printf("%s", seq_2_output[i].c_str());
     }
     printf("\n");
