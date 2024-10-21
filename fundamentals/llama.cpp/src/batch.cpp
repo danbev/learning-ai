@@ -241,6 +241,9 @@ int main(int argc, char** argv) {
 
     int pos1 = input_tokens1.size();
     int pos2 = input_tokens2.size();
+    std::vector<std::string> seq_1_output;
+    std::vector<std::string> seq_2_output;
+
     while (decode_calls--) {
         llama_batch update_batch = llama_batch_init(2, 0, 2);
         update_batch.token[0] = sp_token_seq1;
@@ -264,16 +267,28 @@ int main(int argc, char** argv) {
 
         sp_token_seq1 = llama_sampler_sample(sampler, ctx, 0);
         std::string sp_str1 = token_as_string(model, sp_token_seq1);
+        seq_1_output.push_back(sp_str1);
         printf("new_token_seq1: %d : token_str1 [%s]\n", sp_token_seq1, sp_str1.c_str());
 
         llama_sampler_reset(sampler);
 
         sp_token_seq2 = llama_sampler_sample(sampler, ctx, 1);
         std::string sp_str2 = token_as_string(model, sp_token_seq2);
+        seq_2_output.push_back(sp_str2);
         printf("new_token_seq2: %d : token_str2 [%s]\n", sp_token_seq2, sp_str2.c_str());
 
         llama_batch_free(update_batch);
     }
+    printf("sequence 1 output:\n");
+    for (int i = 0; i < seq_1_output.size(); i++) {
+        printf("%s", seq_1_output[i].c_str());
+    }
+    printf("\n");
+    printf("sequence 2 output:\n");
+    for (int i = 0; i < seq_2_output.size(); i++) {
+        printf("%s", seq_2_output[i].c_str());
+    }
+    printf("\n");
 
     llama_batch_free(batch);
     llama_free(ctx);
