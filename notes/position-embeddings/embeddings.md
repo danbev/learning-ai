@@ -118,6 +118,16 @@ meant to capture the overall meaning of the input sequence.
 
 There is also `rank` which I need to look into more closely: TODO: rank pooling
 
+And then normalization will happen on this vector that the pooling produces.
+```console
+--embd-normalize N                      normalisation for embendings (default: 2) (-1=none, 0=max absolute
+                                        int16, 1=taxicab, 2=euclidean, >2=p-norm)
+```
+So `-1/none` will just return the values as they that the pooling produced.
+`0` will normalize the values to the max absolute int16 value. `1` will use
+taxicab/manhattan/L1 normalization, `2` will use euclidean/L2 normalization and
+values greater than 2 will use p-norm normalization.
+
 The example can be used as follows:
 ```console
 $ gdb --args ./llama-embedding -m models/llama-2-7b-chat.Q4_K_M.gguf --pooling mean  -p "What is LoRA?"
