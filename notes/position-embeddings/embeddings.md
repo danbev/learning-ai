@@ -5,7 +5,7 @@ to turn text into vectors with the elements of the vector being numbers so that
 text can be used with neural networks.
 
 How this text to vectors of numbers is done can differ, and one example is doing
-[one-hot-encoding](./one-hot-encoding.md). Another option is using a count
+[one-hot-encoding](../one-hot-encoding.md). Another option is using a count
 based approach. And we also have the option to use embeddings which is what this
 document will address.
 
