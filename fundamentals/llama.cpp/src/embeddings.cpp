@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
     model_params.n_gpu_layers = 0;
 
     std::string prompt = "What is LoRA?";
+    printf("%sprompt: %s%s\n", GREEN, prompt.c_str(), RESET);
 
     llama_backend_init();
     llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
@@ -93,7 +94,7 @@ int main(int argc, char** argv) {
     ctx_params.n_ctx = 1024;
     ctx_params.n_threads = 1;
     ctx_params.n_threads_batch = 1;
-    ctx_params.pooling_type = LLAMA_POOLING_TYPE_MEAN;
+    ctx_params.pooling_type = LLAMA_POOLING_TYPE_NONE;
     ctx_params.embeddings = true;
 
     llama_context* embd_ctx = llama_new_context_with_model(model, ctx_params);
@@ -102,58 +103,80 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("%sprompt: %s%s\n", GREEN, prompt.c_str(), RESET);
-
     std::vector<llama_token> input_tokens = tokenize_prompt(model, prompt);
 
-    llama_batch batch = create_batch(ctx_params.n_batch, input_tokens, model);
-
-    if (llama_decode(embd_ctx, batch) != 0) {
+    llama_batch prompt_batch = create_batch(ctx_params.n_batch, input_tokens, model);
+    if (llama_decode(embd_ctx, prompt_batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
 
-    float* embd = nullptr;
-    embd = llama_get_embeddings_seq(embd_ctx, 0);
-    printf("%sGenerated embeddings for prompt. Embedding size: %d.\%s\n", BLUE, llama_n_embd(model), RESET);
+    //float* embd = nullptr;
+    int n_embd = llama_n_embd(model);
+    //std::vector<float*> token_embeddings;
+    std::vector<std::vector<float>> token_embeddings;
 
-    ctx_params.embeddings = false;
-    llama_context* inf_ctx = llama_new_context_with_model(model, ctx_params);
-    // So now that we have the embeddings, lets try passing them to the LLM
-    // for inference to see how passing embeddings in a batch works.
-    llama_batch embd_batch = llama_batch_init(1, 0, 1);
-    embd_batch.embd = embd;
-    embd_batch.pos[0] = 0;
-    embd_batch.n_seq_id[0] = 1;
-    embd_batch.seq_id[0][0] = 0;
-    embd_batch.logits[0] = true;
+    for (size_t i = 0; i < input_tokens.size(); i++) {
+        float* embd = llama_get_embeddings_ith(embd_ctx, i);
+        //token_embeddings.push_back(embd);
+        token_embeddings.push_back(std::vector<float>(embd, embd + n_embd));
 
-    if (llama_decode(inf_ctx, batch) != 0) {
-        fprintf(stderr, "llama_decode() failed\n");
-        return 1;
+        printf("%stoken %ld embeddings: %d.\%s\n", BLUE, i, n_embd, RESET);
+        for (int j = 0; j < 5; j++) {
+            printf("%s%f %s", BLUE, embd[j], RESET);
+        }
+        printf("\n");
+    }
+
+    llama_kv_cache_clear(embd_ctx);
+    llama_free(embd_ctx);
+    llama_batch_free(prompt_batch);
+
+    llama_context_params inf_ctx_params = llama_context_default_params();
+    inf_ctx_params.n_ctx = 1024;
+    inf_ctx_params.n_threads = 1;
+    inf_ctx_params.n_threads_batch = 1;
+    llama_context* inf_ctx = llama_new_context_with_model(model, inf_ctx_params);
+
+    for (size_t i = 0; i < token_embeddings.size(); i++) {
+        llama_batch embd_batch = llama_batch_init(1, n_embd, 1);
+        embd_batch.n_tokens = 1;
+        embd_batch.embd = token_embeddings[i].data();
+        embd_batch.pos[0] = i; 
+        embd_batch.n_seq_id[0] = 1;
+        embd_batch.seq_id[0][0] = 0;
+        embd_batch.logits[0] = true;
+
+        if (llama_decode(inf_ctx, embd_batch) != 0) {
+            fprintf(stderr, "llama_decode() failed for token %zu\n", i);
+            return 1;
+        }
+        //llama_batch_free(embd_batch);
     }
 
     auto sparams = llama_sampler_chain_default_params();
     llama_sampler* sampler = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(3));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.8f)); 
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
 
-    // Sample a token (sp=sampled token)
-    llama_token sp_token = llama_sampler_sample(sampler, inf_ctx, input_tokens.size()-1);
-    std::string sp_str = token_as_string(model, sp_token);
-    printf("%snew_token_seq1: %d : token_str1 [%s]%s\n", ORANGE, sp_token, sp_str.c_str(), RESET);
-
-    int decode_calls = 15;
-
-    int pos = input_tokens.size();
     std::vector<std::string> output;
+    // Sample a token (sp=sampled token)
+    llama_token sp_token = llama_sampler_sample(sampler, inf_ctx, 0);
+    std::string sp_str = token_as_string(model, sp_token);
+    output.push_back(sp_str);
+    printf("%stoken_seq: %d : token_str [%s]%s\n", ORANGE, sp_token, sp_str.c_str(), RESET);
+    llama_sampler_reset(sampler);
+
+    int decode_calls = 10;
+    int pos = token_embeddings.size() - 1;
 
     printf("%sInference:%s\n", ORANGE, RESET);
     while (decode_calls--) {
         llama_batch update_batch = llama_batch_init(1, 0, 1);
+        update_batch.n_tokens = 1;
         update_batch.token[0] = sp_token;
         update_batch.pos[0] = pos++;
-        update_batch.n_tokens = 1;
 
         update_batch.n_seq_id[0] = 1;
         update_batch.seq_id[0][0] = 0;
@@ -164,27 +187,26 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        sp_token = llama_sampler_sample(sampler, inf_ctx, 0);
-        std::string sp_str = token_as_string(model, sp_token);
+        sp_token = llama_sampler_sample(sampler, inf_ctx, -1);
+        sp_str = token_as_string(model, sp_token);
         output.push_back(sp_str);
         printf("%stoken_seq: %.4d : token [%s]%s\n", ORANGE, sp_token, sp_str.c_str(), RESET);
 
         llama_sampler_reset(sampler);
 
-        llama_batch_free(update_batch);
+        //llama_batch_free(update_batch);
     }
+
     printf("Generated output:\n");
     for (size_t i = 0; i < output.size(); i++) {
         printf("%s%s%s", GREEN, output[i].c_str(), RESET);
     }
     printf("\n");
 
-    llama_batch_free(batch);
-    llama_free(inf_ctx);
-    llama_free(embd_ctx);
-    llama_free_model(model);
-    llama_backend_free();
-    llama_sampler_free(sampler);
+    //llama_free(inf_ctx);
+    //llama_free_model(model);
+    //llama_backend_free();
+    //llama_sampler_free(sampler);
 
     return 0;
 }
