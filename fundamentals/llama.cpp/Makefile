@@ -104,6 +104,9 @@ simple-prompt-multi: src/simple-prompt-multi.cpp
 batch: src/batch.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
 
+embeddings: src/embeddings.cpp
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+
 run-simple-prompt: simple-prompt
 	./simple-prompt
 
