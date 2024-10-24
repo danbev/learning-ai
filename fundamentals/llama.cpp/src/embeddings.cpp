@@ -73,12 +73,18 @@ const char* RESET = "\033[0m";
 int main(int argc, char** argv) {
     fprintf(stdout, "llama.cpp embedding exploration\n");
     llama_model_params model_params = llama_model_default_params();
-    std::string model_path = "models/llama-2-7b-chat.Q4_K_M.gguf";
 
     model_params.main_gpu = 0;
     model_params.n_gpu_layers = 0;
 
+    // Chat/Instruct model usage.
+    //std::string model_path = "models/llama-2-7b-chat.Q4_K_M.gguf";
+    //std::string prompt = "<s>[INST] <<SYS>>\n\n<</SYS>>\n\nWhat is LoRA? [/INST]";
+
+    // Base model usage
+    std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
     std::string prompt = "What is LoRA?";
+
     printf("%sprompt: %s%s\n", GREEN, prompt.c_str(), RESET);
 
     llama_backend_init();
@@ -91,9 +97,8 @@ int main(int argc, char** argv) {
     }
 
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 1024;
-    ctx_params.n_threads = 1;
-    ctx_params.n_threads_batch = 1;
+    ctx_params.n_threads = 4;
+    ctx_params.n_threads_batch = 4;
     ctx_params.pooling_type = LLAMA_POOLING_TYPE_NONE;
     ctx_params.embeddings = true;
 
@@ -104,7 +109,7 @@ int main(int argc, char** argv) {
     }
 
     std::vector<llama_token> input_tokens = tokenize_prompt(model, prompt);
-    llama_batch prompt_batch = create_batch(ctx_params.n_batch, input_tokens, model);
+    llama_batch prompt_batch = create_batch(input_tokens.size(), input_tokens, model);
 
     // Decode the prompt to generate the embeddings. We are not going to use
     // the logits at this stage.
@@ -116,6 +121,11 @@ int main(int argc, char** argv) {
     // Now we will extract the embeddings.
     int n_embd = llama_n_embd(model);
     std::vector<float> token_embeddings;
+
+    float* embd = llama_get_embeddings(embd_ctx);
+    token_embeddings.insert(token_embeddings.end(), embd, embd + input_tokens.size() * n_embd);
+
+    /* Alternative way to extract embeddings.
     for (size_t i = 0; i < input_tokens.size(); i++) {
         float* embd = llama_get_embeddings_ith(embd_ctx, i);
         token_embeddings.insert(token_embeddings.end(), embd, embd + n_embd);
@@ -126,12 +136,14 @@ int main(int argc, char** argv) {
         }
         printf("\n");
     }
+    */
+
     // Print out the first 5 embeddings from all token embeddings generated.
     for (size_t i = 0; i < input_tokens.size(); i++) {
         printf("%sembedding %ld \%s", BLUE, i, RESET);
         float* token_embd = token_embeddings.data() + (i * n_embd);
         for (int j = 0; j < 5; j++) {
-            printf("%f ", token_embd[j]);
+            printf("%s%10f%s ", BLUE, token_embd[j], RESET);
         }
         printf("\n");
     }
@@ -145,23 +157,22 @@ int main(int argc, char** argv) {
 
     // Now we are going to create a new context for inference.
     llama_context_params inf_ctx_params = llama_context_default_params();
-    inf_ctx_params.n_ctx = 1024;
-    inf_ctx_params.n_threads = 1;
-    inf_ctx_params.n_threads_batch = 1;
+    inf_ctx_params.n_threads = 4;
+    inf_ctx_params.n_threads_batch = 4;
     llama_context* inf_ctx = llama_new_context_with_model(model, inf_ctx_params);
     int pos = 0;
 
     // Next we create a batch for the token embeddings generated above.
     // The following is creating a single batch with 6 token embeddings in it.
-    llama_batch embd_batch = llama_batch_init(1024, n_embd, 1);
+    llama_batch embd_batch = llama_batch_init(input_tokens.size(), n_embd, 1);
     embd_batch.n_tokens = input_tokens.size();
     embd_batch.embd = token_embeddings.data();
     printf("%sToken embeddings size: %d, n_tokens: %d%s\n", GREEN, n_embd, embd_batch.n_tokens, RESET);
     for (size_t i = 0; i < input_tokens.size(); i++) {
         embd_batch.pos[i] = i; 
         embd_batch.n_seq_id[i] = 1;
-        embd_batch.seq_id[i][0] = 10;
-        embd_batch.logits[i] = true;
+        embd_batch.seq_id[i][0] = 2;
+        embd_batch.logits[i] = i == input_tokens.size() - 1;
     }
     printf("%slast position : %d%s\n", GREEN, embd_batch.pos[input_tokens.size() - 1], RESET);
 
@@ -172,12 +183,33 @@ int main(int argc, char** argv) {
         llama_batch_free(embd_batch);
     }
     pos = embd_batch.pos[input_tokens.size() - 1];
+        float* logits = llama_get_logits(inf_ctx);
+        printf("Top 5 logits:\n");
+        std::vector<std::pair<llama_token, float>> top_logits;
+        for (int i = 0; i < llama_n_vocab(model); i++) {
+            top_logits.push_back(std::make_pair(i, logits[i]));
+        }
+        std::partial_sort(top_logits.begin(),
+                  top_logits.begin() + 5,
+                  top_logits.end(),
+                  [](const std::pair<llama_token, float>& a,
+                     const std::pair<llama_token, float>& b) {
+                      return a.second > b.second;
+                  });
+        for (int i = 0; i < 5; i++) {
+        printf("Token %d (%s): %f\n",
+           top_logits[i].first,
+           token_as_string(model, top_logits[i].first).c_str(),
+           top_logits[i].second);
+        }
 
     // Next create a sampler chain for sampling the next token.
     auto sparams = llama_sampler_chain_default_params();
     llama_sampler* sampler = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(3));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.5));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(5));
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
+    //llama_kv_cache_clear(inf_ctx);
 
     std::vector<std::string> output;
     // Sample a token (sp=sampled token)
@@ -185,17 +217,17 @@ int main(int argc, char** argv) {
     std::string sp_str = token_as_string(model, sp_token);
     printf("%stoken_seq: %d : token_str [%s]%s\n", ORANGE, sp_token, sp_str.c_str(), RESET);
     output.push_back(sp_str);
-    llama_sampler_reset(sampler);
 
     int decode_calls = 5;
     while (decode_calls--) {
+        //llama_kv_cache_clear(inf_ctx);
         llama_batch update_batch = llama_batch_init(1, 0, 1);
         update_batch.n_tokens = 1;
         update_batch.token[0] = sp_token;
-        update_batch.pos[0] = pos++;
+        update_batch.pos[0] = ++pos;
 
         update_batch.n_seq_id[0] = 1;
-        update_batch.seq_id[0][0] = 10;
+        update_batch.seq_id[0][0] = 2;
         update_batch.logits[0] = true;
         printf("%sInference: token: %d, pos: %d %s\n", ORANGE, update_batch.token[0], update_batch.pos[0], RESET);
 
@@ -204,7 +236,27 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        sp_token = llama_sampler_sample(sampler, inf_ctx, -1);
+        float* logits = llama_get_logits(inf_ctx);
+        printf("Top 5 logits:\n");
+        std::vector<std::pair<llama_token, float>> top_logits;
+        for (int i = 0; i < llama_n_vocab(model); i++) {
+            top_logits.push_back(std::make_pair(i, logits[i]));
+        }
+        std::partial_sort(top_logits.begin(),
+                  top_logits.begin() + 5,
+                  top_logits.end(),
+                  [](const std::pair<llama_token, float>& a,
+                     const std::pair<llama_token, float>& b) {
+                      return a.second > b.second;
+                  });
+        for (int i = 0; i < 5; i++) {
+        printf("Token %d (%s): %f\n",
+           top_logits[i].first,
+           token_as_string(model, top_logits[i].first).c_str(),
+           top_logits[i].second);
+        }
+
+        sp_token = llama_sampler_sample(sampler, inf_ctx, 0);
         sp_str = token_as_string(model, sp_token);
         output.push_back(sp_str);
         printf("%stoken_seq: %.4d : token [%s]%s\n", ORANGE, sp_token, sp_str.c_str(), RESET);
