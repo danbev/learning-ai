@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     //std::string prompt = "<s>[INST] <<SYS>>\n\n<</SYS>>\n\nWhat is LoRA? [/INST]";
 
     // Base model usage
-    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
+    std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
     //std::string model_path = "models/mamba-1.4b-f16.gguf";
     std::string prompt = "What is LoRA?";
 
@@ -184,6 +184,7 @@ int main(int argc, char** argv) {
         llama_batch_free(embd_batch);
     }
     pos = embd_batch.pos[input_tokens.size() - 1];
+
     float* logits = llama_get_logits(inf_ctx);
     printf("Top 5 logits:\n");
     std::vector<std::pair<llama_token, float>> top_logits;
@@ -207,10 +208,13 @@ int main(int argc, char** argv) {
     // Next create a sampler chain for sampling the next token.
     auto sparams = llama_sampler_chain_default_params();
     llama_sampler* sampler = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.5));
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(5));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(1.5));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(10));
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
-    //llama_kv_cache_clear(inf_ctx);
+
+    //llama_sampler_chain_add(sampler, llama_sampler_init_dist(1234));
+    //llama_sampler_chain_add(sampler, llama_sampler_init_softmax());
+    //llama_sampler_chain_add(sampler, llama_sampler_init_top_k(3));
 
     std::vector<std::string> output;
     // Sample a token (sp=sampled token)
@@ -221,7 +225,6 @@ int main(int argc, char** argv) {
 
     int decode_calls = 5;
     while (decode_calls--) {
-        //llama_kv_cache_clear(inf_ctx);
         llama_batch update_batch = llama_batch_init(1, 0, 1);
         update_batch.n_tokens = 1;
         update_batch.token[0] = sp_token;
