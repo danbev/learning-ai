@@ -82,7 +82,8 @@ int main(int argc, char** argv) {
     //std::string prompt = "<s>[INST] <<SYS>>\n\n<</SYS>>\n\nWhat is LoRA? [/INST]";
 
     // Base model usage
-    std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
+    std::string model_path = "models/llama-2-7b.Q4_0.gguf";
+    //std::string model_path = "models/mamba-1.4b-f16.gguf";
     std::string prompt = "What is LoRA?";
 
     printf("%sprompt: %s%s\n", GREEN, prompt.c_str(), RESET);
@@ -171,7 +172,7 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < input_tokens.size(); i++) {
         embd_batch.pos[i] = i; 
         embd_batch.n_seq_id[i] = 1;
-        embd_batch.seq_id[i][0] = 2;
+        embd_batch.seq_id[i][0] = 0;
         embd_batch.logits[i] = i == input_tokens.size() - 1;
     }
     printf("%slast position : %d%s\n", GREEN, embd_batch.pos[input_tokens.size() - 1], RESET);
@@ -183,25 +184,25 @@ int main(int argc, char** argv) {
         llama_batch_free(embd_batch);
     }
     pos = embd_batch.pos[input_tokens.size() - 1];
-        float* logits = llama_get_logits(inf_ctx);
-        printf("Top 5 logits:\n");
-        std::vector<std::pair<llama_token, float>> top_logits;
-        for (int i = 0; i < llama_n_vocab(model); i++) {
-            top_logits.push_back(std::make_pair(i, logits[i]));
-        }
-        std::partial_sort(top_logits.begin(),
-                  top_logits.begin() + 5,
-                  top_logits.end(),
-                  [](const std::pair<llama_token, float>& a,
-                     const std::pair<llama_token, float>& b) {
-                      return a.second > b.second;
-                  });
-        for (int i = 0; i < 5; i++) {
-        printf("Token %d (%s): %f\n",
-           top_logits[i].first,
-           token_as_string(model, top_logits[i].first).c_str(),
-           top_logits[i].second);
-        }
+    float* logits = llama_get_logits(inf_ctx);
+    printf("Top 5 logits:\n");
+    std::vector<std::pair<llama_token, float>> top_logits;
+    for (int i = 0; i < llama_n_vocab(model); i++) {
+	top_logits.push_back(std::make_pair(i, logits[i]));
+    }
+    std::partial_sort(top_logits.begin(),
+	      top_logits.begin() + 5,
+	      top_logits.end(),
+	      [](const std::pair<llama_token, float>& a,
+		 const std::pair<llama_token, float>& b) {
+		  return a.second > b.second;
+	      });
+    for (int i = 0; i < 5; i++) {
+    printf("Token %d (%s): %f\n",
+       top_logits[i].first,
+       token_as_string(model, top_logits[i].first).c_str(),
+       top_logits[i].second);
+    }
 
     // Next create a sampler chain for sampling the next token.
     auto sparams = llama_sampler_chain_default_params();
@@ -227,7 +228,7 @@ int main(int argc, char** argv) {
         update_batch.pos[0] = ++pos;
 
         update_batch.n_seq_id[0] = 1;
-        update_batch.seq_id[0][0] = 2;
+        update_batch.seq_id[0][0] = 0;
         update_batch.logits[0] = true;
         printf("%sInference: token: %d, pos: %d %s\n", ORANGE, update_batch.token[0], update_batch.pos[0], RESET);
 
