@@ -137,21 +137,52 @@ embedding 4: -1.278546  0.123264 -1.812276  ... -1.009741  2.422771  0.410338
 embedding 5:  1.063118 -2.252861 -2.212228  ... -0.188066 -0.433652  0.414811
 ```
 
-Then in the example [embeddings](../fundamentals/llama.cpp/src/embeddings.cpp)
+Then in the example [embeddings.cpp](../fundamentals/llama.cpp/src/embeddings.cpp)
 I did the same thing and extracted the embeddings:
 ```
-embedding 0 0.400597 -0.190815 0.222652 0.074640 -0.191031
-embedding 1 1.491324 0.126824 1.260321 -0.551602 0.151728
-embedding 2 0.130336 -0.622851 2.395198 1.474568 -1.747949
-embedding 3 -0.708625 -0.107112 -0.749924 0.901563 -1.643292
-embedding 4 -1.278546 0.123264 -1.812276 -0.099625 -3.626511
-embedding 5 1.063118 -2.252861 -2.212228 0.937880 -4.282171
+embedding 0   0.400597  -0.190815   0.222652   0.074640  -0.191031 
+embedding 1   1.491324   0.126824   1.260321  -0.551602   0.151728 
+embedding 2   0.130336  -0.622851   2.395198   1.474568  -1.747949 
+embedding 3  -0.708625  -0.107112  -0.749924   0.901563  -1.643292 
+embedding 4  -1.278546   0.123264  -1.812276  -0.099625  -3.626511 
+embedding 5   1.063118  -2.252861  -2.212228   0.937880  -4.282171
 ```
 So that looks pretty good and these are stored in `token_embeddings`.
 
 Now, I was not sure if I should use the last token embedding or all of them for
 inference (not that like I mentioned above this might be completely wrong and
 not supposed to work like this at all but I'm including this to clarify what I'm
-doing).
+doing). Using all of the embeddings I then created a new context for inference
+and the first batch contains the above embeddings.
+The I try to peform inference on this and the sampled token is:
+```console
+token_seq: 4309 : token_str [ Lo]
+```
+And this looks promising as it is the token `Lo` from the prompt `What is LoRA?`
+. The I use this token with a new decode to try to continue the inference I 
+start to get "garbage" tokens:
+```console
+token_seq: 7228 : token [PA]
+Inference: token: 7228, pos: 7 
+token_seq: 7228 : token [PA]
+Inference: token: 7228, pos: 8 
+token_seq: 7228 : token [PA]
+Inference: token: 7228, pos: 9 
+token_seq: 7228 : token [PA]
+Inference: token: 7228, pos: 10 
+token_seq: 7228 : token [PA]
 
+Generated output:
+ LoPAPAPAPAPA
+```
+
+Inspecting the logits for this second inference (when the token id is 4309) I
+see this:
+```console
+(gdb) p cur[7228]
+$54 = {id = 7228, logit = 14.2697344, p = 0}
+(gdb) p ctx.model.vocab.id_to_token[7228]
+$55 = {text = "PA", score = -6969, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
 _wip_
+
