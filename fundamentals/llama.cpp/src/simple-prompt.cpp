@@ -87,8 +87,8 @@ int main(int argc, char** argv) {
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 1024;
-    ctx_params.n_threads = 4;
-    ctx_params.n_threads_batch = 4;
+    ctx_params.n_threads = 1;
+    ctx_params.n_threads_batch = 1;
     ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;
     
     //struct llama_sampler* sampler = llama_sampler_init_greedy();
