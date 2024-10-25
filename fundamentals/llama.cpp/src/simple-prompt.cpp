@@ -157,9 +157,6 @@ int main(int argc, char** argv) {
         // Increment the number of tokens in the batch.
         batch.n_tokens++;
     }
-    //batch.n_seq_id = nullptr;
-    //batch.seq_id = nullptr;
-
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
     printf("%sbatch.n_tokens: %d%s\n", ORANGE, batch.n_tokens, RESET);
@@ -169,15 +166,16 @@ int main(int argc, char** argv) {
     }
     printf("%s]%s\n" , ORANGE, RESET);
 
-    printf("%sprompt: %s%s", ORANGE, prompt.c_str(), RESET);
-    fflush(stderr);
-
+    printf("%sprompt: %s%s\n", ORANGE, prompt.c_str(), RESET);
+    
     // Now we run the inference on the batch. This will populate the logits
     // for the last token in the batch.
+    printf("%sFirst decode. kv_cache count: %d%s\n", ORANGE, llama_get_kv_cache_token_count(ctx), RESET);
     if (llama_decode(ctx, batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
+    printf("%skv_cache_token count: %d%s\n", ORANGE, llama_get_kv_cache_token_count(ctx), RESET);
     print_top_logits(model, ctx);
 
     // This is the total number of tokens that we will generate, which recall
