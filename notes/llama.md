@@ -294,8 +294,8 @@ again, in the Key and Value matrices:
 
 The transformer architecture needs to have all the previous tokens in the
 sequence to predict the next token but we don't have to recalculate the dot
-product every time. We can cache the key and value matrices and then just
-use a single input token, the last token predicted and not append that token to
+products every time. We can cache the key and value matrices and then just
+use a single input token, the last token predicted, and not append that token to
 the input:
 ```
 Time=2
@@ -545,8 +545,8 @@ $54 = {n_tokens = 6, token = 0xc63980, embd = 0x0, pos = 0x8a86f0, n_seq_id = 0x
 (gdb) p n_batch
 $56 = 512
 ```
-So, n_batch is the maximum number of tokens that can be in a single batch, and
-n_tokens is the number of tokens in the current batch.
+So, `n_batch` is the maximum number of tokens that can be in a single batch, and
+`n_tokens` is the number of tokens in the current batch.
 ```console
 (gdb) n
 5682	    int n_threads = n_tokens == 1 ? cparams.n_threads : cparams.n_threads_batch;
@@ -603,11 +603,12 @@ The number of tokens in the batch cannot exceed the max context size.
 1605	            continue;
 1606	        }
 ```
-So we are going to loop and the first thing we to is check if the head plus the
+So we are going to loop and the first thing we do is check if the head plus the
 number of tokens in the batch exceed the max number of tokens allowed.  If this
-is the case then n_tested is incremented with the max context size minus the
+is the case then `n_tested` is incremented with the max context size minus the
 cache head.
-Lets pretent that we have a head that is 1020 and the number of tokens is 6 and
+
+Lets pretend that we have a head that is 1020 and the number of tokens is 6 and
 n_ctx is 1024. Then 1020+6=1026 and 1026 > 1024. And n_tested will become
 1024-1020=4. And the head will be set to 0. And then the loop will continue but
 this time head will be zero. And the if statement will compare 6 > 1024 which
@@ -634,10 +635,17 @@ $84 = 0
 (gdb) p cache.cells[cache.head + i].pos
 $85 = -1
 ```
-cache.cells is a vector of size 1024, the max number of tokens allowed. And
-each entry in this  vector is currently not set, its position is -1. So in our
-case this will false and the if block will not be executed. So this is making
-sure that from the current head there are n_tokens number of slots available.
+cache.cells is a vector of size 1024, the max number of tokens allowed.
+```console
+(gdb) p lctx.kv_self.cells.size()
+$24 = 1024
+```
+
+If an entry in this vector is currently not set, its position is -1. So in our
+case the cells checked will not be greater than zero and the if block will not
+be executed. So this is making sure that from the current head there are
+n_tokens number of slots available.
+
 That will lead us to the following code:
 ```console
 1628	    for (uint32_t i = 0; i < n_tokens; i++) {
@@ -728,7 +736,7 @@ Next, we have:
 5829	            }
 ```
 The `llama_kv_cache` is a ringbuffer and when the buffer is full and we need to
-add data the oldest data is overwritten which I believe is called shifting.
+add data, the oldest data is overwritten which I believe is called shifting.
 This false in our case.
 ```console
 5832	        kv_self.head += n_tokens;
@@ -739,7 +747,7 @@ $118 = 6
 (gdb) p kv_self.size
 $119 = 1024
 ```
-So that was the initial prompt which has now been decode and then we will use
+So that was the initial prompt which has now been decoded and then we will use
 the logits to predict the next token. This will be a single token which we will
 then pass into llama_decode:
 ```console
@@ -785,27 +793,324 @@ vocabulary of the model. And this is a pointer to a int so think of it as an
 array. A `llama_batch` can either contains tokens or embeddings (embd) which
 are floats. 
 
-A `llama_batch` is similar to the contept of context we talked about
-[llm.md](../../notes/llm.md#context_size). Below we are adding the input query
-tokens to this batch/context. So it will initially just contain the tokens for
-our query. But after running the inference, we will append the next token to the
-batch and run the inference again and then run the inference again to predict
-the next token, now with more context (the previous token).
-
 The `pos` is the position of the token in the sequence. Notice that this is a
 pointer and we can think of it as an array:
 ```
     pos[0]  position in the sequence for token[0]
 ```
-Next we have the number of sequence id's in this batch.
+Next we have the number of sequence id's, which is also an array so we have one
+entry for each token in the batch. This indicates how many sequences this token
+belongs to, or is part of. If we have a value that is greater than 1 this means
+that this token is part of multiple sequences of this batch. This is something
+that has confused me for a while and I'm trying to understand the usecase for
+this. One thought I had was that this was done to save space, like if the same
+token is used in multiple sequences we might get away with only storing it once
+in the tokens array. But this does not seem to be the case as each token is
+still stored in the array and the `seq_id` array is of the same size.
+
+Are these hints to the inference engine perhaps?   
+To try this out with two prompts/sequences:
+```console
+prompt1: Yesterday was Friday
+prompt2: Yesterday was Monday
 ```
-    seq_id[0
+So in this case we have two tokens in common for both sequences, `Yesterday` and
+`was`.
+
+Using the [batch](../fundamentals/llama.cpp/src/batch.cpp) example this is
+what the batch that we will pass to `llama_decode` will look like this:
+```console
+Creating new llama_batch with 2 sequences
+
+Token id [43688] in common at positions:
+  Sequence 1, Index 0
+  Sequence 0, Index 0
+Token id [369] in common at positions:
+  Sequence 1, Index 1
+  Sequence 0, Index 1
+
+Processing prompt 0, nr tokens: 3 (batch_n_tokens: 0)
+  idx: 0, token_id: 43688
+    n_seq_id: 2
+    seq_id[0]: 1
+    seq_id[1]: 0
+  idx: 1, token_id: 369
+    n_seq_id: 2
+    seq_id[0]: 1
+    seq_id[1]: 0
+  idx: 2, token_id: 6794
+    n_seq_id: 1
+    seq_id[0]: 0
+
+Processing prompt 1, nr tokens: 3 (batch_n_tokens: 3)
+  idx: 3, token_id: 43688
+    n_seq_id: 2
+    seq_id[0]: 1
+    seq_id[1]: 0
+  idx: 4, token_id: 369
+    n_seq_id: 2
+    seq_id[0]: 1
+    seq_id[1]: 0
+  idx: 5, token_id: 7216
+    n_seq_id: 1
+    seq_id[0]: 1
+
+batch.n_tokens: 6
+batch.tokens: [43688, 369, 6794, 43688, 369, 7216, ]
 ```
+We can see that we still the tokens `43688` and `369` in the batch twice.
+```console
+(gdb) p batch.token[0]
+$2 = 43688
+(gdb) p model.vocab.id_to_token[batch.token[0]]
+$3 = {text = "Yesterday", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+(gdb) p batch.token[1]
+$5 = 369
+(gdb) p model.vocab.id_to_token[batch.token[1]]
+$4 = {text = "Ġwas", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+And these tokens have the positions, 0, 1, 3, and 4.
+In `llama_sbatch::from_batch` there will be an inplace sort of the ids. The
+vector of ids will initially look like this:
+```console
+(gdb) p ids
+$3 = std::vector of length 6, capacity 6 = {0, 1, 2, 3, 4, 5}
+```
+This vector of ids will now be sorted using the following function:
+```c++
+        std::sort(ids.begin(), ids.end(),
+            [&batch](size_t a, size_t b) {
+                int32_t n_seq_a = batch.n_seq_id ? batch.n_seq_id[a] : 1;
+                int32_t n_seq_b = batch.n_seq_id ? batch.n_seq_id[b] : 1;
+                // sort by seq_id, then by pos
+                if (n_seq_a == n_seq_b) {
+                    if (batch.seq_id) {
+                        for (int32_t i = 0; i < n_seq_a; ++i) {
+                            llama_seq_id seq_id_a = batch.seq_id[a][i];
+                            llama_seq_id seq_id_b = batch.seq_id[b][i];
+                            // smaller seq_ids go first
+                            if (seq_id_a != seq_id_b) {
+                                return seq_id_a < seq_id_b;
+                            }
+                        }
+                    }
+                    // when all else is equal, sort by pos
+                    if (batch.pos) {
+                        return batch.pos[a] < batch.pos[b];
+                    }
+                    // no pos, sort by id
+                    return a < b;
+                }
+                // shared prompts go first
+                return n_seq_a > n_seq_b;
+            }
+        );
+```
+
+```console
+(gdb) br llama.cpp:3195 -commands
+End with a line saying just "end".
+>silent
+>printf "a=%zu, b=%zu, n_seq_a=%d, n_seq_b=%d\n", a, b, n_seq_a, n_seq_b
+>continue
+>end
+
+(gdb) c
+Continuing.
+a=1, b=0, n_seq_a=2, n_seq_b=2
+a=1, b=0, n_seq_a=2, n_seq_b=2
+a=2, b=0, n_seq_a=1, n_seq_b=2
+a=2, b=1, n_seq_a=1, n_seq_b=2
+a=3, b=0, n_seq_a=2, n_seq_b=2
+a=3, b=2, n_seq_a=2, n_seq_b=1
+a=3, b=1, n_seq_a=2, n_seq_b=2
+a=3, b=0, n_seq_a=2, n_seq_b=2
+a=4, b=0, n_seq_a=2, n_seq_b=2
+a=4, b=2, n_seq_a=2, n_seq_b=1
+a=4, b=1, n_seq_a=2, n_seq_b=2
+a=5, b=0, n_seq_a=1, n_seq_b=2
+a=5, b=2, n_seq_a=1, n_seq_b=1
+```
+And after the sort the ids vector will look like this:
+```console
+(gdb) p ids
+$16 = std::vector of length 6, capacity 6 = {0, 3, 1, 4, 2, 5}
+```
+Notice that the tokens that are shared between sequences are the first ids in
+the vector now.
+After this the ids will be iterated over, and in our case this will start with
+0, which has 2 sequences ids:
+```console
+(gdb) p batch.n_seq_id[0]
+$72 = 2
+```
+Before this loop `last_seq` is set to `nullptr`:
+```c++
+        // init seq
+        llama_sbatch_seq * last_seq = nullptr;
+
+        for (size_t i = 0; i < n_tokens; ++i) {
+            const size_t bi = ids[i];
+            const int32_t n_seqs = batch.n_seq_id[bi];
+            llama_seq_id * seq_ids = batch.seq_id[bi];
+            ...  // skipping the case where last_seq != nullptr
+
+            llama_sbatch_seq new_seq = {n_seqs, seq_ids, i, 1};
+            seq.push_back(new_seq);
+            last_seq = &seq.back();
+        }
+```
+```console
+(gdb) p new_seq
+$75 = {n_seq_id = 2, seq_id = 0x55555665c010, offset = 0, length = 1}
+(gdb) p seq
+$76 = std::vector of length 0, capacity 0
+```
+So my understanding of this is that we are creating a new `llama_sbatch_seq` for
+the token at offset 0 in the original `llama_batch` (which `llama_sbatch` has a
+pointer to as a member field). The initial length of this sequence is 1 (but
+this will be updated later), and `seq_id` is also pointer into the original
+batch. And this token has 2 sequence ids, that is this token is part of another
+sequence as well.
+This is then added to the `llama_sbatch` seq vector
+```console
+(gdb) p this
+$79 = (llama_sbatch * const) 0x555555ad5aa0
+(gdb) p this.seq
+$80 = std::vector of length 1, capacity 1 = {
+  {n_seq_id = 2, seq_id = 0x55555665c010, offset = 0, length = 1}
+}
+```
+For the next iteration it will process the second element of the ids vector
+which is 3, but this time `last_seq` is not null:
+```console
+        for (size_t i = 0; i < n_tokens; ++i) { const size_t bi = ids[i];
+            const int32_t n_seqs = batch.n_seq_id[bi];
+            llama_seq_id * seq_ids = batch.seq_id[bi];
+            if (last_seq != nullptr) {
+
+                bool same = n_seqs == last_seq->n_seq_id;
+                for (int32_t j = 0; same && j < n_seqs; ++j) {
+                    if (seq_ids[j] != last_seq->seq_id[j]) {
+                        same = false;
+                    }
+                }
+                if (same) {
+                    last_seq->length += 1;
+                    continue;
+                }
+            }
+            llama_sbatch_seq new_seq = {n_seqs, seq_ids, i, 1};
+            seq.push_back(new_seq);
+            last_seq = &seq.back();
+        }
+```
+So the `same` variable is created by a comparison of the number number of
+sequences for token 3 is the the same as for the last token then same will be
+true:
+```console
+(gdb) p n_seqs == last_seq->n_seq_id
+$88 = true
+(gdb) p n_seqs
+$89 = 2
+(gdb) p last_seq->n_seq_id
+$90 = 2
+(gdb)
+```
+The this will iterate over all the sequence ids and compare the sequence ids
+of the current token (3) and the last sequence token. In our case they are all
+the same so `same` will remain true and the `last_seq->length` will get
+incremented by one.
+We then move on to the third token in ids which is 1. The same will happend
+again for this token and lenght will be incremented once more.
+Next the forth token in ids will be processed which is 4. The same thing will
+happen again and `last_seq` will look like this at this point:
+```console
+(gdb) p * last_seq
+$114 = {n_seq_id = 2, seq_id = 0x55555665c010, offset = 0, length = 4}
+```
+Next we have the fifth token in ids which is 2. This token has only one sequence
+so same will be false. So this will create new `llama_sbatch_seq`:
+```console
+(gdb) p new_seq
+$122 = {n_seq_id = 1, seq_id = 0x555555ad5eb0, offset = 4, length = 1}
+```
+And `last_seq` will be updated to point to this new sequence.
+```console
+(gdb) p *last_seq
+$124 = {n_seq_id = 1, seq_id = 0x555555ad5eb0, offset = 4, length = 1}
+```
+Next we have the last token in ids which is 5. This token has only one sequence
+but this time the last seq also has only one sequence so `same` will be true.
+But in the check these two tokens are not part of the same sequence:
+```console
+(gdb) p seq_ids[j]
+$131 = 1
+(gdb) p last_seq->seq_id[j]
+$132 = 0
+```
+So `same` will be set to false and a new `llama_sbatch_seq` will be created:
+```console
+(gdb) p new_seq
+$133 = {n_seq_id = 1, seq_id = 0x555555a0c660, offset = 5, length = 1}
+```
+The loop will then exist. Lets inpsect the `this.seq` after the final sorting:
+```console
+(gdb) p seq
+$136 = std::vector of length 3, capacity 4 = {
+  {n_seq_id = 1, seq_id = 0x555555ad5eb0, offset = 4, length = 1},
+  {n_seq_id = 1, seq_id = 0x555555a0c660, offset = 5, length = 1},
+  {n_seq_id = 2, seq_id = 0x55555665c010, offset = 0, length = 4}}
+```
+Keep in mind that `ids` is a member of sbatch after this function returns
+the values in this vector will be:
+```console
+this.ids    : {  0,     3,    1,   4,   2,    5    }
+(token ids) : [43688, 43688, 369, 369, 6794, 7216, ]
+```
+So the first entry in the seq vector is for token 6794 which is not part of any
+other sequence and has a lenght of 1 therefor. Same with the last token 7216.
+
+Later back in `llama_decode_internal` this setup of batches that I've done
+with the sequence ids will cause the first tokens to be set on the input
+tensor the following:
+```c++
+        ggml_backend_tensor_set(lctx.inp_tokens, batch.token, 0, n_tokens*ggml_element_size(lctx.inp_tokens));
+```
+```console
+(gdb) p n_tokens
+$194 = 4
+
+$195 = (const llama_ubatch &) @0x7fffffffd550: {equal_seqs = true,
+n_tokens = 4, n_seq_tokens = 4, n_seqs = 1, token = 0x555555a8be80, embd = 0x0,
+pos = 0x55555665c030, n_seq_id = 0x5555559fa260, seq_id = 0x555555a2a460,
+output = 0x55555665c050 ""}
+
+(gdb) p batch.token[0]
+$190 = 43688
+(gdb) p batch.token[1]
+$191 = 43688
+(gdb) p batch.token[2]
+$192 = 369
+(gdb) p batch.token[3]
+$193 = 369
+```
+But notice that this is passing tokens which don't make sense to be procesed.
+I think I'm way off on this idea and how sequences are intended to be used.
+
+This feels a little embarrassing and I now realize that I've been thinking about
+this in the wrong way and actually I think I looked into the sequence ids before
+and should have recalled this. I've been looking at this when using a batch to
+call `llama_decode` once, and one usage of the sequence ids is to be able to
+pass multiple sequences to the model in a single batch. And we can specify the
+sequence id with following `llama_decode` calls as well. 
 
 This struct holds `input` data for llama_decode. For example, if we pass in
 a prompt of "What is LoRA" that would first be tokenized and then the tokens
 will be added to the batch. An example of this can be found in
 [simple-prompt.cpp](../fundamentals/llama.cpp/src/simple-prompt.cpp).
+I'm still not sure when using multiple sequence ids for a single token is useful
+
 
 An instance of a batch contains a count of the number of tokens (or embeddings)
 that this batch holds. In the above case `n_tokens` would be 7.
@@ -853,64 +1158,9 @@ $13 = 1
 (gdb) p *batch.seq_id[3]
 $9 = 0
 ```
-Lets see if we can figure this out by looking at `llama_decode` and how it
-uses these sequence values. If we set these pointers to null and rerun we
-will be able to see how `llama_decode` uses these values:
-```c++
-    batch.n_seq_id = nullptr;
-    batch.seq_id = nullptr;
-```
-We have the following if statement in llama_decode:
-```c++
-    std::vector<int32_t> n_seq_id;
-    std::vector<llama_seq_id *> seq_id_arr;
-    std::vector<std::vector<llama_seq_id>> seq_id;
 
-    if (batch.seq_id == nullptr) {
-        n_seq_id.resize(n_tokens);
-        seq_id.resize(n_tokens);
-        seq_id_arr.resize(n_tokens);
-        for (uint32_t i = 0; i < n_tokens; i++) {
-            n_seq_id[i] = 1;
-            seq_id[i].resize(1);
-
-            seq_id[i][0] = batch.all_seq_id;
-            seq_id_arr[i] = seq_id[i].data();
-        }
-
-        batch.n_seq_id = n_seq_id.data();
-        batch.seq_id = seq_id_arr.data();
-    }
-```
-First notice that 3 vectors are initialized and these will be populated if
-the `batch.seq_id` is null. Each entry in the `n_seq_id` vector will be set to 1,
-and the `seq_id` will be resized to that size (1) as well. Next, the actual
-value of the sequence id is set to `batch.all_seq_id` which is 0.
-Finally `batch.n_seq_id` and `batch.seq_id` are set to point to this data.
-
-```
-batch tokenized from "What is LoRA", n_tokens = 7
-
-batch.token[0] = 0      batch.pos[0] = 0  n_seq_id[0] = 1 seq_id[0][0] = 0
-batch.token[1] = 1      batch.pos[1] = 1  n_seq_id[1] = 1 seq_id[1][0] = 0
-batch.token[2] = 338    batch.pos[2] = 2  n_seq_id[2] = 1 seq_id[2][0] = 0
-batch.token[3] = 4309   batch.pos[3] = 3  n_seq_id[3] = 1 seq_id[3][0] = 0
-batch.token[4] = 4717   batch.pos[4] = 3  n_seq_id[4] = 1 seq_id[4][0] = 0
-batch.token[5] = 29973  batch.pos[5] = 5  n_seq_id[5] = 1 seq_id[5][0] = 0
-batch.token[6] = 13     batch.pos[6] = 6  n_seq_id[6] = 1 seq_id[6][0] = 0
-                                                          (size=1)       ↑
-                                                                    sequence number
-```
-It is possible to set the values of the sequences to something else. For
-example, if we set the sequence id of the first token to 1, and the sequence id
-of the second token to 2, then we will have two sequences in this batch.
-```c++
-    batch.n_seq_id[0] = 1;
-    batch.seq_id[0][0] = 1;
-    batch.n_seq_id[1] = 1;
-    batch.seq_id[1][0] = 2;
-```
-I'm still not sure how this is useful.
+A batch can consist of multiple sequences by specifying
+A token in a batch can belong to multiple sequences. 
 
 ### llama_context
 
