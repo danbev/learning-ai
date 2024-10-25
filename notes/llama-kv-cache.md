@@ -1,4 +1,4 @@
-## llama.cpp kv-cache notes
+o# llama.cpp kv-cache notes
 
 ### Overview
 I've gone through the theory of Key-Value caching in the transformer architecture
@@ -885,9 +885,272 @@ So this is what these matrices looks like for a single layer:
     .                     .                   .
     .                     .                   .
 31  [0  ...  127]      31 [0  ...  127]      31 [0...31]
+```
 
+```c++
+
+    llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
+```
+`llm_build_kv_store` also has quite a few parameters but again we have seen most of them before:
+```c++
+static void llm_build_kv_store(
+        struct ggml_context * ctx,
+        const llama_hparams & hparams,
+        const llama_cparams & cparams,
+       const llama_kv_cache & kv,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * k_cur,
+         struct ggml_tensor * v_cur,
+                    int32_t   n_tokens,
+                    int32_t   kv_head,
+         const llm_build_cb & cb,
+                    int64_t   il) {
+    const int64_t n_ctx = cparams.n_ctx;
+
+    const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+    const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+```
+```console
+(lldb) p n_ctx
+(const int64_t) 1024
+(lldb) p n_embd_k_gqa
+(const int64_t) 4096
+(lldb) p n_embd_v_gqa
+(const int64_t) 4096
+```
+So we have a context size of 1024 and an embedding dimension size of 4096.
+Next we will create a view of the kv cache `k_l` tensor for this layer, and
+the number of elements will be `n_tokens * n_embed_k_gqa`, and the offset is
+the last argument. The cache is empty in this case. One note here is that if
+`kv_head` is a larger values like 512 the is probably because there is call
+to this function as part of `llama_new_context_with_model` which can happen
+if you set a break point on a line somewhere in this function.
+```c++
+    struct ggml_tensor * k_cache_view = ggml_view_1d(ctx,
+        kv.k_l[il],
+        n_tokens*n_embd_k_gqa,
+        ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)*kv_head);
+```
+```console
+(lldb) p ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)
+(size_t) 8192
+(lldb) p kv_head
+(int32_t) 0
+(lldb) p k_cache_view->ne
+(int64_t[4])  ([0] = 24576, [1] = 1, [2] = 1, [3] = 1)
+```
+So in this case the will produce a view of the tensor and the view will span
+the first 24576 element
+```
+n_embd_k_gqa / n_tokens
+4096         / 6
+```
+Then a copy operation will be created for copying `k_cur` to the `k_cache_view`:
+```c++
+    ggml_build_forward_expand(graph, ggml_cpy(ctx, k_cur, k_cache_view));
+```
+
+```c++
+    struct ggml_tensor * v_cache_view = nullptr;
+    if (cparams.flash_attn) {
+        v_cache_view = ggml_view_1d(ctx, kv.v_l[il],
+            n_tokens*n_embd_v_gqa, ggml_row_size(kv.v_l[il]->type, n_embd_v_gqa) * kv_head);
+    } else {
+        // note: the V cache is transposed when not using flash attention
+        v_cache_view = ggml_view_2d(ctx, kv.v_l[il], n_tokens, n_embd_v_gqa,
+                (  n_ctx)*ggml_element_size(kv.v_l[il]),
+                (kv_head)*ggml_element_size(kv.v_l[il]));
+
+        v_cur = ggml_transpose(ctx, v_cur);
+    }
+```
+```console
+(lldb) p v_cache_view->ne
+(int64_t[4])  ([0] = 6, [1] = 4096, [2] = 1, [3] = 1)
+```
+And this is then transposed. This is the last thing to happen in `llm_build_kv_store` and
+we will be back in `llm_build_kv`:
+```c++
+    llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
+```
+
+```c++
+static struct ggml_tensor * llm_build_kqv(
+        struct ggml_context * ctx,
+       struct llama_context & lctx,
+       const llama_kv_cache & kv,
+         struct ggml_cgraph * graph,
+         struct ggml_tensor * wo,
+         struct ggml_tensor * wo_b,
+         struct ggml_tensor * q_cur,
+         struct ggml_tensor * kq_mask,
+                    int32_t   n_tokens,
+                    int32_t   n_kv,
+                    float     kq_scale,
+         const llm_build_cb & cb,
+                    int       il) {
+
+    const llama_model   & model   = lctx.model;
+    const llama_hparams & hparams = lctx.model.hparams;
+    const llama_cparams & cparams = lctx.cparams;
+
+    const int64_t n_ctx         = cparams.n_ctx;
+    const int64_t n_head        = hparams.n_head(il);
+    const int64_t n_head_kv     = hparams.n_head_kv(il);
+    const int64_t n_embd_head_k = hparams.n_embd_head_k;
+    const int64_t n_embd_k_gqa  = hparams.n_embd_k_gqa(il);
+    const int64_t n_embd_head_v = hparams.n_embd_head_v;
+    const int64_t n_embd_v_gqa  = hparams.n_embd_v_gqa(il);
+
+    struct ggml_tensor * q = ggml_permute(ctx, q_cur, 0, 2, 1, 3);
+```
+So this will swap the second and third dimensions of `q_cur`:
+```console
+(lldb) p q_cur->ne
+(int64_t[4])  ([0] = 128, [1] = 32, [2] = 6, [3] = 1)
+
+(lldb) p q->ne
+(int64_t[4])  ([0] = 128, [1] = 6, [2] = 32, [3] = 1)
+```
+So this will be restructured to something like this:
+```
+q matrix:
+
+z0
+          x-axis ->
+  0   [0  ...   127]          y-axis
+      .                         ↓
+      .                       
+  5   [0  ...   127]          
+
+.
+.
+.
+
+z31
+  0   [0  ...   127]
+      .
+      .
+  5   [0  ...   127]
+```
+So we have 32 heads, and each one matrix with 6 rows each with 128 dimensions is
+what I'm trying to convey here.
+Next something similar is done for the Key matrix:
+```c++
+    struct ggml_tensor * k =
+        ggml_view_3d(ctx, kv.k_l[il],
+                n_embd_head_k, n_kv, n_head_kv,
+                ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa),
+                ggml_row_size(kv.k_l[il]->type, n_embd_head_k),
+                0);
+    cb(k, "k", il);
+```
+But notice that the dimensions are different:
+```
+z0
+  0   [0  ...   127]
+      .
+      .
+      .
+      .
+  31  [0  ...   127]
+.  
+.
+.
+
+z31
+  0   [0  ...   127]
+      .
+      .
+      .
+      .
+  31  [0  ...   127]
 
 ```
-TODO: continue in `llm_build_kv`...
+```console
+(lldb) p k->ne
+(int64_t[4])  ([0] = 128, [1] = 32, [2] = 32, [3] = 1)
+```
+Next there is a block for flash attention: TODO: try out flash attention.
 
+```c++
+    if (cparams.flash_attn) {
+
+    } else {
+        struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
+        cb(kq, "kq", il);
+```
+```console
+struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
+
+(lldb) p k->ne
+(int64_t[4])  ([0] = 128, [1] = 32, [2] = 32, [3] = 1)
+(lldb) p q->ne
+(int64_t[4])  ([0] = 128, [1] = 6, [2] = 32, [3] = 1)
+```
+We can visualize this as we are performing 32 separate 2d  multiplications:
+```
+      k matrix
+z0
+  0   [0  ...   127]
+      .
+      .
+      .
+      .
+  31  [0  ...   127]
+
+       q matrix
+z0
+          x-axis ->
+  0   [0  ...   127]          y-axis
+      .                         ↓
+      .                       
+  5   [0  ...   127]          
+
+```
+We need to keep in mind that ggml will transpose the second tensor so this becomes:
+```
+      k matrix                   q matrix
+
+  0   [0  ...   127]        0    [0  ...  5]     0  [0 ... 31]
+      .                          .                  .
+      .                x         .            =     .
+      .                          .               5  [0 ... 31]
+  31  [0  ...   127]             .
+
+                           127   [0  ...  5]
+```
+And this will enable the multiplication to work.
+
+Next we have:
+```c++
+        if (model.arch == LLM_ARCH_PHI2 || model.arch == LLM_ARCH_PHI3 ||
+            model.arch == LLM_ARCH_GPTNEOX || model.arch == LLM_ARCH_QWEN2 ||
+            model.arch == LLM_ARCH_NEMOTRON || model.arch == LLM_ARCH_CHATGLM) {
+            // for this arch, we need to perform the KQ multiplication with F32 precision, otherwise we get NaNs
+            // ref: https://github.com/ggerganov/llama.cpp/pull/4490#issuecomment-1859055847
+            ggml_mul_mat_set_prec(kq, GGML_PREC_F32);
+        }
+```
+This is not the case for this session but something that might be good to be aware of.
+
+Next there is a special case for GROK:
+```c++
+        if (model.arch == LLM_ARCH_GROK) {
+            // need to do the following:
+            // multiply by attn_output_multiplyer of 0.08838834764831845
+            // and then :
+            // kq = 30 * tanh(kq / 30)
+            // before the softmax below
+
+            //try from phi2
+            //ggml_mul_mat_set_prec(kq, GGML_PREC_F32);
+
+            kq = ggml_tanh(ctx, ggml_scale(ctx, kq, 0.08838834764831845f/30.0f));
+            kq = ggml_scale(ctx, kq, 30);
+        }
+```
+
+That is pretty much it for `llama_build_graph` related to the kv cache.
+TODO: continue in `llama_build_graph` and see how the kv cache is used.
 _wip_
