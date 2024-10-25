@@ -5,6 +5,48 @@
 #include <string>
 #include <cstdlib>
 #include <vector>
+#include <algorithm>
+
+const char* BLUE = "\033[0;34m";
+const char* GREEN = "\033[0;32m";
+const char* ORANGE = "\033[0;33m";
+const char* RESET = "\033[0m";
+
+std::string token_as_string(llama_model* model, llama_token token) {
+    int lsplit = 0;
+    bool special = false;
+    std::vector<char> piece(8, 0);
+    int n_tokens = llama_token_to_piece(model, token, piece.data(), piece.size(), lsplit, special);
+    if (n_tokens < 0) {
+        piece.resize(-n_tokens);
+        llama_token_to_piece(model, token, piece.data(), piece.size(), lsplit, special);
+    } else {
+        piece.resize(n_tokens);
+    }
+    return std::string(piece.data(), piece.size());
+}
+
+void print_top_logits(llama_model* model, llama_context* ctx) {
+    float* logits = llama_get_logits(ctx);
+    printf("%sTop 5 logits:%s\n", BLUE, RESET);
+    std::vector<std::pair<llama_token, float>> top_logits;
+    for (int i = 0; i < llama_n_vocab(model); i++) {
+	top_logits.push_back(std::make_pair(i, logits[i]));
+    }
+    std::partial_sort(top_logits.begin(), top_logits.begin() + 5, top_logits.end(),
+	      [](const std::pair<llama_token, float>& a,
+		     const std::pair<llama_token, float>& b) {
+                return a.second > b.second;
+            });
+    for (int i = 0; i < 5; i++) {
+        printf("%sToken %d (%s): %f%s\n",
+            BLUE,
+            top_logits[i].first,
+            token_as_string(model, top_logits[i].first).c_str(),
+            top_logits[i].second,
+            RESET);
+    }
+}
 
 int main(int argc, char** argv) {
     llama_model_params model_params = llama_model_default_params();
@@ -66,8 +108,7 @@ int main(int argc, char** argv) {
     const bool add_bos  = add_bos_token != -1 ? bool(add_bos_token) :
         (llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM); // SPM = SentencePiece Model
 
-    printf("add_bos: %d\n", add_bos);
-    printf("prompt.len: %ld\n", prompt.length());
+    printf("%sprompt.len: %ld%s\n", ORANGE, prompt.length(), RESET);
     int n_tokens = prompt.length() + add_bos;
     std::vector<llama_token> input_tokens(n_tokens);
     n_tokens = llama_tokenize(model,
@@ -88,7 +129,7 @@ int main(int argc, char** argv) {
         input_tokens.resize(n_tokens);
     }
     fprintf(stderr, "\n");
-    fprintf(stdout, "n_tokens: %d\n", n_tokens);
+    printf("%sn_tokens: %d%s\n", ORANGE, n_tokens, RESET);
 
     // Create a new batch
     llama_batch batch = llama_batch_init(512,/*embd*/ 0, /*n_seq_max*/ 1);
@@ -121,14 +162,14 @@ int main(int argc, char** argv) {
 
     // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
-    fprintf(stderr, "batch.n_tokens: %d\n", batch.n_tokens);
-    fprintf(stderr, "batch.tokens: [");
+    printf("%sbatch.n_tokens: %d%s\n", ORANGE, batch.n_tokens, RESET);
+    printf("%sbatch.tokens: [%s", ORANGE, RESET);
     for (int i = 0; i < batch.n_tokens; i++) {
-        fprintf(stderr, "%d, ", batch.token[i]);
+        printf("%s%d, %s",ORANGE, batch.token[i], RESET);
     }
-    fprintf(stderr, "]\n");
+    printf("%s]%s\n" , ORANGE, RESET);
 
-    fprintf(stderr, "prompt: %s", prompt.c_str());
+    printf("%sprompt: %s%s", ORANGE, prompt.c_str(), RESET);
     fflush(stderr);
 
     // Now we run the inference on the batch. This will populate the logits
@@ -137,10 +178,11 @@ int main(int argc, char** argv) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
+    print_top_logits(model, ctx);
 
     // This is the total number of tokens that we will generate, which recall
     // includes our query tokens (they are all in the llm_batch).
-    const int n_len = 80;
+    const int n_len = 20;
 
 
     int n_cur = batch.n_tokens;
@@ -188,7 +230,7 @@ int main(int argc, char** argv) {
             piece.resize(n_tokens);
         }
         std::string piece_str = std::string(piece.data(), piece.size());
-        fprintf(stderr, "%s", piece_str.c_str());
+        printf("%s%s%s", GREEN, piece_str.c_str(), RESET);
         // stdout is line buffered and we are not printing a newline so we
         // above so we need to call flush.
         fflush(stderr);
@@ -217,6 +259,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
         }
+        print_top_logits(model, ctx);
         llama_batch_free(single_token_batch);
     }
     fprintf(stdout, "\nDecoded %d tokens\n", n_decode);
