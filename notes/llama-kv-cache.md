@@ -911,7 +911,6 @@ create a new nodes in the graph. Doing this will ensure that the these tensor
 operation will come before in the graph and hence computed before them during
 the forward pass.
 
-
 ```console
 (gdb) p model.layers[il].wo->ne
 $26 = {4096, 4096, 1, 1}
@@ -1001,7 +1000,8 @@ Then a copy operation will be created for copying `k_cur` to the `k_cache_view`:
     ggml_build_forward_expand(graph, ggml_cpy(ctx, k_cur, k_cache_view));
 ```
 Now, `k_cur` was passed in and is the tensor representing the roped Key matrix.
-And this is creating an copy operation of that tensor into the view of the cache.
+The QK^T operation will be performed prior to this in the graphs and this
+copy operation is what is copying the result of that operation into the cache.
 
 ```c++
     struct ggml_tensor * v_cache_view = nullptr;
@@ -1099,10 +1099,10 @@ Next something similar is done for the Key matrix:
                 0);
     cb(k, "k", il);
 ```
-Notice that this is using `kv.k_l[il]` which is the view of the cache that was
-created in `llm_build_kv_store`.
-
-
+Notice that this is using `kv.k_l[il]` which is the the tensor of the cache for
+this layer.
+created in `llm_build_kv_store`. So when the k q multiplication is done below
+it will be using this view of the cache.
 
 But notice that the dimensions are different:
 ```
@@ -1522,8 +1522,19 @@ that look something like this:
 ```
 After this we will continue in `llama_set_inputs` but there is nothing more
 releated to the kv cache in this function.
-The next thing that happens is the graph is computed. But I'm interested in
-understanding when the cache layers `k_l` and `v_l` are updated.
+
+So to recap this after the QK^T operation is performed the result will be
+copied into the layers `kv.k_l` tensor. And similar for the value cache but
+that the operation is:
+```c++
+        struct ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);
+        cb(kqv, "kqv", il);
+```
+
+The next thing that happens is the graph is computed, which will perform the
+operations that have been built up in the graphs. Among those operation are the
+QK^T operation and the KV^T operation. The result of these operations will be
+copied into the cache for the layer. 
 
 ```console
 (gdb) rwatch ctx.kv_self.k_l
