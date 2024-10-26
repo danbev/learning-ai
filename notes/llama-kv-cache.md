@@ -835,10 +835,35 @@ Next all layer operation will be built:
 
             // self-attention
             {
+                ...
+                struct ggml_tensor * Vcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wv, cur);
+                cb(Vcur, "Vcur", il);
+                if (model.layers[il].bv) {
+                    Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
+                    cb(Vcur, "Vcur", il);
+                }
+
+                Qcur = ggml_rope_ext(
+                    ctx0, ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens), inp_pos, rope_factors,
+                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Qcur, "Qcur", il);
+
+                Kcur = ggml_rope_ext(
+                    ctx0, ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens), inp_pos, rope_factors,
+                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                    ext_factor, attn_factor, beta_fast, beta_slow
+                );
+                cb(Kcur, "Kcur", il);
+
                 cur = llm_build_kv(ctx0, lctx, kv_self, gf,
                         model.layers[il].wo, model.layers[il].bo,
                         Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, kq_scale, cb, il);
 ```
+Notice here that the Roped Key and Query tensors are created and then being
+passed into `llm_build_kv`.
+
 There are a lot of parameters passed to `llm_build_kv` but if we look through
 them we have seen most of them before.
 ```c++
@@ -859,8 +884,34 @@ static struct ggml_tensor * llm_build_kv(
                     float     kq_scale,
          const llm_build_cb & cb,
                     int       il) {
+    const llama_hparams & hparams = lctx.model.hparams;
+    const llama_cparams & cparams = lctx.cparams;
 
+    // these nodes are added to the graph together so that they are not reordered
+    // by doing so, the number of splits in the graph is reduced
+    ggml_build_forward_expand(graph, q_cur);
+    ggml_build_forward_expand(graph, k_cur);
+    ggml_build_forward_expand(graph, v_cur);
+
+    llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
+
+    struct ggml_tensor * cur;
+
+    cur  = llm_build_kqv(ctx, lctx, kv, graph, wo, wo_b, q_cur, kq_mask, n_tokens, n_kv, kq_scale, cb, il);
+    cb(cur, "kqv_out", il);
+
+    return cur;
 ```
+I'm showing the complete function as want to point out that first the
+`llm_build_kv_store` and then `llm_build_kqv` which is the QK^T operation. This
+looks like it is first storing the values in the cache, or rather creating
+operations to do so, and then creating the operations for the QK^T operation.
+But notice those three `ggml_build_forward_expand` calls which are used to
+create a new nodes in the graph. Doing this will ensure that the these tensor
+operation will come before in the graph and hence computed before them during
+the forward pass.
+
+
 ```console
 (gdb) p model.layers[il].wo->ne
 $26 = {4096, 4096, 1, 1}
@@ -949,6 +1000,8 @@ Then a copy operation will be created for copying `k_cur` to the `k_cache_view`:
 ```c++
     ggml_build_forward_expand(graph, ggml_cpy(ctx, k_cur, k_cache_view));
 ```
+Now, `k_cur` was passed in and is the tensor representing the roped Key matrix.
+And this is creating an copy operation of that tensor into the view of the cache.
 
 ```c++
     struct ggml_tensor * v_cache_view = nullptr;
@@ -1035,6 +1088,7 @@ z31
 ```
 So we have 32 heads, and each one matrix with 6 rows each with 128 dimensions is
 what I'm trying to convey here.
+
 Next something similar is done for the Key matrix:
 ```c++
     struct ggml_tensor * k =
@@ -1045,6 +1099,11 @@ Next something similar is done for the Key matrix:
                 0);
     cb(k, "k", il);
 ```
+Notice that this is using `kv.k_l[il]` which is the view of the cache that was
+created in `llm_build_kv_store`.
+
+
+
 But notice that the dimensions are different:
 ```
 z0
@@ -1080,6 +1139,7 @@ Next there is a block for flash attention: TODO: try out flash attention.
         struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
         cb(kq, "kq", il);
 ```
+Next is the actual QK^T operation is created:
 ```console
 struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
 
@@ -1152,5 +1212,324 @@ Next there is a special case for GROK:
 ```
 
 That is pretty much it for `llama_build_graph` related to the kv cache.
-TODO: continue in `llama_build_graph` and see how the kv cache is used.
+
+Now, lets take a look at `llama_set_inputs` to see if the kv cache is used
+there.
+```c++
+    if (lctx.inp_KQ_mask || lctx.inp_KQ_mask_swa) {
+        // NOTE: hparams.causal_attn indicates the model is capable of generation and uses the kv cache.
+        if (cparams.causal_attn && !lctx.is_encoding) {
+            const int64_t n_kv         = kv_self.n;
+            const int64_t n_tokens     = ubatch.n_tokens;
+            const int64_t n_seq_tokens = ubatch.n_seq_tokens;
+            const int64_t n_seqs       = ubatch.n_seqs;
+
+
+            float * data     = nullptr;
+            float * data_swa = nullptr;
+
+            if (lctx.inp_KQ_mask) {
+                GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_KQ_mask->buffer));
+                data = (float *) lctx.inp_KQ_mask->data;
+            }
+```
+
+Next we have the following for loop which is setting the mask (lctx.inp_KQ_mask)
+for a single head (h):
+```c++
+            for (int h = 0; h < 1; ++h) {
+                for (int s = 0; s < n_seqs; ++s) {
+                    const llama_seq_id seq_id = ubatch.seq_id[s][0];
+
+                    for (int j = 0; j < n_seq_tokens; ++j) {
+                        const llama_pos pos = ubatch.pos[s*n_seq_tokens + j];
+
+                        for (int i = 0; i < n_kv; ++i) {
+                            float f;
+                            if (!kv_self.cells[i].has_seq_id(seq_id) || kv_self.cells[i].pos > pos) {
+                                f = -INFINITY;
+                            } else {
+                                if (hparams.use_alibi) {
+                                    f = -std::abs(kv_self.cells[i].pos - pos);
+                                } else {
+                                    f = 0.0f;
+                                }
+                            }
+
+                            if (data) {
+                                data[h*(n_kv*n_tokens) + s*(n_kv*n_seq_tokens) + j*n_kv + i] = f;
+                            }
+
+                            // may need to cut off old tokens for sliding window
+                            if (data_swa) {
+                                if (pos - kv_self.cells[i].pos >= (int32_t)hparams.n_swa) {
+                                    f = -INFINITY;
+                                }
+                                data_swa[h*(n_kv*n_tokens) + s*(n_kv*n_seq_tokens) + j*n_kv + i] = f;
+                            }
+                        }
+                    }
+                }
+
+                if (data) {
+                    for (int i = n_tokens; i < GGML_PAD(n_tokens, GGML_KQ_MASK_PAD); ++i) {
+                        for (int j = 0; j < n_kv; ++j) {
+                            data[h*(n_kv*n_tokens) + i*n_kv + j] = -INFINITY;
+                        }
+                    }
+                }
+
+                if (data_swa) {
+                    for (int i = n_tokens; i < GGML_PAD(n_tokens, GGML_KQ_MASK_PAD); ++i) {
+                        for (int j = 0; j < n_kv; ++j) {
+                            data_swa[h*(n_kv*n_tokens) + i*n_kv + j] = -INFINITY;
+                        }
+                    }
+                }
+            }
+```
+Since h will always be zero we can simplify this a little for readability:
+```c++
+                for (int s = 0; s < n_seqs; ++s) {
+                    const llama_seq_id seq_id = ubatch.seq_id[s][0];
+
+                    for (int j = 0; j < n_seq_tokens; ++j) {
+                        const llama_pos pos = ubatch.pos[s*n_seq_tokens + j];
+
+                        for (int i = 0; i < n_kv; ++i) {
+                            float f;
+                            if (!kv_self.cells[i].has_seq_id(seq_id) || kv_self.cells[i].pos > pos) {
+                                f = -INFINITY;
+                            } else {
+                                if (hparams.use_alibi) {
+                                    f = -std::abs(kv_self.cells[i].pos - pos);
+                                } else {
+                                    f = 0.0f;
+                                }
+                            }
+
+                            if (data) {
+                                data[s * (n_kv*n_seq_tokens) + j*n_kv + i] = f;
+                            }
+
+                            // may need to cut off old tokens for sliding window
+                            if (data_swa) {
+                                if (pos - kv_self.cells[i].pos >= (int32_t)hparams.n_swa) {
+                                    f = -INFINITY;
+                                }
+                                data_swa[s * (n_kv*n_seq_tokens) + j*n_kv + i] = f;
+                            }
+                        }
+                    }
+                }
+```
+The mask (for a single head) is a square matrix:
+```console
+(gdb) p lctx.inp_KQ_mask->ne
+$23 = {32, 32, 1, 1}
+```
+The above will iterate over all the tokens in the ubatch (`n_seq` above which is
+6 in this case). And each token can potentially be part of multiple sequences
+which is that `n_seq_tokens` is specifying so we iterate over all of them. Then
+we iterator over all the entries in the kv cache (32 here even though we only
+have 6 tokens due to the padding we saw earlier). For each entry in the cache
+the code will check if the current cache cell does not have the current tokens
+sequence id, or if the current cells position is greater than the current tokens
+position.
+
+This is what the cache cells looks like at this point:
+```
+cell_0    {pos = 0, delta = 0, src = -1, tail = -1, seq_id = std::set with 1 element = {[0] = 0}}
+cell_1    {pos = 1, delta = 0, src = -1, tail = -1, seq_id = std::set with 1 element = {[0] = 0}}
+cell_2    {pos = 2, delta = 0, src = -1, tail = -1, seq_id = std::set with 1 element = {[0] = 0}}
+cell_3    {pos = 3, delta = 0, src = -1, tail = -1, seq_id = std::set with 1 element = {[0] = 0}}
+cell_4    {pos = 4, delta = 0, src = -1, tail = -1, seq_id = std::set with 1 element = {[0] = 0}}
+cell_5    {pos = 5, delta = 0, src = -1, tail = -1, seq_id = std::set with 1 element = {[0] = 0}}
+cell_6    {pos = -1, delta = 0, src = -1, tail = -1, seq_id = std::set with 0 elements}
+.
+.
+.
+cell_1023 {pos = -1, delta = 0, src = -1, tail = -1, seq_id = std::set with 0 elements}
+```
+So for the first entry the else clause will be executed and the value of f will
+be 0.0f. And recall that `data` is a pointer to the tensor `lctx.inp_KQ_mask`'s
+data.
+```c++
+    data[s * (n_kv * n_seq_tokens) + j * n_kv + i] = f;
+```
+This first iteration s is 0, j is 0, and i is 0:
+```
+    data[0] = 0.0f;
+```
+For the next iteration (of 32) the value of f will be -INFINITY:
+```
+    data[1] = -INFINITY;
+```
+And this will continue until all 32 entries have been processed for the first
+token in the sequence. 
+```console
+      ↓
+      0    1    2    3    4    5    6   ...        31
+    +----+----+----+----+----+----+----+----+----+----+
+    |0.0f|-inf|-inf|-inf|-inf|-inf|-inf|  ...    |    |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+```
+Notice that the values in this matrix are initially zero.
+
+Then we do the same for the next token in the sequence (s=1).
+```c++
+    data[1 * (n_kv * n_seq_tokens) + j * n_kv + i] = f;
+    data[1 * (n_kv * n_seq_tokens)] = f;
+    data[1 * (32 * 1)] = f;
+    data[1 * (32)] = f;
+    data[(32)] = f;
+```
+```console
+           ↓
+      0    1    2    3    4    5    6   ...        31
+    +----+----+----+----+----+----+----+----+---------+
+    |0.0f|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+---------+
+    |0.0f|0.0f|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+```
+Then we do the same for the next token in the sequence (s=2).
+```c++
+    data[2 * (n_kv * n_seq_tokens) + j * n_kv + i] = f;
+    data[2 * (n_kv * n_seq_tokens)] = f;
+    data[2 * ( * 1)] = f;
+    data[2 * (32)] = f;
+    data[64] = f;
+```
+```console
+                ↓
+      0    1    2    3    4    5    6   ...        31
+    +----+----+----+----+----+----+----+----+---------+
+    |0.0f|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+---------+
+    |0.0f|0.0f|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    |0.0f|0.0f|0.0f|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+```
+And this continues until all the `ubatch.n_seq` tokens have been processed which
+is 6 in this case:
+```console
+      0    1    2    3    4    5    6   ...        31
+    +----+----+----+----+----+----+----+----+---------+
+0   |0.0f|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+---------+
+1   |0.0f|0.0f|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+2   |0.0f|0.0f|0.0f|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+3   |0.0f|0.0f|0.0f|0.0f|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+4   |0.0f|0.0f|0.0f|0.0f|0.0f|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+5   |0.0f|0.0f|0.0f|0.0f|0.0f|0.0f|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+6   | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+7   | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    .
+    .
+    .
+    +----+----+----+----+----+----+----+----+----+----+
+31  | 0  | 0  | 0  | 0  | 0  |  0 |  0 | 0  |   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+```
+
+Then we have the following loop:
+```c++
+                if (data) {
+                    for (int i = n_tokens; i < GGML_PAD(n_tokens, GGML_KQ_MASK_PAD); ++i) {
+                        for (int j = 0; j < n_kv; ++j) {
+                            data[h*(n_kv*n_tokens) + i*n_kv + j] = -INFINITY;
+                        }
+                    }
+                }
+```
+The `GGML_PAD` macro is defined as:
+```c++
+#define GGML_KQ_MASK_PAD 32
+#define GGML_PAD(x, n) (((x) + (n) - 1) & ~((n) - 1))
+
+GGML_PAD(n_tokens, GGML_KQ_MASK_PAD);
+GGML_PAD(6, 32);
+GGML_PAD(6, 32) (((6) + (32) - 1) & ~((32) - 1))
+= 32
+```
+This will round up to the nearest multiple of 32 which is 32 in this case. So
+in our case this will iterate of the last 26 entries in the mask and set them
+to -INFINITY. Recall that each token has a mask and this will fill each of
+these padding token masks with -INFINITY. So there will be 26 tokens with a mask
+that look something like this:
+```console
+      0    1    2    3    4    5    6   ...        31
+    +----+----+----+----+----+----+----+----+---------+
+0   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+---------+
+1   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+2   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+3   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+4   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+5   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+6   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+7   |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+    .
+    .
+    .
+    +----+----+----+----+----+----+----+----+----+----+
+31  |-inf|-inf|-inf|-inf|-inf|-inf|-inf|-inf|   ...   |
+    +----+----+----+----+----+----+----+----+----+----+
+```
+After this we will continue in `llama_set_inputs` but there is nothing more
+releated to the kv cache in this function.
+The next thing that happens is the graph is computed. But I'm interested in
+understanding when the cache layers `k_l` and `v_l` are updated.
+
+```console
+(gdb) rwatch ctx.kv_self.k_l
+Hardware watchpoint 3: lctx.kv_self.k_l
+(gdb) c
+```
+
+
 _wip_
