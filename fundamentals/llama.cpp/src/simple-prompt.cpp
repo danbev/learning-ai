@@ -52,9 +52,10 @@ int main(int argc, char** argv) {
     llama_model_params model_params = llama_model_default_params();
 
     // parse the two optional integers named "main_gpu" and "n_gpu_layers" and set the default to zero if they are not provided.
-    int main_gpu = 0;
-    int num_gpu_layers = 0;
+    int main_gpu = 1;
+    int num_gpu_layers = 33;
     std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
+    //std::string model_path = "models/llama-2-7b.Q4_0.gguf";
 
     if (argc > 1) {
         main_gpu = atoi(argv[1]);
@@ -171,10 +172,30 @@ int main(int argc, char** argv) {
     // Now we run the inference on the batch. This will populate the logits
     // for the last token in the batch.
     printf("%sFirst decode. kv_cache count: %d%s\n", ORANGE, llama_get_kv_cache_token_count(ctx), RESET);
+
+
     if (llama_decode(ctx, batch) != 0) {
         fprintf(stderr, "llama_decode() failed\n");
         return 1;
     }
+
+    // Get the current state 
+    struct llama_kv_cache_view kv_view = llama_kv_cache_view_init(ctx, 1);
+    llama_kv_cache_view_update(ctx, &kv_view);
+    printf("%skv n_cells: %d%s\n", GREEN, kv_view.n_cells, RESET);
+    printf("%skv used_cells: %d%s\n", GREEN, kv_view.used_cells, RESET);
+    printf("%skv n_seq_max: %d%s\n", GREEN, kv_view.n_seq_max, RESET);
+    printf("%skv token_count: %d%s\n", GREEN, kv_view.token_count, RESET);
+    printf("%skv max_contiguous: %d%s\n", GREEN, kv_view.max_contiguous, RESET);
+    //for (int i = 0; i < kv_view.n_cells; i++) {
+    // Print out the first 20 cells
+    for (int i = 0; i < 20; i++) {
+	struct llama_kv_cache_view_cell cv = kv_view.cells[i];
+	printf("%scell[%d].pos: %d%s\n", GREEN, i, cv.pos, RESET);
+    }
+
+
+
     printf("%skv_cache_token count: %d%s\n", ORANGE, llama_get_kv_cache_token_count(ctx), RESET);
     print_top_logits(model, ctx);
 
@@ -265,6 +286,7 @@ int main(int argc, char** argv) {
     llama_free(ctx);
     llama_free_model(model);
     llama_backend_free();
+    llama_kv_cache_view_free(&kv_view);
 
     return 0;
 }
