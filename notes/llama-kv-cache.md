@@ -204,18 +204,21 @@ has a count of 32:
 So after this there will be one entry in `cache.ctxs`
 
 Next the vectors of key and value vectors will be reserved for the capacity of
-the number of layers in the model:
+the number of layers in the model, the following will happen in `llama_kv_cache_init`:
 ```c++
     cache.k_l.reserve(n_layer);
     cache.v_l.reserve(n_layer);
 ```
 And these vectors store elements of type `ggml_tensor`:
 ```console
+(lldb) p n_layer
+(const int64_t) 32
+
 (gdb) ptype cache.k_l
 type = std::vector<ggml_tensor*>
 ```
 So each of these vectors will be able to hold 32 `ggml_tensor` pointers, one
-for each layer.
+for each layer. 
 
 Next, these vectors are populated with the following:
 ```
@@ -233,7 +236,7 @@ Next, these vectors are populated with the following:
     }
 ```
 So we have this function `n_embd_k_gqa` which returnes the number of embedding
-dimensions for the Key matrix for grouped query attention. Notice that we are
+dimensions for the Key matrix for grouped query attention (qga). Notice that we are
 passing in the layer which sounds like there can be different embedding sizes
 for different layers.
 ```c++
@@ -242,7 +245,9 @@ for different layers.
 
         return n_embd_head_k * n_head_kv;
     }
-
+```
+And `n_embd_head_k` is the number of embeddings in the key matrix for each head
+```console
     uint32_t n_head_kv(uint32_t il = 0) const {
         if (il < n_layer) {
             return n_head_kv_arr[il];
@@ -251,7 +256,39 @@ for different layers.
         GGML_ABORT("fatal error");
     }
 ```
+`n_head_kv_arr` is a fixed size array, the size is of `LLAMA_MAX_LAYERS` which is
+currently 512:
+```c++
+#define LLAMA_MAX_LAYERS  512
+
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_arr;
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
+```
+Notice that there other per-layer parameters, the is a value per layer for the number of
+heads, and the number of feed-forward/MLP layers too. The values are loaded from the
+model in `llm_load_hparams`:
+```c++
+    // zero-out the per-layer hparams
+    std::fill(hparams.n_head_arr.begin(),    hparams.n_head_arr.end(),    0);
+    std::fill(hparams.n_head_kv_arr.begin(), hparams.n_head_kv_arr.end(), 0);
+    std::fill(hparams.n_ff_arr.begin(),      hparams.n_ff_arr.end(),      0);
+
+    ml.get_key_or_arr(LLM_KV_FEED_FORWARD_LENGTH,  hparams.n_ff_arr,   hparams.n_layer);
+    ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT, hparams.n_head_arr, hparams.n_layer);
+
+    // n_head_kv is optional, default to n_head
+    hparams.n_head_kv_arr = hparams.n_head_arr;
+
+    ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT_KV, hparams.n_head_kv_arr, hparams.n_layer, false);
+```
+So the model can indeed have a different number of heads for each layer, but in
+our case we have the same number of heads for each layer.
+
 ```console
+(lldb) p this
+(const llama_hparams *) 0x0000000132812228
+
 (gdb) p n_head_kv_arr.size()
 $23 = 512
 (gdb) p n_head_kv_arr[il]
@@ -265,17 +302,36 @@ $35 = 4096
 $36 = 4096
 ```
 And the size of the cache in this case is `kv_size`, so the above will create
-a 1d tensor of size `n_embd_k_gqa*kv_size` (4096*1024) for the key and the value
-tensors.
+a 1d tensor of size `n_embd_k_gqa*kv_size (4096*1024)` for the key and the value
+tensors. And `hparams_n_embd_k_s` is zero in this case as this is only used for 
+recursive models I think which is not the case here. So the embedding dimension
+for each layer is 4096.
 
-So each of the k tensors will be of size `n_embd_k_gqa*kv_size`:
+Just to recap where we are:
+```c++
+    for (int i = 0; i < (int) n_layer; i++) {
+        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(i) + hparams.n_embd_k_s();
+        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
+
+        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
+        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
+        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
+        ggml_format_name(k, "cache_k_l%d", i);
+        ggml_format_name(v, "cache_v_l%d", i);
+        cache.k_l.push_back(k);
+        cache.v_l.push_back(v);
+    }
+```
+
+So each of the k tensors will be of size of the embeddings dimensions plus the number
+of items that can be stored in the cache.
 ```console
 (gdb) p n_embd_k_gqa 
 $39 = 4096
 (gdb) p kv_size
 $40 = 1024
 ```
-And we can take a look at `k`:
+And we can take a look at the shape of `k`:
 ```console
 (gdb) p *k
 $3 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
@@ -291,14 +347,19 @@ data = 0x0,
 name = '\000' <repeats 63 times>, 
 extra = 0x0, padding = "\000\000\000\000\000\000\000"}
 ```
+So this is a 1d tensor:
+```console
+   [0                                                        4194304]
+```
 And these tensors will then be added to the `cache.k_l` and `cache.v_l` vectors:
 ```c++
         cache.k_l.push_back(k);
         cache.v_l.push_back(v);
 ```
 So each layer will have a key tensor which has 4194304 elements which we can
-think of as beeing 1024 rows with 4096 dimensions in each. One row for each
-entry in the cache. 4096 is the embedding dimenesion size.
+think of as beeing 1024 rows (one entry for each item in the cache, each with
+4096 dimensions in each. One row for each entry in the cache. 4096 is the
+embedding dimenesion size.
 
 And recall that this will be done for each `n_layer`s in the model.
 
@@ -903,13 +964,26 @@ static struct ggml_tensor * llm_build_kv(
     return cur;
 ```
 I'm showing the complete function as want to point out that first the
-`llm_build_kv_store` and then `llm_build_kqv` which is the QK^T operation. This
-looks like it is first storing the values in the cache, or rather creating
-operations to do so, and then creating the operations for the QK^T operation.
-But notice those three `ggml_build_forward_expand` calls which are used to
-create a new nodes in the graph. Doing this will ensure that the these tensor
-operation will come before in the graph and hence computed before them during
-the forward pass.
+`llm_build_kv_store` and then `llm_build_kqv` which is the QK^T operation.
+
+What is happening, which I'll go through below, is that the `llm_build_kv_store`
+function will copy the current roped key value into the cache (doing this one head
+at a time).
+And then later in `llm_build_kqv` the k tensor that will be used in the attention
+matrix multiplication will use a view into the layers cache:
+```c++
+    struct ggml_tensor * k =
+        ggml_view_3d(ctx, kv.k_l[il],
+                n_embd_head_k, n_kv, n_head_kv,
+                ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa),
+                ggml_row_size(kv.k_l[il]->type, n_embd_head_k),
+                0);
+    cb(k, "k", il);
+    ...
+
+        struct ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);
+```
+And this will operate on all the values in the cache up to this point.
 
 ```console
 (gdb) p model.layers[il].wo->ne
@@ -936,11 +1010,13 @@ So this is what these matrices looks like for a single layer:
     .                     .                   .
 31  [0  ...  127]      31 [0  ...  127]      31 [0...31]
 ```
+So we have an embedding size of 4096 and we divide this into 32 heads which means
+that each head will have an embeddings size of 128.
 
 ```c++
-
     llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
 ```
+
 `llm_build_kv_store` also has quite a few parameters but again we have seen most of them before:
 ```c++
 static void llm_build_kv_store(
@@ -999,9 +1075,27 @@ Then a copy operation will be created for copying `k_cur` to the `k_cache_view`:
 ```c++
     ggml_build_forward_expand(graph, ggml_cpy(ctx, k_cur, k_cache_view));
 ```
-Now, `k_cur` was passed in and is the tensor representing the roped Key matrix.
-The QK^T operation will be performed prior to this in the graphs and this
-copy operation is what is copying the result of that operation into the cache.
+Now, `k_cur` was passed in and is the tensor representing the roped key value for
+this token. So my understanding is that the cache is empty in this case and this
+it taking the roped key value and copying it into the cache. Now this did not sound
+right to me at first as I've learned that the cache is about storing the computed
+output of the QK^T operation, and not just storing the key values. But this is just
+copying the key value for the current token which is about to be processed. If we
+had processed earlier tokens they would already exist in the cache and be the result
+of the previous QK^T operation. And the current decode/processing of the token the
+cache will contain the computed value as we will see later. This sounds reasonable
+to me but I'm not sure this is actually what is being done and I'm currently looking
+into being able verify this. The reason I'm unsure is that while the QK^T operation
+uses the views of the cache as it source for the key values, I've yet to see that the
+output of this computation, the computed dot product for the new token, is copied into
+the cache.
+
+`console
+(lldb) watchpoint set expression -w read_write --  &(ctx->kv_self->k_l)
+Watchpoint created: Watchpoint 3: addr = 0x600001690100 size = 8 state = enabled type = rw
+    watchpoint spec = ' &(ctx->kv_self->k_l)'
+        new value: 0x0000000100acc020
+```
 
 ```c++
     struct ggml_tensor * v_cache_view = nullptr;
@@ -1100,9 +1194,8 @@ Next something similar is done for the Key matrix:
     cb(k, "k", il);
 ```
 Notice that this is using `kv.k_l[il]` which is the the tensor of the cache for
-this layer.
-created in `llm_build_kv_store`. So when the k q multiplication is done below
-it will be using this view of the cache.
+this layer. So when the k q multiplication is done below it will be using this view
+of the cache.
 
 But notice that the dimensions are different:
 ```
@@ -1542,5 +1635,6 @@ Hardware watchpoint 3: lctx.kv_self.k_l
 (gdb) c
 ```
 
-
 _wip_
+
+
