@@ -1071,6 +1071,21 @@ that the operation is:
 
 The next thing that happens is the graph is computed, which will perform the
 operations that have been built up in the graphs.
+Following that the cache head is updated in `
+```c++
+        // update the kv ring buffer
+        {
+            kv_self.head += n_tokens;
+
+            // Ensure kv cache head points to a valid index.
+            if (kv_self.head >= kv_self.size) {
+                kv_self.head = 0;
+            }
+        }
+```
+So for the next decode `kv_self.head` will be 6 and the offset we say above for
+the key and values cache will use 6 when calculating the offset to store the 
+roped k and value cache entried for the next token.
 
 _wip_
 
