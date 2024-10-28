@@ -771,6 +771,11 @@ be called.
 
         const int64_t n_embd_head = hparams.n_embd_head_v;
 ```
+```console
+(gdb) p n_embd_head
+$18 = 128
+```
+
 Now, `build_llama` is a method/member of the struct `llm_build_context` which
 has a field named `kv_head`:
 ```console
@@ -783,10 +788,6 @@ caused me some confusion. For the next token processed this value will be the
 number of that token in the sequence. So we if had 6 tokens in the initital
 prompt this would be 6 for the next token to be docoded.
 
-```console
-(gdb) p n_embd_head
-$18 = 128
-```
 First we have the input layer which will be build using either the tokens in
 the ubatch or the embeddings in the ubatch:
 ```c++
@@ -812,7 +813,7 @@ the ubatch or the embeddings in the ubatch:
         return flash_attn ? ggml_cast(ctx0, lctx.inp_KQ_mask, GGML_TYPE_F16) : lctx.inp_KQ_mask;
     }
 ```
-In our case this will create a 2d tensor with a dimension of 32 (n_kv)
+In our case this will create a 2d tensor with a dimension of 32 (`n_kv`)
 ```c++
 (gdb) p lctx.inp_KQ_mask->ne
 $22 = {32, 32, 1, 1}
