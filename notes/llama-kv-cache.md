@@ -42,9 +42,8 @@ struct llama_kv_cache {
     std::vector<ggml_backend_buffer_t> bufs;
 ```
 
-Recall that there is a KV-Cache per layer in the transformer architecture. And
-the cache is storing the output of the QK computation, and the output of the
-value computation. And notice that there is a vector of `ggml_tensor` pointer
+Recall that there is a KV-Cache per layer in the transformer architecture. 
+And notice that there is a vector of `ggml_tensor` pointer
 for key and one for the value per layers. So for each layer there is a tensor
 which we will see later is a 1d tensor, or just a list of values. And each layer
 has a `ggml_context` and also a `ggml_backend_buffer_t`.
@@ -80,13 +79,7 @@ So after the construction of a `llama_context` the `kv_self` member is
 initialized to default values, there has not been any explicit assignements to
 any of the members of `kv_self`.
 
-Now, lets create a watch point on `kv_self` so we can trace the interactions:
-```console
-(gdb) watch ctx.kv_self 
-Watchpoint 2: ctx.kv_self
-```
-
-Further down in the code, the `kv_self` is initialized with:
+Further down in `llama_new_context_with_model` `kv_self` is initialized with:
 ```c++
         if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
             LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
@@ -236,9 +229,9 @@ Next, these vectors are populated with the following:
     }
 ```
 So we have this function `n_embd_k_gqa` which returnes the number of embedding
-dimensions for the Key matrix for grouped query attention (qga). Notice that we are
-passing in the layer which sounds like there can be different embedding sizes
-for different layers.
+dimensions for the Key matrix for grouped query attention (qga). Notice that we
+are passing in the layer which sounds like there can be different embedding
+sizes for different layers.
 ```c++
     uint32_t n_embd_k_gqa(uint32_t il = 0) const { // dimension of key embeddings across all k-v heads
         const uint32_t n_head_kv = this->n_head_kv(il);
@@ -246,7 +239,7 @@ for different layers.
         return n_embd_head_k * n_head_kv;
     }
 ```
-And `n_embd_head_k` is the number of embeddings in the key matrix for each head
+And `n_embd_head_k` is the number of embeddings in the key matrix for each head:
 ```console
     uint32_t n_head_kv(uint32_t il = 0) const {
         if (il < n_layer) {
@@ -265,9 +258,10 @@ currently 512:
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
 ```
-Notice that there other per-layer parameters, the is a value per layer for the number of
-heads, and the number of feed-forward/MLP layers too. The values are loaded from the
-model in `llm_load_hparams`:
+Notice that there other per-layer parameters, `n_head_arr` is a value per layer
+for the number of heads, and then we also have `n_ff_arr` which is the  number
+of feed-forward/MLP layers too. The values are loaded from the model in
+`llm_load_hparams`:
 ```c++
     // zero-out the per-layer hparams
     std::fill(hparams.n_head_arr.begin(),    hparams.n_head_arr.end(),    0);
@@ -323,8 +317,8 @@ Just to recap where we are:
     }
 ```
 
-So each of the k tensors will be of size of the embeddings dimensions plus the number
-of items that can be stored in the cache.
+So each of the k tensors will be of size of the embeddings dimensions plus the
+number of items that can be stored in the cache.
 ```console
 (gdb) p n_embd_k_gqa 
 $39 = 4096
@@ -543,95 +537,6 @@ GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
 }
 ```
 
-After this we will return to `llama_new_context_with_model`:
-```c++
-        if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
-            LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
-            llama_free(ctx);
-            return nullptr;
-        }
-```
-```c
-static bool llama_kv_cache_init(
-             struct llama_kv_cache & cache,
-               const llama_context * ctx,
-                         ggml_type   type_k,
-                         ggml_type   type_v,
-                          uint32_t   kv_size,
-                              bool   offload) {
-    const llama_model & model = ctx->model;
-    const llama_cparams & cparams = ctx->cparams;
-
-    const struct llama_hparams & hparams = model.hparams;
-
-    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa() + hparams.n_embd_k_s();
-    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa() + hparams.n_embd_v_s();
-```
-Now the number of embedding in the key matrix for grouped query attention (gqa)
-is:
-```console
-(gdb) p hparams.n_embd_k_gqa()
-$5 = 2048
-(gdb) p hparams.n_embd_k_s()
-$8 = 0
-```
-And `n_embd_k_s` is the number of embeddings in the rolling state
-embeddings, which is 0 in our case, this is used for SSM (like Mamba).
-```c
-    uint32_t n_embd_k_s() const { // dimension of the rolling state embeddings
-        // corresponds to Mamba's conv_states size
-        // TODO: maybe support other convolution strides than 1
-        // NOTE: since the first column of the conv_state is shifted out each time, it's not actually needed
-        return (ssm_d_conv > 0 ? ssm_d_conv - 1 : 0) * ssm_d_inner;
-    }
-```
-Next we have a few more local variables:
-```c
-    const int64_t  n_layer      = hparams.n_layer;
-    cache.has_shift = false;
-
-    cache.recurrent = model.arch == LLM_ARCH_MAMBA;
-    cache.v_trans   = !cparams.flash_attn;
-
-    cache.head = 0;
-    cache.size = kv_size;
-    cache.used = 0;
-
-    cache.type_k = type_k;
-    cache.type_v = type_v;
-
-    cache.cells.clear();
-    cache.cells.resize(kv_size);
-```
-A little further down we have the following
-```c
-    cache.k_l.reserve(n_layer);
-    cache.v_l.reserve(n_layer);
-
-    for (int i = 0; i < (int) n_layer; i++) {
-        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
-        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
-        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
-        ggml_format_name(k, "cache_k_l%d", i);
-        ggml_format_name(v, "cache_v_l%d", i);
-        cache.k_l.push_back(k);
-        cache.v_l.push_back(v);
-    }
-```
-For each layer in the current model we will create a new tensor for the keys
-with the size of 
-```console
-(gdb) p n_embd_k_gqa
-$5 = 2048
-(gdb) p kv_size
-$7 = 8192
-```
-`kv_size` is the number of tokens that the cache can hold, and each of these has
-an embedding size of 2048. Think of this as there being 8192 rows and 2048
-columns, but this is only a 1d list. 
-This tensors in the context will then be created in the backend and this
-function will return.
-
 Following this code there is some logging of the memory usage:
 ```c++
 
@@ -678,12 +583,21 @@ $14 = 1
                 LLAMA_MAX_NODES,
                 pipeline_parallel);
 ```
-What is a GGML Backend Schuduler?   
+What is a GGML Backend Schuduler?   TODO: Look into this.
 
 
+### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
-the kv-cache. In `llama_decode_internal` we find the following:
-```c
+the kv-cache.
+```console
+$ cd fundamentals/llama.cpp
+$ make simple_prompt
+$ gdb --args simple_prompt
+(gdb) br llama_decode_internal
+```
+
+In `llama_decode_internal` we find the following:
+```c++
         // non-causal masks do not use the KV cache
         if (hparams.causal_attn) {
             llama_kv_cache_update(&lctx);
@@ -711,10 +625,12 @@ the kv-cache. In `llama_decode_internal` we find the following:
 The first call is to `llama_kv_cache_update` which actually does not do anything
 is our case. But this checks the `has_shift` of the cache and would perform
 apply a shift of the keys if that had been set, which is done by the add/div
-functions. TODO: Incorporate notes from self-extend which I think went through
-this process in some detail.
-And this stage the cache is empty and head is zero so lets look at find slot:
-(in this case n_tokens is 6 and cache size is 1024)
+functions.
+TODO: Incorporate notes from self-extend which I think went through this process
+in some detail.
+
+At this stage the cache is empty and head is zero so lets look at find slot:
+(in this case `n_tokens` is 6 and cache size is 1024)
 ```c++
 static bool llama_kv_cache_find_slot(
            struct llama_kv_cache & cache,
@@ -887,7 +803,7 @@ reason why it may seem small.
 Interesting to see `ggml_cast` which I have not used, and this is making sure
 that if flash attention is used the tensor will be cast to f16.
 
-Next all layer operation will be built:
+Next all layer operations will be built:
 ```c++
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
         for (int il = 0; il < n_layer; ++il) {
@@ -922,7 +838,7 @@ Next all layer operation will be built:
                         model.layers[il].wo, model.layers[il].bo,
                         Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, kq_scale, cb, il);
 ```
-Notice here that the Roped Key and Query tensors are created and then being
+Notice here that the roped Key and Query operations are created and then being
 passed into `llm_build_kv`.
 
 There are a lot of parameters passed to `llm_build_kv` but if we look through
@@ -964,13 +880,13 @@ static struct ggml_tensor * llm_build_kv(
     return cur;
 ```
 I'm showing the complete function as want to point out that first the
-`llm_build_kv_store` and then `llm_build_kqv` which is the QK^T operation.
+`llm_build_kv_store` and then `llm_build_kqv` which is the `QK^T` operation.
 
 What is happening, which I'll go through below, is that the `llm_build_kv_store`
-function will copy the current roped key value into the cache (doing this one head
-at a time).
-And then later in `llm_build_kqv` the k tensor that will be used in the attention
-matrix multiplication will use a view into the layers cache:
+function will copy the current roped key value into the cache (doing this one
+head at a time). And then later in `llm_build_kqv` the `k` tensor that will be
+used in the attention matrix multiplication will use a view into the layers
+cache:
 ```c++
     struct ggml_tensor * k =
         ggml_view_3d(ctx, kv.k_l[il],
@@ -985,6 +901,7 @@ matrix multiplication will use a view into the layers cache:
 ```
 And this will operate on all the values in the cache up to this point.
 
+Lets take a look at a few of the parameters passed to `llm_build_kv_store`:
 ```console
 (gdb) p model.layers[il].wo->ne
 $26 = {4096, 4096, 1, 1}
@@ -1001,23 +918,25 @@ $31 = 0
 (gdb) p kq_scale
 $32 = 0.0883883461
 ```
+
 So this is what these matrices looks like for a single layer:
 ```
-      Kcur                  Qcur             KQ_mask
-0   [0  ...  127]      0  [0  ...  127]      0  [0...31]
+           Kcur                     Qcur                 KQ_mask
+0   [0     ...     127]      0  [0     ...  127]      0  [0...31]
     .                     .                   .
     .                     .                   .
     .                     .                   .
-31  [0  ...  127]      31 [0  ...  127]      31 [0...31]
+31  [0     ...     127]      31 [0     ...  127]      31 [0...31]
 ```
-So we have an embedding size of 4096 and we divide this into 32 heads which means
-that each head will have an embeddings size of 128.
+So we have an embedding size of 4096 and we divide this into 32 heads which
+means that each head will have an embeddings size of 128.
 
 ```c++
     llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
 ```
 
-`llm_build_kv_store` also has quite a few parameters but again we have seen most of them before:
+`llm_build_kv_store` also has quite a few parameters but again we have seen most
+of them before:
 ```c++
 static void llm_build_kv_store(
         struct ggml_context * ctx,
@@ -1047,10 +966,15 @@ static void llm_build_kv_store(
 So we have a context size of 1024 and an embedding dimension size of 4096.
 Next we will create a view of the kv cache `k_l` tensor for this layer, and
 the number of elements will be `n_tokens * n_embed_k_gqa`, and the offset is
-the last argument. The cache is empty in this case. One note here is that if
-`kv_head` is a larger values like 512 the is probably because there is call
-to this function as part of `llama_new_context_with_model` which can happen
-if you set a break point on a line somewhere in this function.
+the last argument. The cache is empty in this case.
+One note here is that if `kv_head` is a larger value, like 512 and not the size
+of the tokens representing the prompt, then this is probably because there is
+call to this function as part of `llama_new_context_with_model` and this can can
+happen if you set a break point on a line somewhere in this function. Just 
+`continue` in gdb or lldb to get past this and break in the function for 
+building the operations for the prompt instead..
+
+Next a view of the k matrix is created:
 ```c++
     struct ggml_tensor * k_cache_view = ggml_view_1d(ctx,
         kv.k_l[il],
@@ -1066,37 +990,64 @@ if you set a break point on a line somewhere in this function.
 (int64_t[4])  ([0] = 24576, [1] = 1, [2] = 1, [3] = 1)
 ```
 So in this case the will produce a view of the tensor and the view will span
-the first 24576 element
-```
-n_embd_k_gqa / n_tokens
-4096         / 6
-```
+the first 24576 (`n_tokens * n_embd_k_gqa` which is 6 * 4096 in this case)
+elements
+
 Then a copy operation will be created for copying `k_cur` to the `k_cache_view`:
 ```c++
     ggml_build_forward_expand(graph, ggml_cpy(ctx, k_cur, k_cache_view));
 ```
-Now, `k_cur` was passed in and is the tensor representing the roped key value for
-this token. So my understanding is that the cache is empty in this case and this
-it taking the roped key value and copying it into the cache. Now this did not sound
-right to me at first as I've learned that the cache is about storing the computed
-output of the QK^T operation, and not just storing the key values. But this is just
-copying the key value for the current token which is about to be processed. If we
-had processed earlier tokens they would already exist in the cache and be the result
-of the previous QK^T operation. And the current decode/processing of the token the
-cache will contain the computed value as we will see later. This sounds reasonable
-to me but I'm not sure this is actually what is being done and I'm currently looking
-into being able verify this. The reason I'm unsure is that while the QK^T operation
-uses the views of the cache as it source for the key values, I've yet to see that the
-output of this computation, the computed dot product for the new token, is copied into
-the cache.
+These tensors have different dimensions but the same number of elelements:
+```console
+(gdb) p ggml_n_dims(k_cur)
+$16 = 3
+(gdb) p ggml_n_dims(k_cache_view)
+$17 = 1
 
-`console
-(lldb) watchpoint set expression -w read_write --  &(ctx->kv_self->k_l)
-Watchpoint created: Watchpoint 3: addr = 0x600001690100 size = 8 state = enabled type = rw
-    watchpoint spec = ' &(ctx->kv_self->k_l)'
-        new value: 0x0000000100acc020
+(gdb) p k_cache_view->ne
+$13 = {24576, 1, 1, 1}
+(gdb) p k_cur->ne
+$14 = {128, 32, 6, 1}
+(gdb) p 128 * 32 * 6
+$15 = 24576
+```
+So this is creating a copy operation to copy a head of the key tensor into
+the k cache view. And we have 6 tokens in this batch so there will be 6 of these
+which is indicated by the `z` axis below:
+```
+z_0
+
+  0   [0     ...     127]
+  .
+  .
+  .
+  31  [0     ...     127]
+
+.
+.
+.
+
+z_5
+
+  0   [0     ...     127]
+  .
+  .
+  .
+  31  [0     ...     127]
+
 ```
 
+Now, `k_cur` was passed in and is the tensor representing the roped key value for
+this token. So my understanding is that the cache is empty in this case and this
+it taking the roped key value and copying it into the cache. 
+
+This is only processing the current batch which is the prompt in our case so
+there is nothing in the cache at this point. But if we had already processed
+some tokens this would just be adding to the currently processed token to the
+key cache. So we are adding a column to the key matrix for each token we
+process.
+
+Then we also create a view for the value matrix:
 ```c++
     struct ggml_tensor * v_cache_view = nullptr;
     if (cparams.flash_attn) {
@@ -1110,13 +1061,20 @@ Watchpoint created: Watchpoint 3: addr = 0x600001690100 size = 8 state = enabled
 
         v_cur = ggml_transpose(ctx, v_cur);
     }
+    ggml_build_forward_expand(graph, ggml_cpy(ctx, v_cur, v_cache_view));
 ```
 ```console
-(lldb) p v_cache_view->ne
-(int64_t[4])  ([0] = 6, [1] = 4096, [2] = 1, [3] = 1)
+(gdb) p v_cache_view->ne
+$31 = {6, 4096, 1, 1}
 ```
-And this is then transposed. This is the last thing to happen in `llm_build_kv_store` and
-we will be back in `llm_build_kv`:
+And this is then transposed and also copied into the value cache view.
+So the above will have populated the cache with the key and value for one
+single layer. The next time we process a token which belongs to the same
+sequence this will add a column to the key cache matrix and a row to the 
+value cache matrix.
+
+This is the last thing to happen in `llm_build_kv_store` and we will be back in
+`llm_build_kv`:
 ```c++
     llm_build_kv_store(ctx, hparams, cparams, kv, graph, k_cur, v_cur, n_tokens, kv_head, cb, il);
 ```
@@ -1167,8 +1125,8 @@ z0
           x-axis ->
   0   [0  ...   127]          y-axis
       .                         ↓
-      .                       
-  5   [0  ...   127]          
+      .
+  5   [0  ...   127]
 
 .
 .
@@ -1625,15 +1583,7 @@ that the operation is:
 ```
 
 The next thing that happens is the graph is computed, which will perform the
-operations that have been built up in the graphs. Among those operation are the
-QK^T operation and the KV^T operation. The result of these operations will be
-copied into the cache for the layer. 
-
-```console
-(gdb) rwatch ctx.kv_self.k_l
-Hardware watchpoint 3: lctx.kv_self.k_l
-(gdb) c
-```
+operations that have been built up in the graphs.
 
 _wip_
 
