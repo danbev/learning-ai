@@ -5,6 +5,7 @@ I've gone through the theory of Key-Value caching in the transformer architectur
 in [llama.md](llama.md). This document is a more detailed look at the
 implementation of the key-value cache in the llama.cpp codebase.
 
+### `kv_self`
 A `llama_context` contains a member named `kv_self` (self as in self attention)
 which is of type `llama_kv_cache`. This struct is defined in `llama.cpp`:
 ```c++
@@ -351,10 +352,17 @@ And these tensors will then be added to the `cache.k_l` and `cache.v_l` vectors:
         cache.v_l.push_back(v);
 ```
 So each layer will have a key tensor which has 4194304 elements which we can
-think of as beeing 1024 rows (one entry for each item in the cache, each with
+think of as being 1024 rows (one entry for each item in the cache, each with
 4096 dimensions in each. One row for each entry in the cache. 4096 is the
 embedding dimenesion size.
+```
+     0   [0   ...        4095]
+     ...
+     ...
+     ...
+  1023   [0   ...        4095]
 
+```
 And recall that this will be done for each `n_layer`s in the model.
 
 Again, recall that the `ctx_map` only contains one entry.
@@ -763,6 +771,18 @@ be called.
 
         const int64_t n_embd_head = hparams.n_embd_head_v;
 ```
+Now, `build_llama` is a method/member of the struct `llm_build_context` which
+has a field named `kv_head`:
+```console
+(gdb) p this.kv_head
+(gdb) 0
+```
+This is very important to and for the first prompt it will be zero and was
+something that I overlooked the first time I stepped through the code and it
+caused me some confusion. For the next token processed this value will be the
+number of that token in the sequence. So we if had 6 tokens in the initital
+prompt this would be 6 for the next token to be docoded.
+
 ```console
 (gdb) p n_embd_head
 $18 = 128
@@ -839,7 +859,8 @@ Next all layer operations will be built:
                         Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, kq_scale, cb, il);
 ```
 Notice here that the roped Key and Query operations are created and then being
-passed into `llm_build_kv`.
+passed into `llm_build_kv`. And notice that `kv_head` is passed in which like
+we mentioned above will be important for the next tokens.
 
 There are a lot of parameters passed to `llm_build_kv` but if we look through
 them we have seen most of them before.
@@ -981,22 +1002,76 @@ Next a view of the k matrix is created:
         n_tokens*n_embd_k_gqa,
         ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)*kv_head);
 ```
+We can see here that we are creating a view of the tensor `k_l` for the current
+layer and notice that the offset used is taking into account the `kv_head`
+value.
+So this is creating a new which will be of size (elements) the number of tokens
+being processed (6 in this case) times the embeddings size. And the offset
+will be 0 in this case because this is the first time we are processing tokens:
 ```console
 (lldb) p ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)
 (size_t) 8192
 (lldb) p kv_head
 (int32_t) 0
+(gdb) p ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)*kv_head
+$69 = 0
+```
+
+```console
 (lldb) p k_cache_view->ne
 (int64_t[4])  ([0] = 24576, [1] = 1, [2] = 1, [3] = 1)
 ```
 So in this case the will produce a view of the tensor and the view will span
 the first 24576 (`n_tokens * n_embd_k_gqa` which is 6 * 4096 in this case)
-elements
+elements.
 
+Now, just to make this clear I'll also show what this would look like when
+decoding the next token.
+```console
+(gdb) p kv_head
+$75 = 6
+(gdb) p n_tokens
+$76 = 1
+(gdb) p n_embd_k_qga
+No symbol "n_embd_k_qga" in current context.
+(gdb) p n_embd_k_gqa
+$77 = 4096
+(gdb) p n_embd_k_gqa * 1
+$78 = 4096
+
+(gdb) p ggml_row_size(kv.k_l[il]->type, n_embd_k_gqa)*kv_head
+$79 = 49152
+```
+Notice that the offset is now 49152 which is the size of the previous view and
+we can visualize this as follows:
+```
+                                                   offset
+     0   [0   ...        4095]  (prompt token 1)   0
+     1   [0   ...        4095]  (prompt token 2)   8192
+     2   [0   ...        4095]  (prompt token 3)   16384
+     3   [0   ...        4095]  (prompt token 4)   24576
+     4   [0   ...        4095]  (prompt token 5)   32768 
+     5   [0   ...        4095]  (prompt token 6)   40960 
+     6   [0   ...        4095]  (next token 1)     49152
+     ...
+     ...
+     ...
+  1023   [0   ...        4095]
+```
+At this point we have created an operation to create a view with the correct
+offset.
+
+Next we create a tensor operation that will copy the current tokens roped
+key value into this slot of the cache:
 Then a copy operation will be created for copying `k_cur` to the `k_cache_view`:
 ```c++
     ggml_build_forward_expand(graph, ggml_cpy(ctx, k_cur, k_cache_view));
 ```
+So this is how the new tokens roped key value is added to the cache. We have a
+cache which can store 1024 tokens, each having an embedding dimension of 4096,
+and `kv_head` is used to create the offset into the `k_l` tensor for each 
+layer.
+
 These tensors have different dimensions but the same number of elelements:
 ```console
 (gdb) p ggml_n_dims(k_cur)
