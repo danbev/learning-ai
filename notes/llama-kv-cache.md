@@ -5,595 +5,6 @@ I've gone through the theory of Key-Value caching in the transformer architectur
 in [llama.md](llama.md). This document is a more detailed look at the
 implementation of the key-value cache in the llama.cpp codebase.
 
-### `kv_self`
-A `llama_context` contains a member named `kv_self` (self as in self attention)
-which is of type `llama_kv_cache`. This struct is defined in `llama.cpp`:
-```c++
-struct llama_context {
-    ...
-    // key + value cache for the self attention
-    struct llama_kv_cache kv_self;
-```
-So every `llama_context` will have a key-value cache for self attention.
-
-And the `llama_kv_cache` struct is defined as follows:
-```c++
-struct llama_kv_cache {
-    bool has_shift = false;
-    bool do_defrag = false;
-    bool do_copy   = false;
-    bool recurrent = false; // with recurrent state models, a cell can hold the state for more than one past token
-    bool v_trans   = true;  // the value tensor is transposed
-    uint32_t head = 0;
-    uint32_t size = 0;
-    uint32_t used = 0; // used cells (i.e. at least one seq_id)
-
-    // computed before each graph build
-    uint32_t n = 0;
-
-    ggml_type type_k = GGML_TYPE_F16;
-    ggml_type type_v = GGML_TYPE_F16;
-
-    std::vector<llama_kv_cell> cells;
-
-    std::vector<struct ggml_tensor *> k_l; // per layer
-    std::vector<struct ggml_tensor *> v_l;
-
-    std::vector<struct ggml_context *> ctxs;
-    std::vector<ggml_backend_buffer_t> bufs;
-```
-
-Recall that there is a KV-Cache per layer in the transformer architecture. 
-And notice that there is a vector of `ggml_tensor` pointer
-for key and one for the value per layers. So for each layer there is a tensor
-which we will see later is a 1d tensor, or just a list of values. And each layer
-has a `ggml_context` and also a `ggml_backend_buffer_t`.
-
-So when a `llama_context` is created the `kv_self` will also be created using
-default initialization (so just default values will be assigned to it).
-```c++
-struct llama_context {
-    llama_context(const llama_model & model) : model(model), t_start_us(model.t_start_us), t_load_us(model.t_load_us) {}
-    ...
-}
-```
-
-```console
-$ gdb --args simple_prompt
-(gdb) br llama_new_context_with_model
-(gdb) r
-(gdb) 
-16368	    llama_context * ctx = new llama_context(*model);
-(gdb) n
-(gdb) p ctx.kv_self 
-$1 = {has_shift = false, do_defrag = false, do_copy = false, recurrent = false,
-v_trans = true, head = 0, size = 0, used = 0, n = 0,
-type_k = GGML_TYPE_F16,
-type_v = GGML_TYPE_F16,
-cells = std::vector of length 0, capacity 0, 
-k_l = std::vector of length 0, capacity 0,
-v_l = std::vector of length 0, capacity 0,
-ctxs = std::vector of length 0, capacity 0, 
-bufs = std::vector of length 0, capacity 0}
-```
-So after the construction of a `llama_context` the `kv_self` member is
-initialized to default values, there has not been any explicit assignements to
-any of the members of `kv_self`.
-
-Further down in `llama_new_context_with_model` `kv_self` is initialized with:
-```c++
-        if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
-            LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
-            llama_free(ctx);
-            return nullptr;
-        }
-```
-So we are passing in `ctx->kv_self` which will have a local name of `cache`
-below:
-```
-static bool llama_kv_cache_init(
-             struct llama_kv_cache & cache,
-               const llama_context * ctx,
-                         ggml_type   type_k,
-                         ggml_type   type_v,
-                          uint32_t   kv_size,
-                              bool   offload) {
-
-    const int64_t  n_layer = hparams.n_layer;
-
-    cache.has_shift = false;
-
-    cache.recurrent = llama_model_is_recurrent(&model);
-    cache.v_trans   = !cache.recurrent && !cparams.flash_attn;
-
-    cache.head = 0;
-    cache.size = kv_size;
-    cache.used = 0;
-
-    cache.type_k = type_k;
-    cache.type_v = type_v;
-
-    cache.cells.clear();
-    cache.cells.resize(kv_size);
-```
-The `kv_size` is the passed in and will be the size of the computation param
-`n_ctx` unless the model supports Mamba.
-```console
-(gdb) p n_layer
-$3 = 32
-
-(gdb) p kv_size
-$12 = 1024
-
-(gdb) p cache.v_trans
-$4 = true
-
-(gdb) p cache.size
-$5 = 1024
-
-(gdb) p cache.type_v
-$9 = GGML_TYPE_F16
-
-(gdb) p cache.cells.size()
-$10 = 1024
-```
-So we can see that we have 1024 cells in this cache.
-
-Next, a map of `ggml_backend_buffer_type_t` and a count of the different types
-of backend buffers for the kv cache. In our case `offload` is true (comes from
-cparams.offload_kqv) so that is the path that will be taken. But also notice
-that if this was not the case then the default buffer type would be
-`llama_default_buffer_type_cpu(true)` would be set as the key and the found 32.
-
-But for the offload case we iterate over the number of layers and count the
-number of different buffer types used:
-```c++
-    // count used buffer types
-    std::map<ggml_backend_buffer_type_t, int> buft_layer_count;
-    if (offload) {
-        for (int64_t i = 0; i < n_layer; ++i) {
-            buft_layer_count[model.buft_layer[i].buft]++;
-        }
-    } else {
-        buft_layer_count[llama_default_buffer_type_cpu(true)] = n_layer;
-    }
-```
-So the model struct has a field `buft_layer` which is a vector of `llama_buft`:
-```console
-(gdb) ptype model.buft_layer
-type = std::vector<llama_model::layer_buft>
-
-(gdb) p model.buft_layer.size()
-$14 = 32
-```
-This vector is populated by `llama_load_tensors`.
-
-After this the map looks like this:
-```console
-(gdb) p buft_layer_count
-$25 = std::map with 1 element = {[0x555555978400 <ggml_backend_cpu_buffer_type>] = 32}
-```
-Next for each of the entries in the `buft_layer_count` map we create a ggml
-context for each buffer type, and in this case there is only one element, which
-has a count of 32:
-```c++
-    // create a context for each buffer type
-    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
-    for (auto & it : buft_layer_count) {
-        int n_layers = it.second;
-        struct ggml_init_params params = {
-            /*.mem_size   =*/ 2u*n_layers*ggml_tensor_overhead(),
-            /*.mem_buffer =*/ NULL,
-            /*.no_alloc   =*/ true,
-        };
-        ggml_context * ctx = ggml_init(params);
-        if (!ctx) {
-            LLAMA_LOG_ERROR("%s: failed to allocate context for kv cache\n", __func__);
-            return false;
-        }
-        ctx_map[it.first] = ctx;
-        cache.ctxs.push_back(ctx);
-    }
-```
-So after this there will be one entry in `cache.ctxs`
-
-Next the vectors of key and value vectors will be reserved for the capacity of
-the number of layers in the model, the following will happen in `llama_kv_cache_init`:
-```c++
-    cache.k_l.reserve(n_layer);
-    cache.v_l.reserve(n_layer);
-```
-And these vectors store elements of type `ggml_tensor`:
-```console
-(lldb) p n_layer
-(const int64_t) 32
-
-(gdb) ptype cache.k_l
-type = std::vector<ggml_tensor*>
-```
-So each of these vectors will be able to hold 32 `ggml_tensor` pointers, one
-for each layer. 
-
-Next, these vectors are populated with the following:
-```
-    for (int i = 0; i < (int) n_layer; i++) {
-        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(i) + hparams.n_embd_k_s();
-        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
-
-        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
-        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
-        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
-        ggml_format_name(k, "cache_k_l%d", i);
-        ggml_format_name(v, "cache_v_l%d", i);
-        cache.k_l.push_back(k);
-        cache.v_l.push_back(v);
-    }
-```
-So we have this function `n_embd_k_gqa` which returnes the number of embedding
-dimensions for the Key matrix for grouped query attention (qga). Notice that we
-are passing in the layer which sounds like there can be different embedding
-sizes for different layers.
-```c++
-    uint32_t n_embd_k_gqa(uint32_t il = 0) const { // dimension of key embeddings across all k-v heads
-        const uint32_t n_head_kv = this->n_head_kv(il);
-
-        return n_embd_head_k * n_head_kv;
-    }
-```
-And `n_embd_head_k` is the number of embeddings in the key matrix for each head:
-```console
-    uint32_t n_head_kv(uint32_t il = 0) const {
-        if (il < n_layer) {
-            return n_head_kv_arr[il];
-        }
-
-        GGML_ABORT("fatal error");
-    }
-```
-`n_head_kv_arr` is a fixed size array, the size is of `LLAMA_MAX_LAYERS` which is
-currently 512:
-```c++
-#define LLAMA_MAX_LAYERS  512
-
-    std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_arr;
-    std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
-    std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
-```
-Notice that there other per-layer parameters, `n_head_arr` is a value per layer
-for the number of heads, and then we also have `n_ff_arr` which is the  number
-of feed-forward/MLP layers too. The values are loaded from the model in
-`llm_load_hparams`:
-```c++
-    // zero-out the per-layer hparams
-    std::fill(hparams.n_head_arr.begin(),    hparams.n_head_arr.end(),    0);
-    std::fill(hparams.n_head_kv_arr.begin(), hparams.n_head_kv_arr.end(), 0);
-    std::fill(hparams.n_ff_arr.begin(),      hparams.n_ff_arr.end(),      0);
-
-    ml.get_key_or_arr(LLM_KV_FEED_FORWARD_LENGTH,  hparams.n_ff_arr,   hparams.n_layer);
-    ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT, hparams.n_head_arr, hparams.n_layer);
-
-    // n_head_kv is optional, default to n_head
-    hparams.n_head_kv_arr = hparams.n_head_arr;
-
-    ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT_KV, hparams.n_head_kv_arr, hparams.n_layer, false);
-```
-So the model can indeed have a different number of heads for each layer, but in
-our case we have the same number of heads for each layer.
-
-```console
-(lldb) p this
-(const llama_hparams *) 0x0000000132812228
-
-(gdb) p n_head_kv_arr.size()
-$23 = 512
-(gdb) p n_head_kv_arr[il]
-$25 = 32
-```
-So the dimensions for these tensors will be:
-```c++
-(gdb) p n_embd_k_gqa
-$35 = 4096
-(gdb) p n_embd_v_gqa
-$36 = 4096
-```
-And the size of the cache in this case is `kv_size`, so the above will create
-a 1d tensor of size `n_embd_k_gqa*kv_size (4096*1024)` for the key and the value
-tensors. And `hparams_n_embd_k_s` is zero in this case as this is only used for 
-recursive models I think which is not the case here. So the embedding dimension
-for each layer is 4096.
-
-Just to recap where we are:
-```c++
-    for (int i = 0; i < (int) n_layer; i++) {
-        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(i) + hparams.n_embd_k_s();
-        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
-
-        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
-        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
-        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
-        ggml_format_name(k, "cache_k_l%d", i);
-        ggml_format_name(v, "cache_v_l%d", i);
-        cache.k_l.push_back(k);
-        cache.v_l.push_back(v);
-    }
-```
-
-So each of the k tensors will be of size of the embeddings dimensions plus the
-number of items that can be stored in the cache.
-```console
-(gdb) p n_embd_k_gqa 
-$39 = 4096
-(gdb) p kv_size
-$40 = 1024
-```
-And we can take a look at the shape of `k`:
-```console
-(gdb) p *k
-$3 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
-ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 8388608}, 
-op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
-flags = 0,
-grad = 0x0,
-src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
-perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
-view_src = 0x0,
-view_offs = 0,
-data = 0x0,
-name = '\000' <repeats 63 times>, 
-extra = 0x0, padding = "\000\000\000\000\000\000\000"}
-```
-So this is a 1d tensor:
-```console
-   [0                                                        4194304]
-```
-And these tensors will then be added to the `cache.k_l` and `cache.v_l` vectors:
-```c++
-        cache.k_l.push_back(k);
-        cache.v_l.push_back(v);
-```
-So each layer will have a key tensor which has 4194304 elements which we can
-think of as being 1024 rows (one entry for each item in the cache, each with
-4096 dimensions in each. One row for each entry in the cache. 4096 is the
-embedding dimenesion size.
-```
-     0   [0   ...        4095]
-     ...
-     ...
-     ...
-  1023   [0   ...        4095]
-
-```
-And recall that this will be done for each `n_layer`s in the model.
-
-Again, recall that the `ctx_map` only contains one entry.
-```c++
-    // allocate tensors and initialize the buffers to avoid NaNs in the padding
-    for (auto it : ctx_map) {
-        ggml_backend_buffer_type_t buft = it.first;
-        ggml_context * ctx = it.second;
-        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
-        if (!buf) {
-            LLAMA_LOG_ERROR("%s: failed to allocate buffer for kv cache\n", __func__);
-            return false;
-        }
-        ggml_backend_buffer_clear(buf, 0);
-        cache.bufs.push_back(buf);
-    }
-```
-Now, `buft` describes the buffer type and we can inspect it like this:
-```console
-(gdb) ptype buft
-type = struct ggml_backend_buffer_type {
-    ggml_backend_buffer_type_i iface;
-    ggml_backend_buffer_type_context_t context;
-} *
-
-(gdb) ptype buft.iface
-type = struct ggml_backend_buffer_type_i {
-    const char *(*get_name)(ggml_backend_buffer_type_t);
-    ggml_backend_buffer_t (*alloc_buffer)(ggml_backend_buffer_type_t, size_t);
-    size_t (*get_alignment)(ggml_backend_buffer_type_t);
-    size_t (*get_max_size)(ggml_backend_buffer_type_t);
-    size_t (*get_alloc_size)(ggml_backend_buffer_type_t, const ggml_tensor *);
-    _Bool (*is_host)(ggml_backend_buffer_type_t);
-}
-
-(gdb) p buft.iface.get_name(buft)
-$67 = 0x555555882d22 "CPU"
-
-(gdb) p buft.iface.is_host(buft)
-$70 = true
-```
-Notice that `buf` is of type `ggml_backend_buffer_t` which is different from
-`buft` which is of type `ggml_backend_buffer_type_t`, at least I have some
-trouble keeping these apart as the names are somewhat similar. I try to think
-that one it is a description of a backend buffer type and the other is an actual
-buffer. So in the following we are passing in the buffer type to allocate a new
-buffer of that type:
-```c++
-        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
-```
-```c++
-ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
-    GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
-
-    size_t alignment = ggml_backend_buft_get_alignment(buft);
-    size_t max_size = ggml_backend_buft_get_max_size(buft);
-
-    ggml_backend_buffer_t * buffers = NULL;
-    size_t n_buffers = 0;
-```
-```console
-gdb) p alignment 
-$71 = 32
-(gdb) p max_size
-$72 = 18446744073709551615
-```
-
-```c++
-    ggml_backend_buffer_t * buffers = NULL;
-    size_t n_buffers = 0;
-
-    size_t cur_buf_size = 0;
-    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
-```
-`first` will be `cache_k_l0`:
-```console
-(gdb) p *first
-$74 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 
-    8388608}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
-    0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
-  name = "cache_k_l0", '\000' <repeats 53 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
-```
-
-Then the following loop will iterate over the tensors in the passed in context
-and calculate the size for the buffer:
-```c++
-    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-        size_t this_size = 0;
-        if (t->data == NULL && t->view_src == NULL) {
-            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
-        }
-
-        if (this_size > max_size) {
-            ...
-        }
-
-        if ((cur_buf_size + this_size) > max_size) {
-            // allocate tensors in the current buffer
-            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
-                return NULL;
-            }
-            first = t;
-            cur_buf_size = this_size;
-        } else {
-            cur_buf_size += this_size;
-        }
-    }
-```
-The second time throught the loop `t` will be:
-```console
-(gdb) p *t
-$76 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 
-    8388608}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
-    0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
-  name = "cache_v_l0", '\000' <repeats 53 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
-```
-When the loop has completed the following wil be run:
-```c++
-    if (cur_buf_size > 0) {
-        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
-            return NULL;
-        }
-    }
-```
-We can find `alloc_tensor_range` in the `ggml-alloc.c`::
-```c
-static bool alloc_tensor_range(struct ggml_context * ctx,
-        struct ggml_tensor * first, struct ggml_tensor * last,
-        ggml_backend_buffer_type_t buft, size_t size,
-        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
-    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
-```
-And in `ggml-backend.c` we have:
-```c
-GGML_CALL ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
-    return buft->iface.alloc_buffer(buft, size);
-}
-```
-Which in our case will call the following function:
-```c
-GGML_CALL static ggml_backend_buffer_t ggml_backend_cpu_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
-    size += TENSOR_ALIGNMENT;   // malloc may return an address that is not aligned
-    void * data = malloc(size); // TODO: use GGML_ALIGNED_MALLOC (move to ggml-impl.h)
-    if (data == NULL) {
-        fprintf(stderr, "%s: failed to allocate buffer of size %zu\n", __func__, size);
-        return NULL;
-    }
-
-    return ggml_backend_buffer_init(buft, cpu_backend_buffer_i, data, size);
-}
-```
-Now, malloc will take the size (in bytes), so that will be:
-```console
-(gdb) p size / 1024.0/1024.0
-$82 = 512.00003051757812
-```
-So 512MB will be allocated for the buffer. If we were using a different backend
-for example CUDA this would instead be the function
-`ggml_backend_cuda_buffer_type_alloc_buffer` in llama.cpp/ggml-backend.cu which
-does `ggml_cuda_device_malloc` which allocates memory on the device instead.
-
-The last call in the function is:
-```c
-GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
-               ggml_backend_buffer_type_t      buft,
-        struct ggml_backend_buffer_i           iface,
-               ggml_backend_buffer_context_t   context,
-               size_t                          size) {
-    ggml_backend_buffer_t buffer = malloc(sizeof(struct ggml_backend_buffer));
-
-    (*buffer) = (struct ggml_backend_buffer) {
-        /* .interface = */ iface,
-        /* .buft      = */ buft,
-        /* .context   = */ context,
-        /* .size      = */ size,
-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
-    };
-
-    return buffer;
-}
-```
-
-Following this code there is some logging of the memory usage:
-```c++
-
-        {
-            size_t memory_size_k = 0;
-            size_t memory_size_v = 0;
-
-            for (auto & k : ctx->kv_self.k_l) {
-                memory_size_k += ggml_nbytes(k);
-            }
-
-            for (auto & v : ctx->kv_self.v_l) {
-                memory_size_v += ggml_nbytes(v);
-            }
-
-            LLAMA_LOG_INFO("%s: KV self size  = %7.2f MiB, K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
-                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f),
-                ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
-                ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
-        }
-```
-Next we have `llama_output_reserve` which is is called in a number of places,
-so what does it actually do?
-```c
-            // resized during inference when a batch uses more outputs
-            if (llama_output_reserve(*ctx, params.n_seq_max) < params.n_seq_max) {
-                LLAMA_LOG_ERROR("%s: failed to reserve initial output buffer\n", __func__);
-                llama_free(ctx);
-                return nullptr;
-            }
-```
-In this case the `n_seq_max` is 1:
-```console
-(gdb) p params.n_seq_max
-$14 = 1
-```
-```c
-            ctx->buf_compute_meta.resize(
-                ggml_tensor_overhead()*LLAMA_MAX_NODES + 
-                ggml_graph_overhead_custom(LLAMA_MAX_NODES, false));
-            ctx->sched = ggml_backend_sched_new(ctx->backends.data(),
-                backend_buft.data(),
-                ctx->backends.size(),
-                LLAMA_MAX_NODES,
-                pipeline_parallel);
-```
-What is a GGML Backend Schuduler?   TODO: Look into this.
-
-
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
 the kv-cache.
@@ -1662,5 +1073,595 @@ The next thing that happens is the graph is computed, which will perform the
 operations that have been built up in the graphs.
 
 _wip_
+
+
+
+### `kv_self`
+A `llama_context` contains a member named `kv_self` (self as in self attention)
+which is of type `llama_kv_cache`. This struct is defined in `llama.cpp`:
+```c++
+struct llama_context {
+    ...
+    // key + value cache for the self attention
+    struct llama_kv_cache kv_self;
+```
+So every `llama_context` will have a key-value cache for self attention.
+
+And the `llama_kv_cache` struct is defined as follows:
+```c++
+struct llama_kv_cache {
+    bool has_shift = false;
+    bool do_defrag = false;
+    bool do_copy   = false;
+    bool recurrent = false; // with recurrent state models, a cell can hold the state for more than one past token
+    bool v_trans   = true;  // the value tensor is transposed
+    uint32_t head = 0;
+    uint32_t size = 0;
+    uint32_t used = 0; // used cells (i.e. at least one seq_id)
+
+    // computed before each graph build
+    uint32_t n = 0;
+
+    ggml_type type_k = GGML_TYPE_F16;
+    ggml_type type_v = GGML_TYPE_F16;
+
+    std::vector<llama_kv_cell> cells;
+
+    std::vector<struct ggml_tensor *> k_l; // per layer
+    std::vector<struct ggml_tensor *> v_l;
+
+    std::vector<struct ggml_context *> ctxs;
+    std::vector<ggml_backend_buffer_t> bufs;
+```
+
+Recall that there is a KV-Cache per layer in the transformer architecture. 
+And notice that there is a vector of `ggml_tensor` pointer
+for key and one for the value per layers. So for each layer there is a tensor
+which we will see later is a 1d tensor, or just a list of values. And each layer
+has a `ggml_context` and also a `ggml_backend_buffer_t`.
+
+So when a `llama_context` is created the `kv_self` will also be created using
+default initialization (so just default values will be assigned to it).
+```c++
+struct llama_context {
+    llama_context(const llama_model & model) : model(model), t_start_us(model.t_start_us), t_load_us(model.t_load_us) {}
+    ...
+}
+```
+
+```console
+$ gdb --args simple_prompt
+(gdb) br llama_new_context_with_model
+(gdb) r
+(gdb) 
+16368	    llama_context * ctx = new llama_context(*model);
+(gdb) n
+(gdb) p ctx.kv_self 
+$1 = {has_shift = false, do_defrag = false, do_copy = false, recurrent = false,
+v_trans = true, head = 0, size = 0, used = 0, n = 0,
+type_k = GGML_TYPE_F16,
+type_v = GGML_TYPE_F16,
+cells = std::vector of length 0, capacity 0, 
+k_l = std::vector of length 0, capacity 0,
+v_l = std::vector of length 0, capacity 0,
+ctxs = std::vector of length 0, capacity 0, 
+bufs = std::vector of length 0, capacity 0}
+```
+So after the construction of a `llama_context` the `kv_self` member is
+initialized to default values, there has not been any explicit assignements to
+any of the members of `kv_self`.
+
+Further down in `llama_new_context_with_model` `kv_self` is initialized with:
+```c++
+        if (!llama_kv_cache_init(ctx->kv_self, ctx, type_k, type_v, kv_size, cparams.offload_kqv)) {
+            LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
+            llama_free(ctx);
+            return nullptr;
+        }
+```
+So we are passing in `ctx->kv_self` which will have a local name of `cache`
+below:
+```
+static bool llama_kv_cache_init(
+             struct llama_kv_cache & cache,
+               const llama_context * ctx,
+                         ggml_type   type_k,
+                         ggml_type   type_v,
+                          uint32_t   kv_size,
+                              bool   offload) {
+
+    const int64_t  n_layer = hparams.n_layer;
+
+    cache.has_shift = false;
+
+    cache.recurrent = llama_model_is_recurrent(&model);
+    cache.v_trans   = !cache.recurrent && !cparams.flash_attn;
+
+    cache.head = 0;
+    cache.size = kv_size;
+    cache.used = 0;
+
+    cache.type_k = type_k;
+    cache.type_v = type_v;
+
+    cache.cells.clear();
+    cache.cells.resize(kv_size);
+```
+The `kv_size` is the passed in and will be the size of the computation param
+`n_ctx` unless the model supports Mamba.
+```console
+(gdb) p n_layer
+$3 = 32
+
+(gdb) p kv_size
+$12 = 1024
+
+(gdb) p cache.v_trans
+$4 = true
+
+(gdb) p cache.size
+$5 = 1024
+
+(gdb) p cache.type_v
+$9 = GGML_TYPE_F16
+
+(gdb) p cache.cells.size()
+$10 = 1024
+```
+So we can see that we have 1024 cells in this cache.
+
+Next, a map of `ggml_backend_buffer_type_t` and a count of the different types
+of backend buffers for the kv cache. In our case `offload` is true (comes from
+cparams.offload_kqv) so that is the path that will be taken. But also notice
+that if this was not the case then the default buffer type would be
+`llama_default_buffer_type_cpu(true)` would be set as the key and the found 32.
+
+But for the offload case we iterate over the number of layers and count the
+number of different buffer types used:
+```c++
+    // count used buffer types
+    std::map<ggml_backend_buffer_type_t, int> buft_layer_count;
+    if (offload) {
+        for (int64_t i = 0; i < n_layer; ++i) {
+            buft_layer_count[model.buft_layer[i].buft]++;
+        }
+    } else {
+        buft_layer_count[llama_default_buffer_type_cpu(true)] = n_layer;
+    }
+```
+So the model struct has a field `buft_layer` which is a vector of `llama_buft`:
+```console
+(gdb) ptype model.buft_layer
+type = std::vector<llama_model::layer_buft>
+
+(gdb) p model.buft_layer.size()
+$14 = 32
+```
+This vector is populated by `llama_load_tensors`.
+
+After this the map looks like this:
+```console
+(gdb) p buft_layer_count
+$25 = std::map with 1 element = {[0x555555978400 <ggml_backend_cpu_buffer_type>] = 32}
+```
+Next for each of the entries in the `buft_layer_count` map we create a ggml
+context for each buffer type, and in this case there is only one element, which
+has a count of 32:
+```c++
+    // create a context for each buffer type
+    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
+    for (auto & it : buft_layer_count) {
+        int n_layers = it.second;
+        struct ggml_init_params params = {
+            /*.mem_size   =*/ 2u*n_layers*ggml_tensor_overhead(),
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc   =*/ true,
+        };
+        ggml_context * ctx = ggml_init(params);
+        if (!ctx) {
+            LLAMA_LOG_ERROR("%s: failed to allocate context for kv cache\n", __func__);
+            return false;
+        }
+        ctx_map[it.first] = ctx;
+        cache.ctxs.push_back(ctx);
+    }
+```
+So after this there will be one entry in `cache.ctxs`
+
+Next the vectors of key and value vectors will be reserved for the capacity of
+the number of layers in the model, the following will happen in `llama_kv_cache_init`:
+```c++
+    cache.k_l.reserve(n_layer);
+    cache.v_l.reserve(n_layer);
+```
+And these vectors store elements of type `ggml_tensor`:
+```console
+(lldb) p n_layer
+(const int64_t) 32
+
+(gdb) ptype cache.k_l
+type = std::vector<ggml_tensor*>
+```
+So each of these vectors will be able to hold 32 `ggml_tensor` pointers, one
+for each layer. 
+
+Next, these vectors are populated with the following:
+```
+    for (int i = 0; i < (int) n_layer; i++) {
+        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(i) + hparams.n_embd_k_s();
+        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
+
+        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
+        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
+        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
+        ggml_format_name(k, "cache_k_l%d", i);
+        ggml_format_name(v, "cache_v_l%d", i);
+        cache.k_l.push_back(k);
+        cache.v_l.push_back(v);
+    }
+```
+So we have this function `n_embd_k_gqa` which returnes the number of embedding
+dimensions for the Key matrix for grouped query attention (qga). Notice that we
+are passing in the layer which sounds like there can be different embedding
+sizes for different layers.
+```c++
+    uint32_t n_embd_k_gqa(uint32_t il = 0) const { // dimension of key embeddings across all k-v heads
+        const uint32_t n_head_kv = this->n_head_kv(il);
+
+        return n_embd_head_k * n_head_kv;
+    }
+```
+And `n_embd_head_k` is the number of embeddings in the key matrix for each head:
+```console
+    uint32_t n_head_kv(uint32_t il = 0) const {
+        if (il < n_layer) {
+            return n_head_kv_arr[il];
+        }
+
+        GGML_ABORT("fatal error");
+    }
+```
+`n_head_kv_arr` is a fixed size array, the size is of `LLAMA_MAX_LAYERS` which is
+currently 512:
+```c++
+#define LLAMA_MAX_LAYERS  512
+
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_arr;
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
+    std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
+```
+Notice that there other per-layer parameters, `n_head_arr` is a value per layer
+for the number of heads, and then we also have `n_ff_arr` which is the  number
+of feed-forward/MLP layers too. The values are loaded from the model in
+`llm_load_hparams`:
+```c++
+    // zero-out the per-layer hparams
+    std::fill(hparams.n_head_arr.begin(),    hparams.n_head_arr.end(),    0);
+    std::fill(hparams.n_head_kv_arr.begin(), hparams.n_head_kv_arr.end(), 0);
+    std::fill(hparams.n_ff_arr.begin(),      hparams.n_ff_arr.end(),      0);
+
+    ml.get_key_or_arr(LLM_KV_FEED_FORWARD_LENGTH,  hparams.n_ff_arr,   hparams.n_layer);
+    ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT, hparams.n_head_arr, hparams.n_layer);
+
+    // n_head_kv is optional, default to n_head
+    hparams.n_head_kv_arr = hparams.n_head_arr;
+
+    ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT_KV, hparams.n_head_kv_arr, hparams.n_layer, false);
+```
+So the model can indeed have a different number of heads for each layer, but in
+our case we have the same number of heads for each layer.
+
+```console
+(lldb) p this
+(const llama_hparams *) 0x0000000132812228
+
+(gdb) p n_head_kv_arr.size()
+$23 = 512
+(gdb) p n_head_kv_arr[il]
+$25 = 32
+```
+So the dimensions for these tensors will be:
+```c++
+(gdb) p n_embd_k_gqa
+$35 = 4096
+(gdb) p n_embd_v_gqa
+$36 = 4096
+```
+And the size of the cache in this case is `kv_size`, so the above will create
+a 1d tensor of size `n_embd_k_gqa*kv_size (4096*1024)` for the key and the value
+tensors. And `hparams_n_embd_k_s` is zero in this case as this is only used for 
+recursive models I think which is not the case here. So the embedding dimension
+for each layer is 4096.
+
+Just to recap where we are:
+```c++
+    for (int i = 0; i < (int) n_layer; i++) {
+        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(i) + hparams.n_embd_k_s();
+        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
+
+        struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
+        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
+        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
+        ggml_format_name(k, "cache_k_l%d", i);
+        ggml_format_name(v, "cache_v_l%d", i);
+        cache.k_l.push_back(k);
+        cache.v_l.push_back(v);
+    }
+```
+
+So each of the k tensors will be of size of the embeddings dimensions plus the
+number of items that can be stored in the cache.
+```console
+(gdb) p n_embd_k_gqa 
+$39 = 4096
+(gdb) p kv_size
+$40 = 1024
+```
+And we can take a look at the shape of `k`:
+```console
+(gdb) p *k
+$3 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 8388608}, 
+op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
+flags = 0,
+grad = 0x0,
+src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
+view_src = 0x0,
+view_offs = 0,
+data = 0x0,
+name = '\000' <repeats 63 times>, 
+extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+So this is a 1d tensor:
+```console
+   [0                                                        4194304]
+```
+And these tensors will then be added to the `cache.k_l` and `cache.v_l` vectors:
+```c++
+        cache.k_l.push_back(k);
+        cache.v_l.push_back(v);
+```
+So each layer will have a key tensor which has 4194304 elements which we can
+think of as being 1024 rows (one entry for each item in the cache, each with
+4096 dimensions in each. One row for each entry in the cache. 4096 is the
+embedding dimenesion size.
+```
+     0   [0   ...        4095]
+     ...
+     ...
+     ...
+  1023   [0   ...        4095]
+
+```
+And recall that this will be done for each `n_layer`s in the model.
+
+Again, recall that the `ctx_map` only contains one entry.
+```c++
+    // allocate tensors and initialize the buffers to avoid NaNs in the padding
+    for (auto it : ctx_map) {
+        ggml_backend_buffer_type_t buft = it.first;
+        ggml_context * ctx = it.second;
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        if (!buf) {
+            LLAMA_LOG_ERROR("%s: failed to allocate buffer for kv cache\n", __func__);
+            return false;
+        }
+        ggml_backend_buffer_clear(buf, 0);
+        cache.bufs.push_back(buf);
+    }
+```
+Now, `buft` describes the buffer type and we can inspect it like this:
+```console
+(gdb) ptype buft
+type = struct ggml_backend_buffer_type {
+    ggml_backend_buffer_type_i iface;
+    ggml_backend_buffer_type_context_t context;
+} *
+
+(gdb) ptype buft.iface
+type = struct ggml_backend_buffer_type_i {
+    const char *(*get_name)(ggml_backend_buffer_type_t);
+    ggml_backend_buffer_t (*alloc_buffer)(ggml_backend_buffer_type_t, size_t);
+    size_t (*get_alignment)(ggml_backend_buffer_type_t);
+    size_t (*get_max_size)(ggml_backend_buffer_type_t);
+    size_t (*get_alloc_size)(ggml_backend_buffer_type_t, const ggml_tensor *);
+    _Bool (*is_host)(ggml_backend_buffer_type_t);
+}
+
+(gdb) p buft.iface.get_name(buft)
+$67 = 0x555555882d22 "CPU"
+
+(gdb) p buft.iface.is_host(buft)
+$70 = true
+```
+Notice that `buf` is of type `ggml_backend_buffer_t` which is different from
+`buft` which is of type `ggml_backend_buffer_type_t`, at least I have some
+trouble keeping these apart as the names are somewhat similar. I try to think
+that one it is a description of a backend buffer type and the other is an actual
+buffer. So in the following we are passing in the buffer type to allocate a new
+buffer of that type:
+```c++
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+```
+```c++
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
+
+    size_t alignment = ggml_backend_buft_get_alignment(buft);
+    size_t max_size = ggml_backend_buft_get_max_size(buft);
+
+    ggml_backend_buffer_t * buffers = NULL;
+    size_t n_buffers = 0;
+```
+```console
+gdb) p alignment 
+$71 = 32
+(gdb) p max_size
+$72 = 18446744073709551615
+```
+
+```c++
+    ggml_backend_buffer_t * buffers = NULL;
+    size_t n_buffers = 0;
+
+    size_t cur_buf_size = 0;
+    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+```
+`first` will be `cache_k_l0`:
+```console
+(gdb) p *first
+$74 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 
+    8388608}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "cache_k_l0", '\000' <repeats 53 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+Then the following loop will iterate over the tensors in the passed in context
+and calculate the size for the buffer:
+```c++
+    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+        size_t this_size = 0;
+        if (t->data == NULL && t->view_src == NULL) {
+            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+        }
+
+        if (this_size > max_size) {
+            ...
+        }
+
+        if ((cur_buf_size + this_size) > max_size) {
+            // allocate tensors in the current buffer
+            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
+                return NULL;
+            }
+            first = t;
+            cur_buf_size = this_size;
+        } else {
+            cur_buf_size += this_size;
+        }
+    }
+```
+The second time throught the loop `t` will be:
+```console
+(gdb) p *t
+$76 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {4194304, 1, 1, 1}, nb = {2, 8388608, 8388608, 
+    8388608}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "cache_v_l0", '\000' <repeats 53 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+When the loop has completed the following wil be run:
+```c++
+    if (cur_buf_size > 0) {
+        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+            return NULL;
+        }
+    }
+```
+We can find `alloc_tensor_range` in the `ggml-alloc.c`::
+```c
+static bool alloc_tensor_range(struct ggml_context * ctx,
+        struct ggml_tensor * first, struct ggml_tensor * last,
+        ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+```
+And in `ggml-backend.c` we have:
+```c
+GGML_CALL ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    return buft->iface.alloc_buffer(buft, size);
+}
+```
+Which in our case will call the following function:
+```c
+GGML_CALL static ggml_backend_buffer_t ggml_backend_cpu_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    size += TENSOR_ALIGNMENT;   // malloc may return an address that is not aligned
+    void * data = malloc(size); // TODO: use GGML_ALIGNED_MALLOC (move to ggml-impl.h)
+    if (data == NULL) {
+        fprintf(stderr, "%s: failed to allocate buffer of size %zu\n", __func__, size);
+        return NULL;
+    }
+
+    return ggml_backend_buffer_init(buft, cpu_backend_buffer_i, data, size);
+}
+```
+Now, malloc will take the size (in bytes), so that will be:
+```console
+(gdb) p size / 1024.0/1024.0
+$82 = 512.00003051757812
+```
+So 512MB will be allocated for the buffer. If we were using a different backend
+for example CUDA this would instead be the function
+`ggml_backend_cuda_buffer_type_alloc_buffer` in llama.cpp/ggml-backend.cu which
+does `ggml_cuda_device_malloc` which allocates memory on the device instead.
+
+The last call in the function is:
+```c
+GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
+               ggml_backend_buffer_type_t      buft,
+        struct ggml_backend_buffer_i           iface,
+               ggml_backend_buffer_context_t   context,
+               size_t                          size) {
+    ggml_backend_buffer_t buffer = malloc(sizeof(struct ggml_backend_buffer));
+
+    (*buffer) = (struct ggml_backend_buffer) {
+        /* .interface = */ iface,
+        /* .buft      = */ buft,
+        /* .context   = */ context,
+        /* .size      = */ size,
+        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
+    };
+
+    return buffer;
+}
+```
+
+Following this code there is some logging of the memory usage:
+```c++
+
+        {
+            size_t memory_size_k = 0;
+            size_t memory_size_v = 0;
+
+            for (auto & k : ctx->kv_self.k_l) {
+                memory_size_k += ggml_nbytes(k);
+            }
+
+            for (auto & v : ctx->kv_self.v_l) {
+                memory_size_v += ggml_nbytes(v);
+            }
+
+            LLAMA_LOG_INFO("%s: KV self size  = %7.2f MiB, K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
+                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f),
+                ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
+                ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
+        }
+```
+Next we have `llama_output_reserve` which is is called in a number of places,
+so what does it actually do?
+```c
+            // resized during inference when a batch uses more outputs
+            if (llama_output_reserve(*ctx, params.n_seq_max) < params.n_seq_max) {
+                LLAMA_LOG_ERROR("%s: failed to reserve initial output buffer\n", __func__);
+                llama_free(ctx);
+                return nullptr;
+            }
+```
+In this case the `n_seq_max` is 1:
+```console
+(gdb) p params.n_seq_max
+$14 = 1
+```
+```c
+            ctx->buf_compute_meta.resize(
+                ggml_tensor_overhead()*LLAMA_MAX_NODES + 
+                ggml_graph_overhead_custom(LLAMA_MAX_NODES, false));
+            ctx->sched = ggml_backend_sched_new(ctx->backends.data(),
+                backend_buft.data(),
+                ctx->backends.size(),
+                LLAMA_MAX_NODES,
+                pipeline_parallel);
+```
+What is a GGML Backend Schuduler?   TODO: Look into this.
 
 
