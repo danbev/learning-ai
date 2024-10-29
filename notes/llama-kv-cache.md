@@ -2077,7 +2077,35 @@ $1 = {128, 32, 32, 1}
 
 (gdb) p kq_mask->ne
 $6 = {32, 32, 1, 1}
+
+(lldb) p kq->ne
+(int64_t[4])  ([0] = 32, [1] = 1, [2] = 32, [3] = 1)
 ```
+So as we can expect and have seen before the result of the Q and K matrix is a square
+matrix, and recall that this is par layer we are seeing.
+So what this is doing is it is caclulating the softmax of the logits in `kq` which like we
+said contains the dot product of the current token with all the cached Key values.
+In this case the first 6 tokens in the key cache belong to sequence 0, and the ones from 6-13 are
+the ones for sequence 1 which the current token belongs to:
+```console
+      kq                                 kq_mask
+z0                0     1    2    3    4    5   6     7    8    9    10  11    12   13   14  ... 31]
+   [0 ... 31]   [-inf -inf -inf -inf -inf -inf  0.0  0.0  0.0  0.0  0.0  0.0  0.0  0.0  -inf    -inf]
+                [-inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf  -inf ...-inf]
+                ...
+             31 [-inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf  -inf ...-inf]
+
+...
+
+z31
+   [0 ... 31] 0 [-inf -inf -inf -inf -inf -inf  0.0  0.0  0.0  0.0  0.0  0.0  0.0  0.0  -inf    -inf]
+                [-inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf  -inf ...-inf]
+                ...
+             31 [-inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf -inf  -inf ...-inf]
+```
+So this will include only the logits that belong to the current token's sequence.
+So get a feel for how this works there is a standalone example in
+[llama-att-softmax.c](../ggml/src/llama-att-softmax.c)
 
 <a name="wip"></a>
 _wip_
