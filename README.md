@@ -3,7 +3,8 @@ This repository contains notes and code examples related to AI.
 
 ### In-progress
 
-* [Llava](./notes/llava.md#user-content-wip) Llava exploration
+* [kv-cache](./notes/llava-kv-cache.md) llama kv-cache exploration
+* [llava](./notes/llava.md#user-content-wip) llava exploration
 * [llama.cpp server](./notes/llama-server.md) llama.cpp server exploration
 
 ### Topics
@@ -22,7 +23,6 @@ This repository contains notes and code examples related to AI.
 * [Llama.cpp](fundamentals/llama.cpp) Llama.cpp library exploration code
 * [GPU](gpu/README.md) CUDA, Kompute, Metal, OpenCL, ROCm, and Vulkan exploration code
 * [Embeddings](./embeddings) Word embeddings examples in Rust and Python
-* [OpenAI API](./openai) OpenAI API examples written in Rust and Python
 * [Huggingface API](./hugging-face/python) Huggingface API example written in Python
 * [Qdrant Vector Database](./vector-databases/qdrant) Examples in Python and Rust
 * [LanceDB Vector Database](./vector-databases/lancedb) Examples in Python and Rust
