@@ -42,9 +42,13 @@ int main(int argc, char **argv) {
   printf("result tensor type: %s\n", ggml_type_name(result->type));
   printf("result dim: %d\n", ggml_n_dims(result));
   printf("result dim[0]: %ld\n", result->ne[0]);
+  float sum = 0.0f;
   for (int i = 0; i < ggml_nelements(result); i++) {
-	printf("%.2f ", *(float *) ((char *) result->data + i * result->nb[0]));
+    float value = *(float *) ((char *) result->data + i * result->nb[0]); 
+	printf("%.4f ", value);
+    sum += value;
   }
+  printf("\nsum: %.4f\n", sum);
 
   ggml_free(ctx);
   return 0;
