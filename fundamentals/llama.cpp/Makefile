@@ -107,6 +107,12 @@ batch: src/batch.cpp
 embeddings: src/embeddings.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
 
+logging: src/logging.cpp
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+
+logging-pre: src/logging.cpp
+	$(CXX) $(CXXFLAGS) -E $^
+
 run-simple-prompt: simple-prompt
 	./simple-prompt
 
