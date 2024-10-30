@@ -3,6 +3,10 @@ I've gone through the theory of Key-Value caching in the transformer architectur
 in [llama.md](llama.md). This document is a more detailed look at the
 implementation of the key-value cache in the llama.cpp codebase.
 
+## Table of Contents
+- [KV-Cache at inference time](#inference-with-kv-cache)
+- [llama_kv_cache details](#llama_kv_cache)
+
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
 the kv-cache.
@@ -1086,7 +1090,7 @@ the key and values cache will use 6 when calculating the offset to store the
 roped k and value cache entried for the next token.
 
 
-### `kv_self`
+### llama_kv_cache
 A `llama_context` contains a member named `kv_self` (self as in self attention)
 which is of type `llama_kv_cache`. This struct is defined in `llama.cpp`:
 ```c++
