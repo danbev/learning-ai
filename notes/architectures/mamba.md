@@ -9,7 +9,7 @@ One of the authors is Tri Dao, was also involved in the developement of
 [Flash Attention](./flash-attention.md) and Mamba takes advantage of the GPU
 hardware.
 
-Transformers are effecient at training as they can be parallelized, incontrast
+Transformers are effecient at training as they can be parallelized, in contrast
 to RNNs which are sequential which makes training large models a slow process.
 
 But, the issue with transformers is that they don't scale to long sequences
@@ -27,7 +27,7 @@ make sense to review [RNNs](./rnn.md) and [SSMs](./state-space-models.md).
 
 Paper: [Mamba: Linear-Time Sequence Modeling with Selective State Space](https://arxiv.org/pdf/2312.00752)
 
-Selective state space models, which Mamaba is a type of, give us a linear
+Selective state space models, which Mamba is a type of, give us a linear
 recurrent network simliar to RRNs, but also have the fast training that we get
 from transformers. So we get the best of both worlds.
 
