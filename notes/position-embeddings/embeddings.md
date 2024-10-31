@@ -134,6 +134,7 @@ $ gdb --args ./llama-embedding -m models/llama-2-7b-chat.Q4_K_M.gguf --pooling m
 ```
 Now, recall that first the prompt is split into tokens, which each have an id
 from the model vocabulary.
+
 This example will set `params.embeddings = true`: 
 ```c++
     params.embedding = true;
@@ -153,20 +154,19 @@ $7 = {text = "▁What", score = -1465, attr = LLAMA_TOKEN_ATTR_NORMAL}
 $8 = {text = "▁is", score = -79, attr = LLAMA_TOKEN_ATTR_NORMAL}
 ```
 So we have tokens for the prompt we passed in.
-For model in this example it has an embedding size of 4096 and we will create
-a vector large enough to hold an embedding:
+For the model in this example it has an embedding size of 4096 and we will
+create a vector large enough to hold an embedding:
 ```c++
     std::vector<float> embeddings(n_prompts * n_embd, 0);
 ```
 A this point all values in the dimensions are zero.
-
+Next we create a pointer to the above vectors data:
 ```c++
     float * emb = embeddings.data();
 
     // final batch
     float * out = emb + p * n_embd;
     batch_decode(ctx, batch, out, s, n_embd, params.embd_normalize);
-
 ```
 The batch looks like this:
 ```console
@@ -175,7 +175,7 @@ $38 = {n_tokens = 6, token = 0x555555b2e570, embd = 0x0, pos = 0x555555b30580, n
   seq_id = 0x555555b345a0, logits = 0x555555ed1510 "\001\001\001\001\001\001", all_pos_0 = 0, all_pos_1 = 0, 
   all_seq_id = 0}
 ```
-We  will call `llama_decode` just like we would for a formal decoding:
+We  will call `llama_decode` just like we would for a normal decoding:
 ```c++
     if (llama_decode(ctx, batch) < 0) {
         fprintf(stderr, "%s : failed to decode\n", __func__);
@@ -291,7 +291,7 @@ name = "inp_mean", '\000' <repeats 55 times>, extra = 0x0}
 ```
 
 If we look back as how this tensor is populated we can see that is first figures
-out how many tokens each sequence has. Potentially each token could belong to as
+out how many tokens each sequence has. Potentially each token could belong to a
 different sequence to at most 6 sums are stored in the `sum` vector.
 ```c++
         std::vector<uint64_t> sum(n_tokens, 0);
@@ -317,6 +317,15 @@ And then we will calculate the divisors for each sequence:
             }
         }
 ```
+Instead of doing a sum followed by a division we can do the division this is
+setting up the tensor `inp_mean` to hold reciprocol of the sum for each
+sequence. So instead of sum and divide this can be done by a single matrix
+multiplication:
+```c++
+     struct ggml_tensor * inp_mean = build_inp_mean();
+     cur = ggml_mul_mat(ctx0, ggml_cont(ctx0, ggml_transpose(ctx0, inp)), inp_mean);
+```
+
 ```console
 (gdb) p div
 $69 = std::vector of length 6, capacity 6 = {0.166666672, 0, 0, 0, 0, 0}
