@@ -873,32 +873,6 @@ By setting `cache.has_shift` to true when `llama_decode_internal` calls
             }
         }
     }
-    // apply K-shift if needed
-    if (lctx.model.hparams.rope_type != LLAMA_ROPE_TYPE_NONE && lctx.kv_self.has_shift) {
-        {
-            ggml_backend_sched_reset(lctx.sched);
-
-            ggml_cgraph * gf = llama_build_graph_k_shift(lctx);
-
-            ggml_backend_sched_alloc_graph(lctx.sched, gf);
-
-            llama_set_k_shift(lctx);
-
-            llama_graph_compute(lctx, gf, lctx.cparams.n_threads);
-
-            need_reserve = true;
-        }
-
-        {
-            auto & kv_self = lctx.kv_self;
-
-            kv_self.has_shift = false;
-
-            for (uint32_t i = 0; i < kv_self.size; ++i) {
-                kv_self.cells[i].delta = 0;
-            }
-        }
-    }
 ```
 
 When the kv-cache `has_shift` is true like in this case where we updated above

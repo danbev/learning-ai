@@ -2317,6 +2317,13 @@ k_cache_size = 512 * 32 * 32 * 128 * 2 = 536870912 = 512MB
 ```
 And for other models:
 ```console
+kv-cache size = 2 *                     // both keys and values
+                ctx.cparams.n_ctx *
+                ctx.model.hparams.n_layer *
+                ctx.model.hparams.n_head_kv(0) *
+                ctx.model.hparams.n_embd_head_k *
+                ctx.kv_self.type_k
+
 kv-cache size = 2 * 30016 * 32 * 8 * 128 * 2 bytes
         = 2 * 30016 * 32 * 8 * 128 * 2
         = 3934257152
