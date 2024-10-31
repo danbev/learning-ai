@@ -5604,8 +5604,8 @@ $168 = 3
 #define GGML_KQ_MASK_PAD 32
 #define GGML_PAD(x, n) (((x) + (n) - 1) & ~((n) - 1))
 
-GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
-GGML_PAD(3, 32));
+GGML_PAD(n_tokens, GGML_KQ_MASK_PAD);
+GGML_PAD(3, 32);
 GGML_PAD(3, 32) (((3) + (32) - 1) & ~((32) - 1))
 = 32
 ```
@@ -5621,7 +5621,7 @@ So this would look something like this:
   30  [0      ...         255]
   31  [0      ...         255]
 ```
-And this is for the Qeury matrix matrix masking to prevent the model from
+And this is for the Query matrix masking to prevent the model from
 looking at tokens "in the future".
 ```c++
         for (int il = 0; il < n_layer; ++il) {
