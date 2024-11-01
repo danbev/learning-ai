@@ -154,7 +154,7 @@ clean-llama:
 	cd llama.cpp && make clean
 
 quantize-llama-model:
-	./llama.cpp/quantize models/llama-2-7b.gguf models/llama-2-7b-Q4.gguf Q4_1
+	./llama.cpp/llama-quantize models/llama-2-7b.gguf models/llama-2-7b-Q4.gguf Q4_1
 
 download-llama-7b-q4: | models
 	cd models && \
@@ -208,18 +208,23 @@ quantize-open-llama-model-q8:
 	./llama.cpp/quantize models/open-llama-2-7b.gguf models/open-llama-2-7b-Q8_0.gguf Q8_0
 	@ls -lh models/open-llama-2-7b-Q8_0.gguf
 
-### llama-2-7b-chat targets
+###### llama-2-7b-chat targets  ######################
 checkout-llama-2-7b-chat-hf-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/
-
+	cd Llama-2-7b-chat-hf && git lfs install && git lfs pull
 
 convert-llama-2-7b-chat-hf-model:
-	@python3.11 -m venv venv
+	@python3 -m venv venv
 	@. venv/bin/activate && \
-		pip install -r llama.cpp/requirements/requirements-convert-hf-to-gguf.txt && \
-		python3.11 llama.cpp/convert-hf-to-gguf.py  Llama-2-7b-chat-hf \
-	        --outfile models/llama-2-7b-hf-chat.gguf --outtype f16
+		pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt && \
+		python3 llama.cpp/convert_hf_to_gguf.py  Llama-2-7b-chat-hf \
+	        --outfile models/llama-2-7b-hf-chat-f16.gguf --outtype f16
+
+quantize-llama-2-7b-chat-hf-q4:
+	./llama.cpp/llama-quantize models/llama-2-7b-hf-chat-f16.gguf models/llama-2-7b-hf-chat-q4.gguf Q4_K_S
+
+#######################################################
 
 convert-llama-2-7b-chat-model:
 	@python3.11 -m venv venv
