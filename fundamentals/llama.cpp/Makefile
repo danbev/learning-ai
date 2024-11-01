@@ -192,23 +192,7 @@ download-llama-3-model:
 	cd .. && git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Meta-Llama-3-8B
 
-### open-llama targets
-download-open_llama-model:
-	git clone --branch main --single-branch --depth 1 \
-	https://huggingface.co/openlm-research/open_llama_3b_v2
-
-convert-open_llama-model:
-	@python3.11 -m venv venv
-	@. venv/bin/activate && \
-		pip install -r llama.cpp/requirements/requirements-convert.txt && \
-		python3.11 llama.cpp/convert.py open_llama_3b_v2 \
-	        --outfile models/open-llama-2-7b.gguf --outtype f16
-
-quantize-open-llama-model-q8:
-	./llama.cpp/quantize models/open-llama-2-7b.gguf models/open-llama-2-7b-Q8_0.gguf Q8_0
-	@ls -lh models/open-llama-2-7b-Q8_0.gguf
-
-###### llama-2-7b-chat targets  ######################
+###### llama-2-7b-chat-hf targets  ######################
 checkout-llama-2-7b-chat-hf-model:
 	git clone --branch main --single-branch --depth 1 \
 	https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/
@@ -226,20 +210,23 @@ quantize-llama-2-7b-chat-hf-q4:
 
 #######################################################
 
+###### llama-2-7b-chat targets  ######################
 convert-llama-2-7b-chat-model:
-	@python3.11 -m venv venv
+	@python3 -m venv venv
 	@. venv/bin/activate && \
-		pip install -r llama.cpp/requirements/requirements-convert.txt && \
-		python3.11 llama.cpp/convert.py /home/danielbevenius/work/ai/llama/llama-2-7b-chat/ \
+		pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt && \
+		python3 llama.cpp/convert.py /home/danielbevenius/work/ai/llama/llama-2-7b-chat/ \
 	        --outfile models/llama-2-7b-chat.gguf --outtype f16
 
 quantize-llama-2-7b-chat-model-f16:
-	./llama.cpp/quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-f16.gguf F16
+	./llama.cpp/llama-quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-f16.gguf F16
 
 # I need to quantize this model to Q8_0.
 quantize-llama-2-7b-chat-model-q8:
-	./llama.cpp/quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-Q8_0.gguf Q8_0
+	./llama.cpp/llama-quantize models/llama-2-7b-chat.gguf models/llama-2-7b-chat-Q8_0.gguf Q8_0
 	@ls -lh models/llama-2-7b-chat-Q8_0.gguf
+
+#######################################################
 
 ### rwkv targets
 checkout-rwkv-model:
