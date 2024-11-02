@@ -181,6 +181,11 @@ download-llama-7b-q8:
 	cd models && \
 	wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q8_0.gguf
 
+download-llama-3-2-1B:
+	cd models && \
+	wget https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_S.gguf
+
+
 download-shakespeare:
 	wget -P data/ https://raw.githubusercontent.com/brunoklein99/deep-learning-notes/master/shakespeare.txt
 
