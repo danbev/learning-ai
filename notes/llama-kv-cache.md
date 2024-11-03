@@ -6,6 +6,8 @@ implementation of the key-value cache in the llama.cpp codebase.
 ## Table of Contents
 - [KV-Cache at inference time](#inference-with-kv-cache)
 - [llama_kv_cache details](#llama_kv_cache)
+- [has_shift](#has_shift)
+- [kv_cache size](#size-of-the-cache)
 
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
@@ -2112,6 +2114,226 @@ To get a feel for how this works there is a standalone example in
 [llama-att-softmax.c](../ggml/src/llama-att-softmax.c)
 
 ### has_shift
+This is a boolean field in the `llama_kv_cache` struct. This is closely related
+to the self-extend attention mechanism and details can be found in 
+[Self-Extend Attention](llama-self-extend.md).
+
+### do_defrag
+This is a boolean field in the `llama_kv_cache` struct. There is a function
+exposed via `llama.h` which can trigger a defrag operation:
+```c++
+void llama_kv_cache_defrag(struct llama_context * ctx) {
+    llama_kv_cache_defrag(ctx->kv_self);
+}
+
+static void llama_kv_cache_defrag(struct llama_kv_cache & cache) {
+    if (!cache.recurrent) {
+        cache.do_defrag = true;
+    }
+}
+```
+So this will set the `do_defrag` field to true and upon the next decode
+operation (in `llama_decode_internal`) this field will be checked by the
+`llama_kv_cache_update` function:
+```c++
+        // non-causal masks do not use the KV cache
+        if (hparams.causal_attn) {
+            llama_kv_cache_update(&lctx);
+```
+```c++
+static void llama_kv_cache_update_internal(struct llama_context & lctx) {
+    bool need_reserve = false;
+
+    ...
+
+    // defragment the KV cache if needed
+    if (lctx.kv_self.do_defrag) {
+        llama_kv_cache_defrag_internal(lctx);
+
+        need_reserve = true;
+
+        lctx.kv_self.do_defrag = false;
+    }
+}
+```
+
+### Recurrent models and the cache
+Recurrent models like Mamba or RWKV don't have a kv-cache in the same way that
+non-recurrent models do. In a non-recurrent model the kv-cache is used to store
+information about a single token but for a recurrent model the kv-cache will
+store information for a sequence. We have seen an example of this earlier where
+we had a non-recurrent model which used two sequences. This would store an 
+entry for each token in each sequence as then are decoded. For a recurrent model
+only two entries would be stored in the cache, one for each sequence.
+
+For this section I'm going to use a batch which two sequences and the reason
+for this is that I initially started with a single sequence but this made it
+somewhat more difficult to understand some part of the code. So I'll be using
+the `simple-prompt-multi` here.
+
+First in `llama_new_context_with_model` we have the following which is setting
+the size of the kv-cache to the max number of sequences:
+```c++
+    // Mamba only needs a constant number of KV cache cells per sequence
+    if (llama_model_is_recurrent(model)) {
+        // Mamba needs at least as many KV cells as there are sequences kept at any time
+        kv_size = std::max((uint32_t) 1, params.n_seq_max);
+        // it's probably best to keep as much precision as possible for the states
+        type_k = GGML_TYPE_F32; // required by ggml_ssm_conv for Mamba's conv_states
+        type_v = GGML_TYPE_F32; // required by ggml_ssm_scan for Mamba's ssm_states
+    }
+```
+So `kv_size` will be 1 on this case as we only have one sequence:
+```console
+(gdb) p params.n_seq_max
+$21 = 2
+(gdb) p kv_size
+$22 = 2
+```
+
+The `llama_batch` that is passed to `llama_decode` looks like this:
+```console
+$5 = (const llama_batch &) @0x7fffffffd538: {n_tokens = 9, token = 0x555555a48f10, embd = 0x0, pos = 0x555555a8a9b0, 
+  n_seq_id = 0x555555a32c40, seq_id = 0x555555a33450, logits = 0x555555b071a0 ""}
+```
+
+Let now look at `llama_kv_cache_init` which is pretty much the same
+as we discussed before but this time recurrent will be true:
+skipped earlier.
+```console
+(gdb) p cache.recurrent
+$11 = true
+```
+So now lets look at `llama_kv_cache_find_slot` and the recurrent block that
+we skipped earlier:
+```c++
+static bool llama_kv_cache_find_slot(
+           struct llama_kv_cache & cache,
+       const struct llama_ubatch & batch) {
+    ...
+    if (cache.recurrent) {
+        // can only process batches with an equal number of new tokens in each sequence
+        GGML_ASSERT(batch.equal_seqs);
+
+        int32_t min = cache.size - 1;
+        int32_t max = 0;
+
+        // everything should fit if all seq_ids are smaller than the max
+        for (uint32_t s = 0; s < n_seqs; ++s) {
+            const uint32_t n_seq_id = batch.n_seq_id[s];
+            for (uint32_t j = 0; j < n_seq_id; ++j) {
+                const llama_seq_id seq_id = batch.seq_id[s][j];
+
+                if (seq_id < 0 || (uint32_t) seq_id >= cache.size) {
+                    // too big seq_id
+                    // TODO: would it be possible to resize the cache instead?
+                    LLAMA_LOG_ERROR("%s: seq_id=%d >= n_seq_max=%d Try using a bigger --parallel value\n", __func__, seq_id, cache.size);
+                    return false;
+                }
+                if (j > 0) {
+                    llama_kv_cell & seq = cache.cells[seq_id];
+                    if (seq.tail >= 0) {
+                        llama_kv_cell & cell = cache.cells[seq.tail];
+                        // clear cells from seq_ids that become shared
+                        // (should not normally happen, but let's handle it anyway)
+                        cell.seq_id.erase(seq_id);
+                        seq.tail = -1;
+                        if (cell.seq_id.empty()) {
+                            cell.pos = -1;
+                            cell.src = -1;
+                            cache.used -= 1;
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+```
+
+The ubatch (`n_seq`) looks like this:
+```console
+$16 = (const llama_ubatch &) @0x7fffffffd490: {equal_seqs = true, n_tokens = 8, n_seq_tokens = 4, n_seqs = 2,
+  token = 0x555555a137d0, embd = 0x0, pos = 0x555555a137a0, n_seq_id = 0x555555a13880, seq_id = 0x555555a74060,
+  output = 0x555555b073b0 ""}
+```
+TODO: Take another looks as the ubatch splitting/creation to understand how this
+works for recurrent models as it seems to be different.
+
+_wip_
+
+```c++
+        // find usable cell range
+        for (uint32_t s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = batch.seq_id[s][0];
+            llama_kv_cell & seq_meta = cache.cells[seq_id];
+            bool has_cell = false;
+            if (seq_meta.tail >= 0) {
+                llama_kv_cell & cell = cache.cells[seq_meta.tail];
+                GGML_ASSERT(cell.has_seq_id(seq_id));
+                // does this seq_id "own" the cell?
+                if (cell.seq_id.size() == 1) { has_cell = true; }
+            }
+            if (!has_cell) {
+                llama_kv_cell & empty_cell = cache.cells[next_empty_cell];
+                GGML_ASSERT(empty_cell.is_empty());
+                // copy old tail into the empty cell
+                if (seq_meta.tail >= 0) {
+                    llama_kv_cell & orig_cell = cache.cells[seq_meta.tail];
+                    empty_cell.pos = orig_cell.pos;
+                    empty_cell.src = orig_cell.src;
+                    orig_cell.seq_id.erase(seq_id);
+                    empty_cell.seq_id.insert(seq_id); // will be overwritten
+                }
+(1)  ----->     seq_meta.tail = next_empty_cell;
+                // find next empty cell
+                if (s + 1 < n_seqs) {
+                    next_empty_cell += 1;
+                    for (uint32_t i = 0; i < cache.size; ++i) {
+                        if (next_empty_cell >= cache.size) { next_empty_cell -= cache.size; }
+                        llama_kv_cell & cell = cache.cells[next_empty_cell];
+                        if (cell.is_empty()) { break; }
+                        next_empty_cell += 1;
+                    }
+                }
+            }
+            if (min > seq_meta.tail) { min = seq_meta.tail; }
+            if (max < seq_meta.tail) { max = seq_meta.tail; }
+        }
+```
+At (1) this is what `seq_meta` looks like:
+```console
+(gdb) p seq_meta
+{pos = -1, delta = 0, src = -1, tail = -1, seq_id = std::set with 0 elements}
+(gdb) p next_empty_cell
+$40 = 0
+```
+So this will set its tail to 0.
+
+Now, I've found myself thinking that this should be adding 5 entries to the
+cache becuause that is what would happen in the non-recurrent case. But I need
+to forget that and for recurrent models there will only be one entry per
+sequence. So the cache will look like this initally:
+```console
+(gdb) p cache.cells
+$71 = std::vector of length 1, capacity 1 = {{pos = -1, delta = 0, src = -1, tail = -1, seq_id = std::set with 0 elements}}
+```
+
+And our batch looks like this:
+```console
+(gdb) p ubatch
+$69 = {equal_seqs = true, n_tokens = 5, n_seq_tokens = 5, n_seqs = 1, token = 0x555555b0a1e0, embd = 0x0,
+  pos = 0x555555b0a200, n_seq_id = 0x555555b0a220, seq_id = 0x555555a15780, output = 0x555555b0a240 ""}
+```
+
+And the cache will end up looking like this:
+```console
+(gdb) p cache.cells
+$72 = std::vector of length 1, capacity 1 = {{pos = 4, delta = 0, src = -1, tail = 0, seq_id = std::set with 1 element = {
+      [0] = 0}}}
+```
+I still don't understand what `tail` is for?  
+
 
 ### Connection/link between cells and cache tensors
 This might seem obvious but this was not clear to me initially which is why I'm adding this
