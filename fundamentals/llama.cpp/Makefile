@@ -55,8 +55,6 @@ OBJ_COMMON = llama.cpp/common/common.o \
 	llama.cpp/common/console.o \
 	llama.cpp/common/ngram-cache.o \
 	llama.cpp/common/sampling.o \
-	llama.cpp/common/train.o \
-	llama.cpp/common/grammar-parser.o \
 	llama.cpp/common/build-info.o \
 	llama.cpp/common/json-schema-to-grammar.o \
 	llama.cpp/common/log.o
@@ -67,6 +65,7 @@ OBJ_GGML += \
 	llama.cpp/ggml/src/ggml-backend.o \
 	llama.cpp/ggml/src/ggml-quants.o \
 	llama.cpp/ggml/src/ggml-aarch64.o \
+	llama.cpp/ggml/src/ggml-cpu.o \
 	llama.cpp/ggml/src/llamafile/sgemm.o
 
 ifeq ($(OS),Darwin)
