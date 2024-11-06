@@ -85,17 +85,17 @@ is something that is learned during training and can be thought of as a matrix
 of weights. Keep that in mind for the next part.
 
 Vision Transformers do not have a vocabulary in the traditional sense because
-they deal with images, not discrete tokens. So, for an ViT we don't have a
+they deal with images, not discrete tokens. So, for a ViT we don't have a
 vocabulary, but do generate embeddings, which are called patch embedding, and
-they also do this using a matrix multiplication of a learned matrix. This looks
-something like this:
+this is retreived/calculated using a matrix multiplication of a learned matrix.
+This looks something like this:
 ```
 E = VW + b
 
-E = embedding for a single patch, like Im₁ for example
 V = a flattened vector which contains raw pixel values of the patch
 W = a matrix of weights
 b = a bias term which is a vector of the same size as the embedding space.
+E = embedding for a single patch, like Im₁ for example
 ```
 The vector V (flattened patch) is multiplied by the matrix W (weights of the
 linear projection), resulting in a new vector. This operation transforms the
@@ -108,21 +108,21 @@ E₁ = [0     ...        768]
 E₂ = [0     ...        768]
 E₃ = [0     ...        768]
 ...
-Eₙ = [0     ...        255]
+Eₙ = [0     ...        768]
 ```
-Simliar to how a sentence is represented as a sequence of embeddings in NLP. So
-we might have a sequence of length 225 for example. And the dimension of each
-patch embedding (each row above) would be the dimension of the models
-hyperparameter.
+This is simliar to how a sentence is represented as a sequence of embeddings in
+NLP. So we might have a sequence of length 225 (n) for example. And the
+dimension of each patch embedding (each row above) would be the dimension of the
+models hyperparameter.
 
 After this we have positional encoding which is simliar to the NPL transformer
 so this would be added to each patch embedding dimension:
 ```
 Cᵢ = Eᵢ + Pᵢ
 
-Cᵢ = combined embedding (vector)
 Eᵢ = patch embedding (vector)
 Pᵢ = positional encoding (vector)
+Cᵢ = combined embedding (vector)
 
 C₁ = [0+pos,     ...        768+pos]
 C₂ = [0+pos,     ...        768+pos]
@@ -156,5 +156,5 @@ making a classification decision.
 
 So with the above the patch embeddings are now ready to be passed through the
 transformer layers. So the rest is the same processing as show in
-[transformer.md](transformers.md) but with patch embeddings replace the token
+[transformer.md](architectures/transformers.md) but with patch embeddings replace the token
 embeddings as input.
