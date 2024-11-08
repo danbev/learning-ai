@@ -15,16 +15,16 @@ int main(int argc, char **argv) {
   };
   struct ggml_context* ctx = ggml_init(params);
 
-  struct ggml_tensor* logits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 4, 1, 1);
+  struct ggml_tensor* logits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 1, 1);
   ggml_set_name(logits, "logits");
 
-  float tensor_data[4] = { 6, 7, 10, 9};
+  float tensor_data[8] = { 6, 7, 10, 9, 22, 33, 44, 55};
   memcpy((char *)logits->data, tensor_data, ggml_nbytes(logits));
 
-  struct ggml_tensor* mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 1);
+  struct ggml_tensor* mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 1);
                                 
   ggml_set_name(mask, "mask");
-  float mask_data[4] = { 0, 0, -INFINITY, 0};
+  float mask_data[8] = { 0, 0, -INFINITY, 0, -INFINITY, -INFINITY, -INFINITY, -INFINITY};
   memcpy((char *)mask->data, mask_data, ggml_nbytes(mask));
 
   struct ggml_tensor* result = ggml_soft_max_ext(ctx, logits, mask, 1.0f, 0.0f);

@@ -1,16 +1,14 @@
 #include <stdio.h>
-#include <math.h>
 
 #include "ggml.h"
-#include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
 int main(int argc, char **argv) {
-  printf("GGML RoPE example\n");
+  printf("GGML LBFGS example\n");
 
   struct ggml_init_params params = {
-    .mem_size   = 20000000,
+    .mem_size   = 16*1024*1024,
     .mem_buffer = NULL,
   };
   struct ggml_context* ctx = ggml_init(params);
@@ -25,19 +23,22 @@ int main(int argc, char **argv) {
   // The Query matrix in this case can hold 512 tokens each with a dimension
   // of 4096.
   struct ggml_tensor* query = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_ctx_orig, n_tokens);
+  // Will trigger: GGML_ASSERT(false && "backwards pass not implemented") failed
+  ggml_set_param(ctx, query);
 
   // We reshape the query matrix embedding dimensions to account for the number
   // of heads (32) each which will have a dimension of 128 (128 * 32 = 4096).
   struct ggml_tensor* a = ggml_reshape_3d(ctx, query, embd_dim, n_head, n_tokens);
   ggml_set_name(a, "a");
+  // Will trigger: GGML_ASSERT(false && "backwards pass not implemented") failed
+  //ggml_set_param(ctx, a);
 
   // These are the positions 
   struct ggml_tensor* pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
   ggml_set_name(pos, "pos");
+  ggml_set_param(ctx, pos);
 
   // Set some made up values for the tensor to be rotated.
-  // First loop over the number of tokens in the batch (6) (skipping the actual
-  // loop for the batch here though.
   for (int i = 0; i < a->ne[2]; i++) {
       // Loop over the embedding heads (32)
       for (int j = 0; j < a->ne[1]; j++) {
@@ -107,19 +108,17 @@ int main(int argc, char **argv) {
                                         beta_fast,
                                         beta_slow);
 
-  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
-  ggml_build_forward_expand(c_graph, s);
+  struct ggml_opt_params opts = ggml_opt_default_params(GGML_OPT_TYPE_LBFGS);
+  ggml_set_param(ctx, s);
 
-  int n_threads = 4;
-  enum ggml_status status = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
-  if (status != GGML_STATUS_SUCCESS) {
-    printf("Error: %s\n", ggml_status_to_string(status));
-    return 1;
-  }
-  
-  for (int i = 0; i < 10; i++) {
-    printf("embedding for token 1, embedding dim %d = %f\n", i, ggml_get_f32_nd(s, i, 0, 1, 0));
-  }
+  struct ggml_cgraph * cgraph = ggml_new_graph_custom(ctx, GGML_DEFAULT_GRAPH_SIZE, true);
+  ggml_build_forward_expand(cgraph, s);
+
+  ggml_opt(ctx, opts, s);
+
+  ggml_graph_compute_with_ctx(ctx, cgraph, 1);
+
+  //printf("a: n_elements: %ld\n", ggml_nelements(s));
 
   ggml_free(ctx);
   return 0;

@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "ggml.h"
+#include "ggml-cpu.h"
 
 int main(int argc, char **argv) {
   printf("GGML accumulate example\n");
