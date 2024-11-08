@@ -3380,8 +3380,8 @@ static ggml_fp16_t ggml_table_gelu_f16[1 << 16];
 ```
 
 ### `llm_build_context`
-This section is doing to take a detailed look at how a computation graph is
-build in llama.cpp. I'll be using the `main` example to step through the code.
+This section is going to take a detailed look at how a computation graph is
+built in llama.cpp. I'll be using the `main` example to step through the code.
 
 ```console
 $ gdb --args ./main -m models/llama-2-7b-chat.Q4_0.gguf -p "What is your name?"
@@ -3445,7 +3445,7 @@ SYCL, Metal, and Vulkan. So the llama_context has members for backends:
 So we have a vector of backends which will initially be empty, optionally if
 METAL is used then there is also a backend_metal, and there is also a
 backend_cpu.
-Notice that they type of the backends is `ggml_backend_t` which is a pointer to
+Notice that the type of the backends is `ggml_backend_t` which is a pointer to
 In ggml-alloc.h we have:
 ```c++
 typedef struct ggml_backend * ggml_backend_t;
