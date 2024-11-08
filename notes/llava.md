@@ -1312,8 +1312,6 @@ Now, we we inspect the output of the model we can see the following:
      20: [INT32]    |       10 | clip.vision.image_grid_pinpoints
  ```
  This is an array of 10 integers representing something called pin points.
- A vision model will often divide an image into a grid of cells/patches. The
- grid enables a systemactic way of processing the image.
 ```console
 pinpoints[0] = 336
 pinpoints[1] = 672
@@ -4191,6 +4189,86 @@ And that will return us to the `main` function in `llava-cli.cpp`:
 So we can now see that all that we have gone through is to load the image and
 generate the patch embeddings for the image and the class token embedding. We
 will now pass the patch embeddings to `process_prompt`.
+
+```c++
+static void process_prompt(struct llava_context * ctx_llava,
+    struct llava_image_embed * image_embed,
+    common_params * params,
+    const std::string & prompt) {
+    int n_past = 0;
+
+    const int max_tgt_len = params->n_predict < 0 ? 256 : params->n_predict;
+
+```
+The above is setting the max target (?) length to 256 in this case.
+```c++
+    std::string system_prompt, user_prompt;
+    size_t image_pos = prompt.find("<image>");
+
+    if (image_pos != std::string::npos) {
+        ...
+    } else {
+        // llava-1.5 native mode
+        system_prompt = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.\nUSER:";
+        user_prompt = prompt + "\nASSISTANT:";
+        if (params->verbose_prompt) {
+            auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
+            for (int i = 0; i < (int) tmp.size(); i++) {
+                LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
+            }
+        }
+    }
+```
+We can see that the system prompt and user prompt are set.
+Following that the system prompt will be passed to `eval_string`:
+```c++
+    eval_string(ctx_llava->ctx_llama, system_prompt.c_str(), params->n_batch, &n_past, true);
+```
+
+```c++
+static bool eval_string(struct llama_context * ctx_llama, const char* str, int n_batch, int * n_past, bool add_bos){
+    std::string              str2     = str;
+    std::vector<llama_token> embd_inp = common_tokenize(ctx_llama, str2, add_bos, true);
+    eval_tokens(ctx_llama, embd_inp, n_batch, n_past);
+    return true;
+}
+```
+So this will first tokenize the string which will create the token for the
+system prompt:
+```console
+(gdb) p embd_inp
+$17 = std::vector of length 34, capacity 164 = {1, 319, 13563, 1546, 263, 12758, 5199, 322, 385, 23116, 21082, 20255, 29889, 450,
+  20255, 4076, 8444, 29892, 13173, 29892, 322, 1248, 568, 6089, 304, 278, 5199, 29915, 29879, 5155, 29889, 13, 11889, 29901}
+
+(gdb) p ctx_llama->model->vocab->id_to_token[319]
+$18 = {text = "▁A", score = -60, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p ctx_llama->model->vocab->id_to_token[13563]
+$19 = {text = "▁chat", score = -13304, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+And this will be passed to `eval_tokens`:
+```c++
+static bool eval_tokens(struct llama_context * ctx_llama, std::vector<llama_token> tokens, int n_batch, int * n_past) {
+    int N = (int) tokens.size();
+    for (int i = 0; i < N; i += n_batch) {
+        int n_eval = (int) tokens.size() - i;
+        if (n_eval > n_batch) {
+            n_eval = n_batch;
+        }
+        if (llama_decode(ctx_llama, llama_batch_get_one(&tokens[i], n_eval, *n_past, 0))) {
+            LOG_ERR("%s : failed to eval. token %d/%d (batch size %d, n_past %d)\n", __func__, i, N, n_batch, *n_past);
+            return false;
+        }
+        *n_past += n_eval;
+    }
+    return true;
+}
+```
+So the above will iterate over all the tokens which is 34 in this case, but
+notice that the increments are by `n_batch` which is 2048 in this case. And
+`n_past` is 0 to start with.
+Stepping into `llama_decode` I realized that I've never really looked at (or
+it has changed since I last looked at it) the `u_batch` handling and
 
 <a name="wip"></a>
 _wip_
