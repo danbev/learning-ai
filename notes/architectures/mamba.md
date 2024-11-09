@@ -77,7 +77,7 @@ represent some abstract feature or concept. The state at any given point in time
 is a point/vector in this space.
 
 We might be able to think of the current state, the point/vector, as the last
-token's position in this space. And if the next token is "simliar" perhaps
+token's position in this space. And if the next token is "similar" perhaps
 semantically we might only transform/move the state a little, but if they are
 not very simliar we might move the point further.
 For example, if the we processed the token representing "cat" followed by a
@@ -90,15 +90,16 @@ understanding up to and including the last processed token.
 
 So the current state of the system is a vector that has a point somewhere in
 this space. The A matrix is a transformation that moves this vector to a new
-point in the space. It suggests a direction the this point would naturally drift.
-The B matrix determines how new input tokens influence the states position.
+point in the space. It suggests a direction that this point would naturally
+drift. The B matrix determines how new input tokens influence the states
+position.
 
 This is where delta comes in where it can control how much the state is
 transformed.
 
-Now, we need to keep in mind that we are dealing with an underlying continious
-system, and A represents this continious-time dynamics. This might be described
-a a differential equation like:
+Now, we need to keep in mind that we are dealing with an underlying continous
+system, and A represents this continous-time dynamics. This might be described
+by a differential equation like:
 ```
   dx
   -- = A x(t)
@@ -108,8 +109,8 @@ x(t) = state at time t
 A    = state transition matrix
 ```
 This describes how the state evolves over time without any input. So A is this
-State transition matrix which describes how the system would evolve natrually
-over time if there was not input to the system.
+state transition matrix which describes how the system would evolve natrually
+over time if there was no input to the system.
 So that is the countinous system which is a differential equation and
 the solution to this is:
 ```
@@ -118,10 +119,10 @@ x(t) = e^(At) * x(0)
 x(t)   = state at time t, typically a vector.
 x(0)   = initial state at time 0.
 e^(At) = matrix exponential of A * t. This captures the cumulative effect of
-         the state transition matrix A over time t. Think of this an compounding
-         the effect of A over time (line componding interest) and.
+         the state transition matrix A over time t. Think of this as compounding
+         the effect of A over time (like componding interest).
 ```
-Think of this an compounding the effect of A over time (line componding
+Think of this an compounding the effect of A over time (like componding
 interest from 0 to time t) and multiplying this by the initial state gives us
 the state at time t. It's like compounding the effect of A continuously from 0
 to t. Kind of like transforming the inital state by A for a duration of t.
@@ -1750,3 +1751,68 @@ the current Mamba model we are using).
 
 
 (wip)
+
+
+$42 = (const llama_ubatch &) @0x7fffffffb910: {equal_seqs = true, n_tokens = 1, n_seq_tokens = 1, n_seqs = 1,
+  token = 0x7fffffffb7b8, embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, output = 0x0}
+
+$43 = (const llama_ubatch &) @0x7fffffffb8d0: {equal_seqs = true, n_tokens = 512, n_seq_tokens = 512, n_seqs = 1, 
+  token = 0x7fffffffb7b8, embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, output = 0x0}
+
+            (gdb) p ubatch_pp
+$54 = {equal_seqs = true, n_tokens = 512, n_seq_tokens = 512, n_seqs = 1, token = 0x7fffffffb7b8, embd = 0x0, pos = 0x0,
+  n_seq_id = 0x0, seq_id = 0x0, output = 0x0}
+
+The error seems to happen when building the graph for `gf_pp` and not the
+other graphs before this:
+```console
+19696             // reserve again with pp graph to avoid ggml-alloc reallocations during inference
+19697             gf_pp = llama_build_graph(*ctx, ubatch_pp, false);                  
+19698             if (!ggml_backend_sched_reserve(ctx->sched, gf_pp)) {               
+19699                 LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
+19700                 llama_free(ctx);                                                
+19701                 return nullptr;                                                 
+19702             }
+```
+Setting a breakpoint on this line and inspecting
+```
+(gdb) br llama.cpp:19697
+(gdb) r
+```
+Stepping through the `build_llama_graph` I noticed that the value of `n_kv` is
+0:
+```console
+(gdb) p llm.n_kv
+$71 = 0
+```
+And this will cause the `inp_s_mask` tensor to have a size of 0:
+```c++
+        lctx.inp_s_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 1, n_kv);
+```
+```console
+(gdb) p n_kv
+$72 = 0
+(gdb) p lctx.inp_s_mask->ne
+$73 = {1, 0, 1, 1}
+```
+I've tried adding the following to `llm_build_context`:
+```console
+diff --git a/src/llama.cpp b/src/llama.cpp
+index bedacfcb..517b1eb6 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -10257,7 +10257,7 @@ struct llm_build_context {
+         norm_eps         (hparams.f_norm_eps),
+         norm_rms_eps     (hparams.f_norm_rms_eps),
+         n_tokens         (ubatch.n_tokens),
+-        n_kv             (worst_case ? kv_self.size : kv_self.n),
++        n_kv             (worst_case ? kv_self.size : (kv_self.recurrent ? 1 : kv_self.n)),
+         n_outputs        (worst_case ? n_tokens : lctx.n_outputs),
+         n_outputs_enc    (worst_case ? n_tokens : lctx.embd_enc.size() / hparams.n_embd),
+         kv_head          (worst_case ? (kv_self.recurrent ? 0 : kv_self.size - n_tokens) : kv_self.head),
+```
+I'm not sure if this is a proper fix but as I'm running out of time today I
+thought I'd let you know in case this sparks some ideas for you about this issue.
+I'd be happy to continue investigating this tomorrow.
+
+
