@@ -640,14 +640,106 @@ std::tie(model, ctx) = llama_init_from_gpt_params(params);
 ```
 
 ### Tensors
+A tensor in GGML is defined in ggml.h in the struct `ggml_tensor`:
+```c
+    struct ggml_tensor {
+        enum ggml_type type;
+        ...
+```
+The type of a tensor specifies the type of data that this tensor will store.
+```c++
+    enum ggml_type {
+        GGML_TYPE_F32     = 0,
+        GGML_TYPE_F16     = 1,
+        GGML_TYPE_Q4_0    = 2,
+        GGML_TYPE_Q4_1    = 3,
+        ...
+```
+Next we have then number of element which is an array which stores the number of
+elements per dimension. 
+```c
+        int64_t ne[GGML_MAX_DIMS]; // number of elements
+```
+Currently the maximum number of dimensions is 4.
+```c
+        int64_t nb[GGML_MAX_DIMS]; // number of bytes
+```
 When reading about matrix multiplication we often see it in the format that
 we create a matrix like 3x2 which means 3 rows and 2 columns. When working
 with GGML, and I think this is also common with graphics libraries in general,
 that one first specifies the x-axis, that is the horizontal axis/number of
 columns.
-If we have multiple dimensions then we have another value that specifies the
-size of the y-axis, that is the vertical axis/number of rows. So think of this
-as building a matrix from the bottom up and specifying one dimension at a time.
+```
+              x-axis
+ne[0]    ------------>
+
+             |
+ne[1]        | y-axis
+             |
+             ↓
+```
+So if we create a 2d tensor with 2 rows and three elements each this would become:
+```
+             x-axis
+            -------->
+ne[0] = 3   [0, 1, 2] |
+ne[1] = 2   [3, 4, 5] | y-axis
+                      ↓
+```
+For the higher dimension I like think of them encapuslating the lower dimensions.
+```
+ne[0] = 3
+ne[1] = 2
+ne[2] = 2
+
+z_0
+    [0, 1, 2]
+    [3, 4, 5]
+z_1
+    [0, 1, 2]
+    [3, 4, 5]
+```
+And if we add another dimension:
+```
+ne[0] = 3
+ne[1] = 2
+ne[2] = 2
+ne[3] = 3
+
+w_0
+    z_0
+        [0, 1, 2]
+        [3, 4, 5]
+    z_1
+        [0, 1, 2]
+        [3, 4, 5]
+
+w_1
+    z_0
+        [0, 1, 2]
+        [3, 4, 5]
+    z_1
+        [0, 1, 2]
+        [3, 4, 5]
+
+w_2
+    z_0
+        [0, 1, 2]
+        [3, 4, 5]
+    z_1
+        [0, 1, 2]
+        [3, 4, 5]
+
+w_3
+    z_0
+        [0, 1, 2]
+        [3, 4, 5]
+    z_1
+        [0, 1, 2]
+        [3, 4, 5]
+```
+At least this is how I think of the dimensions in GGML I try to visualize them this
+way.
 
 So if we want to create a 3x2 matrix in GGML we do the following:
 ```c
@@ -679,6 +771,135 @@ Memory layout:
     row 1      row 2        row 3
              ↑
              8 (ne[1])
+```
+We can get the total number of elements of a tensor by multiplying the number of
+elements in each dimension.
+
+A tensor can be the result of an operation, which which case it's operation field
+will specify the operation:
+```c
+        enum ggml_op op;
+```
+```c
+    enum ggml_op {
+        GGML_OP_NONE = 0,
+
+        GGML_OP_DUP,
+        GGML_OP_ADD,
+        GGML_OP_ADD1,
+```
+Operations can accept parameters which can be values of other tensors. For values
+they are stored in 
+```c
+        int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+```
+And the operation takes other tensors as parameters they are stored in src:
+```c
+        struct ggml_tensor * src[GGML_MAX_SRCS];
+```
+Tensors also have a field for the gradient:
+```c
+        struct ggml_tensor * grad;
+```
+This is used to store the gradient of the tensor and this is used by the automatic
+differentiation.
+Tensors can also have views which is covered in a separate section.
+
+### Views
+If we inspect a tensor we can see that it contains the following:
+```console
+(gdb) p *x
+$7 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {10, 1, 1, 1}, nb = {
+    4, 40, 40, 40}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
+  perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x7ffff6a001a0, 
+  name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+So this is storing 10 elements of type float (GGML_TYPE_F32):
+```console
+(gdb) p ((float*) x->data)[0]
+$11 = 1
+(gdb) p ((float*) x->data)[1]
+$12 = 2
+(gdb) p ((float*) x->data)[2]
+$13 = 3
+(gdb) p ((float*) x->data)[4]
+$14 = 5
+(gdb) p ((float*) x->data)[3]
+$15 = 4
+(gdb) p ((float*) x->data)[9]
+$16 = 10
+```
+Now if we create a 1d view of this tensor using:
+```c
+  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, (5-1) * ggml_type_size(x->type));
+```
+Where the first int argument is the number of elements and the second integer is
+the offset in bytes. Notice that we have take into account the size for the
+elements stored. Keep in mind that the index is zero based so the offset should
+reflect this too.
+
+So if our x tensor is:
+```console
+x[0]: 1.000000
+x[1]: 2.000000
+x[2]: 3.000000
+x[3]: 4.000000
+x[4]: 5.000000
+x[5]: 6.000000
+x[6]: 7.000000
+x[7]: 8.000000
+x[8]: 9.000000
+x[9]: 10.000000
+```
+Then the view would be:
+```console
+view[0]: 5.000000
+view[1]: 6.000000
+view[2]: 7.000000
+view[3]: 8.000000
+view[4]: 9.000000
+```
+The element type in this case if 4. And what we are saying above is that we
+want a view of 5 elements starting at the offset 16:
+```
+ 0     4    8   12   16   20   24   28   32   36 
+ [0    1    2    3    4    5    6    7    8    9]
+ [1    2    3    4    5    6    7    8    9   10]
+
+```
+
+
+```c
+    struct ggml_tensor * result = ggml_view_impl(ctx, a, 1, &ne0, offset);
+```
+
+```c
+static struct ggml_tensor * ggml_view_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   n_dims,
+        const int64_t       * ne,
+        size_t                offset) {
+    ...
+       
+    struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, n_dims, ne, a, offset);
+    ggml_format_name(result, "%s (view)", a->name);
+```
+If we step into this function we can see the arguments are as follows:
+```console
+(gdb) s
+ggml_new_tensor_impl (ctx=0x7ffff7fba2a8 <g_state+8>, type=GGML_TYPE_F32, n_dims=1, ne=0x7fffffffc7e8, 
+    view_src=0x7ffff6a00030, view_offs=5)
+    at /home/danielbevenius/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:2928
+```
+Notice that `view_src` is a pointer to the `x` tensor:
+```console
+(gdb) p x
+$20 = (struct ggml_tensor *) 0x7ffff6a00030
+(gdb) down
+(gdb) p a
+$21 = (struct ggml_tensor *) 0x7ffff6a00030
 ```
 
 ### Gradients
@@ -783,102 +1004,6 @@ used. This tensor is then updated to have the operation set to `GGML_OP_MUL`
 and and take `a` and `b` as sources/inputs. In this case `is_node` is true
 so a duplicate of the result tensor is created as set as the gradient.
 
-### views
-If we inspect a tensor we can see that it contains the following:
-```console
-(gdb) p *x
-$7 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {10, 1, 1, 1}, nb = {
-    4, 40, 40, 40}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, 
-  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, 
-  perf_time_us = 0, view_src = 0x0, view_offs = 0, data = 0x7ffff6a001a0, 
-  name = '\000' <repeats 63 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
-```
-So this is storing 10 elements of type float (GGML_TYPE_F32):
-```console
-(gdb) p ((float*) x->data)[0]
-$11 = 1
-(gdb) p ((float*) x->data)[1]
-$12 = 2
-(gdb) p ((float*) x->data)[2]
-$13 = 3
-(gdb) p ((float*) x->data)[4]
-$14 = 5
-(gdb) p ((float*) x->data)[3]
-$15 = 4
-(gdb) p ((float*) x->data)[9]
-$16 = 10
-```
-Now if we create a 1d view of this tensor using:
-```c
-  struct ggml_tensor* view = ggml_view_1d(ctx, x, 5, (5-1) * ggml_type_size(x->type));
-```
-Where the first int argument is the number of elements and the second integer is
-the offset in bytes. Notice that we have take into account the size for the
-elements stored. Keep in mind that the index is zero based so the offset should
-reflect this too.
-
-So if our x tensor is:
-```console
-x[0]: 1.000000
-x[1]: 2.000000
-x[2]: 3.000000
-x[3]: 4.000000
-x[4]: 5.000000
-x[5]: 6.000000
-x[6]: 7.000000
-x[7]: 8.000000
-x[8]: 9.000000
-x[9]: 10.000000
-```
-Then the view would be:
-```console
-view[0]: 5.000000
-view[1]: 6.000000
-view[2]: 7.000000
-view[3]: 8.000000
-view[4]: 9.000000
-```
-The element type in this case if 4. And what we are saying above is that we
-want a view of 5 elements starting at the offset 16:
-```
- 0     4    8   12   16   20   24   28   32   36 
- [0    1    2    3    4    5    6    7    8    9]
- [1    2    3    4    5    6    7    8    9   10]
-
-```
-
-
-```c
-    struct ggml_tensor * result = ggml_view_impl(ctx, a, 1, &ne0, offset);
-```
-
-```c
-static struct ggml_tensor * ggml_view_impl(
-        struct ggml_context * ctx,
-        struct ggml_tensor  * a,
-        int                   n_dims,
-        const int64_t       * ne,
-        size_t                offset) {
-    ...
-       
-    struct ggml_tensor * result = ggml_new_tensor_impl(ctx, a->type, n_dims, ne, a, offset);
-    ggml_format_name(result, "%s (view)", a->name);
-```
-If we step into this function we can see the arguments are as follows:
-```console
-(gdb) s
-ggml_new_tensor_impl (ctx=0x7ffff7fba2a8 <g_state+8>, type=GGML_TYPE_F32, n_dims=1, ne=0x7fffffffc7e8, 
-    view_src=0x7ffff6a00030, view_offs=5)
-    at /home/danielbevenius/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml.c:2928
-```
-Notice that `view_src` is a pointer to the `x` tensor:
-```console
-(gdb) p x
-$20 = (struct ggml_tensor *) 0x7ffff6a00030
-(gdb) down
-(gdb) p a
-$21 = (struct ggml_tensor *) 0x7ffff6a00030
-```
 
 [zero-to-hero]: ../fundamentals/rust/zero-to-hero/README.md
 
