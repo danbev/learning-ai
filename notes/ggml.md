@@ -640,7 +640,7 @@ std::tie(model, ctx) = llama_init_from_gpt_params(params);
 ```
 
 ### Tensors
-A tensor in GGML is defined in ggml.h in the struct `ggml_tensor`:
+Is a tensor in GGML which is defined in ggml.h in the struct `ggml_tensor`:
 ```c
     struct ggml_tensor {
         enum ggml_type type;
@@ -661,9 +661,6 @@ elements per dimension.
         int64_t ne[GGML_MAX_DIMS]; // number of elements
 ```
 Currently the maximum number of dimensions is 4.
-```c
-        int64_t nb[GGML_MAX_DIMS]; // number of bytes
-```
 When reading about matrix multiplication we often see it in the format that
 we create a matrix like 3x2 which means 3 rows and 2 columns. When working
 with GGML, and I think this is also common with graphics libraries in general,
@@ -704,7 +701,7 @@ And if we add another dimension:
 ne[0] = 3
 ne[1] = 2
 ne[2] = 2
-ne[3] = 3
+ne[3] = 4
 
 w_0
     z_0
@@ -738,8 +735,8 @@ w_3
         [0, 1, 2]
         [3, 4, 5]
 ```
-At least this is how I think of the dimensions in GGML I try to visualize them this
-way.
+At least this is how I think of the dimensions in GGML I try to visualize them
+this way.
 
 So if we want to create a 3x2 matrix in GGML we do the following:
 ```c
