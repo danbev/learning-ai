@@ -3,9 +3,31 @@
 ML is just for machine learning. It is a
 [C library](https://github.com/rustformers/llm/blob/main/crates/ggml/README.md).
 
-This is a basic example in [ggml](fundamentals/ggml/README.md) of how to use
-GGML.
+## Table of Contents
+- [Introduction](#introduction)
+- [Memory Usage](#memory-usage)
+- [Tensors](#tensors)
+- [Views](#views)
+- [Gradients](#gradients)
+- [Backpropagation](#backpropagation)
+- [Backend](#backend)
+- [Tensor allocator](#tensor-allocator)
+- [Forward expand](#forward-expand)
+- [Graph Compute](#graph-compute)
+- [Backward expand](#backward-expand)
+- [Graph Compute Backward](#graph-compute-backward)
+- [Broadcasting](#broadcasting)
+- [GGML_TENSOR_BINARY_OP_LOCALS](#ggml_tensor_binary_op_locals)
+- [ggml_get_rows](#ggml_get_rows)
+- [GGML Project structure](#project-structure)
+- [ggml_conv_2d](#ggml_conv_2d)
+- [image to column](#image-to-column-im2col)
+- [ggml_norm](#ggml_norm)
+- [simd](#simd)
+- [Graph allocator (galloc)](#graph-allocator-galloc)
 
+
+### Introduction
 For me it helps to draw parallels between GGML and part1 of [zero-to-hero],
 where we created a Value struct which in addition of holding a value, would also
 have a gradient, an operation, and children if the value was created by an
@@ -30,6 +52,8 @@ hyperparameters, vocabulary, and weights.
 So GGML is used by llama.cpp, and whisper.cpp. In addition GGML is what is the
 used by the Rust `llm` crate, and also by llm-chain. So learning about GGML will
 help understand all of these project better.
+
+There are is a basic examples in [ggml](../fundamentals/ggml/README.md).
 
 ### Memory usage
 We start off by specifying the memory that GGML will use. This is done by
@@ -802,6 +826,8 @@ This is used to store the gradient of the tensor and this is used by the automat
 differentiation.
 Tensors can also have views which is covered in a separate section.
 
+An example can be found in [tensor.c](../fundamentals/ggml/src/tensor.c).
+
 ### Views
 If we inspect a tensor we can see that it contains the following:
 ```console
@@ -1082,7 +1108,7 @@ and the same goes for the support of events which I think are only for the
 async functions.
 
 
-### `ggml_tallocr` (Tensor Allocator)
+### Tensor Allocator
 ```c
 // Tensor allocator
 struct ggml_tallocr {
@@ -4372,8 +4398,8 @@ And I think this is how the multi-threading is implemented in GGML.
 
 ### Backpropagation
 This section deals with the backpropagation in GGML.
-The following example [backprop.c](../fundamentals/ggml/backprop.c) will be used
-to explore backpropagation in this secion.
+The following example [backprop.c](../fundamentals/ggml/src/backprop.c) will be used
+to explore backpropagation in this section.
 
 First lets take a look at the compute graph which we have seen ealier. 
 ```c
