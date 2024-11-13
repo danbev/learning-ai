@@ -29,6 +29,9 @@ llama-kompute:
 llama-cuda-debug:
 	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1 LLAMA_DEBUG=1 DEBUG=1 LLAMA_METAL=1
 
+# Use the following target with causion as it will probably mess up an
+# actual run of a specific program. Just use it for debugging/learning and
+# then switch back to the normal target for testing.
 llama-debug: 
 	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
 
@@ -52,6 +55,7 @@ OBJ_COMMON = llama.cpp/common/common.o \
 	llama.cpp/common/console.o \
 	llama.cpp/common/ngram-cache.o \
 	llama.cpp/common/sampling.o \
+	llama.cpp/common/grammar-parser.o \
 	llama.cpp/common/build-info.o \
 	llama.cpp/common/json-schema-to-grammar.o \
 	llama.cpp/common/log.o
