@@ -5941,13 +5941,166 @@ int ret = llama_decode_internal(llama_context & lctx, llama_batch batch);
 ```
 So the sbatch will get updated with a reference to the original batch:
 ```
-     lctx.sbatch
+     lctx.sbatch                     llama_batch
   +-----------------+              +----------------+
-  | batch           | ------------>| llama_batch    |
+  | batch           | ------------>|                |
   |                 |              +----------------+
-
-__wip__
+  |                 |              +----------------------------------+
+  | seq             | ------------>| std::vector<llama_sbatch_seq>    |
+  +-----------------+              +----------------------------------+
+                                   | n_seq_id                         |
+                                   | seq_id*                          |
+                                   | offset                           |
+                                   | length                           |
+                                   +----------------------------------+
 ```
+Now, lets try a prompt with two sequences and we how the sbatch is updated. While the 
+sbatch is a member of the context we can think of it as being local to the
+`llama_decode_internal` function as they values are reset for each new call.
+```c++
+        GGML_ASSERT(batch.n_tokens >= 0);
+        this->batch = &batch;
+        this->n_embd = n_embd;
+        this->logits_all = logits_all;
+
+        n_tokens = batch.n_tokens;
+        ids.resize(n_tokens);
+        out_ids.clear();
+        // TODO: reserve out_ids and seq
+
+        for (size_t i = 0; i < n_tokens; ++i) {
+            ids[i] = i;
+        }
+```
+For all calls to decode if the model is non-recursive then this will be a
+"simple split":
+```c++
+        if (simple_split) {
+            seq.resize(1);
+            llama_sbatch_seq & s = seq[0];
+            s.n_seq_id = 0;
+            s.seq_id = nullptr;
+            s.offset = 0;
+            s.length = n_tokens;
+            return;
+        }
+```
+So the `seq` vector willl be resized to 1 in this case.
+```
+     lctx.sbatch                     llama_batch
+  +-----------------+              +----------------+
+  | batch           | ------------>|                |
+  |                 |              +----------------+
+  |                 |              +----------------------------------+
+  | seq             | ------------>| std::vector<llama_sbatch_seq>    |
+  +-----------------+              +----------------------------------+
+                                   | n_seq_id = 0                     |
+                                   | seq_id*  = nullprt               |
+                                   | offset   = 0                     |
+                                   | length   = 13                    |
+                                   +----------------------------------+
+
+(this is a simplified view or the sbatch to just look at the seq)
+```
+The offset is an offset into the tokens of the batch. And the length is the
+number of tokens for this sbatch. After this returns the ids of the sbatch, the
+number of tokens, the embeddings size/dimension, the ids, adn the original `llama_batch`
+have been stored on the sbatch struct.
+
+Now, the sbatch will iterator over all the tokens in the batch:
+```c++
+    while (lctx.sbatch.n_tokens > 0) {
+        llama_ubatch ubatch;
+        ...
+            ubatch = lctx.sbatch.split_simple(n_ubatch);
+```
+The above call will produce an update batch (ubatch), which is what will be used to
+build the computation graph and also to set the inputs to the model (`llama_set_inputs`).
+
+Now in this case I've set the `ctx_params.n_ubatch = 4`:
+```c++
+    llama_ubatch split_simple(size_t n_ubatch) {
+        n_ubatch = n_tokens < n_ubatch ? n_tokens : n_ubatch;
+        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr);
+        ubatch.equal_seqs = false;
+        if (!seq.empty()) {
+            llama_sbatch_seq & s = seq[0];
+            size_t length = s.length < n_ubatch ? s.length : n_ubatch;
+            GGML_ASSERT(seq.size() == 1 && s.n_seq_id == 0); // don't mix with other splits
+            add_seq_to_ubatch(ubatch, s, length);
+        }
+        return ubatch;
+    }
+```
+```c++
+    llama_ubatch reserve_ubatch(size_t n_ubatch, bool has_embd = false) {
+        // clear empty sequences
+        // the previous ubatch is assumed to be gone,
+        // so nothing should refer to values in these sequences anymore.
+        for (size_t i = seq.size(); i-- > 0;) {
+            if (seq[i].length == 0) {
+                seq.pop_back();
+            } else {
+                break;
+            }
+        }
+        ubatch_token.resize(!has_embd ? n_ubatch : 0);
+        ubatch_embd.resize(has_embd ? n_embd * n_ubatch : 0);
+        ubatch_pos.resize(n_ubatch);
+        ubatch_n_seq_id.resize(n_ubatch);
+        ubatch_seq_id.resize(n_ubatch);
+        ubatch_output.resize(n_ubatch);
+```
+So all of the above vectors will be resized to 4 in this case.
+Next,
+```
+        llama_ubatch ubatch = {
+            /*equal_seqs   =*/ true,
+            /*n_tokens     =*/ 0,
+            /*n_seq_tokens =*/ 0,
+            /*n_seqs       =*/ 0,
+            /*token        =*/ !has_embd ? ubatch_token.data() : nullptr,
+            /*embd         =*/ has_embd  ? ubatch_embd.data()  : nullptr,
+            /*pos          =*/ ubatch_pos.data(),
+            /*n_seq_id     =*/ ubatch_n_seq_id.data(),
+            /*seq_id       =*/ ubatch_seq_id.data(),
+            /*output       =*/ ubatch_output.data(),
+        };
+        return ubatch;
+```
+Notice that the entries of the ubatch fields that are pointers are pointers to the
+data of the above vectors that were resized.
+After that we have:
+```c++
+        ubatch.equal_seqs = false;
+        if (!seq.empty()) {
+            llama_sbatch_seq & s = seq[0];
+            size_t length = s.length < n_ubatch ? s.length : n_ubatch;
+            GGML_ASSERT(seq.size() == 1 && s.n_seq_id == 0); // don't mix with other splits
+            add_seq_to_ubatch(ubatch, s, length);
+        }
+        return ubatch;
+```
+
+```c++
+    void add_seq_to_ubatch(llama_ubatch & ubatch, llama_sbatch_seq & seq, size_t length) {
+        ...
+                ubatch.token = batch->token + seq.offset;
+        ...
+        ubatch.n_tokens += length;
+        ubatch.n_seqs += ubatch.equal_seqs ? 1 : length; // virtual sequences for simple splits
+        seq.offset += length;
+        seq.length -= length;
+```
+We can see that the seq offset is incremented by the length of the ubatch and the
+the total length is decremented (0->4, and 13->9), and `n_tokens` is also decremented from 
+13-9.
+
+So this the the actual batch that will be processed by the model, used to build the
+computation graph and set the actual input to the model be for computing the graph.
+
+After the graph has been computed we will again entery the while loop again and this
+time the seq.offset will be 4.
 
 Next the vector of ids (token indices not sequence ids) is resized to the
 number of tokens (so 13 in our case):
@@ -6966,59 +7119,19 @@ _wip_
 
 ### batch/ubatch/sbatch
 So a batch, or rather a `llama_batch` is what we pass into the `llama_decode`
-function and is really the only thing that an external caller know anything
+function and is really the only thing that an external caller knows anything
 about (well that is not entirely true as they can set a ubatch value but the
-struct itself is private). But the internal decode operation is/can be split
-into smaller units called ubatches (update batches?). The internal decode
-will create an sbatch, sequence-aware that manages the sequences of the ubatches.
+as a command line argumument `-ub/--ubatch-size`).
+The internal decode operation is/can be split into smaller units called ubatches
+(update batches?). The internal decode will create an sbatch, sequence-aware that
+manages the ubatches. I was not sure what this actually meant, the sequence-aware
+batch and there was a disussion where this was also asked where I replied with 
+the following:
+```. 
+sbatch stands for sequence-aware batch which can be found from this comment. My understanding of what this means is that for recurrent models they can benefit from processing batches with sequences of equal length. The way this works is that if there are multiple sequences in a batch (llama_batch that is passed to llama_decode) they will be split into ubatches of equal sequence length.
+The sbatch will manage this (hence the name sequence aware batch) and produce an ubatch which will then be used to build the computation graph, set the inputs, and then compute the graph (the forward pass). So the ubatch is what is actually passed to the model and I think it stands for update batch.
+This process will then continue by handling the remaining tokens for the sequences, again making sure that they are of equal size.
 
-Lets take a look at when an sbatch is created. `llama_sbatch` is a struct and it
-is a member of `llama_context`. When we create a new context with from a model
-one instance of this will be created. For example, if we look at the main
-example we have:
-```c++
-common_init_result llama_init = common_init_from_params(params);
+There are some more details in the following comment which also contains an example:
+#7531 (comment)
 ```
-This will call:
-```c++
-llama_context * lctx = llama_new_context_with_model(model, cparams)
-```
-Which in turn will call:
-```c++
-llama_context * ctx = new llama_context(*model);
-```
-And this is where the sbatch is created. At this point it does not contain
-any data (default initilized).
-```console
-(gdb) p ctx->sbatch
-$2 = {n_tokens = 93802895217820, n_embd = 8587913089966890862, logits_all = 128, ids = std::vector of length 0, capacity 0,
-  out_ids = std::vector of length 0, capacity 0, seq = std::vector of length 0, capacity 0, batch = 0x0,
-  ubatch_token = std::vector of length 0, capacity 0, ubatch_embd = std::vector of length 0, capacity 0,
-  ubatch_pos = std::vector of length 0, capacity 0, ubatch_n_seq_id = std::vector of length 0, capacity 0,
-  ubatch_seq_id = std::vector of length 0, capacity 0, ubatch_output = std::vector of length 0, capacity 0}
-```
-
-A `llama_batch` is what a caller will create and pass to `llama_decode`. This
-batch will be passed to the the sbatch's `from_batch` method:
-```c++
-   lctx.sbatch.from_batch(batch, n_embd,                                            
-        /* simple_split */ !kv_self.recurrent,                                       
-        /* logits_all   */ n_outputs == n_tokens_all);
-```
-
-
-```console
-
-     llama_batch                   ctx->llama_sbatch
-   +--------------+                +--------------+
-   |              |  llama_decode  |              |
-   |              |  ------------> |              |
-   |              |                |              |
-   |              |                |              |
-   |              |                |              |
-   +--------------+                +--------------+
-
-
-```
-
-
