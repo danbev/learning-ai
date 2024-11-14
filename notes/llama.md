@@ -7122,14 +7122,13 @@ So a batch, or rather a `llama_batch` is what we pass into the `llama_decode`
 function and is really the only thing that an external caller knows anything
 about (well that is not entirely true as they can set a ubatch value but the
 as a command line argumument `-ub/--ubatch-size`).
-The internal decode operation is/can be split into smaller units called ubatches
-(update batches?). The internal decode will create an sbatch, sequence-aware that
-manages the ubatches. I was not sure what this actually meant, the sequence-aware
-batch and there was a disussion where this was also asked where I replied with 
-the following:
+The internal decode operation is/can be split into smaller units called ubatches.
+The internal decode will create an sbatch, sequence-aware that manages the ubatches. I
+was not sure what this actually meant, the sequence-aware batch and there was a
+disussion where this was also asked where I replied with the following:
 ```. 
 sbatch stands for sequence-aware batch which can be found from this comment. My understanding of what this means is that for recurrent models they can benefit from processing batches with sequences of equal length. The way this works is that if there are multiple sequences in a batch (llama_batch that is passed to llama_decode) they will be split into ubatches of equal sequence length.
-The sbatch will manage this (hence the name sequence aware batch) and produce an ubatch which will then be used to build the computation graph, set the inputs, and then compute the graph (the forward pass). So the ubatch is what is actually passed to the model and I think it stands for update batch.
+The sbatch will manage this (hence the name sequence aware batch) and produce an ubatch which will then be used to build the computation graph, set the inputs, and then compute the graph (the forward pass). So the ubatch is what is actually passed to the model and I think it stands for micro batch.
 This process will then continue by handling the remaining tokens for the sequences, again making sure that they are of equal size.
 
 There are some more details in the following comment which also contains an example:
