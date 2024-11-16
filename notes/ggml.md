@@ -7197,6 +7197,34 @@ type.
 _wip_
 
 
+#### GGML_LLAMAFILE
+This is an build flag that is named `GGML_LLAMAFILE` which is related to the
+cpu backend. It is a small optimized BLAS (Basic Linear Algebra Subprograms)
+implementation originally written by Justine Tunney for
+[llamafile](https://github.com/mozilla-Ocho/llamafile).  This was contributed in
+https://github.com/ggerganov/llama.cpp/pull/6414.
 
+There is a blog post about this here:
+https://justine.lol/matmul/
 
+We can see that this is used in the CPU backend in `src/ggml-cpu/CMakeLists.txt`:
+```console
+if (GGML_LLAMAFILE)
+    message(STATUS "Using llamafile")
 
+    add_compile_definitions(GGML_USE_LLAMAFILE)
+
+    target_sources(ggml-cpu PRIVATE
+                    llamafile/sgemm.cpp
+                    llamafile/sgemm.h)
+endif()
+```
+The header includes one function with is a single precision general matrix
+multiplication:
+```c
+bool llamafile_sgemm(int64_t, int64_t, int64_t, const void *, int64_t,
+                     const void *, int64_t, void *, int64_t, int, int,
+                     int, int, int);
+```
+Compared to a GEMM function this uses single precision floats which makes it
+faster but less percise. This is later used in `ggml_compute_forward_mul_mat`.
