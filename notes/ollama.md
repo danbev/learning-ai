@@ -44,7 +44,7 @@ the metadata file:
 $ cat ~/.ollama/models/manifests/registry.ollama.ai/library/mycustomllama/latest | jq '.layers[] | select(.mediaType == "application/vnd.ollama.image.model") | .digest'
 "sha256:42f685711f23fc73c4558da0d8df22fd18ecabbee9c6c8f8277204902ace10d3"
 ```
-And we can use the digest (without the sha256: prefix) to find the blob:
+And we can use the digest (with  sha256- as the prefix instead of ':') to find the blob:
 ```console
 $ ./inspect-model.sh ~/.ollama/models/blobs/sha256-42f685711f23fc73c4558da0d8df22fd18ecabbee9c6c8f8277204902ace10d3
 INFO:gguf-dump:* Loading: /home/danbev/.ollama/models/blobs/sha256-42f685711f23fc73c4558da0d8df22fd18ecabbee9c6c8f8277204902ace10d3
