@@ -37,11 +37,15 @@ TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 ifeq ($(OS),Linux)
 CFLAGS += -fopenmp
 CXXFLAGS += -fopenmp
-WHOLE_ARCHIVE = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
+WHOLE_ARCHIVE  = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whole-archive 
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cpu/libggml-cpu.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
-WHOLE_ARCHIVE = -Wl,-force_load,ggml/build/src/libggml.a
+WHOLE_ARCHIVE  = -Wl,-force_load,ggml/build/src/libggml.a
+WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-base.a
+WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cpu.a
 endif
 
 .PHONY: all clean

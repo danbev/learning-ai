@@ -29,7 +29,6 @@ int main(int argc, char **argv) {
   ggml_set_name(out, "out_prod");
   printf("out->src0: %s\n", out->src[0]->name);
   printf("out->src1: %s\n", out->src[1]->name);
-  printf("out->grad: %s\n", out->grad->name);
   printf("out->ne[0]: %ld\n", out->ne[0]);
   printf("out->ne[1]: %ld\n", out->ne[1]);
   printf("\n");

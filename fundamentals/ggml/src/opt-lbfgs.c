@@ -13,6 +13,8 @@ int main(int argc, char **argv) {
   };
   struct ggml_context* ctx = ggml_init(params);
 
+  /* TODO: revisit this code after reading up on the new optimizer API
+
   // Simulate a sequence of 6 tokens with en embedding size of 4096 and a
   // context length of 512. 
   int n_ctx_orig = 4096;
@@ -119,6 +121,7 @@ int main(int argc, char **argv) {
   ggml_graph_compute_with_ctx(ctx, cgraph, 1);
 
   //printf("a: n_elements: %ld\n", ggml_nelements(s));
+  */
 
   ggml_free(ctx);
   return 0;

@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "ggml.h"
+#include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
@@ -13,6 +14,8 @@ int main(int argc, char **argv) {
   };
   struct ggml_context* ctx = ggml_init(params);
 
+  /* TODO: revisit this code after reading up on the new optimizer API
+  
   struct ggml_opt_params opts = ggml_opt_default_params(GGML_OPT_TYPE_ADAM);
   struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
   ggml_set_param(ctx, a);
@@ -25,6 +28,7 @@ int main(int argc, char **argv) {
   ggml_graph_compute_with_ctx(ctx, cgraph, 1);
 
   printf("a: n_elements: %ld\n", ggml_nelements(a));
+  */
 
   ggml_free(ctx);
   return 0;

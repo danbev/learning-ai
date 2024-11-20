@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
   printf("ggml type trait is_quantized: %s\n", q4_0->is_quantized ? "true" : "false");
   // The type trait contains function pointers to the quantize and dequantize
   // functions
-  q4_0->from_float(data, &block_q4_0, 32);
+  q4_0->from_float_ref(data, &block_q4_0, 32);
   for (int i = 0; i < QK4_0/2; i++) {
     printf("block_q4_0.qs[%d]: %d\n", i, block_q4_0.qs[i]);
   }

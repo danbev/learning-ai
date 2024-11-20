@@ -5,6 +5,7 @@
 #include "ggml.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
 
 int main(int argc, char **argv) {
   printf("GGML softmax example\n");

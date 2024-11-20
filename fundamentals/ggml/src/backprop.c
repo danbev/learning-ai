@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
     .mem_buffer = NULL,
   };
   struct ggml_context* ctx = ggml_init(params);
+  struct ggml_context* static_ctx = ggml_init(params);
 
   // 'a' represents a parameter in the graph/neural network
   struct ggml_tensor* a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
@@ -29,8 +30,8 @@ int main(int argc, char **argv) {
 
   printf("Parameter a:\n");
   printf("a: %f\n", ggml_get_f32_1d(a, 0));
-  printf("a->grad: %s\n", a->grad->name);
-  printf("a->grad: %f\n", ggml_get_f32_1d(a->grad, 0));
+  //printf("a->grad: %s\n", ggml_graph_get_grad(b_graph, a->grad->name));
+  //printf("a->grad: %f\n", ggml_get_f32_1d(a->grad, 0));
   printf("\n");
 
   // 'b' represents another parameter in the graph/neural network
@@ -41,8 +42,8 @@ int main(int argc, char **argv) {
   ggml_set_param(ctx, b);
   printf("Parameter b:\n");
   printf("b: %f\n", ggml_get_f32_1d(b, 0));
-  printf("b->grad: %s\n", b->grad->name);
-  printf("b->grad: %f\n", ggml_get_f32_1d(b->grad, 0));
+  //printf("b->grad: %s\n", b->grad->name);
+  //printf("b->grad: %f\n", ggml_get_f32_1d(b->grad, 0));
   printf("\n");
 
   printf("Operation/Output tensor mul:\n");
@@ -51,7 +52,7 @@ int main(int argc, char **argv) {
   printf("mul->op: %s\n", ggml_op_name(mul->op));
   printf("mul->src0: %s\n", mul->src[0]->name);
   printf("mul->src1: %s\n", mul->src[1]->name);
-  printf("mul->grad: %s\n", mul->grad->name);
+  //printf("mul->grad: %s\n", mul->grad->name);
   printf("\n");
 
   struct ggml_cgraph* f_graph = ggml_new_graph_custom(ctx, GGML_DEFAULT_GRAPH_SIZE, true);
@@ -74,25 +75,27 @@ int main(int argc, char **argv) {
   ggml_graph_reset(f_graph);
 
   struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph);
-  ggml_build_backward_expand(ctx, f_graph, b_graph, /*accumulate*/ false);
+  ggml_build_backward_expand(static_ctx, ctx, b_graph, /*accumulate*/ false);
   ggml_graph_print(b_graph);
 
   // Set the gradient of the output tensor (mul) which would be the value of
   // the loss function.
-  ggml_set_f32(mul->grad, 2.0f);
+  const ggml_tensor* a_grad = ggml_graph_get_grad(b_graph, a);
+  printf("a->grad: %f\n", ggml_get_f32_1d(a_grad, 0));
+  ggml_set_f32(mul, 2.0f);
   // Compute the gradients
   printf("[Perform backward pass]\n\n");
   ggml_graph_compute_with_ctx(ctx, b_graph, 1);
 
   printf("Updated gradients:\n");
-  printf("a->grad: %f\n", ggml_get_f32_1d(a->grad, 0));
-  printf("b->grad: %f\n", ggml_get_f32_1d(b->grad, 0));
+  //printf("a->grad: %f\n", ggml_get_f32_1d(static_ctx, ggml_graph_get_grad(b_graph, a)));
+  //printf("b->grad: %f\n", ggml_get_f32_1d(b->grad, 0));
   printf("\n");
 
   // Now, a and b values would be updated using the gradients computed above.
   float learning_rate = 0.01;
-  ggml_set_f32_1d(a, 0, ggml_get_f32_1d(a, 0) - learning_rate * ggml_get_f32_1d(a->grad, 0));
-  ggml_set_f32_1d(b, 0, ggml_get_f32_1d(b, 0) - learning_rate * ggml_get_f32_1d(b->grad, 0));
+  //ggml_set_f32_1d(a, 0, ggml_get_f32_1d(a, 0) - learning_rate * ggml_get_f32_1d(a->grad, 0));
+  //ggml_set_f32_1d(b, 0, ggml_get_f32_1d(b, 0) - learning_rate * ggml_get_f32_1d(b->grad, 0));
 
   printf("Updated parameters a and b:\n");
   printf("a: %f\n", ggml_get_f32_1d(a, 0));
