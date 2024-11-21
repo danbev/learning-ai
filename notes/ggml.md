@@ -1,7 +1,7 @@
 ## GGML
 "GG" refers to the initials of its originator (Georgi Gerganov) and I think
 ML is just for machine learning. It is a tensor library for machine learning
-written in.
+written in C/C++.
 
 Github: https://github.com/ggerganov/ggml
 
