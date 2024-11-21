@@ -1,11 +1,12 @@
-## GGML (Georgi Gerganov Machine Learning)
+## GGML
 "GG" refers to the initials of its originator (Georgi Gerganov) and I think
-ML is just for machine learning. It is a
-[C library](https://github.com/rustformers/llm/blob/main/crates/ggml/README.md).
+ML is just for machine learning. It is a tensor library for machine learning
+written in.
 
-While I try to stay up to date with the development in GGML it is challenging
-due to the rapid development. I will try to keep this document up to date but 
-some things will become out of date until I revisit them.
+Github: https://github.com/ggerganov/ggml
+
+> **Note on Updates**
+> While I try to stay up to date with the development in GGML, it is challenging due to the rapid development. I will try to keep this document up to date but some things will become out of date until I have time to revisit them.
 
 The code examples can be found [ggml](../fundamentals/ggml/README.md) and
 are updated more frequently (at least as often as I update the ggml submodule).
