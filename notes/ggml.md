@@ -3,6 +3,13 @@
 ML is just for machine learning. It is a
 [C library](https://github.com/rustformers/llm/blob/main/crates/ggml/README.md).
 
+While I try to stay up to date with the development in GGML it is challenging
+due to the rapid development. I will try to keep this document up to date but 
+some things will become out of date until I revisit them.
+
+The code examples can be found [ggml](../fundamentals/ggml/README.md) and
+are updated more frequently (at least as often as I update the ggml submodule).
+
 ## Table of Contents
 - [Introduction](#introduction)
 - [Memory Usage](#memory-usage)
@@ -32,9 +39,12 @@ For me it helps to draw parallels between GGML and part1 of [zero-to-hero],
 where we created a Value struct which in addition of holding a value, would also
 have a gradient, an operation, and children if the value was created by an
 operation. The Value struct also supported automatic differentiation. In a
-simliar manner GGML has a `tensor` struct which holds a value, a gradient, an
+simliar manner GGML has a `tensor` struct which holds a value, ~~a gradient~~, an
 operation and a `src` array which is simlar to the children in zero-to-hero
 in that is would contain the left hand side and right hand side of an operation.
+
+_NOTE_: The `grad` field was recently removed and I hope to revisit this and
+understand how it works now.
 
 In the case of zero-to-hero when we perform an operation on a Value the
 operation itself will create a new Value which will contain the output of the
@@ -52,8 +62,6 @@ hyperparameters, vocabulary, and weights.
 So GGML is used by llama.cpp, and whisper.cpp. In addition GGML is what is the
 used by the Rust `llm` crate, and also by llm-chain. So learning about GGML will
 help understand all of these project better.
-
-There are is a basic examples in [ggml](../fundamentals/ggml/README.md).
 
 ### Memory usage
 We start off by specifying the memory that GGML will use. This is done by
