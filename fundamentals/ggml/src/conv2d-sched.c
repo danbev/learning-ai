@@ -93,18 +93,15 @@ int main(int argc, char **argv) {
         printf("%.2f ", conv_data[i]);
     }
     printf("\n");
-    /*
-    printf("result:\n");
-    float result_val;
-    for (int y = 0; y < result->ne[1]; y++) {
-        for (int x = 0; x < result->ne[0]; x++) {
-            ggml_backend_tensor_get(result, &result_val, y * result->ne[0] + x, sizeof(float));
-            printf("%.2f ", result_val);
+
+    {
+        printf("\na:\n");
+        float* a_data = (float*)a->data;
+        for (int i = 0; i < ggml_nelements(a); i++) {
+            printf("%.2f ", a_data[i]);
         }
         printf("\n");
     }
-    printf("\n");
-    */
 
     ggml_free(ctx);
     return 0;
