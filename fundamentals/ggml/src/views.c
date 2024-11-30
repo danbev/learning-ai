@@ -56,6 +56,7 @@ int main(int argc, char **argv) {
     ggml_backend_graph_compute(backend, gf);
 
     {
+        printf("Loop over all dimensions in view:\n");
         float buf[6];
         ggml_backend_tensor_get(view, buf, 0, sizeof(buf));
         for (int row = 0; row < view->ne[1]; row++) {
@@ -67,6 +68,16 @@ int main(int argc, char **argv) {
     }
 
     {
+        printf("Loop over all elements in view:\n");
+        float buf[6];
+        ggml_backend_tensor_get(view, buf, 0, sizeof(buf));
+        for (int i = 0; i < ggml_nelements(view); i++) {
+            printf("buf[%d] = %f\n", i, buf[i]);
+        }
+    }
+
+    {
+        printf("Loop over all elements in src tensor:\n");
         float buf[6];
         ggml_backend_tensor_get(x, buf, 0, sizeof(buf));
         for (int i = 0; i < x->ne[0]; i++) {
