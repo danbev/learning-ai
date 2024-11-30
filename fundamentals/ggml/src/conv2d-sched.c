@@ -3,6 +3,7 @@
 
 #include "ggml.h"
 #include "ggml-cpu.h"
+#include "ggml-cuda.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
@@ -43,23 +44,38 @@ int main(int argc, char **argv) {
     ggml_build_forward_expand(c_graph, conv);
 
 
-    ggml_backend_t backend = ggml_backend_init_by_name("CPU", NULL);
-    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
-    ggml_backend_buffer_type_t buffer_type =ggml_backend_buffer_get_type(buffer);
+    ggml_backend_t cpu_backend = ggml_backend_init_by_name("CPU", NULL);
+    ggml_backend_t cuda_backend = ggml_backend_init_by_name("CUDA0", NULL);
+    if (!cuda_backend) {
+        fprintf(stderr, "Failed to initialize CUDA backend\n");
+        return 1;
+    }
+    ggml_backend_t backends[] = {cuda_backend, cpu_backend};
+
+    // Get buffer types
+    ggml_backend_buffer_type_t buffer_types[] = {
+        ggml_backend_get_default_buffer_type(cuda_backend),
+        ggml_backend_get_default_buffer_type(cpu_backend)
+    };
+
+    printf("CUDA buffer type: %s\n", ggml_backend_buft_name(buffer_types[0]));
+    printf("CPU buffer type: %s\n", ggml_backend_buft_name(buffer_types[1]));
 
     size_t graph_work_size = ggml_graph_size(c_graph);
     size_t graph_nodes = ggml_graph_n_nodes(c_graph);
-    ggml_backend_sched_t sched = ggml_backend_sched_new(&backend, &buffer_type, 1, graph_nodes, graph_work_size);
+    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 2, graph_nodes, graph_work_size);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
-        ggml_backend_free(backend);
+        ggml_backend_free(cpu_backend);
+        ggml_backend_free(cuda_backend);
         return 1;
     }
     
     if (!ggml_backend_sched_alloc_graph(sched, c_graph)) {
         fprintf(stderr, "Failed to allocate graph\n");
         ggml_backend_sched_free(sched);
-        ggml_backend_free(backend);
+        ggml_backend_free(cpu_backend);
+        ggml_backend_free(cuda_backend);
         return 1;
     }
 
@@ -95,12 +111,16 @@ int main(int argc, char **argv) {
     printf("\n");
 
     {
-        printf("\na:\n");
-        float* a_data = (float*)a->data;
-        for (int i = 0; i < ggml_nelements(a); i++) {
-            printf("%.2f ", a_data[i]);
+        struct ggml_tensor * tensor = ggml_graph_get_tensor(c_graph, "a");
+        float buf[4];
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched, tensor);
+        printf("Tensor type: %s\n", ggml_type_name(tensor->type));
+        printf("Backend type: %s\n", ggml_backend_name(backend));
+        ggml_backend_tensor_get_async(backend, tensor, buf, 0, sizeof(buf));
+        ggml_backend_sched_synchronize(sched);
+        for (int i = 0; i < 4; i++) {
+            printf("a[%d] = %f\n", i, buf[i]);
         }
-        printf("\n");
     }
 
     ggml_free(ctx);
