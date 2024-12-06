@@ -33,7 +33,7 @@ BPE refers to the order or priority of these merge rules. The most frequent
 pairs get the lowest ranks (highest priority).
 
 #### llama.cpp Byte Pair Encoding
-This section will step through [tokenize.cpp](../fundamentals/llama.cpp/tokenize.cpp)
+This section will step through [tokenize.cpp](../../fundamentals/llama.cpp/tokenize.cpp)
 which be built and started using the following commands:
 ```console
 $ cd ../fundamentals/llama.cpp/
@@ -456,7 +456,6 @@ And two new bigrams have been added to the work queue for future consideration:
 ```c++
 A-BC
 BC-D
-```
 
 Before:
 [A] -> [B] -> [C] -> [D] -> [E]
