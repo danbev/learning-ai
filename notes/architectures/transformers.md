@@ -183,7 +183,7 @@ Standard attention uses 3 martixes, a query matrix, a key matrix, and a value
 matrix. 
 
 Let's start with the following input sentence "Dan loves icecream". The first
-step it split this into tokens, so we will have might get 4 tokens:
+step is to split this into tokens, so we will have might get 4 tokens:
 ```
 ["Dan", "loves", "ice", "cream"]
 ```
@@ -203,6 +203,10 @@ If the same word appears multiple times in the input, the same embedding will
 be used for each occurance. So there is currently no context or association
 between these words/token embeddings. They only contain information about each
 word/token itself, and nothing about the context in which it appears.
+
+This mapping can happen using somethin like `ggml_get_rows` which uses the a
+tensor that contains the embeddings for each token, and an index tensor which
+contains the token ids. The index tensor is used to index into the embeddings.
 
 So with these embeddings the first thing in the model does is to add a
 positional encoding to each of the embeddings. In the original paper this used
