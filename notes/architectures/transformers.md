@@ -16,7 +16,7 @@ generation, and summarization.
 So they can take text as input but neural networks don't process text, instead
 the text need to be transformed into a format that the neural network can work
 with. This is done by first tokenizing the text, and then these tokens are
-converted into [embeddings](./embeddings.md) which are vectors of numbers that
+converted into [embeddings] which are vectors of numbers that
 represent the tokens. These embeddings are then fed into the neural network.
 
 
@@ -173,8 +173,8 @@ sentence as the output. The model would then be trained to predict the Swedish
 sentence given the English sentence.
 
 Now, lets take a closer look at the boxes of the above diagram.
-I've written about embeddings in [embeddings.md](./embeddings.md)
-and positional encoding in [positional-encoding.md](./positional-encoding.md) so
+I've written about embeddings in [embeddings.md].
+and positional encoding in [positional-encoding.md](../../positional-embeddings/positional-encoding.md) so
 lets skip them for now and start with the encoder layer.
 So the next layer, or most often multiple layers, is the multi-head attention.
 
@@ -211,7 +211,7 @@ contains the token ids. The index tensor is used to index into the embeddings.
 So with these embeddings the first thing in the model does is to add a
 positional encoding to each of the embeddings. In the original paper this used
 absolute position encoding. I've written about this is
-[embeddings.md](../position-embeddings/embeddings.md).
+[embeddings.md].
 
 So we have our input matrix which in our case is a 4x512 matrix, where each
 entry is one of the tokens in the input sentence. Notice that we in this case
@@ -1030,3 +1030,5 @@ Att+(W, K, V) = -----------------
 There are multiple variants of attention. There is the one in the original
 paper where query, key, and value matrix per layer.
 There is also one where we split the 
+
+[embeddings.md]: (../../position-embeddings/embeddings.md
