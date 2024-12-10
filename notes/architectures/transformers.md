@@ -211,7 +211,7 @@ contains the token ids. The index tensor is used to index into the embeddings.
 So with these embeddings the first thing in the model does is to add a
 positional encoding to each of the embeddings. In the original paper this used
 absolute position encoding. I've written about this is
-[embeddings.md](./embeddings.md).
+[embeddings.md](../position-embeddings/embeddings.md).
 
 So we have our input matrix which in our case is a 4x512 matrix, where each
 entry is one of the tokens in the input sentence. Notice that we in this case
