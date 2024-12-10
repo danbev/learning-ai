@@ -416,7 +416,7 @@ attention function that we went through above.
    +----------------+   +-------+     +--------+
    |      Q         |   |  Key  |     |   Q'   |
    |                | X |       |  =  |        |   
-   |  (4, 512)      |   |(512,4)|     | (4, 4) |
+   |  (4, 128)      |   |(128,4)|     | (4, 4) |
    +----------------+   |       |     +--------+
                         |       |
                         |       |
@@ -432,11 +432,12 @@ Attention(Q'₃, K'₃, V'₃) = softmax((Q'₃, K'₃, V'₃)/√dₖ) x V'₃
 Those will output 4 (`sequence_length x dₖ`) matrices. So why would we want to do
 this?  
 Well, notice how each attention calculation will still be using all the words/
-tokens of the input sequence but uses fewer dimensions than with the single head
-attention. This has implication for the softmax calculation which now only sees
-a subset of the embedding dimension values. This is what allows each of the
-heads to "focus" on different parts of the dimension space and it is what
-causes the model to learn different things about the input sequence.
+tokens of the input sequence, 4 above, but uses fewer dimensions than with the
+single head attention (128). This has implication for the softmax calculation
+which now only sees a subset of the embedding dimension values. This is what
+allows each of the heads to "focus" on different parts of the dimension space
+and it is what causes the model to learn different things about the input
+sequence.
 
 These matrices are then concatenated into a single matrix:
 ```
