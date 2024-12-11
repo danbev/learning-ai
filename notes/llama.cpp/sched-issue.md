@@ -12,15 +12,15 @@ They have two models, one for the language model and one for the vision encoder.
 In our case I made the assumption that we only want one model so that that is
 what I opted for.
 
-I wanted to follow the new Vision API and the example that was provided
+I wanted to follow the new Vision API and the Llava example that was provided
 in https://github.com/ggerganov/llama.cpp/pull/9687. So I used the same image to
-try to reproduce the same output.
+try to reproduce the same/simliar output.
 
 ### The Issue
 While developing/debugging the model I added a number of tensors that are copies
 of tensors used in the computation graph so that I could inspect their output
-if the original tensor is resued by the backend schdular which I think is
-something that is can do with tensors that are part of the graph. So this is a
+if the original tensor gets resued by the backend schdular, which I think is
+something that it can do with tensors that are part of the graph. So this is a
 way to inspect the output of a tensor which might get reused by the backend
 scheduler.
 
@@ -62,13 +62,16 @@ I also noticed that if I increase the number of layers that I offload to the GPU
 this also effect the output. For example, if I change the number of layers from
 30 to 36 the I will also see the output above with the "gray background".
 
-It seems like if I make a change to the computation graph of the vision model
-this can have an effect on the language model which I was not expecting (not
-saying it is wrong as I'm unfamiliar the inner workings of the backend
-scheduler). Does anyone recognize this issue or have any ideas where I should
-look to try to figure this out?
+It seems to me like if I make a change to the computation graph of the vision
+model this can have an effect on the language model which I was not expecting
+(not saying it is wrong as I'm unfamiliar the inner workings of the backend
+scheduler). Almost like the graph are shared but I was thinking that they would
+not be after calling `ggml_backend_sched_reset(ctx.sched)`.
 
-The following [example] contains the steps to convert the model, quantize and
-also run it.
+Does anyone recognize this issue, or have any ideas where I should start looking
+to try to figure this out?
+
+The [example] contains the steps to convert the model, quantize it, and also run
+it.
 
 [example]: https://github.com/danbev/llama.cpp/tree/vision-api-mllama-example/examples/simple-vision-mllama#simple-vision-mllama-example
