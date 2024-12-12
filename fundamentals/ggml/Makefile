@@ -21,7 +21,7 @@ else ifeq ($(OS),Darwin)
 CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DGGML_BLAS=OFF
 endif
 
-CUDA_DIR = /usr/local/cuda-12.2/lib64
+CUDA_DIR = /usr/local/cuda-12.6/lib64
 CUDA_FLAGS :=
 
 VULKAN_FLAGS :=
@@ -40,12 +40,14 @@ CXXFLAGS += -fopenmp
 WHOLE_ARCHIVE  = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
 WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whole-archive 
 WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cpu/libggml-cpu.a -Wl,--no-whole-archive 
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 WHOLE_ARCHIVE  = -Wl,-force_load,ggml/build/src/libggml.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-base.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cpu.a
+WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cuda.a
 endif
 
 .PHONY: all clean
@@ -82,6 +84,11 @@ backend-cuda: backend
 backend-vulkan: VULKAN_FLAGS := -Wl,--whole-archive -lvulkan -Wl,--no-whole-archive
 backend-vulkan: CC = $(CXX)
 backend-vulkan: backend
+
+#.PHONY: conv2d-sched-cuda
+conv2d-sched-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+conv2d-sched-cuda: CC = $(CXX)
+conv2d-sched-cuda: conv2d-sched
 
 .PHONY: run-backend-vulkan
 run-backend-vulkan: backend-vulkan
