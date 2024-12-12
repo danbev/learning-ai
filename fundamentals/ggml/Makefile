@@ -39,8 +39,8 @@ CFLAGS += -fopenmp
 CXXFLAGS += -fopenmp
 WHOLE_ARCHIVE  = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
 WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whole-archive 
-WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cpu/libggml-cpu.a -Wl,--no-whole-archive 
-WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-cpu.a -Wl,--no-whole-archive 
+#WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
