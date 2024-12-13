@@ -58,6 +58,41 @@ Split2: {
     n_inputs: 1
 }
 ```
+So this function which is quite long is about setting up this information in
+the sched struct:
+```c++
+(gdb) ptype *sched
+type = struct ggml_backend_sched {
+    bool is_reset;
+    bool is_alloc;
+    int n_backends;
+    ggml_backend_t backends[16];
+    ggml_backend_buffer_type_t bufts[16];
+    ggml_gallocr_t galloc;
+    ggml_hash_set hash_set;
+    int *hv_tensor_backend_ids;
+    ggml_tensor **hv_tensor_copies;
+    int *node_backend_ids;
+    int *leaf_backend_ids;
+    int *prev_node_backend_ids;
+    int *prev_leaf_backend_ids;
+    ggml_cgraph graph;
+    ggml_backend_sched_split *splits;
+    int n_splits;
+    int splits_capacity;
+    int n_copies;
+    int cur_copy;
+    ggml_backend_event_t events[16][4];
+    ggml_tensor *graph_inputs[10];
+    int n_graph_inputs;
+    ggml_context *ctx;
+    ggml_backend_sched_eval_callback callback_eval;
+    void *callback_eval_user_data;
+    char *context_buffer;
+    size_t context_buffer_size;
+    int debug;
+}
+```
 
 First, a new ggml_context will be created for the scheduler.
 ```c++
@@ -490,4 +525,5 @@ from `i` above:
             }
 ```
 
+TODO: Continue from here
 
