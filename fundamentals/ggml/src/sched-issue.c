@@ -49,6 +49,18 @@ int main(int argc, char **argv) {
 
     // Create a scheduler.
     ggml_backend_t cpu_backend = ggml_backend_init_by_name("CPU", NULL);
+
+    auto threadpool_params = ggml_threadpool_params_default(1);
+    auto threadpool = ggml_threadpool_new(&threadpool_params);
+    auto* reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(cpu_backend));
+    auto* set_threadpool_fn = (decltype(ggml_backend_cpu_set_threadpool) *) ggml_backend_reg_get_proc_address(reg, "ggml_backend_cpu_set_threadpool");
+    set_threadpool_fn(cpu_backend, threadpool);
+
+    auto ggml_backend_set_n_threads_fn = (ggml_backend_set_n_threads_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads");
+    if (ggml_backend_set_n_threads_fn) {
+        ggml_backend_set_n_threads_fn(cpu_backend, 1);
+    }
+
     ggml_backend_t backends[] = {cpu_backend};
     ggml_backend_buffer_type_t buffer_types[] = {
         ggml_backend_get_default_buffer_type(cpu_backend)
@@ -120,8 +132,19 @@ int main(int argc, char **argv) {
     printf("v_r (3 * (4 * 5)) = %.2f \n", v_r_data[0]);
     assert(v_r_data[0] == 60);
     printf("\n");
-
+    
     // Now execute the first graph (language model):
+    l_g = ggml_new_graph(ctx);
+    ggml_build_forward_expand(l_g, l_r);
+    
+    ggml_backend_sched_reset(sched);
+    if (!ggml_backend_sched_alloc_graph(sched, l_g)) {
+        fprintf(stderr, "Failed to allocate graph\n");
+        ggml_backend_sched_free(sched);
+        ggml_backend_free(cpu_backend);
+        return 1;
+    }
+
     // Set tensor data for first graph:
     ggml_backend_tensor_set(l_a, l_a_data, 0, ggml_nbytes(l_a));
     ggml_backend_tensor_set(l_b, l_b_data, 0, ggml_nbytes(l_b));
