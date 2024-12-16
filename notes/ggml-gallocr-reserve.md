@@ -1,5 +1,7 @@
-## ggml_gallocr_reserve
-This function will be called by [ggml_backend_sched_alloc_splits](./ggml-split-graph.md).
+## ggml_gallocr_reserve_n
+This function is called by `ggml_backend_sched_reserve` and
+[ggml_backend_sched_alloc_splits](./ggml-split-graph.md).
+
 ```c++
 bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
     GGML_ASSERT((int)sched->hash_set.size >= graph->n_nodes + graph->n_leafs);
@@ -29,8 +31,8 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
     }
 ```
 So this will iterate over all the nodes in the graph. Notice the struct
-`ggml_backend_sched` has two arrays with previous backend node ids and the
-previous leaf ids. This above is checking if any of the node's have been
+`ggml_backend_sched` has two arrays with previous backend node ids, and the
+previous leaf ids. The above is checking if any of the node's have been
 assigned to a different backend and if so setting `backend_ids_changed` to true
 and breaking out of the loop.
 
@@ -97,7 +99,7 @@ ggml_gallocr_needs_realloc: graph has different number of nodes
 This feels somewhat misleading as the graph has not changed and perhaps this
 should only be printed if galloc->n_nodes is not zero.
 
-And the above is clause will be entered and the following will be printed:
+And the above if clause will be entered and the following will be printed:
 ```console
 ggml_gallocr_alloc_graph: reallocating buffers automatically
 ```
@@ -136,6 +138,8 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
     ...
 }
 ```
+We can see that the hash table is initialized and the allocators are reset.
+
 ```c++
 static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
     // clear hash tables
@@ -242,11 +246,11 @@ And for the next leaf which is tensor b:
 (gdb) p *hn
 $26 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = true}
 ```
-So we have the two tensors a and be allocated in the same buffer (0) and a
+So we have the two tensors a and b, allocated in the same buffer (0) and a
 starts at offset 0 and b at offset 32.
 
 Just to recap that the `galloc` struct has a field named  `buf_tallocs` which is
-an array with then number of elements that there are buffers (`n_buffers`):
+an array with the number of elements that there are buffers (`n_buffers`):
 ```console
 (gdb) p *galloc.buf_tallocs[0]
 $28 = {alignment = 32, n_free_blocks = 1, free_blocks = {{offset = 0, size = 9223372036854775807}, {
@@ -258,8 +262,8 @@ $29 = 1
 (gdb) p galloc.buf_tallocs[0]->free_blocks[0]
 $30 = {offset = 0, size = 9223372036854775807}
 ```
-So we one free block (`n_free_blocks`) and it starts at offset 0 and has a size
-9223372036854775807
+So we have one free block (`n_free_blocks`) and it starts at offset 0 and has a
+size 9223372036854775807:
 ```
 block (variable name in code above):
 
@@ -542,7 +546,7 @@ type = struct leaf_alloc {
     struct tensor_alloc leaf;
 }
 ```
-Now, we can see that this struct alos stores a buffer id and an offset, just
+Now, we can see that this struct also stores a buffer id and an offset, just
 like the `hash_node` struct did and this had me confused for a while. But notice
 that we have the addition of the `size_max` field which represents the size
 allocated for the tensor.
@@ -728,4 +732,314 @@ $95 = {iface = {
   context = 0x555555705540, size = 64, usage = GGML_BACKEND_BUFFER_USAGE_COMPUTE}
 ```
 So this is how the actual memory buffer is allocated and is what the
-`node_alloc` instances above point into.
+`node_alloc` instances above point into. So we have a memory buffer, that is
+for a CPU backend a malloced memory block that can be used, for a CUDA device
+this would be a memory block on the device allocated with cudaMalloc or
+something like that.
+
+Now, this is the end of `ggml_gallocr_reserve_n`.
+
+If `ggml_gallocr_reserve_n` was called by `ggml_galloc_alloc_graph` then we will
+be back in:
+```c++
+    // reset buffers
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        if (galloc->buffers[i] != NULL) {
+            ggml_backend_buffer_reset(galloc->buffers[i]);
+        }
+    }
+```
+For the CPU backend the reset is a no-op (or is actually a null function pointer).
+
+Next, we are going to allocate the tensors, starting with the leafs:
+```c++
+    // allocate the graph tensors from the previous assignments
+    // leafs
+    for (int i = 0; i < graph->n_leafs; i++) {
+        struct ggml_tensor * leaf = graph->leafs[i];
+        struct leaf_alloc * leaf_alloc = &galloc->leaf_allocs[i];
+        ggml_gallocr_init_tensor(galloc, leaf, &leaf_alloc->leaf);
+    }
+```
+Notice that this first gets the leaf tensor from the graph, and then gets the
+`leaf_alloc` from galloc and calls `ggml_gallocr_init_tensor` with them:
+```c++
+static void ggml_gallocr_init_tensor(ggml_gallocr_t galloc, struct ggml_tensor * tensor, struct tensor_alloc * tensor_alloc) {
+    int buffer_id = tensor_alloc->buffer_id;
+    assert(tensor->data || tensor->view_src || ggml_backend_buffer_get_alloc_size(galloc->buffers[buffer_id], tensor) <= tensor_alloc->size_max);
+
+    if (tensor->view_src != NULL) {
+        if (tensor->buffer == NULL) {
+            assert(tensor_alloc->offset == SIZE_MAX);
+            if (tensor->view_src->buffer == NULL) {
+                // this tensor was allocated without ggml-backend
+                return;
+            }
+            ggml_backend_view_init(tensor);
+        }
+    } else {
+        if (tensor->data == NULL) {
+            assert(tensor_alloc->offset != SIZE_MAX);
+            assert(ggml_backend_buffer_get_alloc_size(galloc->buffers[buffer_id], tensor) <= tensor_alloc->size_max);
+
+--->        void * base = ggml_backend_buffer_get_base(galloc->buffers[buffer_id]);
+            void * addr = (char *)base + tensor_alloc->offset;
+            ggml_backend_tensor_alloc(galloc->buffers[buffer_id], tensor, addr);
+        } else {
+            if (tensor->buffer == NULL) {
+                // this tensor was allocated without ggml-backend
+                return;
+            }
+        }
+    }
+}
+```
+So here we are getting the base address of the buffer, like the pointer that
+malloc returned to the memory. And this will calculate the offset into this
+memory using the offset that was set in the `tensor_alloc` struct. This address
+is then used to call `ggml_backend_tensor_alloc`:
+```c++
+void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    GGML_ASSERT(tensor->buffer == NULL);
+    GGML_ASSERT(tensor->data == NULL);
+    GGML_ASSERT(tensor->view_src == NULL);
+    GGML_ASSERT(addr >= ggml_backend_buffer_get_base(buffer));
+    GGML_ASSERT((char *)addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
+                (char *)ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
+
+    tensor->buffer = buffer;
+    tensor->data = addr;
+    ggml_backend_buffer_init_tensor(buffer, tensor);
+}
+```
+And here we can see that the tensor's buffer is set and the data pointer is set.
+For the b leaf this is a little more interesting:
+```console
+(gdb) p base
+$102 = (void *) 0x555555705540
+(gdb) p addr
+$103 = (void *) 0x555555705560
+```
+
+Then the same is done for the node(s):
+```c++
+    // nodes
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        struct node_alloc * node_alloc = &galloc->node_allocs[i];
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            struct ggml_tensor * src = node->src[j];
+            if (src == NULL) {
+                continue;
+            }
+            ggml_gallocr_init_tensor(galloc, src, &node_alloc->src[j]);
+        }
+        ggml_gallocr_init_tensor(galloc, node, &node_alloc->dst);
+    }
+
+    return true;
+```
+Now, for the leafs that were already allocated, they had their buffer and data
+pointers set that is, they will be skipped in `ggml_gallocr_init_tensor`.
+And after that the node itself will be initialized, and recall that it will
+be pointing to the same memory as the leaf tensor a.
+
+And after this we will return to:
+```c++
+bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+    GGML_ASSERT((int)sched->hash_set.size >= graph->n_nodes + graph->n_leafs);
+
+    ggml_backend_sched_split_graph(sched, graph);
+
+
+    if (!ggml_backend_sched_alloc_splits(sched)) {
+        return false;
+    }
+
+--> sched->is_alloc = true;
+
+    return true;
+}
+```
+So this is setting the `is_alloc` flag to true and then returning. So that
+was the last thing to happen in `ggml_backend_sched_alloc_graph`.
+
+So the tensors in the graph have now a buffer and a pointer to the memory in
+that buffer set. Now, if this memory is on a CPU device we could set it
+directly using the data pointer but if the backend is a CUDA device we would
+need to copy the data to the device memory.
+
+
+
+In the example I've been using [sched-issue.c](../fundamentals/ggml/src/sched-issue.c)
+I want to simulate an issue I've seen with the new Vision API
+(this is not finished or merged yet). What is happening there is that we have
+a vision and a language model but they are built and computed separately but
+the both share the same scheduler. First the language model graph is built and
+`ggml_backend_sched_reserve` is called using the language model graph. 
+
+After `ggml_backend_sched_reserve` has been called the tensor involved in the
+language model graph will have been allocated and they will have a buffer
+and a data pointer to the memory in the buffer set. So, we then come to the
+vision model which builds its own graph and calls 
+
+So after reserve, we can explore the state of the tensors:
+```console
+(gdb) p *a
+$3 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555705590, ne = {1, 1,
+    1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1,
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0,
+  data = 0x555555705540, name = "a", '\000' <repeats 62 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p *b
+$4 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555705590, ne = {1, 1, 
+    1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, 
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, 
+  data = 0x555555705560, name = "b", '\000' <repeats 62 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+
+  (gdb) p *mul
+$7 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555705590, ne = {1, 1,
+    1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_MUL, op_params = {0 <repeats 16 times>}, flags = 0,
+  src = {0x7ffff6600060, 0x7ffff66001d0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0,
+  view_offs = 0, data = 0x555555705540, name = "mul", '\000' <repeats 60 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+```
+And we can see that they have their buffer and data pointers set.
+
+And we can check the backend ids for the tensors:
+```console
+(gdb) p sched->hv_tensor_backend_ids[ggml_hash(a) % sched->hash_set->size]
+$9 = 0
+(gdb) p sched->hv_tensor_backend_ids[ggml_hash(b) % sched->hash_set->size]
+$10 = 0
+(gdb) p sched->hv_tensor_backend_ids[ggml_hash(mul) % sched->hash_set->size]
+$11 = 0
+```
+And the graph allocation information:
+```console
+(gdb) p sched->galloc->hash_values[ggml_hash(a) % sched->galloc->hash_set->size]
+$12 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = false}
+
+(gdb) p sched->galloc->hash_values[ggml_hash(b) % sched->galloc->hash_set->size]
+$13 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = false}
+
+(gdb) p sched->galloc->hash_values[ggml_hash(mul) % sched->galloc->hash_set->size]
+$14 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
+```
+And the splits (just in case they become important):
+```console
+(gdb) p sched->n_splits
+$15 = 1
+
+(gdb) p sched->splits[0]
+$16 = {backend_id = 0, i_start = 0, i_end = 1, inputs = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    0x0, 0x0}, n_inputs = 0, graph = {size = 0, n_nodes = 1, n_leafs = 0, nodes = 0x7ffff6600500,
+    grads = 0x0, grad_accs = 0x0, leafs = 0x0, visited_hash_set = {size = 0, used = 0x0,
+      keys = 0x0}, order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT}}
+```
+
+So what I'm wondering about is what will happen when I call
+`ggml_backend_sched_alloc_graph` with the vision graph?  
+```console
+    // Allocate the graph in the scheduler for the second graph.
+    if (!ggml_backend_sched_alloc_graph(sched, g2)) {
+        fprintf(stderr, "Failed to allocate graph 2\n");
+        ggml_backend_sched_free(sched);
+        ggml_backend_free(cpu_backend);
+        return 1;
+    }
+
+(gdb) p ggml_graph_print(graph)
+=== GRAPH ===
+n_nodes = 2
+ -   0: [     1,     1,     1]              MUL  
+ -   1: [     1,     1,     1]              MUL  
+n_leafs = 3
+ -   0: [     1,     1]     NONE                c
+ -   1: [     1,     1]     NONE               a2
+ -   2: [     1,     1]     NONE               b2
+========================================
+```
+And recall that `ggml_backend_sched_alloc_graph` looks like this:
+```c++
+bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+    GGML_ASSERT((int)sched->hash_set.size >= graph->n_nodes + graph->n_leafs);
+
+    ggml_backend_sched_split_graph(sched, graph);
+
+
+    if (!ggml_backend_sched_alloc_splits(sched)) {
+        return false;
+    }
+
+    sched->is_alloc = true;
+
+    return true;
+}
+```
+So we will call split graph first. sched currently look like this:
+```console
+(gdb) p *sched
+$14 = {is_reset = false, is_alloc = true, n_backends = 1, backends = {0x5555556f8ea0,
+    0x0 <repeats 15 times>}, bufts = {
+    0x555555661680 <ggml_backend_cpu_buffer_type::ggml_backend_cpu_buffer_type>,
+    0x0 <repeats 15 times>}, galloc = 0x5555557040a0, hash_set = {size = 2053,
+    used = 0x5555556fd3b0, keys = 0x5555556f9380}, hv_tensor_backend_ids = 0x5555556fd4c0,
+  hv_tensor_copies = 0x5555556ff4e0, node_backend_ids = 0x7ffff7b7f010,
+  leaf_backend_ids = 0x7ffff7b54010, prev_node_backend_ids = 0x7ffff7b29010,
+  prev_leaf_backend_ids = 0x7ffff7afe010, graph = {size = 22, n_nodes = 1, n_leafs = 2,
+    nodes = 0x5555557051e0, grads = 0x0, grad_accs = 0x0, leafs = 0x5555557052a0,
+    visited_hash_set = {size = 0, used = 0x0, keys = 0x0},
+    order = GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT}, splits = 0x555555703510, n_splits = 1,
+  splits_capacity = 16, n_copies = 1, cur_copy = 0, events = {{0x0, 0x0, 0x0,
+      0x0} <repeats 16 times>}, graph_inputs = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+  n_graph_inputs = 0, ctx = 0x5555556f87d0, callback_eval = 0x0, callback_eval_user_data = 0x0,
+  context_buffer = 0x7ffff5800010 "", context_buffer_size = 13828752, debug = 2}
+```
+First, a number of fields will be reset:
+```c++
+static void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+    // reset splits
+    sched->n_splits = 0;
+    sched->n_graph_inputs = 0;
+    sched->is_reset = false;
+
+    struct ggml_init_params params = {
+        /* .mem_size =   */ sched->context_buffer_size,
+        /* .mem_buffer = */ sched->context_buffer,
+        /* .no_alloc =   */ true
+    };
+
+    ggml_free(sched->ctx);
+
+    sched->ctx = ggml_init(params);
+    if (sched->ctx == NULL) {
+        GGML_ABORT("%s: failed to initialize context\n", __func__);
+    }
+```
+Notice that a new ggml_context will be initialized.
+
+Later the graph size will be updated and the nodes and leafs will be reallocated:
+```c++
+    int graph_size = std::max(graph->n_nodes, graph->n_leafs) + sched->n_splits*GGML_SCHED_MAX_SPLIT_INPUTS*2*sched->n_copies;
+    if (sched->graph.size < graph_size) {
+        sched->graph.size = graph_size;
+        sched->graph.nodes = (ggml_tensor **) realloc(sched->graph.nodes, graph_size * sizeof(struct ggml_tensor *));
+        sched->graph.leafs = (ggml_tensor **) realloc(sched->graph.leafs, graph_size * sizeof(struct ggml_tensor *));
+        GGML_ASSERT(sched->graph.nodes != NULL);
+        GGML_ASSERT(sched->graph.leafs != NULL);
+    }
+    sched->graph.n_nodes = 0;
+    sched->graph.n_leafs = 0;
+```
+Just to show that the nodes are currently from graph 1:
+```console
+(gdb) p *sched->graph.nodes[0][0]->src[0]
+$36 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555705590, ne = {1, 1,
+    1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1,
+  src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0,
+  data = 0x555555705540, name = "a", '\000' <repeats 62 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+```
