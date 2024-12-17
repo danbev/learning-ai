@@ -69,16 +69,19 @@ int main(int argc, char **argv) {
         ggml_backend_set_n_threads_fn(cpu_backend, 1);
     }
 
-    ggml_backend_t backends[] = {cpu_backend};
+    ggml_backend_t backends[] = {cuda_backend, cpu_backend};
     ggml_backend_buffer_type_t buffer_types[] = {
+        ggml_backend_get_default_buffer_type(cuda_backend),
         ggml_backend_get_default_buffer_type(cpu_backend)
     };
     size_t graph_size = ggml_graph_size(l_g);
-    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 1, graph_size, false);
+    bool parallel = false;
+    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 2, graph_size, parallel);
 
     if(!ggml_backend_sched_reserve(sched, l_g)) {
         fprintf(stderr, "Failed to reserve graph\n");
         ggml_backend_sched_free(sched);
+        ggml_backend_free(cuda_backend);
         ggml_backend_free(cpu_backend);
         return 1;
     }
@@ -87,6 +90,7 @@ int main(int argc, char **argv) {
     if (!ggml_backend_sched_alloc_graph(sched, l_g)) {
         fprintf(stderr, "Failed to allocate graph\n");
         ggml_backend_sched_free(sched);
+        ggml_backend_free(cuda_backend);
         ggml_backend_free(cpu_backend);
         return 1;
     }
