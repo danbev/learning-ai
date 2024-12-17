@@ -8,7 +8,6 @@ bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
     ggml_backend_sched_split_graph(sched, graph);
 
-
     if (!ggml_backend_sched_alloc_splits(sched)) {  <-------
         return false;
     }
@@ -139,6 +138,28 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
 }
 ```
 We can see that the hash table is initialized and the allocators are reset.
+So first what will happen is that the hash tables will be populated by calling
+`ggml_gallocr_alloc_graph_impl`. `ggml_gallocr` is a struct that holds
+backend buffers, their types, a hash table and values for nodes, and also
+allocation arrays for nodes and leafs.
+```c++
+struct ggml_gallocr {
+    ggml_backend_buffer_type_t * bufts; // [n_buffers]
+    ggml_backend_buffer_t * buffers; // [n_buffers]
+    struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
+    int n_buffers;
+
+    struct ggml_hash_set hash_set;
+    struct hash_node * hash_values; // [hash_set.size]
+
+    struct node_alloc * node_allocs; // [n_nodes]
+    int n_nodes;
+
+    struct leaf_alloc * leaf_allocs; // [n_leafs]
+    int n_leafs;
+};
+```
+Above we can see that that hash_set if freedgT
 
 ```c++
 static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
@@ -223,8 +244,8 @@ static bool ggml_op_can_inplace(enum ggml_op op) {
     }
 }
 ```
-The current node is not an operations so this will not be entered this time
-but later for the `mul` node it should be.
+The current node is not an operations but a leaf node so this will not be
+entered this time but later for the `mul` node it should be.
 ```c++
         // allocate tensor from the buffer
         struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
@@ -338,8 +359,9 @@ Next, we will iterate over the nodes:
     }
 ```
 So this will iterate over all the nodes in the graph and for each src update
-the `n_children` of the src tensor `hash_node`. And notice that the next check
-is checking if the src tensors is an input tensor and not if the current node is.
+`n_children` of the src tensor `hash_node`. And notice that the next check
+is checking if the `src` tensors is an input tensor and not if the current node
+is.
 
 So this will call `ggml_gallocr_allocate_node` similar to what we did for the
 leafs above. And again notice that this is passing in src, that is tensor `a`
@@ -351,7 +373,7 @@ and there is a check in for this in `ggml_gallocr_allocate_node`:
         assert(hn->offset == 0);
 ```
 
-Next tensors (not inputs or leafs are allocated, so operations?):
+Next tensors nodes (operations) are allocated:
 ```c++
     // allocate tensors
     for (int i = 0; i < graph->n_nodes; i++) {
@@ -376,10 +398,9 @@ In this case parent will be tensor a:
 $37 = "a", '\000' <repeats 62 times>
 ```
 And we will again call `ggml_gallocr_allocate_node` for this tensor and like
-before it has already been allocated.
+before it will return as it has already been allocated.
 
-Now, we will allocate the mul tensor:
-```console
+Now, we will allocate the `mul` tensor:
 ```c++
         // allocate node
         ggml_gallocr_allocate_node(galloc, node, buffer_id);
@@ -389,7 +410,6 @@ Now, in this case the operation can be made inplace:
 (gdb) p ggml_op_can_inplace(node->op)
 $42 = true
 ```
-
 ```c++
         if (ggml_op_can_inplace(node->op)) {
             for (int i = 0; i < GGML_MAX_SRC; i++) {
@@ -441,7 +461,10 @@ $42 = true
         }
 ```
 In our case `a` has one child, `n_children` is 1 and no views, `n_views` is 0,
-and it is not a view. Now, this is interesting what happnes next:
+and it is not a view. And note that output tensors cannot be resued, and the
+tensor need to have the same type and dimensions (layout).
+
+Now, this is interesting what happnes next:
 ```c++
                         hn->buffer_id = p_hn->buffer_id;
                         hn->offset = p_hn->offset;
@@ -451,16 +474,25 @@ and it is not a view. Now, this is interesting what happnes next:
 to the one that `a` has, and also the same offset that `a` has. _So this is how
 tensors in a graph can be reused_. The mul tensor will now use `a`'s buffer id
 and offset.
+```console
+(gdb) p parent->name
+$46 = "l_a", '\000' <repeats 60 times>
+(gdb) p *p_hn
+$45 = {n_children = 1, n_views = 0, buffer_id = 1, offset = 0, allocated = true}
+```
+So the hash node entry for the multiplication operation will now have the same
+buffer id and offset as the `l_a` tensor.
 
-The `hash_node` struct is created for each tensor and hold allocation releated
-metadata and is used for graph execution planning. It provides information about
-where the tensor is allocated (which buffer and offset), if it has children
-and if it is allocated or not. But this is still about planning I think and
-the other struct we will see later hold similar information but for a different
-stage so it might be good to think of it this way. Like even during planning
-if all the leafs and nodes are iterated over it would be possible to see when
-a node/leaf is no longer used anymore and then reuse the buffer and offset for
-another tensor, just like we saw above.
+An instance of the `hash_node` struct is created for each tensor and hold
+allocation releated metadata and is used for graph execution planning. It
+provides information about where the tensor is allocated (which buffer and
+offset), if it has children and if it is allocated or not. But this is still
+about planning I think and the other structs (node_alloc etc) we will see later
+hold similar information but for a different stage so it might be good to think
+of it this way. Like even during planning if all the leafs and nodes are
+iterated over it would be possible to see when a node/leaf is no longer used
+anymore and then reuse the buffer and offset for another tensor, just like we
+saw above.
 
 Back in `ggml_gallocr_alloc_graph_impl` we then have the following which is
 just for logging:
@@ -514,9 +546,29 @@ This time, the parents `hash_node` will have its `n_children` decremented which
 will bring the count down to zero. It is not a view so that is skipped and since
 we set `p_hn->allocated=false` ealier this will not be freed which is good as
 it is reused by the mul tensor.
-But for the `b` tensor it will be freed as it has not been reused.
+But for the `b` tensor it will be freed as it has not been reused. It would not
+have been freed though if it was marked as an output tensor:
+```c++
+static void ggml_gallocr_free_node(ggml_gallocr_t galloc, struct ggml_tensor * node) {
+    // graph outputs are never freed
+    if (node->flags & GGML_TENSOR_FLAG_OUTPUT) {
+        AT_PRINTF("not freeing output %s\n", node->name);
+        return;
+    }
 
-This will then return back to `ggml_gallocr_reserve_n`:
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+    size_t offset = hn->offset;
+    int buffer_id = hn->buffer_id;
+    struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
+    ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
+    size_t size = ggml_backend_buft_get_alloc_size(buft, node);
+    ggml_dyn_tallocr_free_tensor(alloc, offset, size, node);
+    hn->allocated = false;
+}
+```
+
+This will then return back to `ggml_gallocr_reserve_n`. And now we will
+use the information from that was created/set in `ggml_gallocr_alloc_graph_impl`:
 ```c++
     // set the node_allocs from the hash table
     if (galloc->n_nodes < graph->n_nodes) {
@@ -565,19 +617,20 @@ be executed.
             node_alloc->dst.offset = SIZE_MAX;
             node_alloc->dst.size_max = 0;
         } else {
-            struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+------->    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
             node_alloc->dst.buffer_id = hn->buffer_id;
             node_alloc->dst.offset    = hn->offset;
             node_alloc->dst.size_max  = ggml_backend_buft_get_alloc_size(galloc->bufts[hn->buffer_id], node);
         }
         ...
 ```
-Notice that the `hash_node` for this node is retrieved (so from the "planning")
-and it will set the `buffer_id` and `offset` to the values that were of
-`node_alloc`: 
+Notice that the `hash_node` for this node is retrieved (from the "planning phase")
+and it will set the `buffer_id` and `offset` from the hash node and set them
+on the `node_alloc` instance. And the size will be by calling the backend
+
 ```console
 (gdb) p *hn
-$66 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
+$65 = {n_children = 0, n_views = 0, buffer_id = 1, offset = 0, allocated = true}
 ```
 And recall that these are the values for the leaf tensor `a` as it was resued
 by above. But we are also setting the `size_max` field which is the size which
@@ -624,6 +677,26 @@ $80 = {buffer_id = 0, offset = 32, size_max = 4}
 The rest of the sources will have `buffer_id` set to -1 and `offset` to
 `SIZE_MAX` and `size_max` to 0.
 
+This is what the node/operation tensors `node_alloc` will look like:
+```console
+(gdb) p galloc->node_allocs[0]
+$73 = {
+  dst = {buffer_id = 1, offset = 0,  size_max = 4},
+  src = {
+        {buffer_id = 1, offset = 0,  size_max = 4},
+        {buffer_id = 1, offset = 32, size_max = 4},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0},
+        {buffer_id = -1, offset = 18446744073709551615, size_max = 0}
+  }
+}
+```
+
 After that we will do something similar but for leafs:
 ```c++
     if (galloc->n_leafs < graph->n_leafs) {
@@ -653,7 +726,7 @@ $84 = {leaf = {buffer_id = 0, offset = 0, size_max = 4}}
 $85 = {leaf = {buffer_id = 0, offset = 32, size_max = 4}}
 ```
 
-Next we will iterate over all the buffers (just 1 in this case)
+Next we will iterate over all the buffers:
 ```c++
     // reallocate buffers if needed
     for (int i = 0; i < galloc->n_buffers; i++) {
@@ -731,13 +804,73 @@ $95 = {iface = {
   buft = 0x555555661680 <ggml_backend_cpu_buffer_type::ggml_backend_cpu_buffer_type>,
   context = 0x555555705540, size = 64, usage = GGML_BACKEND_BUFFER_USAGE_COMPUTE}
 ```
+
 So this is how the actual memory buffer is allocated and is what the
 `node_alloc` instances above point into. So we have a memory buffer, that is
 for a CPU backend a malloced memory block that can be used, for a CUDA device
 this would be a memory block on the device allocated with cudaMalloc or
 something like that.
+```console
+(gdb) p galloc->n_buffers
+$87 = 2
 
-Now, this is the end of `ggml_gallocr_reserve_n`.
+```
+
+Now, this is the end of `ggml_gallocr_reserve_n`. To recap what has been done
+is to plan and find an optimal usage/resue of tensors in memory. And the backend
+buffers have been allocated and the `node_alloc` and `leaf_alloc` structs have
+been filled with information about where the tensors are allocated in memory.
+But we still havn't touched the actual tensors them self, like their buffer
+and data fields:
+```console
+(gdb) p *graph->nodes[0]
+$84 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1},
+  nb = {4, 4, 4, 4}, op = GGML_OP_MUL, op_params = {0 <repeats 16 times>}, flags = 0, src = {
+    0x7fffcb600060, 0x7fffcb6001d0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0,
+  view_offs = 0, data = 0x0, name = "l_r", '\000' <repeats 60 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p *graph->leafs[0]
+$85 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1}, 
+  nb = {4, 4, 4, 4}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, src = {0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "l_a", '\000' <repeats 60 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+(gdb) p *graph->leafs[1]
+$86 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1}, 
+  nb = {4, 4, 4, 4}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 1, src = {0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0, data = 0x0, 
+  name = "l_b", '\000' <repeats 60 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+This will return back to ggml_gallocr_reserve:
+```c++
+    ggml_backend_sched_reset(sched);
+
+    return true;
+}
+```
+So what is reset actually doing:
+```c++
+void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
+    // reset state for the next run
+    if (!sched->is_reset) {
+        ggml_hash_set_reset(&sched->hash_set);
+        memset(sched->hv_tensor_backend_ids, -1, sched->hash_set.size * sizeof(sched->hv_tensor_backend_ids[0]));
+        memset(sched->hv_tensor_copies,       0, sched->hash_set.size * sched->n_backends * sched->n_copies * sizeof(struct ggml_tensor *));
+        sched->is_reset = true;
+    }
+    sched->is_alloc = false;
+}
+
+void ggml_hash_set_reset(struct ggml_hash_set * hash_set) {
+    memset(hash_set->used, 0, sizeof(ggml_bitset_t) * ggml_bitset_size(hash_set->size));
+}
+```
+So this is clearning/resetting the sched hash_set, but note that the galloc
+instance is not reset (which makes sense as it has not been used yet).
+
+_wip_
+
 
 If `ggml_gallocr_reserve_n` was called by `ggml_galloc_alloc_graph` then we will
 be back in:
