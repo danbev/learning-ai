@@ -30,6 +30,9 @@ int main(int argc, char **argv) {
     };
     struct ggml_context* ctx = ggml_init(params);
 
+    size_t count = ggml_backend_reg_count();
+    printf("Number of backends registered: %ld\n", count);
+
     // Tensors for the first graph (simulating the language model):
     struct ggml_tensor* l_a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     ggml_set_input(l_a);
@@ -49,6 +52,11 @@ int main(int argc, char **argv) {
 
     // Create a scheduler.
     ggml_backend_t cpu_backend = ggml_backend_init_by_name("CPU", NULL);
+    ggml_backend_t cuda_backend = ggml_backend_init_by_name("CUDA0", NULL);
+    if (!cuda_backend) {
+        fprintf(stderr, "Failed to initialize CUDA backend. Did you forget to compile ggml with GGML_CUDA?\n");
+        return 1;
+    }
 
     auto threadpool_params = ggml_threadpool_params_default(1);
     auto threadpool = ggml_threadpool_new(&threadpool_params);
