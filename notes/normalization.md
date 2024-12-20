@@ -96,3 +96,49 @@ Zero can be important to have 0.0 in the floating point range, for example when
 using a sigmoid function. If we have a value that is very large, then the
 sigmoid function will return 1.0. If we have a value that is very small, then
 the sigmoid function will return 0.0
+
+### Embedding normalization
+Another motivation for normalizing data can be found in the context of
+embeddings where we want similar entities to have similar embeddings. Lets think
+about this in terms of words. Lets say we have the words "cat", "kittens",
+"tree", and "dog".
+
+```
+Unnormalized vectors:
+cat    = (6, 6)   ||cat|| = sqrt(6^2 + 6^2) = 8.485
+kitten = (3, 3)   ||kitten|| = sqrt(3^2 + 3^2) = 4.243
+dog    = (7, 2)   ||dog|| = sqrt(7^2 + 2^2) = 7.280
+tree   = (1, 3)   ||tree|| = sqrt(1^2 + 3^2) = 3.162
+
+Dot products unnormalized:
+cat · dog     = 6*7 + 6*2 = 54
+kitten · dog  = 3*7 + 3*2 = 27
+Notice that this is saying that cat is almost twice as similar to dog as kitten.
+
+cat · tree    = 6*1 + 6*3 = 24
+kitten · tree = 3*1 + 3*3 = 12
+Again, this is saying that cat is twice as similar to tree as kitten.
+```
+So lets take a look what happends when we normalize the vectors:
+```
+cat_norm    ≈ (0.707, 0.707)
+kitten_norm ≈ (0.707, 0.707)
+dog_norm    ≈ (0.962, 0.275)
+tree_norm   ≈ (0.316, 0.949)
+
+
+Dot products normalized:
+cat_norm · dog_norm     ≈ 0.707 * 0.962 + 0.707 * 0.275 ≈ 0.873
+kitten_norm · dog_norm  ≈ 0.707 * 0.962 + 0.707 * 0.275 ≈ 0.873
+Now this is saying that cat and kitten are equally similar to dog.
+
+cat_norm · tree_norm    ≈ 0.707 * 0.316 + 0.707 * 0.949 ≈ 0.894
+kitten_norm · tree_norm ≈ 0.707 * 0.316 + 0.707 * 0.949 ≈ 0.894
+And this is saying that cat and kitten are equally similar to tree.
+```
+
+So this is not really about the similarities between cat and kittens but between
+these vectors and other vectors (words).
+
+### L1 Normalization
+This is also known as Manhattan or taxicab normalization.
