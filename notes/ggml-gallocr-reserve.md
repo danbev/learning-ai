@@ -871,7 +871,7 @@ instance is not reset (which makes sense as it has not been used yet).
 
 So after this, in [sched-issue.c](../fundamentals/ggml/src/sched-issue.c) we
 will now call `ggml_backend_sched_alloc_graph`.
-So called reserve which used the graph to plan the memory allocation and now
+So we called reserve which used the graph to plan the memory allocation and now
 we are going to actually allocate the memory for the tensors in the graph.
 
 ```c++
@@ -891,7 +891,7 @@ bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgra
 }
 ```
 So split graphs is called again, it was also called in `ggml_gallocr_reserve`
-and we have gone through this before.
+and we have gone through that previously.
 ```c++
 static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
     bool backend_ids_changed = false;
@@ -922,11 +922,11 @@ $4 = (ggml_backend_buffer_type_t) 0x555559960680 <ggml_backend_cpu_buffer_type::
 (gdb) p sched->bufts[sched->prev_node_backend_ids[i]]
 $5 = (ggml_backend_buffer_type_t) 0x555559960680 <ggml_backend_cpu_buffer_type::ggml_backend_cpu_buffer_type>
 ```
-So `backend_ids_changed` will be false and notice that the if statement is
-using ! so this block will be entered. This will iterate over all the leafs and
-check if the leafs backends buffer ids are the different or if the backend buffer
-types are different. If they are different then `backend_ids_changed` will be
-set to true.
+So `backend_ids_changed` will be false and notice that the second if statement
+is using ! so this block will be entered. This will iterate over all the leafs
+and check if the leafs backends buffer ids are the different or if the backend
+buffer types are different. If they are different then `backend_ids_changed`
+will be set to true.
 
 Next, we have the following which will check the `backend_ids_changed` is true
 or call `ggml_gallocr_alloc_graph`.
@@ -1144,6 +1144,11 @@ And after that we return true, and then set `sched->is_alloc` to true:
 }
 ```
 And then we are done in `ggml_backend_sched_alloc_graph`.
+
+To recap, we have split which splits the computation graph into smaller part
+which can run on different backends, and we have reserve which plans the memory
+usage, and alloc which actually allocates the memory for the tensors setting
+their buffers and data pointers.
 
 _wip_
 
