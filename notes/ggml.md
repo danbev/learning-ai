@@ -8,7 +8,7 @@ Github: https://github.com/ggerganov/ggml
 > **Note on Updates**
 > While I try to stay up to date with the development in GGML, it is challenging due to the rapid development. I will try to keep this document up to date but some things will become out of date until I have time to revisit them.
 
-The code examples can be found [ggml](../fundamentals/ggml/README.md) and
+The code examples can be found in [ggml](../fundamentals/ggml/README.md) and
 are updated more frequently (at least as often as I update the ggml submodule).
 
 ## Table of Contents
@@ -1878,7 +1878,7 @@ static size_t ggml_hash_insert(struct ggml_hash_set * hash_set, struct ggml_tens
     GGML_ABORT("fatal error");
 }
 ```
-Now, `ggml_hash` is uses the pointer of the tensor (minus the padding) as the hash:
+Now, `ggml_hash` uses the pointer of the tensor (minus the padding) as the hash:
 ```c
 // hash function for ggml_tensor
 static inline size_t ggml_hash(const struct ggml_tensor * p) {
@@ -1888,8 +1888,8 @@ static inline size_t ggml_hash(const struct ggml_tensor * p) {
 ```
 So we have a `hash_set->size` of 4099 and we need the map the hash value into this
 range of values which is what the modulo operation is used for.
-If we have know the size of the visited hash (4099 in this case) we can get the
-hash for any tensor:
+If we know the size of the visited hash (4099 in this case) we can get the hash
+for any tensor:
 ```console
 (gdb) p ggml_hash(node) % cgraph->visited_hash_set->size
 $7 = 3843
@@ -5760,8 +5760,8 @@ static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor 
 ```
 Notice that this is performing another call to `ggml_gallocr_hash_get` with
 the name node/tensor (`a`) and then it is checking if the tensor is allocated
-or not.  So the first thing that happens is hash node allocated field allocated
-is set to true.
+or not.  So the first thing that happens is `hash_node` allocated field is set
+to true.
 ```console
 (gdb) p galloc->hash_values[2]
 $88 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true}
@@ -5796,6 +5796,7 @@ But the following block will be executed:
 ```
 But the last part is of interest. So the dynamic tensor allocator is retrieved.
 And we also get a pointer to the buffer type.
+
 Now, lets look at `ggml_backend_buft_get_alloc_size`:
 ```c
 GGML_CALL size_t ggml_backend_buft_get_alloc_size(ggml_backend_buffer_type_t buft,
@@ -5964,7 +5965,7 @@ Next we have:
 Notice that the above is checking `alloc->n_free_blocks - 1` which is 0 in our
 case so this for loop will not be executed in this case.
 
-Instead the following block will be taken as `best_fit_block` was initilized
+Instead the following path will be taken as `best_fit_block` was initilized
 to MAX_SIZE which is -1:
 ```c
     if (best_fit_block == -1) {
@@ -7237,3 +7238,5 @@ bool llamafile_sgemm(int64_t, int64_t, int64_t, const void *, int64_t,
 ```
 Compared to a GEMM function this uses single precision floats which makes it
 faster but less percise. This is later used in `ggml_compute_forward_mul_mat`.
+
+### ggml_backend_schede
