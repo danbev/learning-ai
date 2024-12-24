@@ -51,13 +51,13 @@ Aspect Ratio Configurations (each box represents a 560x560 tile)
 
 1. 1x1 (Index 1)     2. 1x2 (Index 2)     3. 1x3 (Index 3)     4. 1x4 (Index 4)
 +-------+            +-------+            +-------+            +-------+
-|       |            |   1   |            |   1   |            |   1   |
+|       |            |   1   |(560x560)   |   1   |(560x560)   |   1   |(560x560)
 |   1   |            +-------+            +-------+            +-------+
-|       |            |   2   |            |   2   |            |   2   |
+|       |            |   2   |(560x560)   |   2   |(560x560)   |   2   |(560x560)
 +-------+            +-------+            +-------+            +-------+
-                                          |   3   |            |   3   |
+(560x560)                                 |   3   |(560x560)   |   3   |(560x560)
                                           +-------+            +-------+
-                                                               |   4   |
+                                                               |   4   |(560x560)
                                                                +-------+
 
 5. 2x1 (Index 5)     6. 2x2 (Index 6)     7. 3x1 (Index 7)
@@ -73,4 +73,224 @@ Aspect Ratio Configurations (each box represents a 560x560 tile)
 +-------+-------+-------+-------+
 
 ```
-Each tile represents a 560x560 pixel area. Numbers indicate processing order (left-to-right, top-to-bottom)
+Each tile represents a 560x560 pixel area and in the code the `tile_size` represents the dimension
+so 560 in this case. Numbers indicate processing order (left-to-right, top-to-bottom).
+
+```c++
+static std::pair<int,int> get_optimal_canvas(int w, int h, int n_tiles, int tile_size) {
+    printf("get_optimal_canvas: w=%d, h=%d, n_tiles=%d, tile_size=%d\n", w, h, n_tiles, tile_size);
+    // This is the size that the model expects.
+    int model_dim = tile_size;
+
+    // Calculate the width to height ratio.
+    //        10
+    // +-----------------+
+    // |                 |
+    // |                 | 5         10 / 5 = 2
+    // |                 |
+    // +-----------------+
+    //     5
+    // +--------+
+    // |        |
+    // |        |          10         5 / 10 = 0.5
+    // |        |
+    // |        |
+    // |        |
+    // |        |
+    // +--------+
+    float aspect = static_cast<float>(w) / h;
+
+    // If the width or height is less than the min dimension
+    if (w < model_dim || h < model_dim) {
+        if (aspect > 1.0f) {
+	        //      Wide image
+	        //  +-----------------+          Example: 300x200 image
+	        //  |                 |          aspect = 300 / 200 = 1.5
+	        //  |                 |          w = 560 (max of 300 and 560)
+	        //  |                 |          h = 373 (560 / 1.5)
+	        //  +-----------------+
+	        // Set width to model_dim or width.
+            w = std::max(w, model_dim);
+	        // Calculate a new height based on the aspect ratio.
+            h = static_cast<int>(w / aspect);
+        } else {
+            //	    Tall image
+            //	    +-----+
+            //	    |     |
+            //	    |     |
+            //	    |     |
+            //	    |     |
+            //	    +-----+
+            //
+            // Set height to model_dim or height.
+            h = std::max(h, model_dim);
+            // Calculate a new width based on the aspect ratio.
+            w = static_cast<int>(h * aspect);
+        }
+    }
+
+    int max_canvas_w = std::min(w, n_tiles * tile_size);
+    int max_canvas_h = std::min(h, n_tiles * tile_size);
+
+    return {max_canvas_w, max_canvas_h};
+}
+```
+So lets say we have 4 tiles and the model expects images to be 560x560. So the maximum
+canvas would be 4 * 560 = 2240 pixels.
+
+A canvas is like a drawing canvas where the tiles will be placed. The size of the canvas
+is determined by how many tiles we need. 
+For example, I have an image that is 1280x853 and 3 channels, the canvas for this would be
+1280x853 (since it is smaller than 2240).
+```
+                  1280
+     +------------------------------+
+     |                              |
+     |                              |
+     |                              |  853
+     |                              |
+     |                              |
+     |                              |
+     +------------------------------+
+```
+
+```c++
+static std::pair<int,int> scale_to_fit_canvas(int w, int h, int canvas_w, int canvas_h, int tile_size) {
+    double scale = std::min(double(canvas_w) / double(w), double(canvas_h) / double(h));
+
+    if (scale > 1.0) {
+	// Don't upscale the image if it is smaller than the canvas.
+        scale = 1.0;
+    }
+
+    // Apply scaling to get new width and height.
+    int new_w = int(std::floor(w * scale));
+    int new_h = int(std::floor(h * scale));
+
+    // Round down to multiples of tile_size
+    new_w = (new_w / tile_size) * tile_size;
+    new_h = (new_h / tile_size) * tile_size;
+
+    // Ensure that the new dimensions are at least tile_size(model dimension size)
+    if (new_w < tile_size) new_w = tile_size;
+    if (new_h < tile_size) new_h = tile_size;
+
+    return {new_w, new_h};
+}
+```
+So for the example of the 1280x853 image, the scaling factor will be 1. Notice that we will
+round this down:
+```
+width:
+  1280 / 560 = 2
+  2 * 560    = 1120
+height:
+  853 / 560 = 1
+  1 * 560   = 560
+
+                  1120
+     +------------------------------+
+     |                              |
+     |                              |
+     |                              |  560
+     |                              |
+     |                              |
+     |                              |
+     +------------------------------+
+
+Scaled size: 1120 x 560
+```
+
+```c++
+    // Resize to Width/Height/Channel
+    std::vector<unsigned char> resized_hwc(final_w * final_h * 3);
+    stbir_resize_uint8_linear(
+        input, i_w, i_h, i_w * 3,
+        resized_hwc.data(),
+        final_w, final_h, final_w * 3,
+        STBIR_RGB
+    );
+```
+This is creating a vector of size 1280x560x3 = 1881600. Notice that we then call `stbir_resize_uint8_linear`
+and we specify the input image, the input width, height, and channels. Then we specify where output
+data should be stored and the width and height, and channels for the output image. So this is where
+the scaling of the image happens.
+
+Then we are going to split this resized image into tiles;
+```c++
+static std::vector<std::vector<unsigned char>> subdivide_into_tiles(
+    const unsigned char* resized_hwc,
+    int final_w,
+    int final_h,
+    int tile_size
+) {
+    // Number horizontal tiles (x-axis)
+    int tiles_x = final_w / tile_size;
+    // Number of vertical tiles (y-axis)
+    int tiles_y = final_h / tile_size;
+
+    std::vector<std::vector<unsigned char>> tiles;
+    tiles.reserve(tiles_x * tiles_y);
+
+    // iterate over the y axis (rows)
+    for (int ty = 0; ty < tiles_y; ty++) {
+        // iterate over the x axis (columns)
+        for (int tx = 0; tx < tiles_x; tx++) {
+            // Create a vector to store the one tile
+            std::vector<unsigned char> tile_data(tile_size * tile_size * 3);
+
+            for (int tile_row = 0; tile_row < tile_size; tile_row++) {
+                for (int tile_col = 0; tile_col < tile_size; tile_col++) {
+                    int src_x = tx * tile_size + tile_col;
+                    int src_y = ty * tile_size + tile_row;
+
+                    int src_idx = (src_y * final_w + src_x) * 3;
+                    int dst_idx = (tile_row * tile_size + tile_col) * 3;
+
+                    // copy 3 channels
+                    tile_data[dst_idx + 0] = resized_hwc[src_idx + 0]; // Red
+                    tile_data[dst_idx + 1] = resized_hwc[src_idx + 1]; // Green
+                    tile_data[dst_idx + 2] = resized_hwc[src_idx + 2]; // Blue
+                }
+            }
+            tiles.push_back(std::move(tile_data));
+        }
+    }
+
+    return tiles;
+}
+```
+So after this we will have a vector of vectors of unsigned chars, where each vector represents
+a tile of the image. And the size of each tile is 560x560x3 = 940800 bytes. And the values will
+be in `[R G B] [R G B]...`.
+
+### Pre-processor config
+Some models have is information in `preprocessor_config.json` which is needed for the
+pre-processing of images, for example from Llama 3.2 Vision Instruct:
+```console
+{
+  "do_convert_rgb": true,
+  "do_normalize": true,
+  "do_pad": true,
+  "do_rescale": true,
+  "do_resize": true,
+  "image_mean": [
+    0.48145466,
+    0.4578275,
+    0.40821073
+  ],
+  "image_processor_type": "MllamaImageProcessor",
+  "image_std": [
+    0.26862954,
+    0.26130258,
+    0.27577711
+  ],
+  "max_image_tiles": 4,
+  "resample": 2,
+  "rescale_factor": 0.00392156862745098,
+  "size": {
+    "height": 560,
+    "width": 560
+  }
+}
+```
