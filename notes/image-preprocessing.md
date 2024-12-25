@@ -2,6 +2,60 @@
 This document is about image preprocessing in the context of multi-modal models, like
 Llama 3.2 Vision Instruct.
 
+### Pre-processor config
+Some models have is information in `preprocessor_config.json` which is needed for the
+pre-processing of images, for example Llama 3.2 Vision Instruct has the following:
+```console
+{
+  "do_convert_rgb": true,
+  "do_normalize": true,
+  "do_pad": true,
+  "do_rescale": true,
+  "do_resize": true,
+  "image_mean": [
+    0.48145466,
+    0.4578275,
+    0.40821073
+  ],
+  "image_processor_type": "MllamaImageProcessor",
+  "image_std": [
+    0.26862954,
+    0.26130258,
+    0.27577711
+  ],
+  "max_image_tiles": 4,
+  "resample": 2,
+  "rescale_factor": 0.00392156862745098,
+  "size": {
+    "height": 560,
+    "width": 560
+  }
+}
+```
+Using this information we can see that rescaling is used:
+```
+"do_rescale": true,
+"rescale_factor": 0.00392156862745098,
+```
+This is 1/255 which we can verify using:
+```console
+1/255 = 0.00392156862745098
+```
+This will recale to a range of [0,1] from [0,255].
+
+This means the preprocessing pipeline does:
+1. Convert to RGB if needed (`do_convert_rgb`: true)
+2. Rescale pixels using `rescale_factor`(`do_rescale`: true)
+```c++
+    pixel = pixel * 0.00392156862745098  // Same as pixel / 255.0f
+    or 
+    pixel = pixel / 255.0f
+```
+3. Normalize using mean/std (`do_normalize`: true)
+```c++
+    normalized = (pixel - mean) / std
+```
+4. Resize/pad to specified size (`do_resize": true, `do_pad`: true)
 
 ### Image loading
 Image loading in llama.cpp uses stb_image.h:
@@ -264,33 +318,3 @@ So after this we will have a vector of vectors of unsigned chars, where each vec
 a tile of the image. And the size of each tile is 560x560x3 = 940800 bytes. And the values will
 be in `[R G B] [R G B]...`.
 
-### Pre-processor config
-Some models have is information in `preprocessor_config.json` which is needed for the
-pre-processing of images, for example from Llama 3.2 Vision Instruct:
-```console
-{
-  "do_convert_rgb": true,
-  "do_normalize": true,
-  "do_pad": true,
-  "do_rescale": true,
-  "do_resize": true,
-  "image_mean": [
-    0.48145466,
-    0.4578275,
-    0.40821073
-  ],
-  "image_processor_type": "MllamaImageProcessor",
-  "image_std": [
-    0.26862954,
-    0.26130258,
-    0.27577711
-  ],
-  "max_image_tiles": 4,
-  "resample": 2,
-  "rescale_factor": 0.00392156862745098,
-  "size": {
-    "height": 560,
-    "width": 560
-  }
-}
-```
