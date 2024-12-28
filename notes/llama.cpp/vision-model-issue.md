@@ -315,12 +315,107 @@ ed90d9fd0b967add6f887ac9e65575ae9c73ece6  inp_raw.bin
 ```
 Comparing both files (llama.cpp first followed by Ollama):
 ```console
+(llama.cpp)
 3037b8632b350a80a8385cad90e517db83932994  inp_raw.bin
 
+(Ollama's)
 ed90d9fd0b967add6f887ac9e65575ae9c73ece6  inp_raw.bin
 ```
 _So we can see that we are not generating identical inputs to the model so there seems to be
 something wrong with how we are preprocessing the image_.
+
+The llama.cpp code that was used for the pre-processing was ported by looking at the Huggingface transformers
+code. Lets try doing the same but using Ollama's preprocessing code and see if we can get an exact match.
+
+```console
+Image loaded, width=1500, height=1749, channels=3
+Calculating optimal canvas for image 1500x1749 with max_tiles=4, tile_size=560
+Possible ratios and their canvas sizes:
+  Ratio 1x1 -> Canvas 560x560 (scale=0.320)
+  Ratio 1x2 -> Canvas 560x1120 (scale=0.373)
+  Ratio 1x3 -> Canvas 560x1680 (scale=0.373)
+  Ratio 1x4 -> Canvas 560x2240 (scale=0.373)
+  Ratio 2x1 -> Canvas 1120x560 (scale=0.320)
+  Ratio 2x2 -> Canvas 1120x1120 (scale=0.640)
+  Ratio 3x1 -> Canvas 1680x560 (scale=0.320)
+  Ratio 4x1 -> Canvas 2240x560 (scale=0.320)
+Scale selection (has_upscale=0, selected_scale=0.640):
+Selected canvas 1120x1120 (area=1254400)
+Canvas size: 1120 x 1120
+Scaled size: 1120 x 1120
+Selected aspect ratio index: 6
+Subdividing into 2x2 tiles (tile_size=560)
+Processing tile at 0,0
+Processing tile at 1,0
+Processing tile at 0,1
+Processing tile at 1,1
+Aspect ratio: 6
+n_tiles: 4, n_channels: 3, patch_size: 14, image_size: 560, n_patches: 1600, n_positions: 1601
+num_padding_patches: 7
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ggml_gallocr_reserve_n: reallocating Metal buffer from size 0.00 MiB to 2839.12 MiB
+ggml_gallocr_reserve_n: reallocating CPU buffer from size 0.00 MiB to 187.62 MiB
+inp_raw tensor type: f32
+inp_raw backend type: CPU
+inp_raw[0] = 1.930336
+inp_raw[1] = 1.930336
+inp_raw[2] = 1.930336
+inp_raw[3] = 1.930336
+inp_raw[4] = 1.930336
+inp_raw[5] = 1.930336
+inp_raw[6] = 1.930336
+inp_raw[7] = 1.930336
+inp_raw[8] = 1.930336
+inp_raw[9] = 1.930336
+aspect_ratio_id = 6
+output[0] = 6.445750
+output[1] = 20.882206
+output[2] = -2.809249
+output[3] = 1.198682
+output[4] = -3.665206
+output[5] = -18.842869
+output[6] = -3.300013
+output[7] = -0.508817
+output[8] = -0.843601
+output[9] = 1.558197
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+n_img_tokens = 15052800
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[3] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[8] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[13] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[18] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[23] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[28] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[33] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[38] ------
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ca_patch_emd[0] = 6.445750
+ca_patch_emd[1] = 20.882206
+ca_patch_emd[2] = -2.809249
+ca_patch_emd[3] = 1.198682
+ca_patch_emd[4] = -3.665206
+ca_patch_emd[5] = -18.842869
+ca_patch_emd[6] = -3.300013
+ca_patch_emd[7] = -0.508817
+ca_patch_emd[8] = -0.843601
+ca_patch_emd[9] = 1.558197
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+The image shows a picture of a tree in a field. The tree is in the center of the image and is surrounded by a field of grass. The tree is a light brown color with a darker brown trunk and branches. The leaves are a lighter shade of brown. The tree is standing in a
+main: decoded 60 tokens in 7.79 s, speed: 7.70 t/s
+```
+
+And the checksum for the file:
+```console
+$ shasum inp_raw.bin
+(llama.cpp)
+bb09af72e28d1c837ade0011ad33df5183520569  inp_raw.bin
+
+(Ollama's)
+ed90d9fd0b967add6f887ac9e65575ae9c73ece6  inp_raw.bin
+```
+Now, I think we should be able to get the exact same input (output from the preprocessing) for
+out model. Things that can effect this are the resizing, tiling, normalization, channels used, channel
+order.
 
 _wip_
 
