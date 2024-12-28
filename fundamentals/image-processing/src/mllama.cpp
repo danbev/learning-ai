@@ -466,6 +466,11 @@ int main() {
 
         llama_img* out = mllama_load_image_from_file("apple.jpg", max_tiles, tile_size);
 
+	// Print the first 10 values of the first tile:
+	for (int i = 0; i < 10; i++) {
+	    printf("%f\n", ((float*)out->data)[i]);
+	}
+
         // out->data is float* in CHW for each tile stacked vertically
         // out->width = 224
         // out->height = 224 * (# of tiles)
