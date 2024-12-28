@@ -471,6 +471,9 @@ int main() {
 	    printf("%f\n", ((float*)out->data)[i]);
 	}
 
+	int aspect_ratio_id = out->aspect_ratio;
+	printf("Aspect ratio ID: %d\n", aspect_ratio_id);
+
         // out->data is float* in CHW for each tile stacked vertically
         // out->width = 224
         // out->height = 224 * (# of tiles)
