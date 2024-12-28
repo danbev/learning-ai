@@ -10,11 +10,35 @@
 #include <limits>
 #include <array>
 
+#if defined(__clang__)
+    #pragma clang diagnostic push
+    // Disable *all* warnings from stb.
+    // Alternatively, you can selectively ignore some, e.g. "-Wunknown-pragmas"
+    #pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__) || defined(__GNUG__)
+    #pragma GCC diagnostic push
+    // Similarly, you can disable *all* or specific warnings:
+    // e.g. #pragma GCC diagnostic ignored "-Wall"
+    #pragma GCC diagnostic ignored "-Wswitch-default"
+#elif defined(_MSC_VER)
+    #pragma warning(push)
+    // Disable specific MSVC warnings:
+    #pragma warning(disable : 4244 4996)
+#endif
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize2.h"
+
+#if defined(__clang__)
+    #pragma clang diagnostic pop
+#elif defined(__GNUC__) || defined(__GNUG__)
+    #pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+    #pragma warning(pop)
+#endif
 
 struct llama_img {
     unsigned char* data = nullptr; // or float*
