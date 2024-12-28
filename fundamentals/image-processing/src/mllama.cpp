@@ -442,6 +442,7 @@ llama_img* mllama_load_image_from_file(const char* fname, int max_image_tiles, i
     // in Python, for j, (num_tiles_h, num_tiles_w) ...
     // we’d do something akin to:
     auto supported = get_all_supported_aspect_ratios(max_image_tiles);
+    printf("Supported aspect ratios size: %zu\n", supported.size());
     // we can find the index
     int ar_index = 0;
     for (size_t i = 0; i < supported.size(); i++) {
