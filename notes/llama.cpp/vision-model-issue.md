@@ -1,4 +1,6 @@
 ### Llama 3.2 Vision Instruct Model issues
+This is an issue I ran into while exploring the new Vision API in llama.cpp (not merged yet)
+and trying to get Llama 3.2 Vision Instruct to work with the model.
 
 ### Issue with callback in build_mllama
 TODO: document the issue that I ran into with the callback in build_mllama.
@@ -9,9 +11,89 @@ which is this image:
 
 ![image](../images/eiffel-tower-3349075_1280.jpg)
 
-Now, while this works and produces a pretty good output I've not been able to get it to
-work with all images. I can get a pretty good response for a photo of the Golden Gate bridge
-but if I try a close up on an apple I get a very poor response.
+Now, while this works and produces a pretty good output:
+```console
+llama_new_context_with_model: graph splits = 64
+token = 128006
+token = 882
+token = 128007
+token = 271
+token = 128256
+token = 3923
+token = 374
+token = 304
+token = 420
+token = 2217
+token = 30
+token = 128009
+token = 128006
+token = 78191
+token = 128007
+token = 271
+Loaded image: w=1280 h=853 c=3
+Chosen canvas: 1120 x 1120
+Resized (no pad) to: 746 x 1120
+Splitting to tiles => 2 x 2
+Supported aspect ratios: size: 8
+Aspect ratio ID: 6
+n_tiles: 4, n_channels: 3, patch_size: 14, image_size: 560, n_patches: 1600, n_positions: 1601
+num_padding_patches: 7
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ggml_gallocr_reserve_n: reallocating Metal buffer from size 0.00 MiB to 2839.12 MiB
+ggml_gallocr_reserve_n: reallocating CPU buffer from size 0.00 MiB to 187.62 MiB
+inp_raw tensor type: f32
+inp_raw backend type: CPU
+inp_raw[0] = 1.156620
+inp_raw[1] = 1.156620
+inp_raw[2] = 1.156620
+inp_raw[3] = 1.156620
+inp_raw[4] = 1.156620
+inp_raw[5] = 1.171218
+inp_raw[6] = 1.171218
+inp_raw[7] = 1.156620
+inp_raw[8] = 1.171218
+inp_raw[9] = 1.171218
+aspect_ratio_id = 6
+output[0] = 10.172008
+output[1] = 15.932920
+output[2] = -3.465006
+output[3] = 5.908316
+output[4] = -1.494109
+output[5] = -14.418842
+output[6] = -0.452144
+output[7] = 1.189293
+output[8] = -8.067196
+output[9] = -0.785143
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+n_img_tokens = 15052800
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[3] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[8] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[13] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[18] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[23] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[28] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[33] ------
+--------- use ca_patch_embd for K and V and store in kv_cache.layer[38] ------
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ca_patch_emd[0] = 10.172008
+ca_patch_emd[1] = 15.932920
+ca_patch_emd[2] = -3.465006
+ca_patch_emd[3] = 5.908316
+ca_patch_emd[4] = -1.494109
+ca_patch_emd[5] = -14.418842
+ca_patch_emd[6] = -0.452144
+ca_patch_emd[7] = 1.189293
+ca_patch_emd[8] = -8.067196
+ca_patch_emd[9] = -0.785143
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+The image shows a photograph of the Eiffel Tower in Paris, France.
+The tower is in the center of the image and is made of metal with a light brown color. It has a long, thin, rectangular shape and is standing on a square base. The background of the image is a
+main: decoded 60 tokens in 7.80 s, speed: 7.70 t/s
+```
+I've not been able to get it to work with all images.
+
+I can get a pretty good response for a photo of the Golden Gate bridge also but if I try a close
+up on an apple I get a very poor response (and other images that I've tried).
 
 I've been looking at the preprocessing as it is somewhat complex and not something that I've
 done before. TODO: link to documentation on the preprocessing.
@@ -237,6 +319,8 @@ Comparing both files (llama.cpp first followed by Ollama):
 
 ed90d9fd0b967add6f887ac9e65575ae9c73ece6  inp_raw.bin
 ```
-So we can see that we are not generating identical inputs to the model so there seems to be
-something wrong with how we are preprocessing the image.
+_So we can see that we are not generating identical inputs to the model so there seems to be
+something wrong with how we are preprocessing the image_.
+
+_wip_
 
