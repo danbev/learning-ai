@@ -149,7 +149,19 @@ Now, lets add the same to Ollama's code and see if its preprocessing produces th
 output. We have to modify the code a little but it is pretty similar and goes in the
 file `llama/mllama.cpp`:
 ```c++
+        size_t total_bytes = ggml_nbytes(inp_raw);
+        void* tensor_data = malloc(total_bytes);
+        if (tensor_data != NULL) {
+            ggml_backend_tensor_get(inp_raw, tensor_data, 0, total_bytes);
 
+            // Write all bytes to file
+            FILE* fp = fopen("inp_raw.bin", "wb");
+            if (fp != NULL) {
+                fwrite(tensor_data, 1, total_bytes, fp);
+                fclose(fp);
+            }
+            free(tensor_data);
+        }
 ```
 
 ```console
