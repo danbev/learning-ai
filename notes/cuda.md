@@ -188,3 +188,12 @@ When using streams we use the async version of memcpy, like `cudaMemcpyAsync`,
 and for launching a kernel we specify a stream as an argument.
 
 An example can be found in [streams.cu](../gpu/cuda/src/streams.cu).
+
+###  CMAKE_CUDA_FLAGS
+This is a cmake variable that is passed to `nvcc` when compiling CUDA code.
+
+#### FASTFP16_AVAILABLE
+This flag tells nvcc to enable the FP16 code paths in the CUDA code.
+```console
+$ cmake -S . -B build -DGGML_CUDA=ON -DCMAKE_CUDA_FLAGS="-DFASTFP16_AVAILABLE"
+```
