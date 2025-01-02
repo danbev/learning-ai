@@ -124,3 +124,8 @@ Notice that my GPU has a compute capability of 8.9 which is greater than the
 reported 520.
 So there is something wrong with the way the compute capability is being
 detected.
+
+Using the following cmake options worked for me
+```console
+cmake -S . -B build -DGGML_CUDA=ON -DGGML_CUDA_F16=ON -DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release
+```
