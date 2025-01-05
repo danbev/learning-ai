@@ -40,14 +40,14 @@ CXXFLAGS += -fopenmp
 WHOLE_ARCHIVE  = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
 WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whole-archive 
 WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-cpu.a -Wl,--no-whole-archive 
-WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
+#WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 WHOLE_ARCHIVE  = -Wl,-force_load,ggml/build/src/libggml.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-base.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cpu.a
-WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cuda.a
+#WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cuda.a
 endif
 
 .PHONY: all clean
@@ -94,6 +94,14 @@ conv2d-sched-cuda: conv2d-sched
 sched-issue-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 sched-issue-cuda: CC = $(CXX)
 sched-issue-cuda: sched-issue
+
+#.PHONY: run-sched-issue
+run-sched-issue: sched-issue-cuda
+	env GGML_SCHED_DEBUG=2 ./bin/sched-issue
+
+#.PHONY: debug-sched-issue
+debug-sched-issue: sched-issue-cuda
+	env GGML_SCHED_DEBUG=2 gdb --args ./bin/sched-issue
 
 .PHONY: run-backend-vulkan
 run-backend-vulkan: backend-vulkan
