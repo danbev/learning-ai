@@ -202,8 +202,106 @@ $38 = {buffer_id = 0, offset = 524384, size_max = 16384}
 ```
 So at this point, after the token generation prompt has been reserved the
 `max_size` is not set the the smaller size of 16384.
+Now, if we don't reserve this pp graph again then the `max_size` will be set to
+16384 (for this node that is). When we later call
+`ggml_backend_sched_alloc_graph(lctx.sched.get(), gf)` in `llama_decode_impl`
+there will be a check 
+```c++
+bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    if (ggml_gallocr_needs_realloc(galloc, graph)) {
+        ...
+```
+```c++
+static bool ggml_gallocr_node_needs_realloc(ggml_gallocr_t galloc, struct ggml_tensor * node, struct tensor_alloc * talloc) {
+    ...
 
-Following that we will again reserve the prefill prompt graph so that the
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        struct node_alloc * node_alloc = &galloc->node_allocs[i];
+
+        if (!ggml_gallocr_node_needs_realloc(galloc, node, &node_alloc->dst)) {
+            ...
+```
+So this is getting the node from the graph, and then the node_alloc from galloc:
+```console
+(gdb) p *node
+$42 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0,
+ne = {4096, 7, 1, 1}, nb = {4, 16384, 114688, 114688},
+op = GGML_OP_GET_ROWS, op_params = {0 <repeats 16 times>}, flags = 0,
+src = {0x555555b64320, 0x7ffff4a40980, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x0, name = "inp_embd", '\000' <repeats 55 times>,
+extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p node_alloc.dst
+$45 = {buffer_id = 0, offset = 8394752, size_max = 8388608}
+```
+And then calling `ggml_gallocr_node_needs_realloc`:
+```c++
+static bool ggml_gallocr_node_needs_realloc(ggml_gallocr_t galloc, struct ggml_tensor * node, struct tensor_alloc * talloc) {
+    size_t node_size = 0;
+    if (!node->data && !node->view_src) {
+        GGML_ASSERT(talloc->buffer_id >= 0); // prevent segfault when misusing the API
+        node_size = ggml_backend_buft_get_alloc_size(galloc->bufts[talloc->buffer_id], node);
+    }
+    return talloc->size_max >= node_size;
+}
+```
+```console
+(gdb) p talloc->size_max
+$47 = 8388608
+(gdb) p node_size
+$46 = 114688
+(gdb) p talloc->size_max >= node_size
+$48 = 1
+
+(gdb) p (bool) $48
+$7 = true
+```
+Since we re-reserved with the prefill prompt graph the `max_size` is set to
+8388608 and the node size is 114688. But if we did not re-reserve the prefill
+we would have the following situation:
+```console
+(gdb) p (bool) (talloc->size_max >= node_size)
+$11 = false
+```
+```c++
+static bool ggml_gallocr_needs_realloc(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    ...
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        struct node_alloc * node_alloc = &galloc->node_allocs[i];
+
+        if (!ggml_gallocr_node_needs_realloc(galloc, node, &node_alloc->dst)) {
+#ifndef NDEBUG
+            GGML_LOG_DEBUG("%s: node %s is not valid\n", __func__, node->name);
+#endif
+            return true;
+        }
+```
+So this will indeed return true because of the negative sign. And this will
+then return true which will cause a reserve:
+```c++
+bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    if (ggml_gallocr_needs_realloc(galloc, graph)) {
+        if (galloc->n_buffers == 1) {
+#ifndef NDEBUG
+            GGML_LOG_DEBUG("%s: reallocating buffers automatically\n", __func__);
+#endif
+            if (!ggml_gallocr_reserve(galloc, graph)) {
+                return false;
+            }
+        } else {
+#ifndef NDEBUG
+            GGML_LOG_DEBUG("%s: cannot reallocate multi buffer graph automatically, call reserve\n", __func__);
+#endif
+            return false;
+        }
+    }
+```
+Our previous reserve was done during the creation of the context and part of
+the startup and not a inference time.
+
+So this is why there is another reserve for the prefill prompt graph so that the
 sizes are correct for the first prompt as before this the sizes are those for
 the token generation.
 ```c++
