@@ -77,10 +77,37 @@ Notice that the size of the tensor is set to 8388608 which is the same as the
 and the offset is 839475.
 
 So that is after the reservation for the prefill prompt. Now, what happens when
-we use the token generation prompt and perform a reserve on that computation
-graph?  
-Well, `ggml_gallocr_reserve_n` will reset the 
+we use the token generation (tg) prompt and perform a reserve on that
+computation graph?  
+This is the code that will do this:
 ```c++
+            // reserve with tg graph to get the number of splits and nodes
+            llama_ubatch ubatch_tg = { true, 1, 1, n_seqs, &token, nullptr, nullptr, nullptr, nullptr, nullptr};
+            ggml_cgraph * gf_tg = llama_build_graph(*ctx, ubatch_tg, true);
+            ggml_backend_sched_reserve(ctx->sched.get(), gf_tg);
+            int n_splits_tg = ggml_backend_sched_get_n_splits(ctx->sched.get());
+            int n_nodes_tg = ggml_graph_n_nodes(gf_tg);
+```
+And this might be pointing out the obvious but the number of nodes and leafs
+are the same here for these computation graphs which one might expect::
+```console
+(gdb) p gf_pp->n_nodes
+$10 = 1030
+(gdb) p gf_pp->n_leafs 
+$11 = 359
+(gdb) p gf_tg->n_nodes 
+$12 = 1030
+(gdb) p gf_tg->n_leafs 
+$13 = 359
+```
+
+And, `ggml_gallocr_reserve_n` will reset:
+```c++
+    size_t min_hash_size = graph->n_nodes + graph->n_leafs;
+    // add 25% margin to avoid hash collisions
+    // Same as (min_hash_size = min_hash_size + (min_hash_size / 4))
+    min_hash_size += min_hash_size / 4;
+
     // initialize hash table
     if (galloc->hash_set.size < min_hash_size) {
         ggml_hash_set_free(&galloc->hash_set);
@@ -92,6 +119,12 @@ Well, `ggml_gallocr_reserve_n` will reset the
         GGML_ASSERT(galloc->hash_values != NULL);
     }
 ```
+So the above is comparing the schedulers current galloc hash set size and if it
+is smaller than the minimum hash size of the passed in graph then it will free
+the hash set and create a new one with the new size.
+
+In our case the hash set will not be reset.
+
 And the reset the dynamic tensor allocator:
 ```c++
     // reset allocators
@@ -104,6 +137,19 @@ And then perform the planning phase (setting gallocs hash nodes etc):
     // allocate in hash table
     ggml_gallocr_alloc_graph_impl(galloc, graph, node_buffer_ids, leaf_buffer_ids);
 ```
+The above will first reset the galloc hash set and then go throught the node
+planning stage creating all the hash nodes.
+```c++
+    // set the node_allocs from the hash table
+    if (galloc->n_nodes < graph->n_nodes) {
+        free(galloc->node_allocs);
+        galloc->node_allocs = calloc(graph->n_nodes, sizeof(struct node_alloc));
+        GGML_ASSERT(galloc->node_allocs != NULL);
+    }
+```
+In our case the number of nodes is the same so the node_allocs will not be
+reset.
+
 And then we have the same code as before:
 ```c++
             struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
@@ -128,7 +174,7 @@ $115 = 524384
 (gdb) p ggml_backend_buft_get_alloc_size(galloc->bufts[hn->buffer_id], node)
 $116 = 16384
 ```
-So in this case we have a different offset and a different size for the tensor.
+So in this case we have a different offset and a different size for this tensor.
 
 Then the splits an number of nodes for the token generation is retrieved:
 ```console
@@ -137,6 +183,26 @@ $118 = 1
 (gdb) p n_nodes_tg
 $119 = 1030
 ```
+If we inspect the
+```console
+(gdb) p ggml_hash_find((const ggml_hash_set*)&(ctx->sched.get()->galloc.hash_set), gf_pp->nodes[0])
+$34 = 1852
+(gdb) p ggml_hash_find((const ggml_hash_set*)&(ctx->sched.get()->galloc.hash_set), gf_tg->nodes[0])
+$35 = 1852
+```
+If we then compare the `node_alloc` for this node with the prefill prompt we
+can see that the prefill prompt (the first one below) had a much larger max
+size:
+```console
+(gdb) p ctx->sched.get().galloc.node_allocs[0].dst
+$106 = {buffer_id = 0, offset = 8394752, size_max = 8388608}
+
+(gdb) p ctx->sched.get()->galloc.node_allocs[0].dst
+$38 = {buffer_id = 0, offset = 524384, size_max = 16384}
+```
+So at this point, after the token generation prompt has been reserved the
+`max_size` is not set the the smaller size of 16384.
+
 Following that we will again reserve the prefill prompt graph so that the
 sizes are correct for the first prompt as before this the sizes are those for
 the token generation.
@@ -150,6 +216,80 @@ the token generation.
             }
 ```
 Why does the prefill prompt computation graph need to be built again?  
+
+The function `ggml_backed_sched_reserve` is also called in the following
+function:
+```c++
+static void llama_kv_cache_update_impl(struct llama_context & lctx) {
+    bool need_reserve = false;
+
+    if (lctx.kv_self.has_shift) {
+        if (!llama_kv_cache_can_shift(&lctx)) {
+            GGML_ABORT("The current context does not support K-shift");
+        }
+
+        // apply K-shift if needed
+        if (lctx.model.hparams.rope_type != LLAMA_ROPE_TYPE_NONE) {
+            ggml_backend_sched_reset(lctx.sched.get());
+
+            ggml_cgraph * gf = llama_build_graph_k_shift(lctx);
+
+            ggml_backend_sched_alloc_graph(lctx.sched.get(), gf);
+
+            llama_set_k_shift(lctx);
+
+            llama_graph_compute(lctx, gf, lctx.cparams.n_threads, lctx.threadpool);
+
+            need_reserve = true;
+        }
+
+        {
+            auto & kv_self = lctx.kv_self;
+
+            kv_self.has_shift = false;
+
+            for (uint32_t i = 0; i < kv_self.size; ++i) {
+                kv_self.cells[i].delta = 0;
+            }
+        }
+    }
+
+    // defragment the KV cache if needed
+    if (lctx.kv_self.do_defrag) {
+        llama_kv_cache_defrag_impl(lctx);
+
+        need_reserve = true;
+
+        lctx.kv_self.do_defrag = false;
+    }
+
+    // reserve a worst case graph again
+    if (need_reserve) {
+        // TODO: extract to a function
+        // build worst-case graph
+        uint32_t n_seqs = 1; // TODO: worst-case number of sequences
+        uint32_t n_tokens = std::min(lctx.cparams.n_ctx, lctx.cparams.n_ubatch);
+        llama_token token = llama_token_bos(&lctx.model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
+        llama_ubatch ubatch = { true, n_tokens, n_tokens / n_seqs, n_seqs, &token, nullptr, nullptr, nullptr, nullptr, nullptr};
+        ggml_cgraph * gf = llama_build_graph(lctx, ubatch, true);
+
+        // initialize scheduler with the worst-case graph
+        ggml_backend_sched_reset(lctx.sched.get());
+        if (!ggml_backend_sched_reserve(lctx.sched.get(), gf)) {
+            LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
+        }
+    }
+}
+```
+Now, if a k-shift is needed then the scheduler is reset and a new graph is built
+and the scheduler is allocated with the new graph which is then computed. But
+this would remove the previous graph and the buffers that were allocated for it.
+This is also the case for `llama_kv_cache_defrag_impl`.
+
+And I think this might be the reason why there is another worst case graph
+reservation done to "reset" this back to the ealier reservation state. And this
+is using the max prompt size as in this case the sequence length would be at
+the max because the kv cache needed shifting or defragmenting.
 
 ### hash sets
 What confused me initially has that when stepping through the code I found
