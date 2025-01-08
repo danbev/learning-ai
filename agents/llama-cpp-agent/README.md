@@ -77,6 +77,11 @@ and that it is possible to print to the console from the wasm module.
 
 ### Agent
 
+### Running the agent
+```console
+$ make run-agent
+```
+
 #### Download model
 There is no particular model that is needed for this agent, however is needs
 to be an instruction trained model.
