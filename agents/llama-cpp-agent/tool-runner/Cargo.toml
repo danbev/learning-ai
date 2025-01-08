@@ -1,0 +1,11 @@
+[package]
+name = "tool-runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+wasmtime = { version = "28.0.0", features = ["component-model", "async"] }
+wasmtime-wasi = { version = "28.0.0" }
+tokio = { version = "1.0", features = ["full"] }
+clap = "4.5.23"

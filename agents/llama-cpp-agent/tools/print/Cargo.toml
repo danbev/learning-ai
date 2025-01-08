@@ -1,0 +1,10 @@
+[package]
+name = "print-tool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wit-bindgen = "0.36.0"
+
+[lib]
+crate-type = ["cdylib"]

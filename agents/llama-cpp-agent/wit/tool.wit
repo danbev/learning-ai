@@ -1,0 +1,33 @@
+package llama-cpp:tool;
+
+interface types {
+
+  record tool-result {
+    success: bool,
+    data: string,
+    error: option<string>,
+  }
+
+  record tool-params {
+    name: string,
+    description: string,
+    %type: string,
+    required: bool,
+  }
+
+  record tool-metadata {
+    name: string,
+    description: string,
+    version: string,
+    params: list<tool-params>,
+  }
+
+}
+
+world tool-world {
+  use types.{tool-metadata, tool-params, tool-result};
+  export get-metadata: func() -> tool-metadata;
+  export execute: func(params: list<tuple<string, string>>) -> tool-result;
+
+  export run: func() -> result;
+}

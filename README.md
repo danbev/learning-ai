@@ -3,7 +3,9 @@ This repository contains notes and code examples related to AI.
 
 ### In-progress
 
-* [vision-api](./notes/llama.cpp/vision-model-issue.md) Vision API exploration issue in llama.cpp
+* [kv-cache](./notes/llama-kv-cache.md#user-content-wip) llama kv-cache exploration
+* [llava](./notes/llava.md#user-content-wip) llava exploration
+* [llama.cpp server](./notes/llama-server.md) llama.cpp server exploration
 
 ### Topics
 
