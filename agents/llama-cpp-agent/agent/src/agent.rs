@@ -41,41 +41,44 @@ impl Agent {
             .context("unable to create context")?;
 
         let metadata = self.tool_manager.get_metadata();
-        let available_tools = format!("{}",
-            metadata.iter().map(|md| {
-                let params = md.params.iter()
-                    .map(|p| format!("{}=<{}>", p.name, p.type_))
-                    .collect::<Vec<_>>()
-                    .join(", ");
 
-                format!("{} - {}\nUsage: USE_TOOL: {}, {}\n",
-                    md.name,
-                    md.description,
-                    md.name,
-                    params
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-        );
+        let available_tools: String = metadata.iter() .map(|md| {
+            let params = md.params.iter()
+                .map(|p| format!("{}=<{}>", p.name, p.type_))
+                .collect::<Vec<_>>()
+                .join(", ");
 
-        let prompt = format!(
-            "<|user|>
-You are a helpful AI assistant. You have access to an Echo tool. When asked to echo something,
-respond ONLY with the exact tool command format and include the complete text to be echoed.
+            let examples = md.usage.iter()
+                .map(|ex| format!(
+                    "User: {}\nAssistant: {}\n",
+                    ex.user,
+                    ex.assistent,
+                ))
+                .collect::<Vec<_>>()
+                .join("\n");
 
-Example interaction:
-User: Please echo back 'hello'
-Assistant: USE_TOOL: Echo, value=hello
+            format!(
+                "{} - {}\nUsage: USE_TOOL: {}, {}\n\nExamples:\n{}\n",
+                md.name,
+                md.description,
+                md.name,
+                params,
+                examples
+            )
+        })
+        .collect();
 
-Available tool:
+        let prompt = format!("<|user|>
+You are a helpful AI assistant. You have access to several tools. When using a tool,
+respond with the exact tool command format as shown in the examples below.
+
+Available tools and their usage patterns:
 {available_tools}
 
 {input}
 <|end|>
 <|assistant|>"
 );
-
         println!("Prompt: {}", prompt);
 
         let tokens_list = self.model

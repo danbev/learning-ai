@@ -1,4 +1,5 @@
 use crate::llama_cpp::tool::types::ToolParams;
+use crate::llama_cpp::tool::types::ToolUsage;
 use std::io::Write;
 
 wit_bindgen::generate!({
@@ -21,11 +22,17 @@ impl Guest for PrintTool {
             required: true,
         };
 
+        let usage = ToolUsage {
+            user: "Please print this string 'something'".to_string(),
+            assistent: "USE_TOOL: Print, message='something'".to_string(),
+        };
+
         ToolMetadata {
             name: "Print".to_string(),
             description: "Prints the provided message to stdout".to_string(),
             version: "0.1.0".to_string(),
             params: vec![params],
+            usage: vec![usage],
         }
     }
 

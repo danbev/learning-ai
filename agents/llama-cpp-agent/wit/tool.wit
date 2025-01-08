@@ -15,11 +15,17 @@ interface types {
     required: bool,
   }
 
+  record tool-usage {
+    user: string,
+    assistent: string,
+  }
+
   record tool-metadata {
     name: string,
     description: string,
     version: string,
     params: list<tool-params>,
+    usage: list<tool-usage>,
   }
 
 }
