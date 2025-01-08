@@ -1,9 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use wasmtime::{
     component::{Component, Linker as ComponentLinker},
     Config, Engine, Store,
 };
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+
+use std::collections::HashMap;
 
 wasmtime::component::bindgen!({
     path: "../wit/tool.wit",
@@ -28,10 +30,12 @@ impl WasiView for ToolContext {
 pub struct ToolManager {
     engine: Engine,
     linker: ComponentLinker<ToolContext>,
+    components: HashMap<String, Component>,
 }
 
 impl ToolManager {
-    pub fn new() -> Result<Self> {
+    pub fn new(component_files: Vec<std::path::PathBuf>) -> Result<Self> {
+        println!("Creating tool manager");
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.async_support(false);
@@ -40,18 +44,46 @@ impl ToolManager {
         let mut linker = ComponentLinker::new(&engine);
         wasmtime_wasi::add_to_linker_sync(&mut linker)?;
 
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdio()
+            .inherit_args()
+            .inherit_env()
+            .build();
+
+        let mut store = Store::new(
+            &engine,
+            ToolContext {
+                wasi,
+                table: wasmtime::component::ResourceTable::new(),
+            },
+        );
+
+        let mut components = HashMap::new();
+        for component_path in component_files {
+            let component = Component::from_file(&engine, &component_path)?;
+            let tool = ToolWorld::instantiate(&mut store, &component, &linker)
+                .context("Failed to instantiate Tool")?;
+            let metadata = tool.call_get_metadata(&mut store).unwrap();
+            println!("Tool metadata:");
+            println!("  Name: {}", metadata.name);
+            println!("  Description: {}", metadata.description);
+            println!("  Version: {}", metadata.version);
+            println!("  Parameters:");
+            for param in &metadata.params {
+                println!("    - {}: {} ({})", param.name, param.description, param.type_);
+            }
+            components.insert(metadata.name.clone(), component);
+        }
+
         Ok(Self {
             engine,
             linker,
+            components,
         })
     }
 
     pub fn execute_tool(&self, tool_name: &str, params: Vec<(String, String)>) -> Result<String> {
-        //TODO(danbev) Fix this hard coded module. This is just for initial testing.
-        let component = Component::from_file(
-            &self.engine,
-            "../components/echo-tool-component.wasm",
-        )?;
+        let component = self.components.get(tool_name).unwrap();
 
         let wasi = WasiCtxBuilder::new()
             .inherit_stdio()

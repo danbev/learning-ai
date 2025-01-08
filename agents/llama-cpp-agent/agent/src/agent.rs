@@ -18,12 +18,12 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(model_path: std::path::PathBuf) -> Result<Self> {
+    pub fn new(model_path: std::path::PathBuf, components: Vec<std::path::PathBuf>) -> Result<Self> {
         let backend = LlamaBackend::init()?;
         let model_params = LlamaModelParams::default();
         let model = LlamaModel::load_from_file(&backend, model_path, &model_params)
             .context("unable to load model")?;
-        let tool_manager = ToolManager::new()?;
+        let tool_manager = ToolManager::new(components)?;
 
         Ok(Self {
             model,
@@ -36,7 +36,6 @@ impl Agent {
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(Some(NonZeroU32::new(2048).unwrap()));
         
-
         let mut ctx = self.model
             .new_context(&self.backend, ctx_params)
             .context("unable to create context")?;

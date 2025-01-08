@@ -34,7 +34,9 @@ run-print-tool: tool-runner print-component
 
 ### Agent
 run-agent:
-	cd agent && cargo run -- -m ../models/Phi-3-mini-4k-instruct-q4.gguf -p "Please echo back 'Something to echo'"
+	cd agent && cargo run -- -m ../models/Phi-3-mini-4k-instruct-q4.gguf \
+		-c ../components/echo-tool-component.wasm \
+		-p "Please echo back 'Something'"
 
 download-phi-mini-instruct: models
 	cd models && \
