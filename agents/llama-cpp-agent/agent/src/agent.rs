@@ -39,6 +39,26 @@ impl Agent {
         let mut ctx = self.model
             .new_context(&self.backend, ctx_params)
             .context("unable to create context")?;
+
+        let metadata = self.tool_manager.get_metadata();
+        let available_tools = format!("{}",
+            metadata.iter().map(|md| {
+                let params = md.params.iter()
+                    .map(|p| format!("{}=<{}>", p.name, p.type_))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                format!("{} - {}\nUsage: USE_TOOL: {}, {}\n",
+                    md.name,
+                    md.description,
+                    md.name,
+                    params
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+        );
+
         let prompt = format!(
             "<|user|>
 You are a helpful AI assistant. You have access to an Echo tool. When asked to echo something,
@@ -49,9 +69,7 @@ User: Please echo back 'hello'
 Assistant: USE_TOOL: Echo, value=hello
 
 Available tool:
-Echo - Echoes back the input text
-Usage: USE_TOOL: Echo, value=<text to echo>
-Note: Make sure to include the complete text after 'value='
+{available_tools}
 
 {input}
 <|end|>

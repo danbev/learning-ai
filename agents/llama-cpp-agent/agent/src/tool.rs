@@ -31,6 +31,7 @@ pub struct ToolManager {
     engine: Engine,
     linker: ComponentLinker<ToolContext>,
     components: HashMap<String, Component>,
+    metadata: Vec<ToolMetadata>,
 }
 
 impl ToolManager {
@@ -59,26 +60,29 @@ impl ToolManager {
         );
 
         let mut components = HashMap::new();
+        let mut metadata = Vec::new();
         for component_path in component_files {
             let component = Component::from_file(&engine, &component_path)?;
             let tool = ToolWorld::instantiate(&mut store, &component, &linker)
                 .context("Failed to instantiate Tool")?;
-            let metadata = tool.call_get_metadata(&mut store).unwrap();
+            let md = tool.call_get_metadata(&mut store).unwrap();
+            metadata.push(md.clone());
             println!("Tool metadata:");
-            println!("  Name: {}", metadata.name);
-            println!("  Description: {}", metadata.description);
-            println!("  Version: {}", metadata.version);
+            println!("  Name: {}", md.name);
+            println!("  Description: {}", md.description);
+            println!("  Version: {}", md.version);
             println!("  Parameters:");
-            for param in &metadata.params {
+            for param in &md.params {
                 println!("    - {}: {} ({})", param.name, param.description, param.type_);
             }
-            components.insert(metadata.name.clone(), component);
+            components.insert(md.name.clone(), component);
         }
 
         Ok(Self {
             engine,
             linker,
             components,
+            metadata,
         })
     }
 
@@ -116,5 +120,9 @@ impl ToolManager {
                 result.error.unwrap_or_else(|| "Unknown error".to_string())
             ))
         }
+    }
+
+    pub fn get_metadata(&self) -> Vec<ToolMetadata> {
+        self.metadata.clone()
     }
 }
