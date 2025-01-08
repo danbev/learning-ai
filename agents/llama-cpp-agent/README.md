@@ -2,6 +2,8 @@
 This is an exploration into AI Agents for llama.cpp. The goals is to gain some
 hands-on experience with AI agents and understand how they can be built.
 
+### Overview
+
 The idea is to enable agent to work with llama.cpp and be able to run the
 locally. The tools that an Agent uses will be defined using the Web Assembly
 Component Model and an interface defined in Web Assembly Interface Types (WIT).
@@ -74,6 +76,13 @@ There is also a print tool but this was mainly to make sure that wasi is working
 and that it is possible to print to the console from the wasm module.
 
 ### Agent
+
+#### Download model
+There is no particular model that is needed for this agent, however is needs
+to be an instruction trained model.
+```console
+$ make download-phi-mini-instruct 
+```
 
 ### Setup/Configuration
 ```console

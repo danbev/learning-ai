@@ -32,6 +32,14 @@ print-component: print-tool | components
 run-print-tool: tool-runner print-component
 	cd tool-runner && cargo run -- -c ../components/print-tool-component.wasm --message "Something to print"
 
+### Agent
+run-agent:
+	cd agent && cargo run -- -m ../models/Phi-3-mini-4k-instruct-q4.gguf -p "Please echo back 'Something to echo'"
+
+download-phi-mini-instruct: models
+	cd models && \
+	wget https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf
+
 clean:
 	cd tools/echo && cargo clean
 	cd tool-runner && cargo clean
@@ -39,3 +47,6 @@ clean:
 install-wasm32-wasip1:
 	rustup target add wasm32-wasip1
 
+.PHONY models:
+models:
+	mkdir -p models
