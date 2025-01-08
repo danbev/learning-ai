@@ -14,6 +14,7 @@ This repository contains notes and code examples related to AI.
 * [Position Embeddings](./notes/position-embeddings)
 * [GPUs](./gpu/README.md)
 * [Vector Databases](./notes/vector-databases.md)
+* [Vision](./notes/vision)
 
 ### Examples/Exploration code
 
