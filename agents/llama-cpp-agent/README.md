@@ -2,6 +2,8 @@
 This is an exploration into AI Agents for llama.cpp. The goals is to gain some
 hands-on experience with AI agents and understand how they can be built.
 
+_This is very much a exploration at this point and these ideas might be valid in practice_
+
 ### Overview
 
 The idea is to enable agent to work with llama.cpp and be able to run the
@@ -29,7 +31,6 @@ Tools are what agents use to accomplish their tasks. These tools are defined
 using the Web Interface Types (WIT) and implemented as Web Assembly Component
 Models.
 
-_this is very much a work in progress and exploration at this point_
 
 ### Building Tools
 The following shows an example of building the Echo tool which just
