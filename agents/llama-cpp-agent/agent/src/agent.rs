@@ -1,4 +1,3 @@
-// src/agent.rs
 use anyhow::{Context, Result};
 use llama_cpp_2::{
     context::params::LlamaContextParams,
@@ -92,7 +91,6 @@ Usage: USE_TOOL: Echo, value=<text to echo><|eot_id|><|start_header_id|>user<|en
         ]);
 
         let mut response = String::new();
-        let mut consecutive_newlines = 0;
         while n_cur <= n_len {
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
@@ -110,24 +108,13 @@ Usage: USE_TOOL: Echo, value=<text to echo><|eot_id|><|start_header_id|>user<|en
             print!("{output_string}");
             std::io::stdout().flush()?;
 
-            if output_string.contains("\n") {
-                consecutive_newlines += 1;
-            } else {
-                consecutive_newlines = 0;
-            }
-
             if response.contains("USE_TOOL: Echo") && response.contains("value=") {
-                // Look for either a newline or multiple spaces as a terminator
-                if consecutive_newlines >= 2 || response.ends_with("  ") {
-                    if let Some(cmd) = response.split("USE_TOOL: Echo, value=").nth(1) {
-                        let value = cmd.trim();
-                        if !value.is_empty() {
-                            return self.tool_manager.execute_tool("Echo", vec![("value".to_string(), value.to_string())]);
-                        }
+                if let Some(cmd) = response.split("USE_TOOL: Echo, value=").nth(1) {
+                    let value = cmd.trim();
+                    if !value.is_empty() {
+                        return self.tool_manager.execute_tool("Echo", vec![("value".to_string(), value.to_string())]);
                     }
-                    break;
                 }
-                break;
             }
 
 
