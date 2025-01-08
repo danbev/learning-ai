@@ -40,15 +40,10 @@ impl Agent {
         let mut ctx = self.model
             .new_context(&self.backend, ctx_params)
             .context("unable to create context")?;
-
-        //let prompt = format!("<|user|>\n You are a helpful AI assistant. You have access to an Echo tool. When asked to echo something, respond ONLY with the exact tool command format'.\n\n Example interaction:\n User: Please echo back 'hello'\n Assistant: USE_TOOL: Echo, value=hello\n\n Available tool:\n Echo - Echoes back the input text\n Usage: USE_TOOL: Echo, value=<text to echo>\n\n {} <|end|>\n<|assistant|>", input);
-        let prompt = format!("<|user|>\n You are a helpful AI assistant. You have access to an Echo tool. When asked to echo something, respond ONLY with the exact tool command format and include the complete text to be echoed.\n\n Example interaction:\n User: Please echo back 'hello'\n Assistant: USE_TOOL: Echo, value=hello\n\n Available tool:\n Echo - Echoes back the input text\n Usage: USE_TOOL: Echo, value=<text to echo>\n Note: Make sure to include the complete text after 'value='\n\n {} <|end|>\n<|assistant|>", input);
-
-        /*
         let prompt = format!(
-            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are a helpful AI assistant. You have access to an Echo tool. When asked to echo something, respond ONLY with the exact tool command format.
+            "<|user|>
+You are a helpful AI assistant. You have access to an Echo tool. When asked to echo something,
+respond ONLY with the exact tool command format and include the complete text to be echoed.
 
 Example interaction:
 User: Please echo back 'hello'
@@ -56,13 +51,13 @@ Assistant: USE_TOOL: Echo, value=hello
 
 Available tool:
 Echo - Echoes back the input text
-Usage: USE_TOOL: Echo, value=<text to echo><|eot_id|><|start_header_id|>user<|end_header_id|>
+Usage: USE_TOOL: Echo, value=<text to echo>
+Note: Make sure to include the complete text after 'value='
 
-{}<|eot_id|>
-<|start_header_id|>assistant<|end_header_id|>",
-            input
-        );
-        */
+{input}
+<|end|>
+<|assistant|>"
+);
 
         println!("Prompt: {}", prompt);
 
