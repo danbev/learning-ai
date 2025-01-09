@@ -24,7 +24,7 @@ impl Guest for PrintTool {
 
         let usage = ToolUsage {
             user: "Please print this string 'something'".to_string(),
-            assistent: "USE_TOOL: Print, message='something'".to_string(),
+            assistent: "USE_TOOL: Print, message=something".to_string(),
         };
 
         ToolMetadata {
@@ -38,8 +38,6 @@ impl Guest for PrintTool {
 
     fn execute(params: Vec<(String, String)>) -> ToolResult {
         let message = &params.get(0).unwrap().1;
-
-        println!("{}", message);
 
         ToolResult {
             success: true,

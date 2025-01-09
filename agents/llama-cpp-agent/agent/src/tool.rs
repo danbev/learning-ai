@@ -111,7 +111,6 @@ impl ToolManager {
             println!("  - {}: {}", name, value);
         }
         let result = tool.call_execute(&mut store, &params)?;
-        println!("Execution result: {}", result.data);
         
         if result.success {
             Ok(result.data)

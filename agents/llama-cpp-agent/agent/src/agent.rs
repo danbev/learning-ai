@@ -110,28 +110,48 @@ Available tools and their usage patterns:
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
 
-            if self.model.is_eog_token(token) {
-                eprintln!();
-                break;
+            if !self.model.is_eog_token(token) {
+                let output_bytes = self.model.token_to_bytes(token, Special::Tokenize)?;
+                let mut output_string = String::with_capacity(32);
+                let _decode_result = decoder.decode_to_string(&output_bytes, &mut output_string, false);
+                response.push_str(&output_string);
             }
 
-            let output_bytes = self.model.token_to_bytes(token, Special::Tokenize)?;
-            let mut output_string = String::with_capacity(32);
-            let _decode_result = decoder.decode_to_string(&output_bytes, &mut output_string, false);
-            response.push_str(&output_string);
+            //print!("{output_string}");
+            //std::io::stdout().flush()?;
+            
+            if self.model.is_eog_token(token) {
+                if response.contains("USE_TOOL:") {
+                    let metadata = self.tool_manager.get_metadata();
 
-            print!("{output_string}");
-            std::io::stdout().flush()?;
+                    for md in &metadata {
+                        let tool_prefix = format!("USE_TOOL: {}", md.name);
 
-            if response.contains("USE_TOOL: Echo") && response.contains("value=") {
-                if let Some(cmd) = response.split("USE_TOOL: Echo, value=").nth(1) {
-                    let value = cmd.trim();
-                    if !value.is_empty() {
-                        return self.tool_manager.execute_tool("Echo", vec![("value".to_string(), value.to_string())]);
+                        if response.contains(&tool_prefix) {
+                            let mut params = Vec::new();
+
+                            if let Some(cmd_part) = response.split(&tool_prefix).nth(1) {
+                                let cmd_part = cmd_part.trim_start_matches(", ").trim();
+                                for param in &md.params {
+                                    let param_prefix = format!("{}=", param.name);
+
+                                    if let Some(value_part) = cmd_part.split(&param_prefix).nth(1) {
+                                        let value = value_part.trim();
+
+                                        if !value.is_empty() {
+                                            params.push((param.name.clone(), value.to_string()));
+                                        }
+                                    }
+                                }
+
+                                if params.len() == md.params.len() {
+                                    return self.tool_manager.execute_tool(&md.name, params);
+                                }
+                            }
+                        }
                     }
                 }
             }
-
 
             batch.clear();
             batch.add(token, n_cur, &[0], true)?;
