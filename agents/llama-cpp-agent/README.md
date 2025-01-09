@@ -218,6 +218,23 @@ Agent response: Something
 
 </details>
 
+And we could run the print tool like this:
+```console
+$ cd agent && cargo run -- -m ../models/Phi-3-mini-4k-instruct-q4.gguf \
+    -c ../components/echo-tool-component.wasm \
+    -c ../components/print-tool-component.wasm \
+    -p "Please print the following 'coffee'"
+    ...
+Please print the following 'coffee'
+<|end|>
+<|assistant|>
+
+Executing tool: Print, params: 1
+  - message: coffee
+Agent response: Successfully printed: coffee
+
+```
+
 #### Download model
 There is no particular model that is needed for this agent, however is needs
 to be an instruction trained model.
