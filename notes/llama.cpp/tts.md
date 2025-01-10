@@ -60,8 +60,41 @@ INFO:gguf-dump:* Loading: ../llama.cpp-debug/models/outetts-0.2-0.5B-q8_0.gguf
      42: UINT32     |        1 | general.quantization_version = 2
      43: UINT32     |        1 | general.file_type = 7
 ```
-So this is a multi-modal LLM model, `qwen2`.
+So this is a multi-modal LLM model, `qwen2`, it has 157696 tokens which I
+believe contains text token, special tokens, and audio tokens (and vision/vision
+tokens also but those are not related to this example).
 
+
+For an overview of this we can imagine that if we passing the prompt
+"Hello World" this will be processed something like this:
+```console
+Input: "Hello World" ---> "hello<|text_sep|>world"
+Output: logits [0 ... 157695]
+```
+In the case where audio is being generated/predicted all the text tokens will
+be zero or very close to zero, as will other tokens that are not related to
+audio. The audio tokens will have non-zero values and these are the tokens that
+will be sampled. So one of these audio tokens will be the ouput from the LLM.
+
+This token which represents and audio code (I think) will be passed to the
+WavTokenizer model and will be looked up, simliar to how text tokens are looked
+up to get their embedding, by using the tensor `token_embd` of the WavTokenizer
+model.
+```console
+111:    2097152 |   512,  4096,     1,     1 | F16     | token_embd.weight
+```
+So the token will act as an index into this tensor, this happens in
+`llm_build_inp_embd`.
+```c++
+    if (ubatch.token) {
+        lctx.inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, ubatch.n_tokens);
+        cb(lctx.inp_tokens, "inp_tokens", -1);
+        ggml_set_input(lctx.inp_tokens);
+
+        inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
+```
+
+The second model is the voice decoder model:
 ```console
 INFO:gguf-dump:* Loading: ../llama.cpp-debug/models/wavtokenizer-large-75-f16.gguf
 * File is LITTLE endian, script is running on a LITTLE endian host.
@@ -114,12 +147,43 @@ INFO:gguf-dump:* Loading: ../llama.cpp-debug/models/wavtokenizer-large-75-f16.gg
     121:        768 |     1,   768,     1,     1 | F32     | posnet.0.norm1.weight
     122:        768 |     1,   768,     1,     1 | F32     | posnet.0.norm2.bias
     123:        768 |     1,   768,     1,     1 | F32     | posnet.0.norm2.weight
+
+    108:    1769472 |  2304,   768,     1,     1 | F16     | convnext.9.pw2.weight
+    109:        768 |     1,   768,     1,     1 | F32     | conv1d.bias
+    110:    2752512 |     7,   512,   768,     1 | F16     | conv1d.weight
+    111:    2097152 |   512,  4096,     1,     1 | F16     | token_embd.weight
+    112:        768 |   768,     1,     1,     1 | F32     | output_norm.bias
+    113:        768 |   768,     1,     1,     1 | F32     | output_norm.weight
+    114:        768 |   768,     1,     1,     1 | F32     | token_embd_norm.bias
+    115:        768 |   768,     1,     1,     1 | F32     | token_embd_norm.weight
+
+    160:       1282 |  1282,     1,     1,     1 | F32     | output.bias
+    161:     984576 |   768,  1282,     1,     1 | F16     | output.weight
+
 ```
 So a wav tokenizer model has a vocabulary size of 4096 which are the codes
-for the audio. More about these codes will be discussed later in this document.
+for the audio. Now a code is a token that represents a piece of audio
+information. We can inspect the vocabulary:
+```console
+gdb) p model_cts.vocab
+$14 = {n_vocab = 4096, type = LLAMA_VOCAB_TYPE_NONE, type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT, max_token_len = 0,
+  token_to_id = std::unordered_map with 0 elements, id_to_token = std::vector of length 0, capacity 0,
+  cache_special_tokens = std::vector of length 0, capacity 0, cache_token_to_piece = std::vector of length 0, capacity 0,
+  bpe_ranks = std::map with 0 elements, special_bos_id = -1, special_eos_id = -1, special_eot_id = -1, special_eom_id = -1,
+  special_unk_id = -1, special_sep_id = -1, special_pad_id = -1, special_cls_id = -1, special_mask_id = -1, linefeed_id = -1,
+  special_fim_pre_id = -1, special_fim_suf_id = -1, special_fim_mid_id = -1, special_fim_pad_id = -1, special_fim_rep_id = -1,
+  special_fim_sep_id = -1, special_eog_ids = std::set with 0 elements, tokenizer_add_space_prefix = false,
+  tokenizer_add_bos = false, tokenizer_add_eos = false, tokenizer_ignore_merges = false, tokenizer_clean_spaces = false,
+  tokenizer_remove_extra_whitespaces = false, tokenizer_escape_whitespaces = true, tokenizer_treat_whitespace_as_suffix = false,
+  precompiled_charsmap = std::vector of length 0, capacity 0, tokenizer = 0x0}
+```
+Where cts stands for codes-to-speech.
 
-_wip_ continue here.
-
+Notice that it does not contain a vocabulary, like there are no tokens in
+id_to_token which there normally are in language models (and there are for
+qwen2). Why is this?  Perhaps this is because the id_to_tokens are mostly used
+when sampling text tokens and the output of this model is not text but audio.
+Hopefully this will become clearer as we continue.
 
 There are 12 convnext blocks and 6 posnet blocks in the voice decoder model.
 
@@ -140,11 +204,11 @@ respectively:
 ```
 So we have a model and a context for each of them.
 
-Now, in a "normal" LLM we process a prompt be splittig it into tokens and then
+Now, in a "normal" LLM we process a prompt be splitting it into tokens and then
 generating embeddings (looking them up) and that is what is passed to the model.
-But for a text to speech model it needs to keep the words in tact it requires
-that there is a token to separate the words. For example, if we have a prompt
-like "What is LoRA?" this would get changed into:
+But for a text to speech model it needs to keep the words in tact, no subword
+splitting, it requires that there is a token to separate the words. For example,
+if we have a prompt like "What is LoRA?" this would get changed into:
 ```
 <|text_start|>What<|text_sep|>is<|text_sep|>LoRA<|text_end|>
 ```
@@ -223,6 +287,29 @@ and take longer to pronounce.
 The code tokens are the audio tokens that are required to generate the audio for
 the word in question.
 
+So `<|t_0.08|>` is actually a token and can be found in `tokenizer_config.json`:
+```
+"155780": {
+      "content": "<|t_0.08|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+```
+And likewise `<|257|>` is also a token:
+```
+    "151929": {
+      "content": "<|257|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+```
+
 
 This is also prompt conditioning and it is used to give the model some context
 about the rhythm of speech and how words are pronounced. It give it a sense of
@@ -276,6 +363,185 @@ When this call reaches `llama_build_graph` the following case will be taken:
 ```
 So this is just the standard qwen2 model which I think can also be used as a
 plain text model.
+
+I'm going to skip ahead to the WaveTokenizer model as this is the part that is
+completely new to me. If we take a look at `build_wavtokenizer_dec` (decoder)
+we find:
+```c++
+    struct ggml_cgraph * build_wavtokenizer_dec() {
+        struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
+
+        struct ggml_tensor * cur;
+        struct ggml_tensor * inpL;
+
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+
+        cur = ggml_cont(ctx0, ggml_transpose(ctx0, inpL));
+
+        cur = ggml_conv_1d_ph(ctx0, model.conv1d, cur, 1, 1);
+        cur = ggml_add(ctx0, cur, model.conv1d_b);
+        ...
+```
+```console
+(gdb) p ubatch
+$34 = (const llama_ubatch &) @0x7fffffffb3d0: {equal_seqs = true,
+n_tokens = 512, n_seq_tokens = 512, n_seqs = 1, token = 0x7fffffffb290,
+embd = 0x0, pos = 0x0, n_seq_id = 0x0, seq_id = 0x0, output = 0x0}
+
+(gdb) p model.tok_embd->ne
+$33 = {512, 4096, 1, 1}
+```
+For some reason this being 512 confused me a little as this is also the size
+for a max batch when the worst case prefill prompt is generated. But lets
+visualize this.
+
+We can check the shape of the tensor:
+```console
+111:    2097152 |   512,  4096,     1,     1 | F16     | token_embd.weight
+```
+And this is how it is created:
+```c++
+            case LLM_ARCH_WAVTOKENIZER_DEC:
+                {
+                    model.tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {hparams.n_embd_features, n_vocab}, 0);
+```
+And if we look at the values:
+```console
+(gdb) p lctx.model.hparams.n_embd_features
+$45 = 512
+```
+```console
+0      [0    511]
+       .
+       .
+       .
+4095   [0    511]
+```
+So we have 4096 rows which represent the audio tokens and each has 512 features.
+
+So after that this `inpL` tensor will be transposed which does nothing to the
+shap in this particular case as this is a square matrix but the values are
+transposed. After that we have a 1d convolution with horizontal padding (ph)
+```console
+(gdb) p model.conv1d->name
+$48 = "conv1d.weight", '\000' <repeats 50 times>
+(gdb) p model.conv1d->ne
+$49 = {7, 512, 768, 1}
+```
+So this convolution kernel has the shape:
+```
+z_0
+    0   [0      6]
+
+    511 [0      6]
+.
+.
+.
+
+z_767
+    0   [0      6]
+
+    511 [0      6]
+```
+And we have the tensor that will be convolved with this kernel:
+```console
+(gdb) p cur->ne
+$50 = {512, 512, 1, 1}
+
+0   [0    6                  511]
+    .
+    .
+    .
+511 [0    6                  511]
+```
+
+Applying the kernel to the first position (first 7 element):
+```console
+X = kernel
+
+0   [XXXXXX        +--> [0               767]
+     XXXXXX        |
+     XXXXXX -------+ 
+     XXXXXX
+511 [XXXXXX
+```
+The kernel is then shifted to the right be one position (the second to last
+argument to ggml_conv1d_ph). This will produce a new tenor with the shape:
+```console
+0   [0                             767]
+    .
+    .
+    .
+511 [0                             767]
+
+(gdb) p cur->ne
+$58 = {512, 768, 1, 1}
+```
+So that is a tensor with 512 rows and 768 columns but what does this actually
+represent? The 512 correspond to a position in the sequence. And each one has
+768 feature which encode various aspects of audio like frequency information,
+amplitude etc.
+The posnet is a way to capture information about the entire sequence using
+ResNet blocks, an attention block, finally a normalization block.
+The ResNet blocks use a small convolutional kernel, 3 positions,  to capture
+local information, how tokens close to each other are related to each other.
+The attention block captures global information, how all tokens are related to
+each other. The normalization block is used to normalize the output of the
+attention block.
+
+Next all the posnet layers, the positional information in the audio data
+are processed:
+```console
+        // posnet
+        for (uint32_t il = 0; il < hparams.posnet.n_layer; ++il) {
+            const auto & layer = model.layers[il].posnet;
+
+            switch (il) {
+                case 0:
+                case 1:
+                case 3:
+                case 4:
+                    {
+                        cur = llm_build_norm(ctx0, cur, hparams,
+                                layer.norm1,
+                                layer.norm1_b,
+                                LLM_NORM_GROUP, cb, 0);
+
+                        cur = ggml_mul(ctx0, ggml_sigmoid(ctx0, cur), cur);
+
+                        cur = ggml_conv_1d_ph(ctx0, layer.conv1, cur, 1, 1);
+                        cur = ggml_add(ctx0, cur, layer.conv1_b);
+
+                        cur = llm_build_norm(ctx0, cur, hparams,
+                                layer.norm2,
+                                layer.norm2_b,
+                                LLM_NORM_GROUP, cb, 0);
+
+                        cur = ggml_mul(ctx0, ggml_sigmoid(ctx0, cur), cur);
+
+                        cur = ggml_conv_1d_ph(ctx0, layer.conv2, cur, 1, 1);
+                        cur = ggml_add(ctx0, cur, layer.conv2_b);
+
+                        cur = ggml_add(ctx0, cur, inpL);
+                    } break;
+```
+If I step back and think about this from before the position layers. I there
+also have a 512x768 shaped tensor. And each of these 512 rows has a dimension of
+768. If I think of this each of these as vectors in that 768 dimensional space,
+that the posnet layers are doing is moving them around slightly, or perhaps a
+lot sometime, to that they are more appropriately placed in this embedding space
+(perhaps if the phonemes for two are similar then one might be moved closer in
+the embedding space). So after these layers the vectors point more accurate
+positions.
+So that is what the posnet layers are doing and this is what will be passed
+to the convnext layers.
+
+```console
+(gdb) p layer.conv1->ne
+$57 = {3, 768, 768, 1}
+```
+
+_wip_ 
 
 ### tts example
 The example in llama.cpp uses a model from [outeai](https://www.outeai.com/)
