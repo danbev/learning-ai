@@ -4,6 +4,7 @@ This repository contains notes and code examples related to AI.
 ### In-progress
 
 * [agents](./agents) AI Agents
+* [text-to-speech](notes/llama.cpp/tts.md) Text-to-Speech example in llama.cpp
 
 ### Topics
 
