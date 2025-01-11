@@ -541,6 +541,259 @@ to the convnext layers.
 $57 = {3, 768, 768, 1}
 ```
 
+
+So what is sampled from this model are audio codes. These will be stored in
+a vector:
+```c++
+    std::vector<llama_token> codes;
+    ...
+
+                codes.push_back(new_token_id);
+```
+For example:
+```console
+(gdb) p new_token_id
+$1 = 198
+(gdb) p model_ttc.vocab.id_to_token[198]
+$2 = {text = "Ċ", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+(gdb) c
+(gdb) p new_token_id
+$3 = 12555
+(gdb) p model_ttc.vocab.id_to_token[12555]
+$4 = {text = "what", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+(gdb) c
+(gdb) p  new_token_id
+$7 = 151669
+(gdb) p model_ttc.vocab.id_to_token[151669]
+$8 = {text = "<|code_start|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152640]
+$10 = {text = "<|968|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) c
+(gdb) p model_ttc.vocab.id_to_token[152890]
+$12 = {text = "<|1218|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) c
+(gdb) p model_ttc.vocab.id_to_token[153026]
+$14 = {text = "<|1354|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[153421]
+$16 = {text = "<|1749|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) c
+(gdb) p  new_token_id
+$17 = 153209
+(gdb) p model_ttc.vocab.id_to_token[153209]
+$18 = {text = "<|1537|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) c
+(gdb) p model_ttc.vocab.id_to_token[152711]
+$20 = {text = "<|1039|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152626]
+$22 = {text = "<|954|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[153439]
+$24 = {text = "<|1767|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152137]
+$26 = {text = "<|465|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152416]
+$28 = {text = "<|744|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[153020]
+$31 = {text = "<|1348|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152991]
+$33 = {text = "<|1319|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152694]
+$35 = {text = "<|1022|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152848]
+$37 = {text = "<|1176|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[152918]
+$39 = {text = "<|1246|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+...
+(gdb) p codes
+$56 = std::vector of length 116, capacity 128 = {198, 12555, 155852, 151669, 152640, 152890, 153026, 153421, 153209, 152711, 152626,
+  153439, 152137, 152416, 153020, 152991, 152695, 152848, 152918, 151793, 153146, 152078, 153091, 152934, 152263, 152534, 152263,
+  152571, 153146, 151689, 152534, 152945, 152263, 153208, 152263, 152571, 153146, 151689, 153010, 152945, 152263, 152534, 152829,
+  153020, 153010, 152399, 153146, 152829, 151793, 153146, 152263, 152920, 152945, 152658, 152049, 152903, 151994, 151856, 152584,
+  151782, 152381, 153296, 153049, 152056, 151670, 198, 285, 155785, 151669, 152659, 152028, 153205, 151704, 151719, 152000, 151869,
+  151676, 152264, 153190, 151670, 198, 75, 6215, 155807, 151669, 152385, 151694, 153196, 151941, 153267, 151694, 151886, 152035,
+  153420, 152197, 152476, 153404, 152144, 153227, 152128, 152903, 152128, 153422, 151817, 152046, 152548, 153343, 153177, 152307,
+  153103, 153370, 151670, 198, 151668, 198, 151645}
+
+(gdb) p model_ttc.vocab.id_to_token[151670]
+$60 = {text = "<|code_end|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[151668]
+$58 = {text = "<|audio_end|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+(gdb) p model_ttc.vocab.id_to_token[151645]
+$57 = {text = "<|im_end|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+```
+So looking at these tokens we can see that they follow the format we showed
+ealier
+```console
+{198, 12555, 155852, 151669, 152640, 152890, 153026, 153421, 153209, 152711, 152626,
+  153439, 152137, 152416, 153020, 152991, 152695, 152848, 152918, 151793, 153146, 152078, 153091, 152934, 152263, 152534, 152263,
+  152571, 153146, 151689, 152534, 152945, 152263, 153208, 152263, 152571, 153146, 151689, 153010, 152945, 152263, 152534, 152829,
+  153020, 153010, 152399, 153146, 152829, 151793, 153146, 152263, 152920, 152945, 152658, 152049, 152903, 151994, 151856, 152584,
+  151782, 152381, 153296, 153049, 152056, 151670,
+```
+198 is the models tokenizers representation for a newline or a space I think. 
+Folling that we have:
+```console
+what<|t_0.08|><|code_start|><|968|>...<|code_end|>
+```
+Then we have the space character 198 again. I just wanted to clarify what the
+qwen2 is producing.
+Oh, this is actually printed a little further down too:
+```console
+codes: '
+what<|t_0.80|><|code_start|><|968|><|1218|><|1354|><|1749|><|1537|><|1039|><|954|><|1767|><|465|><|744|><|1348|><|1319|><|1023|><|1176|><|1246|><|121|><|1474|><|406|><|1419|><|1262|><|591|><|862|><|591|><|899|><|1474|><|17|><|862|><|1273|><|591|><|1536|><|591|><|899|><|1474|><|17|><|1338|><|1273|><|591|><|862|><|1157|><|1348|><|1338|><|727|><|1474|><|1157|><|121|><|1474|><|591|><|1248|><|1273|><|986|><|377|><|1231|><|322|><|184|><|912|><|110|><|709|><|1624|><|1377|><|384|><|code_end|>
+is<|t_0.13|><|code_start|><|987|><|356|><|1533|><|32|><|47|><|328|><|197|><|4|><|592|><|1518|><|code_end|>
+lora<|t_0.35|><|code_start|><|713|><|22|><|1524|><|269|><|1595|><|22|><|214|><|363|><|1748|><|525|><|804|><|1732|><|472|><|1555|><|456|><|1231|><|456|><|1750|><|145|><|374|><|876|><|1671|><|1505|><|635|><|1431|><|1698|><|code_end|>
+<|audio_end|>
+<|im_end|>'
+```
+
+Next we have:
+```c++
+    // remove all non-audio tokens (i.e. < 151672 || > 155772)
+    codes.erase(std::remove_if(codes.begin(), codes.end(), [](llama_token t) { return t < 151672 || t > 155772; }), codes.end());
+```
+So this is removing the newline token, the time tokens, the code start and end
+tokens etc.
+
+```console
+(gdb) p codes
+$77 = std::vector of length 116, capacity 128 = {198, 12555, 155852, 151669, 152640, 152890, 153026, 153421, 153209, 152711, 152626,
+  153439, 152137, 152416, 153020, 152991, 152695, 152848, 152918, 151793, 153146, 152078, 153091, 152934, 152263, 152534, 152263,
+  152571, 153146, 151689, 152534, 152945, 152263, 153208, 152263, 152571, 153146, 151689, 153010, 152945, 152263, 152534, 152829,
+  153020, 153010, 152399, 153146, 152829, 151793, 153146, 152263, 152920, 152945, 152658, 152049, 152903, 151994, 151856, 152584,
+  151782, 152381, 153296, 153049, 152056, 151670, 198, 285, 155785, 151669, 152659, 152028, 153205, 151704, 151719, 152000, 151869,
+  151676, 152264, 153190, 151670, 198, 75, 6215, 155807, 151669, 152385, 151694, 153196, 151941, 153267, 151694, 151886, 152035,
+  153420, 152197, 152476, 153404, 152144, 153227, 152128, 152903, 152128, 153422, 151817, 152046, 152548, 153343, 153177, 152307,
+  153103, 153370, 151670, 198, 151668, 198, 151645}
+(gdb) n
+843	        const std::string inp_txt = common_detokenize(ctx_ttc, codes, true);
+(gdb) p codes
+$78 = std::vector of length 96, capacity 128 = {152640, 152890, 153026, 153421, 153209, 152711, 152626, 153439, 152137, 152416,
+  153020, 152991, 152695, 152848, 152918, 151793, 153146, 152078, 153091, 152934, 152263, 152534, 152263, 152571, 153146, 151689,
+  152534, 152945, 152263, 153208, 152263, 152571, 153146, 151689, 153010, 152945, 152263, 152534, 152829, 153020, 153010, 152399,
+  153146, 152829, 151793, 153146, 152263, 152920, 152945, 152658, 152049, 152903, 151994, 151856, 152584, 151782, 152381, 153296,
+  153049, 152056, 152659, 152028, 153205, 151704, 151719, 152000, 151869, 151676, 152264, 153190, 152385, 151694, 153196, 151941,
+  153267, 151694, 151886, 152035, 153420, 152197, 152476, 153404, 152144, 153227, 152128, 152903, 152128, 153422, 151817, 152046,
+  152548, 153343, 153177, 152307, 153103, 153370}
+
+(gdb) p model_ttc.vocab.id_to_token[152640]
+$82 = {text = "<|968|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+```
+Then we have the following:
+```console
+    for (auto & token : codes) {
+        token -= 151672;
+    }
+```
+So the first token is 152640, and this is doing 152640 - 151672 = 968. Why
+151672?  This is because this is the first audio token which we can see by
+looking in tokenizer_config.json:
+```console
+    "151672": {
+      "content": "<|0|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "151673": {
+      "content": "<|1|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+
+    ...
+
+    "155768": {
+      "content": "<|4096|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "155769": {
+      "content": "<|4097|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "155770": {
+      "content": "<|4098|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "155771": {
+      "content": "<|4099|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+```
+The vocab size of the WebTokenizer model is 4096 so what this is doing is
+basically shifting this down to the range 0-4095.
+So after all tokens have been shifted down they look like this:
+```console
+(gdb) p codes
+$88 = std::vector of length 96, capacity 128 = {968, 1218, 1354, 1749, 1537, 1039, 954, 1767, 465, 744, 1348, 1319, 1023, 1176,
+  1246, 121, 1474, 406, 1419, 1262, 591, 862, 591, 899, 1474, 17, 862, 1273, 591, 1536, 591, 899, 1474, 17, 1338, 1273, 591, 862,
+  1157, 1348, 1338, 727, 1474, 1157, 121, 1474, 591, 1248, 1273, 986, 377, 1231, 322, 184, 912, 110, 709, 1624, 1377, 384, 987, 356,
+  1533, 32, 47, 328, 197, 4, 592, 1518, 713, 22, 1524, 269, 1595, 22, 214, 363, 1748, 525, 804, 1732, 472, 1555, 456, 1231, 456,
+  1750, 145, 374, 876, 1671, 1505, 635, 1431, 1698}
+```
+This will then be passed to the wavtokenizer in a batch:
+```c++
+    const int n_codes = codes.size();
+
+    llama_batch batch = llama_batch_init(n_codes, 0, 1);
+
+    for (size_t i = 0; i < codes.size(); ++i) {
+        common_batch_add(batch, codes[i], i, { 0 }, true); // TODO: all logits?
+    }
+    GGML_ASSERT(batch.n_tokens == n_codes);
+
+    if (llama_decode(ctx_cts, batch) != 0) {
+        LOG_ERR("%s: llama_decode() failed\n", __func__);
+        return 1;
+    }
+```
+```c++
+    const int n_embd = llama_n_embd(model_cts);
+    const float * embd = llama_get_embeddings(ctx_cts);
+
+    auto audio = embd_to_audio(embd, n_codes, n_embd, params.cpuparams.n_threads);
+```
+```console
+(gdb) p n_codes
+$92 = 96
+(gdb) p n_embd
+$93 = 1282
+```
+
+So lets take a look at the function `embd_to_audio`:
+```c++
+static std::vector<float> embd_to_audio(
+        const float * embd,
+        const int n_codes,
+        const int n_embd,
+        const int n_thread) {
+    const int n_fft = 1280;
+    const int n_hop = 320;
+    const int n_win = 1280;
+    const int n_pad = (n_win - n_hop)/2;
+    const int n_out = (n_codes - 1)*n_hop + n_win;
+```
+
 _wip_ 
 
 ### tts example
