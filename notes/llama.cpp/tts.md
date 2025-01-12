@@ -779,19 +779,548 @@ $92 = 96
 (gdb) p n_embd
 $93 = 1282
 ```
+Lets inspect a few of the embedding values:
+```console
+(gdb) p embd[0]
+$95 = -1.40534163
+(gdb) p embd[1]
+$96 = -0.891580999
+(gdb) p embd[2]
+$97 = -1.56436288
+(gdb) p embd[3]
+$98 = 0.353795171
+```
+So these value represent compressed audio in the frequency domain. Now, to recap
+a little, normal sound when we record we are capturing the pressure the air
+waves are hitting the microphone. This is sampled thousands of times per second
+and each number, sample, is the amount of how much the microphone membrane is
+pushed in or pushed out. These would be numbers like 0.2, 0.3, -0.1 etc.
+An audio signal would be store something like this:
+```console
+Original Audio --> Fourier Transform --> Magnitude and Phase
+Time Domain                              Frequency Domain
+```
+In this case what the wavtokenizer is doing is that it is generating data in
+the frequency domain. So the embeddings are the magnitude and phase and they in
+a LLM they are generally stored with all the frequency values in the first half
+of a vector followed by all the phase values in the second half. This is becuase
+that this is more efficient for the neural network to work with. There are still
+pairs of values, magnitude and phase, but they are stored in a different way.
+This is good to keep in mind later when we transform these values for processing
+back to get the audio signal.
+
+The Fourier Transform that says that any signal can be represented as a sum of
+sine and cosine waves. And each sine wave has two properties magnitude and
+phase. Note that this is magnitude and not amplitude so this is a how far value
+differs from zero. The magnitude is always positive (the values above in the
+first half of embd are in logarithmic scale so they need to be exponentiated to
+get the actual values which we can then see are positive). Imagine the final
+audio wave for the word "Hello", it will first have a frequencies for the H and
+the transition to the frequencies for e, and it need to know where along then
+final audio wave to do this transition, this is what phase is for.
+
+The embeddings in the code, `embd`, are the magnitude and phase of the sine and
+cosine waves that make up the audio signal. These are pairs of values but the
+are stored in a way that is more efficient for the neural network to work with.
+
+So to produce a sound we need to take these values of magnitude and phase
+and sum them up to get the original sound.
+
+So lets look at the magnitude and phase for the first element in embd. Now, the
+magnitude values are in logarithmic scale so they need to be exponentiated to
+get the actual values:
+```console
+(gdb) p exp(embd[0])
+$108 = 0.24528324719634226
+(gdb) p embd[n_embd/2 + 0]
+$104 = 1.72218394
+```
+The forumla for the resulting wave at any given time `t` is:
+```console
+amplitude = magnitude * cos(frequency_in_hz * 2π * t + phase)
+
+amplitude = 0.24528324719634226 * cos(frequence * t + 1.72218394)
+frequence = ?
+t = 0
+```
+The frequence rate is defined as:
+```c++
+    const int n_sr = 24000; // sampling rate
+```
+We need to this calculate the frequency for each value:
+```console
+frequency = (component_index * sample_rate) / n_fft
+
+component_index = 0
+frequency = (0 * 24000) / 1280 = 0 Hz
+```
+So this is the frequence of the first sine wave that, together with the others
+will make up the final audio signal. This has a zero frequency meaning that it
+does not osscilate at all, it is a constant value.
+```console
+t = 0
+amplitude = 0.24528324719634226 * cos(0 * 0 + 1.72218394)
+          = 0.24528324719634226 * cos(1.72218394)
+          = 0.24528324719634226 * (-0.15643446...)
+          ≈ -0.0383697
+```
+So this first "wave" will simple offset the signal by -0.0383697 when added
+to other waves.
+
+```console
+(gdb) p exp(embd[1])
+$114 = 0.41000701941844214
+(gdb) p embd[n_embd/2 + 1]
+$115 = -0.819735587
+
+component_index = 1
+frequency = (1 * 24000) / 1280 = 18.75 Hz
+```
+We need to think about this as a complete wave, how it has a frequency of
+18.75 Hz meaning that it osscilates 18.75 times per second.
+
+```
+amplitude = 0.410 * cos(18.75 * 2π * t + 0.353795171)
+
+t = 0
+amplitude = 0.410 * cos(0 + 0.353795171)
+          = 0.410 * 0.938...
+          ≈ 0.384
+
+t = 1/18.75  (one cycle, remember that this wave completes 18.75 cycles per second)
+amp = 0.410 * cos(18.75 * 2π * 1/18.75 + 0.353795171)
+    = 0.410 * cos(2π + 0.353795171)
+    = 0.410 * 0.938...
+    ≈ 0.384
+
+t = 2/18.75
+amp = 0.410 * cos(18.75 * 2π * 2/18.75 + 0.353795171)
+    = 0.410 * cos(4π + 0.353795171)
+    = 0.410 * 0.938...
+    ≈ 0.384
+```
+And again this would be another wave that is added with all the others.
+
+So to recap, the embeddings are pairs values, the first half represent the
+magnitudes (in log scale) and the second half the matching phases.
+Each index maps to a specific frequency, (index * 24000/1280 Hz). And the sum
+of all these waves will produce the final audio signal. The process of going
+from an audio signal (time domain) to the embeddings (frequency domain) looks
+something like this:
+```console
+Original audio → Apply Hann → Forward FFT → [embd data]
+```
+And in this case we are going the other way:
+```console
+[embd data] → Inverse FFT → Apply Hann → Overlap-add
+```
 
 So lets take a look at the function `embd_to_audio`:
-```c++
+```console
 static std::vector<float> embd_to_audio(
         const float * embd,
         const int n_codes,
         const int n_embd,
         const int n_thread) {
-    const int n_fft = 1280;
-    const int n_hop = 320;
-    const int n_win = 1280;
-    const int n_pad = (n_win - n_hop)/2;
+    const int n_fft = 1280;   // Fourier transform window.
+    const int n_hop = 320;    // How far to "hop" between windows.
+    const int n_win = 1280;   // Size of the window.
+    const int n_pad = (n_win - n_hop)/2;  // padding before and after the window.
     const int n_out = (n_codes - 1)*n_hop + n_win;
+```
+`embd` is a vector of size `n_codes * n_embd` and contains the magnitudes first
+followed by the phases. The make up pairs of values, the magnitude and phase.
+
+The size 1280 means 1280 samples, likewise 320 means that we hop/skip over 320
+samples.
+```
+          1280
+   +------------------+
+   |                  |
+   |                  |
+   |                  | 
+   |                  |
+   |                  |
+   +------------------+
+   | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | 
+   ↑                  ↑
+   0                 1280
+   
+               1280
+       +------------------+
+       |               |  |
+       |  960 samples  |  |
+       |  overlap      |  | 
+       |               |  |
+       |               |  |
+       +------------------+
+   | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | 
+   ↑   ↑               ↑
+   0  320             1280
+       [1280-320=960   ]
+```
+So the above tries to show the window and the overlap.
+Next we have the Hann window:
+```console
+    std::vector<float> hann(n_fft);
+    fill_hann_window(hann.size(), true, hann.data());
+```
+So, the normal Fourier transform requires a continous curve (recall that we are
+doing the inverse Fourier transform here but they are very simlar and have the
+same requirements that the signal is periodic and continous). When we take slices
+or chunks of the signal, like we do above taking 1280 samples at a time. 
+So the actual singal might be continious but each 1280 chunk will not be and
+each chunk is processed separatly through the Fourier transform. The Hann window
+is needed to make each chunk continous.
+```
+    1280 samples
+  [ chunk  1   ] --> inv_fft(chunk)
+      ↑
+    Repeating for ever is what the inv_fft "sees"
+
+  [ chunk  2   ] --> inv_fft(chunk)
+      ↑
+    Repeating for ever is what the inv_fft "sees"
+```
+We take a chunk from a signal placing two of these chunks side by side, this is
+what the inverse Fourier transform sees:
+```
+ [chunk 1][chunk 1][chunk 1][chunk 1][chunk 1][chunk 1][chunk 1][chunk 1]...
+```
+The chunks will have breaks in the wave form at the edges (unless we are
+extreemly lucky). One might "jump" up or down breaking the continous curve. The
+Hann window is used to smooth out each chunk so that the edges are not so sharp.
+So notice that we do this for each chunk, so the Hann window is applied to each
+chunk after it is passed to the fourier transform, and the form of the wave will
+be a bell shaped curve so it starts a zero, goes up to the peak and then back
+down to zero. This way adding two chunks next to each other will not have a
+break and they one chunk ends with zero and the other starts at zero.
+
+The forumla for Hann is the following:
+```console
+w(n) = 0.5 * (1 - cos(2π * n / (N-1)))
+
+n = the sample number
+N = the number of samples in the chunk, the window size that is.
+```
+So each chunk is multiplied by the Hann window, which we can visualize or think
+of as a curve that is multiplied by the chunk's curve.
+
+We can actually do the Hann stuff after the inverse Fourier transform which is
+actually what the code is doing.
+If we look at the code we can see this:
+```console
+    std::vector<float> hann(n_fft);
+    fill_hann_window(hann.size(), true, hann.data());
+```
+So this is simply a vector of float values, the size of a chunk/window which is
+1280 samples in this cae, and this is filled using:
+```console
+static void fill_hann_window(int length, bool periodic, float * output) {
+    int offset = -1;
+    if (periodic) {
+        offset = 0;
+    }
+    for (int i = 0; i < length; i++) {
+        output[i] = 0.5 * (1.0 - cosf((2.0 * M_PI * i) / (length + offset)));
+                          ↑ 
+                    // Forumla for Hann window 
+    }
+}
+```
+Recall that the purpose of this is that each chunk, when this vector is used
+will smooth out the edges of the chunk so that when two chunks are placed next
+to each other there will not be a break in the wave form.
+
+Following that we have:
+```console
+    int n_spec = n_embd*n_codes;
+
+    std::vector<float> E (n_spec);
+    std::vector<float> S (n_spec);
+    std::vector<float> ST(n_spec);
+```
+Now, `n_spec` represents the total number of sample points/values for current
+prompt (the output returned by the WaveTokenizer model). Recall that we
+mentioned ealier that the embeddings are pairs of values, the magnitude and
+phase, and that they are stored in a way that is more efficient for the neural
+network to work with. We are now going to transform these values back.
+
+Now `embd` is just a float array which was created by operation:
+```console
+        cur = ggml_add(ctx0, cur, model.output_b);
+        cb(cur, "result_embd", -1);
+
+(gdb) p cur->ne
+$79 = {1282, 1, 1, 1}
+```
+The second dimension is the number of tokens/codes in generated. Now in our
+case we have 96:
+```
+{1282, 96}
+
+0    [0                  1281]
+.          .
+.          .
+.          .
+95   [122976           123072]
+```
+So the embd array will be in this format as well but it is just a flat array
+but we can think of it as 2d array like above. That is we have 1282 values for
+which the first chunk, then another 1282 values for the second chunk and so.
+```console
+    for (int l = 0; l < n_codes; ++l) {
+        for (int k = 0; k < n_embd; ++k) {
+            E[k*n_codes + l] = embd[l*n_embd + k];
+        }
+    }
+```
+So this is going to iterate from 0 to 95. And starting with 0 it will then
+iterate over 0 to 1281.
+```
+l=0, k=0     k*n_codes+l=0      l*n_embd+k = 0
+l=0, k=1     k*n_codes+l=96     l*n_embd+k = 1
+.       .
+.       .
+.       .
+l=0, k=1281  k*n_codes+l=122976 l*n_embd+k = 1281
+
+E[0]      = embd[0]
+E[96]     = embd[1]
+E[192]    = embd[2]
+E[288]    = embd[3]
+...
+E[122976] = embd[1281]
+
+l=1, k=0     k*n_codes+l=1      l*n_embd+k = 1282
+l=1, k=1     k*n_codes+l=97     l*n_embd+k = 1283
+
+E[1]      = embd[1282]
+E[97]     = embd[1283]
+
+
+E will become:
+0   [0             95]
+1   [96           191]
+2   [192          287]
+3   [288          383]
+.          .
+.          .
+.          .
+1281 [126977    123071]
+
+So this is essentially just transposing the embd array.
+```
+So now that we have E in the correct order {96, 1282}.
+
+Next the the values are converted to complex numbers which is what the inverse
+fourier transformation expects:
+```console
+    for (int k = 0; k < n_embd/2; ++k) {
+        for (int l = 0; l < n_codes; ++l) {
+            float mag = E[(k           )*n_codes + l];
+            float phi = E[(k + n_embd/2)*n_codes + l];
+
+            mag = exp(mag);
+
+            if (mag > 1e2) {
+                mag = 1e2;
+            }
+            S[2*(k*n_codes + l) + 0] = mag*cosf(phi);
+            S[2*(k*n_codes + l) + 1] = mag*sinf(phi);
+        }
+    }
+```
+
+```console
+(gdb) p E[(k           )*n_codes + l]
+$114 = -1.40534163
+(gdb) p E[0]
+$115 = -1.40534163
+(gdb) p (0 + n_embd/2)*n_codes + 0
+$111 = 61536
+(gdb) p (n_embd * n_codes) / 2
+$117 = 61536
+```
+So, here we can see that infact the first half of E are the magnitudes and the
+second half are the phases. And the above is extracting the pairs into mag and
+phi. And like we mentioned earlier the magnitudes are in log scale so they need
+to be exponentiated to get the actual values. And these are then converted
+from polar form to complex number (cosine and sine) entries in `S`:
+```
+k_0
+  [mag_0, phi_0]     (0, 1)      chunk 0
+  ...
+  [mag_95, phi_95]               chunk 95
+
+k_1 
+  [mag_0, phi_0]     (192,193)   chunk 0
+  ...
+  [mag_95, phi_95]               chunk 95
+
+k_2 
+  [mag_0, phi_0]     (384, 385)  chunk 0
+  ...
+  [mag_95, phi_95]               chunk 95
+.
+.
+.
+k_641 
+  [mag_0, phi_0]                  chunk 0
+  ...
+  [mag_95, phi_95]    (122976, 122977) chunk 95
+
+
+shape: {2, 96, 641}
+
+(gdb) p 641 * (n_codes*2)
+$124 = 123072
+```
+So, `S` is a 3d array of shape {2, 96, 641} where the first dimension is the
+real and imaginary parts of the complex number, the second dimension is the
+number of tokens/codes and the third dimension is the number of pairs.
+Notice that the chunks are not contiguous in the array, they are interleaved
+with the other chunks.
+
+And finally ST is populated and this will store values for each chunk
+contiguously so that each one can be processed indpendently by a separate
+thread:
+```console
+    for (int l = 0; l < n_codes; ++l) {
+        for (int k = 0; k < n_embd/2; ++k) {
+            ST[l*n_embd + 2*k + 0] = S[2*(k*n_codes + l) + 0];
+            ST[l*n_embd + 2*k + 1] = S[2*(k*n_codes + l) + 1];
+        }
+    }
+```
+So the first chunk will be store like this:
+```
+chunk 0:
+ST[0] = S[0]   (k_0 mag_0)
+ST[1] = S[1]   (k_0 phi_0)
+ST[2] = S[192] (k_1 mag_0)
+ST[3] = S[193] (k_1 phi_0)
+ST[4] = S[384] (k_2 mag_0)
+ST[5] = S[385] (k_2 phi_0)
+...
+```
+Next two vectors are created:
+```console
+    std::vector<float> res  (n_codes*n_fft);
+    std::vector<float> hann2(n_codes*n_fft);
+```
+And then n_thread are created:
+```console
+    std::vector<std::thread> workers(n_thread);
+    for (int i = 0; i < n_thread; ++i) {
+        workers[i] = std::thread([&, i]() {
+            for (int l = i; l < n_codes; l += n_thread) {
+                irfft(n_fft, ST.data() + l*n_embd, res.data() + l*n_fft);
+                for (int j = 0; j < n_fft; ++j) {
+                    res  [l*n_fft + j] *= hann[j];
+                    hann2[l*n_fft + j]  = hann[j] * hann[j];
+                }
+            }
+        });
+    }
+    for (int i = 0; i < n_thread; ++i) {
+        workers[i].join();
+    }
+```
+`n_thread` is 4 in this case so there will be 4 worker threads created. And
+notice that the lambda takes `i` as a parameter so `0, 1, 2, 3` which is assigned
+to l in the loop. And notice the for loop has `l += n_thread`:
+```
+worker[0] l=0, 4, 8, 12, ... 92
+worker[1] l=1, 5, 9, 13, ... 93
+worker[2] l=2, 6, 10, 14, ...94
+worker[3] l=3, 7, 11, 15, ...95
+```
+```console
+irfft(n_fft, ST.data() + l*n_embd, res.data() + l*n_fft);
+```
+So each thread will pass a "slice" of the ST array, and a slice of the result
+array res to the inverse Fourier transform function.
+
+```console
+static void irfft(int n, const float * inp_cplx, float * out_real) {
+    int N = n / 2 + 1;
+
+    std::vector<float> real_input(N);
+    std::vector<float> imag_input(N);
+    for (int i = 0; i < N; ++i) {
+        real_input[i] = inp_cplx[2 * i];
+        imag_input[i] = inp_cplx[2 * i + 1];
+    }
+
+    std::vector<float> real_output(n);
+    std::vector<float> imag_output(n);
+
+    for (int k = 0; k < n; ++k) {
+        real_output[k] = 0.0f;
+        imag_output[k] = 0.0f;
+        for (int m = 0; m < N; ++m) {
+            float twiddle_real;
+            float twiddle_imag;
+
+            twiddle(&twiddle_real, &twiddle_imag, k * m, n);
+
+            real_output[k] += real_input[m] * twiddle_real - imag_input[m] * twiddle_imag;
+            imag_output[k] += real_input[m] * twiddle_imag + imag_input[m] * twiddle_real;
+        }
+    }
+
+    for (int i = 0; i < n; ++i) {
+        out_real[i] = real_output[i] / N;
+    }
+}
+
+// very poor-man fft
+static void twiddle(float * real, float * imag, int k, int N) {
+    float angle = 2 * M_PI * k / N;
+    *real = cos(angle);
+    *imag = sin(angle);
+}
+```
+
+And finally we have the overlap-add process and normalization:
+```console
+    std::vector<float> audio;
+    std::vector<float> env;
+
+    fold(res,   n_out, n_win, n_hop, n_pad, audio);
+    fold(hann2, n_out, n_win, n_hop, n_pad, env); // TODO: can be done once
+
+    for (size_t i = 0; i < audio.size(); ++i) {
+        audio[i] /= env[i];
+    }
+
+    return audio;
+}
+
+static void fold(const std::vector<float> & data, int64_t n_out, int64_t n_win, int64_t n_hop, int64_t n_pad, std::vector<float> & output) {
+    int64_t output_height = n_out;
+    int64_t kernel_w = n_win;
+    int64_t stride_w = n_hop;
+    int64_t width    = n_out;
+
+    output.resize(width, 0.0f);
+
+    int64_t col_idx = 0;
+    for (int64_t w_col = 0; w_col < width; ++w_col) {
+        int64_t start = w_col * stride_w - n_pad;
+        int64_t end   = start + kernel_w;
+
+        for (int64_t w_im = start; w_im < end; ++w_im) {
+            if (w_im >= 0 && w_im < output_height && col_idx < (int64_t) data.size()) {
+                output[w_im] += data[col_idx];
+            }
+            col_idx++;
+        }
+    }
+
+    output.resize(n_out - 2 * n_pad);
+}
 ```
 
 _wip_ 
