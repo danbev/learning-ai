@@ -203,6 +203,77 @@ size 128256.
 The image token needs to be in our models vocab, in vocab.id_to_token so that
 it is resolved correctly and the correct token id passed to the model. But
 id_to_token is also how the vocab size is determined by other parts of llama.cpp.
+For example, in `llama_decode_impl`:
+```c++
+            if (n_outputs_new) {
+                GGML_ASSERT( n_outputs_prev + n_outputs_new <= n_outputs);
+                GGML_ASSERT((n_outputs_prev + n_outputs_new)*n_vocab <= (int64_t) lctx.logits_size);
+                ggml_backend_tensor_get_async(backend_res, res, logits_out, 0, n_outputs_new*(n_vocab)*sizeof(float));
+            }
+```
+So as far as I can tell we need to have the additional image token in the
+actual vocab list, `id_to_token` in llama.cpp. But using that vocab size when
+calling vo
+```c++
+int32_t llama_vocab_n_tokens(const struct llama_vocab * vocab) {
+    return vocab->n_tokens();
+}
+
+uint32_t llama_vocab::n_tokens() const {
+    return (uint32_t) pimpl->id_to_token.size();
+}
+```
+I think a way to handle this is to leave the vocab size as 128256 when
+converting the model, so that id_to_token will have the correct size. And then
+add a special token for the image token.
+So adding the following to the converted .gguf model:
+```console
+     60: UINT32     |        1 | tokenizer.ggml.image_token_id = 128256
+```
+And then adding this to the vocab special tokens in llama-arch.cpp:
+```c++
+enum llm_kv {
+    ...
+    LLM_KV_TOKENIZER_IMAGE_ID,
+    ...
+```
+And the in llama-vocab.cpp:
+```c++
+struct llama_vocab::impl {
+    ...
+    llama_token special_image_id = LLAMA_TOKEN_NULL;
+    ...
+}
+```
+And the update the handling of special tokens in llama-vocab.cpp:
+```c++
+void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+   ...
+   // special tokens                                                               
+    {                                                                               
+        const std::vector<std::pair<enum llm_kv, int32_t &>> special_token_types = {
+            { LLM_KV_TOKENIZER_BOS_ID,     special_bos_id     },                    
+            { LLM_KV_TOKENIZER_EOS_ID,     special_eos_id     },                    
+            { LLM_KV_TOKENIZER_EOT_ID,     special_eot_id     },                    
+            { LLM_KV_TOKENIZER_EOM_ID,     special_eom_id     },                    
+            { LLM_KV_TOKENIZER_UNK_ID,     special_unk_id     },                    
+            { LLM_KV_TOKENIZER_SEP_ID,     special_sep_id     },                    
+            { LLM_KV_TOKENIZER_PAD_ID,     special_pad_id     },                    
+            { LLM_KV_TOKENIZER_MASK_ID,    special_mask_id    },                    
+            { LLM_KV_TOKENIZER_IMAGE_ID,   special_image_id   },                    
+            { LLM_KV_TOKENIZER_FIM_PRE_ID, special_fim_pre_id },                    
+            { LLM_KV_TOKENIZER_FIM_SUF_ID, special_fim_suf_id },                    
+            { LLM_KV_TOKENIZER_FIM_MID_ID, special_fim_mid_id },                    
+            { LLM_KV_TOKENIZER_FIM_PAD_ID, special_fim_pad_id },                    
+            { LLM_KV_TOKENIZER_FIM_REP_ID, special_fim_rep_id },                    
+            { LLM_KV_TOKENIZER_FIM_SEP_ID, special_fim_sep_id },                    
+                                                                                    
+            // deprecated                                                           
+            { LLM_KV_TOKENIZER_PREFIX_ID, special_fim_pre_id },                     
+            { LLM_KV_TOKENIZER_SUFFIX_ID, special_fim_suf_id },                     
+            { LLM_KV_TOKENIZER_MIDDLE_ID, special_fim_mid_id },                 
+        };
+```
 
 
 ### Tasks
