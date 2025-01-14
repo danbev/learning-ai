@@ -1390,3 +1390,190 @@ $ aplay output.wav
 This section can be removed once https://github.com/ggerganov/llama.cpp/pull/11155
 lands.
 
+
+### Server version of the TTS example
+This example requires two server running, one that serves the LLM model and the
+other that serves the voice decoder model.
+
+Start the server with the LLM model:
+```console
+$ ./build/bin/llama-server -m ./models/outetts-0.2-0.5B-q8_0.gguf -ngl 99 --port 8020
+```
+Start the server with the voice decoder model:
+```console
+$ ./build/bin/llama-server -m ./models/wavtokenizer-large-75-f16.gguf --port 8021 --embeddings --pooling none
+print_info: file format = GGUF V3 (latest)
+print_info: file type   = F16
+print_info: file size   = 124.15 MiB (16.03 BPW) 
+print_info: arch             = wavtokenizer-dec
+print_info: vocab_only       = 0
+print_info: n_ctx_train      = 8192
+print_info: n_embd           = 1282
+print_info: n_layer          = 12
+print_info: n_head           = 1
+print_info: n_head_kv        = 1
+print_info: n_rot            = 1282
+print_info: n_swa            = 0
+print_info: n_embd_head_k    = 1282
+print_info: n_embd_head_v    = 1282
+print_info: n_gqa            = 1
+print_info: n_embd_k_gqa     = 1282
+print_info: n_embd_v_gqa     = 1282
+print_info: f_norm_eps       = 1.0e-06
+print_info: f_norm_rms_eps   = 0.0e+00
+print_info: f_clamp_kqv      = 0.0e+00
+print_info: f_max_alibi_bias = 0.0e+00
+print_info: f_logit_scale    = 0.0e+00
+print_info: n_ff             = 2304
+print_info: n_expert         = 0
+print_info: n_expert_used    = 0
+print_info: causal attn      = 0
+print_info: pooling type     = 0
+print_info: rope type        = -1
+print_info: rope scaling     = linear
+print_info: freq_base_train  = 10000.0
+print_info: freq_scale_train = 1
+print_info: n_ctx_orig_yarn  = 8192
+print_info: rope_finetuned   = unknown
+print_info: ssm_d_conv       = 0
+print_info: ssm_d_inner      = 0
+print_info: ssm_d_state      = 0
+print_info: ssm_dt_rank      = 0
+print_info: ssm_dt_b_c_rms   = 0
+print_info: model type       = ?B
+print_info: model params     = 64.98 M
+print_info: general.name     = WavTokenizer Large Speech 75token
+print_info: vocab type       = no vocab
+print_info: n_vocab          = 0
+print_info: n_merges         = 0
+print_info: max token length = 0
+
+Thread 1 "llama-server" hit Breakpoint 1, llama_model::load_tensors (this=0x555555e08740, ml=...)
+    at /home/danbev/work/ai/llama.cpp-debug/src/llama-model.cpp:3250
+3250	                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {hparams.n_embd_features, n_vocab}, 0);
+(gdb) p n_vocab
+$1 = 0
+(gdb) up
+#1  0x00007ffff7c5d7ff in llama_model_load (fname="./models/wavtokenizer-large-75-f16.gguf", model=..., params=...)
+    at /home/danbev/work/ai/llama.cpp-debug/src/llama.cpp:73
+73	        if (!model.load_tensors(ml)) {
+(gdb) bt
+#0  llama_model::load_tensors (this=0x555555e08740, ml=...) at /home/danbev/work/ai/llama.cpp-debug/src/llama-model.cpp:3250
+#1  0x00007ffff7c5d7ff in llama_model_load (fname="./models/wavtokenizer-large-75-f16.gguf", model=..., params=...)
+    at /home/danbev/work/ai/llama.cpp-debug/src/llama.cpp:73
+#2  0x00007ffff7c664b9 in llama_model_load_from_file (path_model=0x555555e08710 "./models/wavtokenizer-large-75-f16.gguf", 
+    params=...) at /home/danbev/work/ai/llama.cpp-debug/src/llama.cpp:9488
+#3  0x00005555557464ed in common_init_from_params (params=...) at /home/danbev/work/ai/llama.cpp-debug/common/common.cpp:868
+#4  0x000055555562fcd1 in server_context::load_model (this=0x7fffffffc2d0, params=...)
+    at /home/danbev/work/ai/llama.cpp-debug/examples/server/server.cpp:1687
+#5  0x00005555555e8031 in main (argc=8, argv=0x7fffffffda08) at /home/danbev/work/ai/llama.cpp-debug/examples/server/server.cpp:4228
+```
+This voice decoder model does not have a vocabulary, it does not have an array
+of `tokenizer.ggml.tokens`, so the values returned from `model.vocab.n_tokens()`
+will be zero.
+But the model model does has the following property:
+```console
+wavtokenizer-dec.vocab_size
+```
+And this matches the exptected size of `tok_embd`:
+```console
+    111:    2097152 |   512,  4096,     1,     1 | F16     | token_embd.weight
+```
+So perhaps this values should be set a hparam when these types of model are
+loaded.
+
+But there will also be a need to a change to `llama_decode_impl` where the
+`n_tokens` is also used:
+```c++
+    if (batch.token) {
+        for (uint32_t i = 0; i < n_tokens_all; ++i) {
+            if (batch.token[i] < 0 || (uint32_t) batch.token[i] >= model.vocab.n_tokens()) {
+                LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
+                return -1;
+            }
+        }
+    }
+```
+There might be other places where a similar situation arises as well.
+
+As a quick test to see if this would work the following changes enable the
+tts example to run again:
+```console
+diff --git a/src/llama-hparams.h b/src/llama-hparams.h
+index 1fe45410..c641ff2a 100644
+--- a/src/llama-hparams.h
++++ b/src/llama-hparams.h
+@@ -45,6 +45,7 @@ struct llama_hparams {
+     // for WavTokenizer
+     struct llama_hparams_posnet   posnet;
+     struct llama_hparams_convnext convnext;
++    uint32_t wav_n_vocab = 0;
+ 
+     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_arr;
+     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index f90f5e74..5b30154c 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -421,6 +421,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+ 
+         ml.get_key(LLM_KV_CONVNEXT_EMBEDDING_LENGTH, hparams.convnext.n_embd);
+         ml.get_key(LLM_KV_CONVNEXT_BLOCK_COUNT,      hparams.convnext.n_layer);
++        ml.get_key(LLM_KV_VOCAB_SIZE,                hparams.wav_n_vocab);
+     }
+ 
+     GGML_ASSERT(hparams.n_expert <= LLAMA_MAX_EXPERTS);
+@@ -3247,7 +3248,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+                 } break;
+             case LLM_ARCH_WAVTOKENIZER_DEC:
+                 {
+-                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {hparams.n_embd_features, n_vocab}, 0);
++                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {hparams.n_embd_features, hparams.wav_n_vocab}, 0);
+ 
+                     conv1d   = create_tensor(tn(LLM_TENSOR_CONV1D, "weight"), {7, hparams.n_embd_features, hparams.posnet.n_embd}, 0);
+                     conv1d_b = create_tensor(tn(LLM_TENSOR_CONV1D, "bias"),   {1, hparams.posnet.n_embd}, 0);
+diff --git a/src/llama.cpp b/src/llama.cpp
+index daf1b7c9..15769dc1 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -8471,8 +8471,10 @@ static int llama_decode_impl(
+     if (batch.token) {
+         for (uint32_t i = 0; i < n_tokens_all; ++i) {
+             if (batch.token[i] < 0 || (uint32_t) batch.token[i] >= model.vocab.n_tokens()) {
+-                LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
+-                return -1;
++                if (model.arch != LLM_ARCH_WAVTOKENIZER_DEC) {
++                    LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
++                    return -1;
++                }
+             }
+         }
+     }
+
+```
+
+```console
+llama_model_load: error loading model: check_tensor_dims: tensor 'token_embd.weight' has wrong shape; expected   512,     0, got   512,  4096,     1,     1
+llama_model_load_from_file: failed to load model
+common_init_from_params: failed to load model './models/wavtokenizer-large-75-f16.gguf'
+```
+I opened https://github.com/ggerganov/llama.cpp/issues/11229 for this issue
+which has now been fixed.
+
+So back to the server example, we need to servers running, one for the LLM model
+and the other for the voice decoder model. The LLM model server is started with:
+```console
+$ ./build/bin/llama-server -m ./models/outetts-0.2-0.5B-q8_0.gguf -ngl 99 --port 8020
+```
+```console
+./build/bin/llama-server -m ./models/wavtokenizer-large-75-f16.gguf --port 8021 --embeddings --pooling none
+```
+
+```console
+$ python3 -m venv venv
+$ source venv/bin/activate
+(venv) pip install requests
+(venv) python ./examples/tts/tts-outetts.py http://localhost:8020 http://localhost:8021 "Hello world"  
+```
+This is not completely implements, most notably `embd_to_audio` which we covered
+above in c++ is not implemented in the python version.
