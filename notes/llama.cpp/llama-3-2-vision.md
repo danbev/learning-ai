@@ -171,6 +171,27 @@ And 32 (`num_hidden_layers`) hidden layers:
 
 ```
 
+I initially thougth that having a single model for both the lanuage and vision
+model was a good idea, simpler to manage for users. But I had not considered
+that it might not optimal from a performance perspective. If we have separate
+models.  
+The following is from a [discussion](https://github.com/ggerganov/llama.cpp/discussions/11139#discussioncomment-11783418)
+on this topic:
+```
+Having separate models allows to create separate contexts for the encoder and
+decoder which gives more fine-grained control over the computation - how many
+layers to offload, which devices to use, how much memory to reserve, etc.
+Also, computations of the encoder and the decoder could be interleaved which is
+important for high-performance scenarios - for example, while we are decoding
+the response for an image we could be already encoding the next images.
+
+Having a single GGUF for the entire vision model is definitely more convenient
+for users and distribution. But maybe this can be achieved by extending GGUF to
+allow packing multiple GGUFs (like an archive).
+```
+So I'm going to create two models for Llama 3.2 Vision Instruct and then take
+a look at how packaging multiple GGUFs could be done.
+
 ### Language model layers (tensors)
 ```console
 "language_model.lm_head.weight"
