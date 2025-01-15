@@ -6,9 +6,9 @@ _This is very much a exploration at this point and these ideas might be valid in
 
 ### Overview
 
-The idea is to enable agent to work with llama.cpp and be able to run the
-locally. The tools that an Agent uses will be defined using the Web Assembly
-Component Model and an interface defined in Web Assembly Interface Types (WIT).
+The idea is to enable agents to work with llama.cpp and be able to run locally.
+The tools that an Agent uses will be defined using the Web Assembly Component
+Model and an interface defined in Web Assembly Interface Types (WIT).
 
 The motivation for choosing this is that using the Web Assembly Component Model,
 we can define an interface for the tools that an agent uses and then implement
