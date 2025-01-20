@@ -122,6 +122,10 @@ textual representations."
 CLIP and VIT are not the same thing as I understand it. CLIP which stands for
 contrastive language-image pretraining can use a vision transformer to process
 the images but CLIP itself is the complete concept of the training process.
+At inference time, like what is being worked on in llama.cpp, it is the ViT
+component of CLIP thas being used and perhaps using clip as the prefix for
+methods/structs/tensor can be a litle misleading. Would this be better off
+named something like 'vit' or `vision_model`, `vision_layer` etc.
 
 ### CLIP image preprocessing
 
