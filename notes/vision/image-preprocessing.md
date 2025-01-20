@@ -2,9 +2,16 @@
 This document is about image preprocessing in the context of multi-modal models, like
 Llama 3.2 Vision Instruct.
 
+The image encoder is a pre-trained ViT-H/14 model which produces image patch
+embeddings. These embeddings are then used in the cross-attention for the
+language model. This is a little different from other models where the image
+patch embeddings are projected into the same embedding space as the text
+embeddings and then are used as normal tokens to the transformer model.
+
 ### Pre-processor config
-Some models have is information in `preprocessor_config.json` which is needed for the
-pre-processing of images, for example Llama 3.2 Vision Instruct has the following:
+Some models have this information in `preprocessor_config.json` which is needed
+for the pre-processing of images, for example Llama 3.2 Vision Instruct has the
+following:
 ```console
 {
   "do_convert_rgb": true,
@@ -72,11 +79,11 @@ inC would be 1 for a grayscale image, and 3 for an RGB image, and 4 for an RGBA 
 Tiling is something that is used for large images so that they don't get scaled down
 into to an image that is too small, which might distort the image information and cause
 the model to not be able to process it properly, or with enough accuracy. Wide images
-can become squished, and tall images can become stretched and be come unrecognizable. Text
+can become squished, and tall images can become stretched and become unrecognizable. Text
 migth become unreadable, and objects might become unrecognizable.
 
 So what is done is the larger image is split into multiple images of the size that the model
-expects. For example, if the model expects (was trained on) 560x560 images images that
+expects. For example, if the model expects (was trained on) 560x560 images, images that
 are larger can be split into multiple 560x560 images. This is where the concept of
 tiling comes in. This allows us to keep the original proportions of the image and keep
 a natural view of the image.
