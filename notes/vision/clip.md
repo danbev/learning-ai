@@ -117,3 +117,14 @@ high-level representation. Each "tower" within a model like CLIP is specialized
 overarching architecture to achieve a common goal, such as aligning visual and
 textual representations."
 
+
+### CLIP vs VIT
+CLIP and VIT are not the same thing as I understand it. CLIP which stands for
+contrastive language-image pretraining can use a vision transformer to process
+the images but CLIP itself is the complete concept of the training process.
+
+### CLIP image preprocessing
+
+* Resize/crop the images to 224x224 pixels (which is what was used in the paper)
+* Normalize the pixel values to be in the range [0, 1]
+* Convert to RGB format if needed
