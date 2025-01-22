@@ -145,6 +145,49 @@ So perhaps we should let the vocabulary size be 128257 so that the image token
 is included in `id_to_token` and then modify the shape of `output.weight` that
 depends on the size being 128256. 
 
+```python
+    tokenizer = AutoTokenizer.from_pretrained(self.dir_model, trust_remote_code=is_cli_non_interactive)
+    vocab_size = max(self.hparams.get("vocab_size", 0), len(tokenizer.vocab))
+    print(f'tokenizer len: {len(tokenizer.vocab)}')
+    print(f'vocab_size: {vocab_size}')
+    assert max(tokenizer.vocab.values()) <= vocab_size
+```
+So allowing the vocabulary size to have the actual size of 128257 and then
+in `load_tensors` we read the 'vocab_size' from the configuration for this 
+model:
+```c++
+    uint32_t n_vocab = 0;
+    ml.get_key(LLM_KV_VOCAB_SIZE, n_vocab, false);
+    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab + 8}, 0);
+```
+With these changes the tokens look like this:
+```console
+prefix prompt: <|start_header_id|>user<|end_header_id|>
+
+
+token = 128006
+token = 882
+token = 128007
+token = 271
+prompt: <|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+
+token = 128256
+token = 3923
+token = 374
+token = 304
+token = 420
+token = 2217
+token = 30
+token = 128009
+token = 128006
+token = 78191
+token = 128007
+token = 271
+```
+We can now see that the `<|image|>` token is correctly resolved to the correct
+token id 128256.
+
 ### Model conversion
 So we first need to convert the model to GGUF format which is done by the
 `convert_hf_to_gguf.py` script. This model consists of not just one model but
