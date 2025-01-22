@@ -8,7 +8,10 @@ multi-modal llama.
 
 Paper: https://arxiv.org/pdf/2407.21783
 
-### vocabulary size
+* [Vision API PR](https://github.com/ggerganov/llama.cpp/pull/11292)
+* [Discussing about multi-model .gguf models](https://github.com/ggerganov/llama.cpp/discussions/11139?sort=old)
+
+### vocab
 One interesting thing with this model is that is has a vocab size specified as:
 ```console
 "vocab_size": 128256 
