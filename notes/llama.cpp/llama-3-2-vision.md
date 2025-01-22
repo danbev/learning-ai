@@ -217,6 +217,30 @@ In this case the above call will cause an error:
 GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor read out of bounds") failed
 ```
 
+The `n_vocab` is earlier in `llama_decode_impl`:
+```c++
+static int llama_decode_impl(
+         llama_context & lctx,
+           llama_batch   inp_batch) {
+           ...
+
+    const int64_t n_vocab = vocab.n_tokens();
+```
+What I've done just to see if I can get the model working is the following
+change:
+```c++
+    int64_t n_vocab;
+    if (model.arch == LLM_ARCH_MLLAMA) {
+        n_vocab = 128256;
+    } else {
+        n_vocab = vocab.n_tokens();
+    }
+```
+This is obviously not a solution but it will allow me to test the model. I'm
+going to ask for input about what best way to handle this is.
+
+_work in progress_
+
 ### Model conversion
 So we first need to convert the model to GGUF format which is done by the
 `convert_hf_to_gguf.py` script. This model consists of not just one model but
