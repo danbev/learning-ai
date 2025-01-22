@@ -45,14 +45,6 @@ This causes problems as there is a tensor that depend on the vocab size being
 The image token needs to be in our models vocab, in `vocab.id_to_token` that is,
 so that it is resolved correctly and the correct token id passed to the model.
 
-For example, in `llama_decode_impl`:
-```c++
-            if (n_outputs_new) {
-                GGML_ASSERT( n_outputs_prev + n_outputs_new <= n_outputs);
-                GGML_ASSERT((n_outputs_prev + n_outputs_new)*n_vocab <= (int64_t) lctx.logits_size);
-                ggml_backend_tensor_get_async(backend_res, res, logits_out, 0, n_outputs_new*(n_vocab)*sizeof(float));
-            }
-```
 So as far as I can tell we need to have the additional image token in the
 actual vocab list, `id_to_token` in llama.cpp. The vocabulary size is determined
 by calling:
