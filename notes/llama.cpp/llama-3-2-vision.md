@@ -8,7 +8,141 @@ multi-modal llama.
 
 Paper: https://arxiv.org/pdf/2407.21783
 
-#### Model conversion
+### vocabulary size
+One interesting thing with this model is that is has a vocab size specified as:
+```console
+"vocab_size": 128256 
+```
+But the special token `<|image|>` is at index 128256, so the actual vocab size
+is 128257. We can see this by inspecting the actual vocabulary array in
+convert_hf_to_gguf.py:
+```python
+    tokenizer = AutoTokenizer.from_pretrained(self.dir_model, trust_remote_code=is_cli_non_interactive)
+    print(f'tokenizer len: {len(tokenizer.vocab)}')
+    vocab_size = self.hparams.get("vocab_size", len(tokenizer.vocab))
+    assert max(tokenizer.vocab.values()) <= vocab_size
+```
+```console
+tokenizer len: 128257
+```
+This causes problems as there is a tensor that depend on the vocab size being
+128256:
+```console
+      1:  525336576 |  4096, 128256,    1,     1 | Q6_K    | output.weight
+```
+
+The image token needs to be in our models vocab, in `vocab.id_to_token` that is,
+so that it is resolved correctly and the correct token id passed to the model.
+
+For example, in `llama_decode_impl`:
+```c++
+            if (n_outputs_new) {
+                GGML_ASSERT( n_outputs_prev + n_outputs_new <= n_outputs);
+                GGML_ASSERT((n_outputs_prev + n_outputs_new)*n_vocab <= (int64_t) lctx.logits_size);
+                ggml_backend_tensor_get_async(backend_res, res, logits_out, 0, n_outputs_new*(n_vocab)*sizeof(float));
+            }
+```
+So as far as I can tell we need to have the additional image token in the
+actual vocab list, `id_to_token` in llama.cpp. The vocabulary size is determined
+by calling:
+```c++
+int32_t llama_vocab_n_tokens(const struct llama_vocab * vocab) {
+    return vocab->n_tokens();
+}
+
+uint32_t llama_vocab::n_tokens() const {
+    return (uint32_t) pimpl->id_to_token.size();
+}
+```
+And notice that this is using the size of the `id_to_token` vector
+to determine the vocab size. Now, this vector is resized in llama-vocab.cpp:
+```c++
+    uint32_t n_tokens = gguf_get_arr_n(ctx, token_idx);
+    id_to_token.resize(n_tokens);
+```
+```console
+(gdb) p  n_tokens
+$1 = 128256
+```
+
+I think a way to handle this is to leave the vocab size as 128256 when
+converting the model, so that id_to_token will have the correct size. And then
+add a special token for the image token.
+So adding the following to the converted .gguf model:
+```console
+     60: UINT32     |        1 | tokenizer.ggml.image_token_id = 128256
+```
+And then adding this to the vocab special tokens in llama-arch.cpp:
+```c++
+enum llm_kv {
+    ...
+    LLM_KV_TOKENIZER_IMAGE_ID,
+    ...
+```
+And the in llama-vocab.cpp:
+```c++
+struct llama_vocab::impl {
+    ...
+    llama_token special_image_id = LLAMA_TOKEN_NULL;
+    ...
+}
+```
+And the update the handling of special tokens in llama-vocab.cpp:
+```c++
+void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+   ...
+   // special tokens                                                               
+    {                                                                               
+        const std::vector<std::pair<enum llm_kv, int32_t &>> special_token_types = {
+            { LLM_KV_TOKENIZER_BOS_ID,     special_bos_id     },                    
+            { LLM_KV_TOKENIZER_EOS_ID,     special_eos_id     },                    
+            { LLM_KV_TOKENIZER_EOT_ID,     special_eot_id     },                    
+            { LLM_KV_TOKENIZER_EOM_ID,     special_eom_id     },                    
+            { LLM_KV_TOKENIZER_UNK_ID,     special_unk_id     },                    
+            { LLM_KV_TOKENIZER_SEP_ID,     special_sep_id     },                    
+            { LLM_KV_TOKENIZER_PAD_ID,     special_pad_id     },                    
+            { LLM_KV_TOKENIZER_MASK_ID,    special_mask_id    },                    
+            { LLM_KV_TOKENIZER_IMAGE_ID,   special_image_id   },                    
+            { LLM_KV_TOKENIZER_FIM_PRE_ID, special_fim_pre_id },                    
+            { LLM_KV_TOKENIZER_FIM_SUF_ID, special_fim_suf_id },                    
+            { LLM_KV_TOKENIZER_FIM_MID_ID, special_fim_mid_id },                    
+            { LLM_KV_TOKENIZER_FIM_PAD_ID, special_fim_pad_id },                    
+            { LLM_KV_TOKENIZER_FIM_REP_ID, special_fim_rep_id },                    
+            { LLM_KV_TOKENIZER_FIM_SEP_ID, special_fim_sep_id },                    
+                                                                                    
+            // deprecated                                                           
+            { LLM_KV_TOKENIZER_PREFIX_ID, special_fim_pre_id },                     
+            { LLM_KV_TOKENIZER_SUFFIX_ID, special_fim_suf_id },                     
+            { LLM_KV_TOKENIZER_MIDDLE_ID, special_fim_mid_id },                 
+        };
+```
+Hmm, this will still not work as if we print out the tokens for the following
+prompt we will see that it will not use the correct image token id:
+```console
+prompt: <|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+token = 27
+token = 91
+token = 1843
+token = 91
+token = 29
+token = 3923
+token = 374
+token = 304
+token = 420
+token = 2217
+token = 30
+token = 128009
+token = 128006
+token = 78191
+token = 128007
+token = 271
+```
+So perhaps we should let the vocabulary size be 128257 so that the image token
+is included in `id_to_token` and then modify the shape of `output.weight` that
+depends on the size being 128256. 
+
+### Model conversion
 So we first need to convert the model to GGUF format which is done by the
 `convert_hf_to_gguf.py` script. This model consists of not just one model but
 it has two which is also reflected in the config.json file of the model. The
@@ -233,136 +367,6 @@ The language model has 40 hidden layers (`num_hidden_layers`):
 "language_model.model.layers.{bid}.self_attn.v_proj.weight"
 ```
 
-### vocabulary size
-One interesting thing with this model is that is has a vocab size specified as:
-```console
-"vocab_size": 128256 
-```
-But the special token `<|image|>` is at index 128256, so the actual vocab size
-is 128257. We can see this by inspecting the actual vocabulary array in
-convert_hf_to_gguf.py:
-```python
-    tokenizer = AutoTokenizer.from_pretrained(self.dir_model, trust_remote_code=is_cli_non_interactive)
-    print(f'tokenizer len: {len(tokenizer.vocab)}')
-    vocab_size = self.hparams.get("vocab_size", len(tokenizer.vocab))
-    assert max(tokenizer.vocab.values()) <= vocab_size
-```
-```console
-tokenizer len: 128257
-```
-This causes problems as there is a tensor that depend on the vocab size being
-128256:
-```console
-      1:  525336576 |  4096, 128256,    1,     1 | Q6_K    | output.weight
-```
-
-The image token needs to be in our models vocab, in `vocab.id_to_token` that is,
-so that it is resolved correctly and the correct token id passed to the model.
-
-For example, in `llama_decode_impl`:
-```c++
-            if (n_outputs_new) {
-                GGML_ASSERT( n_outputs_prev + n_outputs_new <= n_outputs);
-                GGML_ASSERT((n_outputs_prev + n_outputs_new)*n_vocab <= (int64_t) lctx.logits_size);
-                ggml_backend_tensor_get_async(backend_res, res, logits_out, 0, n_outputs_new*(n_vocab)*sizeof(float));
-            }
-```
-So as far as I can tell we need to have the additional image token in the
-actual vocab list, `id_to_token` in llama.cpp. The vocabulary size is determined
-by calling:
-```c++
-int32_t llama_vocab_n_tokens(const struct llama_vocab * vocab) {
-    return vocab->n_tokens();
-}
-
-uint32_t llama_vocab::n_tokens() const {
-    return (uint32_t) pimpl->id_to_token.size();
-}
-```
-And notice that this is using the size of the `id_to_token` vector
-to determine the vocab size. Now, this vector is resized in llama-vocab.cpp:
-```c++
-    uint32_t n_tokens = gguf_get_arr_n(ctx, token_idx);
-    id_to_token.resize(n_tokens);
-```
-```console
-(gdb) p  n_tokens
-$1 = 128256
-```
-
-I think a way to handle this is to leave the vocab size as 128256 when
-converting the model, so that id_to_token will have the correct size. And then
-add a special token for the image token.
-So adding the following to the converted .gguf model:
-```console
-     60: UINT32     |        1 | tokenizer.ggml.image_token_id = 128256
-```
-And then adding this to the vocab special tokens in llama-arch.cpp:
-```c++
-enum llm_kv {
-    ...
-    LLM_KV_TOKENIZER_IMAGE_ID,
-    ...
-```
-And the in llama-vocab.cpp:
-```c++
-struct llama_vocab::impl {
-    ...
-    llama_token special_image_id = LLAMA_TOKEN_NULL;
-    ...
-}
-```
-And the update the handling of special tokens in llama-vocab.cpp:
-```c++
-void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
-   ...
-   // special tokens                                                               
-    {                                                                               
-        const std::vector<std::pair<enum llm_kv, int32_t &>> special_token_types = {
-            { LLM_KV_TOKENIZER_BOS_ID,     special_bos_id     },                    
-            { LLM_KV_TOKENIZER_EOS_ID,     special_eos_id     },                    
-            { LLM_KV_TOKENIZER_EOT_ID,     special_eot_id     },                    
-            { LLM_KV_TOKENIZER_EOM_ID,     special_eom_id     },                    
-            { LLM_KV_TOKENIZER_UNK_ID,     special_unk_id     },                    
-            { LLM_KV_TOKENIZER_SEP_ID,     special_sep_id     },                    
-            { LLM_KV_TOKENIZER_PAD_ID,     special_pad_id     },                    
-            { LLM_KV_TOKENIZER_MASK_ID,    special_mask_id    },                    
-            { LLM_KV_TOKENIZER_IMAGE_ID,   special_image_id   },                    
-            { LLM_KV_TOKENIZER_FIM_PRE_ID, special_fim_pre_id },                    
-            { LLM_KV_TOKENIZER_FIM_SUF_ID, special_fim_suf_id },                    
-            { LLM_KV_TOKENIZER_FIM_MID_ID, special_fim_mid_id },                    
-            { LLM_KV_TOKENIZER_FIM_PAD_ID, special_fim_pad_id },                    
-            { LLM_KV_TOKENIZER_FIM_REP_ID, special_fim_rep_id },                    
-            { LLM_KV_TOKENIZER_FIM_SEP_ID, special_fim_sep_id },                    
-                                                                                    
-            // deprecated                                                           
-            { LLM_KV_TOKENIZER_PREFIX_ID, special_fim_pre_id },                     
-            { LLM_KV_TOKENIZER_SUFFIX_ID, special_fim_suf_id },                     
-            { LLM_KV_TOKENIZER_MIDDLE_ID, special_fim_mid_id },                 
-        };
-```
-Hmm, this will still not work as if we print out the tokens for the following
-prompt we will see that it will not use the correct image token id:
-```console
-prompt: <|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-token = 27
-token = 91
-token = 1843
-token = 91
-token = 29
-token = 3923
-token = 374
-token = 304
-token = 420
-token = 2217
-token = 30
-token = 128009
-token = 128006
-token = 78191
-token = 128007
-token = 271
-```
 
 
 ### Tasks
