@@ -188,6 +188,27 @@ token = 271
 We can now see that the `<|image|>` token is correctly resolved to the correct
 token id 128256.
 
+So that worked when I inspected the tokens which is great. But after processing
+the output will be copied:
+```c++
+            if (n_outputs_new) {
+                GGML_ASSERT( n_outputs_prev + n_outputs_new <= n_outputs);
+                GGML_ASSERT((n_outputs_prev + n_outputs_new)*n_vocab <= (int64_t) lctx.logits_size);
+                ggml_backend_tensor_get_async(backend_res, res, logits_out, 0, n_outputs_new*n_vocab*sizeof(float));
+            }
+```
+```console
+(gdb) p res->ne
+$4 = {128256, 1, 1, 1}
+(gdb) p n_vocab
+$7 = 128257
+```
+In this case the above call will cause an error:
+```console
+/danbev/work/ai/new-vision-api/ggml/src/ggml-backend.cpp:245:
+GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor read out of bounds") failed
+```
+
 ### Model conversion
 So we first need to convert the model to GGUF format which is done by the
 `convert_hf_to_gguf.py` script. This model consists of not just one model but
