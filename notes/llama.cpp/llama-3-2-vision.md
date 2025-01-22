@@ -192,6 +192,27 @@ allow packing multiple GGUFs (like an archive).
 So I'm going to create two models for Llama 3.2 Vision Instruct and then take
 a look at how packaging multiple GGUFs could be done.
 
+
+The current `convert_hf_to_gguf.py` script really only support a single model
+as output as it is now. But long term I think there will be multiple models
+that have more than one model in them. I'm thinking of text-to-speech models
+which can contain a voice decoder model in addition to the language model.
+
+So a language model like Llama 3.2 Vision Instruct be registereded using the
+`@Model.register` decorator:
+```python
+@Model.register("MllamaForConditionalGeneration")
+class MLlamaModel(Model):
+    model_arch = gguf.MODEL_ARCH.MLLAMA
+```
+Now, if a model has a vision model in addition to the language model, we could
+we might expect there to be a command line option to specify that the vision
+model should be extracted to a separate model. So perhaps there should be
+a vision_model attibute for the MLlamaModel class for the vision encoder which
+would have a different `model_arch` attribute, like
+`gguf.MODEL_ARCH.MLLAMA_VISION`.
+
+
 ### Language model layers (tensors)
 ```console
 "language_model.lm_head.weight"
@@ -218,12 +239,26 @@ One interesting thing with this model is that is has a vocab size specified as:
 "vocab_size": 128256 
 ```
 But the special token `<|image|>` is at index 128256, so the actual vocab size
-is 128257. This causes problems as there are tensors that depend on the vocab
-size 128256.
+is 128257. We can see this by inspecting the actual vocabulary array in
+convert_hf_to_gguf.py:
+```python
+    tokenizer = AutoTokenizer.from_pretrained(self.dir_model, trust_remote_code=is_cli_non_interactive)
+    print(f'tokenizer len: {len(tokenizer.vocab)}')
+    vocab_size = self.hparams.get("vocab_size", len(tokenizer.vocab))
+    assert max(tokenizer.vocab.values()) <= vocab_size
+```
+```console
+tokenizer len: 128257
+```
+This causes problems as there is a tensor that depend on the vocab size being
+128256:
+```console
+      1:  525336576 |  4096, 128256,    1,     1 | Q6_K    | output.weight
+```
 
-The image token needs to be in our models vocab, in vocab.id_to_token so that
-it is resolved correctly and the correct token id passed to the model. But
-id_to_token is also how the vocab size is determined by other parts of llama.cpp.
+The image token needs to be in our models vocab, in `vocab.id_to_token` that is,
+so that it is resolved correctly and the correct token id passed to the model.
+
 For example, in `llama_decode_impl`:
 ```c++
             if (n_outputs_new) {
@@ -233,8 +268,8 @@ For example, in `llama_decode_impl`:
             }
 ```
 So as far as I can tell we need to have the additional image token in the
-actual vocab list, `id_to_token` in llama.cpp. But using that vocab size when
-calling vo
+actual vocab list, `id_to_token` in llama.cpp. The vocabulary size is determined
+by calling:
 ```c++
 int32_t llama_vocab_n_tokens(const struct llama_vocab * vocab) {
     return vocab->n_tokens();
@@ -244,6 +279,17 @@ uint32_t llama_vocab::n_tokens() const {
     return (uint32_t) pimpl->id_to_token.size();
 }
 ```
+And notice that this is using the size of the `id_to_token` vector
+to determine the vocab size. Now, this vector is resized in llama-vocab.cpp:
+```c++
+    uint32_t n_tokens = gguf_get_arr_n(ctx, token_idx);
+    id_to_token.resize(n_tokens);
+```
+```console
+(gdb) p  n_tokens
+$1 = 128256
+```
+
 I think a way to handle this is to leave the vocab size as 128256 when
 converting the model, so that id_to_token will have the correct size. And then
 add a special token for the image token.
@@ -294,6 +340,28 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             { LLM_KV_TOKENIZER_SUFFIX_ID, special_fim_suf_id },                     
             { LLM_KV_TOKENIZER_MIDDLE_ID, special_fim_mid_id },                 
         };
+```
+Hmm, this will still not work as if we print out the tokens for the following
+prompt we will see that it will not use the correct image token id:
+```console
+prompt: <|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+token = 27
+token = 91
+token = 1843
+token = 91
+token = 29
+token = 3923
+token = 374
+token = 304
+token = 420
+token = 2217
+token = 30
+token = 128009
+token = 128006
+token = 78191
+token = 128007
+token = 271
 ```
 
 
