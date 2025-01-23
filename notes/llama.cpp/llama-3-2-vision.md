@@ -763,7 +763,19 @@ ubatch does not support "cutting" the tensor in half if it does not fit into the
 physical batch limit.
 ```
 So lets try what he suggested and set the image patch embeddings on the
-batch.embd and see if we can get that to work.
+batch.embd and see if we can get that to work. I actually could not get this
+to work either which surprised me. I'll need make sure that I'm actually using
+the exact same code as I did before. Just as test I removed the copying and
+it generated "It appears to be a cat", or "This image appears to be a blank
+space. It does not contain any visible content" which is what I've been getting
+before. So there is something incorrect with what I'm doing compared to the
+previous version. The strange thing is that now and again it gets the image
+correct (I'm using an image of the New York skyline) so it is not completely
+off but it is not consistent.
+```console
+It looks like a picture of the New York City skyline, specifically the Empire State
+Building. Is that correct
+```
 
 _work in progress_
 
