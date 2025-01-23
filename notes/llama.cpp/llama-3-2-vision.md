@@ -231,7 +231,7 @@ change:
 This is obviously not a solution but it will allow me to test the model. I'm
 going to ask for input about what best way to handle this is.
 
-### New vision api issue
+### New Vision API mllama issue
 So I've modified the mllama version that worked with the first new vision api
 and I've verified that the pre-processing produces the same output, and I've
 also added the same logging to the new version to make sure it is identical.
@@ -625,6 +625,30 @@ vision encoder output[9] = -4.424203
 ```
 Hmm, but it could also be that it is only the first tile that is identical so
 perhaps I should print out the first 10 values of all 4 tiles.
+
+Things that are different are how the image patch embeddings are handled in the
+newst version. The actual embedding tensor are copied to the context like this:
+```c++
+    struct ggml_tensor * embeddings = ggml_graph_get_tensor(gf, "mmproj");
+
+    // copy image patch embedding tensor to context
+    if (ctx.ctx_ggml) {
+        ggml_free(ctx.ctx_ggml);
+    }
+    ggml_init_params params = {
+        /*.mem_size   =*/ ggml_tensor_overhead(),
+        /*.mem_buffer =*/ NULL,
+        /*.no_alloc   =*/ true,
+    };
+    ctx.ctx_ggml = ggml_init(params);
+    ctx.output = ggml_dup_tensor(ctx.ctx_ggml, embeddings);
+    ggml_set_name(ctx.output, "img_patch_embd");
+    ggml_backend_alloc_ctx_tensors_from_buft(ctx.ctx_ggml, ctx.model->buft);
+    ggml_backend_tensor_copy(embeddings, ctx.output);
+    ggml_backend_sched_reset(ctx.sched);
+```
+In the previous version they the image patch embeddings were copied into a
+vector<float> and returned.
 
 _work in progress_
 
