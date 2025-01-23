@@ -769,13 +769,134 @@ the exact same code as I did before. Just as test I removed the copying and
 it generated "It appears to be a cat", or "This image appears to be a blank
 space. It does not contain any visible content" which is what I've been getting
 before. So there is something incorrect with what I'm doing compared to the
-previous version. The strange thing is that now and again it gets the image
-correct (I'm using an image of the New York skyline) so it is not completely
-off but it is not consistent.
+previous version.
+
+The strange thing is that now and again it gets the image correct (I'm using an
+image of the New York skyline) so it is not completely off but it is not
+consistent.
 ```console
 It looks like a picture of the New York City skyline, specifically the Empire State
 Building. Is that correct
 ```
+
+So this is how I've updated the code in the example, taking the tensor data
+from 
+```c++
+    auto * patch_embeddings_tensor = llama_vision_get_output_tensor(ctx_llm);
+    std::vector<float> patch_embeddings(ggml_nelements(patch_embeddings_tensor));
+    ggml_backend_tensor_get(patch_embeddings_tensor, patch_embeddings.data(), 0, ggml_nbytes(patch_embeddings_tensor));
+```
+And I also print first 10 values of each tile to inspect them:
+```console
+shape: [4096, 1601, 4, 1]
+
+patch_embeddings_tensor Tile  0 first 10 values:
+  [0] = 9.583341
+  [1] = 14.313586
+  [2] = -3.192569
+  [3] = 5.813879
+  [4] = 0.386942
+  [5] = -13.529299
+  [6] = -2.128806
+  [7] = 3.152669
+  [8] = -7.955503
+  [9] = -4.424203
+
+patch_embeddings_tensor Tile  1 first 10 values:
+  [0] = 5.986829
+  [1] = -2.915241
+  [2] = -2.784132
+  [3] = -4.247492
+  [4] = 6.727473
+  [5] = 10.927721
+  [6] = -6.980994
+  [7] = -1.603015
+  [8] = 9.635002
+  [9] = -24.777727
+
+patch_embeddings_tensor Tile  2 first 10 values:
+  [0] = 11.259818
+  [1] = 11.602535
+  [2] = -3.990987
+  [3] = 10.948430
+  [4] = 8.536315
+  [5] = -1.765288
+  [6] = 10.040323
+  [7] = 4.448214
+  [8] = 9.211788
+  [9] = 8.241113
+
+patch_embeddings_tensor Tile  3 first 10 values:
+  [0] = 0.649771
+  [1] = 0.371095
+  [2] = -0.332472
+  [3] = -2.569907
+  [4] = 1.415616
+  [5] = -0.114935
+  [6] = 0.485733
+  [7] = -1.081182
+  [8] = 0.368833
+  [9] = 0.020522
+```
+So these look correct. I've also update the logging in `llama-context.cpp` to
+also print these values:
+```console
+ca_patch_embd Tile  0 first 10 values:
+  [0] = 9.583341
+  [1] = 14.313586
+  [2] = -3.192569
+  [3] = 5.813879
+  [4] = 0.386942
+  [5] = -13.529299
+  [6] = -2.128806
+  [7] = 3.152669
+  [8] = -7.955503
+  [9] = -4.424203
+
+ca_patch_embd Tile  1 first 10 values:
+  [0] = 5.986829
+  [1] = -2.915241
+  [2] = -2.784132
+  [3] = -4.247492
+  [4] = 6.727473
+  [5] = 10.927721
+  [6] = -6.980994
+  [7] = -1.603015
+  [8] = 9.635002
+  [9] = -24.777727
+
+ca_patch_embd Tile  2 first 10 values:
+  [0] = 11.259818
+  [1] = 11.602535
+  [2] = -3.990987
+  [3] = 10.948430
+  [4] = 8.536315
+  [5] = -1.765288
+  [6] = 10.040323
+  [7] = 4.448214
+  [8] = 9.211788
+  [9] = 8.241113
+
+ca_patch_embd Tile  3 first 10 values:
+  [0] = 0.649771
+  [1] = 0.371095
+  [2] = -0.332472
+  [3] = -2.569907
+  [4] = 1.415616
+  [5] = -0.114935
+  [6] = 0.485733
+  [7] = -1.081182
+  [8] = 0.368833
+  [9] = 0.020522
+```
+Now, if I run this multiple times it can get it correct most of the time saying
+that it is a picture of New York or related to New York. But it is almost like
+it is not able to see the whole image or something as the exact same data is
+being passed to the model each time, but it is responding differently.
+
+So the image preprocessing looks good and it looks like it is copying the data
+correctly. Could this be something with the model conversion or quantization?
+
 
 _work in progress_
 
