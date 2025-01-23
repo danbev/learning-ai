@@ -728,9 +728,11 @@ vision encoder output Tile 3 first 10 values:
   [8] = 0.368833
   [9] = 0.020522
 ```
+These look identical so the issue is not with the vision encoder output I don't
+think.
 
-Things that are different are how the image patch embeddings are handled in the
-newst version. The actual embedding tensor are copied to the context like this:
+One thing that is different is how the image patch embeddings are handled in the
+new version. The actual embedding tensor are copied to the context like this:
 ```c++
     struct ggml_tensor * embeddings = ggml_graph_get_tensor(gf, "mmproj");
 
@@ -751,7 +753,17 @@ newst version. The actual embedding tensor are copied to the context like this:
     ggml_backend_sched_reset(ctx.sched);
 ```
 In the previous version they the image patch embeddings were copied into a
-vector<float> and returned.
+`vector<float>` and returned.
+
+`ngxson` opened this [disussion](https://github.com/danbev/learning-ai/discussions/8)
+and pointed out that there might an issue using the embd_tensor in the way I'm
+currently using it:
+```
+ubatch does not support "cutting" the tensor in half if it does not fit into the
+physical batch limit.
+```
+So lets try what he suggested and set the image patch embeddings on the
+batch.embd and see if we can get that to work.
 
 _work in progress_
 
