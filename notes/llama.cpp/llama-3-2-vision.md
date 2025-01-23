@@ -231,6 +231,401 @@ change:
 This is obviously not a solution but it will allow me to test the model. I'm
 going to ask for input about what best way to handle this is.
 
+### New vision api issue
+So I've modified the mllama version that worked with the first new vision api
+and I've verified that the pre-processing produces the same output, and I've
+also added the same logging to the new version to make sure it is identical.
+
+This is the output from the old version:
+```console
+token = 27
+token = 91
+token = 1843
+token = 91
+token = 29
+token = 3923
+token = 374
+token = 304
+token = 420
+token = 2217
+token = 30
+token = 128009
+token = 128006
+token = 78191
+token = 128007
+token = 271
+Calculating optimal canvas for image 1280x748 with max_tiles=4, tile_size=560
+Possible ratios and their canvas sizes:
+  Ratio 1x1 -> Canvas 560x560 (scale_w=0.438 scale_h=0.749 selected=0.438)
+  Ratio 1x2 -> Canvas 560x1120 (scale_w=0.438 scale_h=1.497 selected=0.438)
+  Ratio 1x3 -> Canvas 560x1680 (scale_w=0.438 scale_h=2.246 selected=0.438)
+  Ratio 1x4 -> Canvas 560x2240 (scale_w=0.438 scale_h=2.995 selected=0.438)
+  Ratio 2x1 -> Canvas 1120x560 (scale_w=0.875 scale_h=0.749 selected=0.749)
+  Ratio 2x2 -> Canvas 1120x1120 (scale_w=0.875 scale_h=1.497 selected=0.875)
+  Ratio 3x1 -> Canvas 1680x560 (scale_w=1.312 scale_h=0.749 selected=0.749)
+  Ratio 4x1 -> Canvas 2240x560 (scale_w=1.750 scale_h=0.749 selected=0.749)
+Selected scale: 0.875000 (upscale=0)
+Candidate canvas 1120x1120 (area=1254400)
+Final selected canvas 1120x1120
+Get image size fit to canvas: img=1280x748, canvas=1120x1120, tile=560
+Now resize image to size: 1120x654
+Padding image to size 560x560 with aspect ratio 2x2
+Padded image to size 1120x1120
+Splitting into 2x2 tiles
+split_to_tiles: img_width=1120, img_height=1120, tile_width=560, tile_height=560, tiles_x=2, tiles_y=2
+
+Processing tile [0,0], source region: x=0-559, y=0-559
+  Tile[0,0] at (0,0): src=(16,147,193) -> dst=(16,147,193)
+  Tile[0,0] at (1,0): src=(15,146,192) -> dst=(15,146,192)
+  Tile[0,0] at (2,0): src=(12,145,192) -> dst=(12,145,192)
+  Tile[0,0] at (0,1): src=(15,148,194) -> dst=(15,148,194)
+  Tile[0,0] at (1,1): src=(14,148,193) -> dst=(14,148,193)
+  Tile[0,0] at (2,1): src=(10,147,192) -> dst=(10,147,192)
+  Tile[0,0] at (0,2): src=(8,145,189) -> dst=(8,145,189)
+  Tile[0,0] at (1,2): src=(7,145,190) -> dst=(7,145,190)
+  Tile[0,0] at (2,2): src=(5,145,191) -> dst=(5,145,191)
+
+Processing tile [1,0], source region: x=560-1119, y=0-559
+  Tile[1,0] at (0,0): src=(195,221,236) -> dst=(195,221,236)
+  Tile[1,0] at (1,0): src=(195,221,236) -> dst=(195,221,236)
+  Tile[1,0] at (2,0): src=(197,220,236) -> dst=(197,220,236)
+  Tile[1,0] at (0,1): src=(192,217,232) -> dst=(192,217,232)
+  Tile[1,0] at (1,1): src=(194,218,233) -> dst=(194,218,233)
+  Tile[1,0] at (2,1): src=(196,219,235) -> dst=(196,219,235)
+  Tile[1,0] at (0,2): src=(192,216,230) -> dst=(192,216,230)
+  Tile[1,0] at (1,2): src=(194,217,231) -> dst=(194,217,231)
+  Tile[1,0] at (2,2): src=(195,218,232) -> dst=(195,218,232)
+
+Processing tile [0,1], source region: x=0-559, y=560-1119
+  Tile[0,1] at (0,0): src=(38,34,35) -> dst=(38,34,35)
+  Tile[0,1] at (1,0): src=(25,21,23) -> dst=(25,21,23)
+  Tile[0,1] at (2,0): src=(0,0,0) -> dst=(0,0,0)
+  Tile[0,1] at (0,1): src=(24,20,21) -> dst=(24,20,21)
+  Tile[0,1] at (1,1): src=(18,14,15) -> dst=(18,14,15)
+  Tile[0,1] at (2,1): src=(0,0,0) -> dst=(0,0,0)
+  Tile[0,1] at (0,2): src=(13,9,10) -> dst=(13,9,10)
+  Tile[0,1] at (1,2): src=(11,7,8) -> dst=(11,7,8)
+  Tile[0,1] at (2,2): src=(16,11,13) -> dst=(16,11,13)
+
+Processing tile [1,1], source region: x=560-1119, y=560-1119
+  Tile[1,1] at (0,0): src=(126,124,129) -> dst=(126,124,129)
+  Tile[1,1] at (1,0): src=(216,214,220) -> dst=(216,214,220)
+  Tile[1,1] at (2,0): src=(177,176,181) -> dst=(177,176,181)
+  Tile[1,1] at (0,1): src=(109,107,112) -> dst=(109,107,112)
+  Tile[1,1] at (1,1): src=(223,221,227) -> dst=(223,221,227)
+  Tile[1,1] at (2,1): src=(182,181,186) -> dst=(182,181,186)
+  Tile[1,1] at (0,2): src=(109,108,113) -> dst=(109,108,113)
+  Tile[1,1] at (1,2): src=(225,224,230) -> dst=(225,224,230)
+  Tile[1,1] at (2,2): src=(185,184,189) -> dst=(185,184,189)
+Processing tile 0
+Processing tile 1
+Processing tile 2
+Processing tile 3
+nx=560, ny=2240
+aspect_ratio=6
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ggml_gallocr_reserve_n: reallocating CUDA0 buffer from size 0.00 MiB to 2864.12 MiB
+ggml_gallocr_reserve_n: reallocating CUDA_Host buffer from size 0.00 MiB to 376.05 MiB
+
+Tile 0 first 10 values:
+  [0] = -1.558688
+  [1] = -1.573286
+  [2] = -1.617081
+  [3] = -1.675475
+  [4] = -1.719270
+  [5] = -1.733869
+  [6] = -1.748467
+  [7] = -1.763066
+  [8] = -1.792263
+  [9] = -1.792263
+
+Tile 1 first 10 values:
+  [0] = 1.054431
+  [1] = 1.054431
+  [2] = 1.083627
+  [3] = 1.083627
+  [4] = 1.083627
+  [5] = 1.098226
+  [6] = 1.127423
+  [7] = 1.142021
+  [8] = 1.127423
+  [9] = 1.112824
+
+Tile 2 first 10 values:
+  [0] = -1.237522
+  [1] = -1.427302
+  [2] = -1.792263
+  [3] = -0.288625
+  [4] = -0.098845
+  [5] = -1.047743
+  [6] = -0.040451
+  [7] = -1.164530
+  [8] = -1.660877
+  [9] = -1.558688
+
+Tile 3 first 10 values:
+  [0] = 0.047139
+  [1] = 1.360998
+  [2] = 0.791659
+  [3] = 0.587281
+  [4] = 0.879250
+  [5] = 0.061738
+  [6] = -1.587885
+  [7] = -1.704672
+  [8] = -1.792263
+  [9] = -1.792263
+n_positions bytes: 6404, n_positions: 1601
+check_node_graph_compatibility_and_refresh_copy_ops: disabling CUDA graphs due to batch size > 1 [embeddings_after_position_embd] [1280 1601 4 1]
+check_node_graph_compatibility_and_refresh_copy_ops: disabling CUDA graphs due to batch size > 1 [embeddings_after_tile_position_embd] [1280 1601 4 1]
+update_cuda_graph_executable: CUDA graph update failed
+update_cuda_graph_executable: CUDA graph update failed
+update_cuda_graph_executable: CUDA graph update failed
+ggml_backend_cuda_graph_compute: disabling CUDA graphs due to too many consecutive updates
+vision encoder output[0] = 9.583341
+vision encoder output[1] = 14.313586
+vision encoder output[2] = -3.192569
+vision encoder output[3] = 5.813879
+vision encoder output[4] = 0.386942
+vision encoder output[5] = -13.529299
+vision encoder output[6] = -2.128806
+vision encoder output[7] = 3.152669
+vision encoder output[8] = -7.955503
+vision encoder output[9] = -4.424203
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ggml_gallocr_reserve_n: reallocating CUDA_Host buffer from size 16.01 MiB to 25.66 MiB
+n_img_tokens = 1
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ggml_gallocr_reserve_n: reallocating CUDA_Host buffer from size 25.66 MiB to 100.21 MiB
+ca_patch_emd[0] = 9.583341
+ca_patch_emd[1] = 14.313586
+ca_patch_emd[2] = -3.192569
+ca_patch_emd[3] = 5.813879
+ca_patch_emd[4] = 0.386942
+ca_patch_emd[5] = -13.529299
+ca_patch_emd[6] = -2.128806
+ca_patch_emd[7] = 3.152669
+ca_patch_emd[8] = -7.955503
+ca_patch_emd[9] = -4.424203
+The image depicts a cityscape, with a large body of water in the background. The
+city appears to be densely populated, with many tall buildings and skyscrapers. In
+the background, there is a large body of water, possibly an ocean or a lake. The
+sky above is cloudy and h
+main: decoded 60 tokens in 19.11 s, speed: 3.14 t/s
+```
+One thing that is different is the `<|image|>` token is not resovled correctly
+with this version but that is something I've fixed in the newest version.
+
+This is the ouput from the newest version:
+```console
+token = 128256
+token = 3923
+token = 374
+token = 304
+token = 420
+token = 2217
+token = 30
+token = 128009
+token = 128006
+token = 78191
+token = 128007
+token = 271
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+check_node_graph_compatibility_and_refresh_copy_ops: disabling CUDA graphs due to batch size > 1 [l_out-9] [4096 4 1 1]
+Decoded prefix prompt
+loaded image examples/vision-mllama/ny.jpg, size = 1280 x 748
+Calculating optimal canvas for image 1280x748 with max_tiles=4, tile_size=560
+Possible ratios and their canvas sizes:
+  Ratio 1x1 -> Canvas 560x560 (scale_w=0.438 scale_h=0.749 selected=0.438)
+  Ratio 1x2 -> Canvas 560x1120 (scale_w=0.438 scale_h=1.497 selected=0.438)
+  Ratio 1x3 -> Canvas 560x1680 (scale_w=0.438 scale_h=2.246 selected=0.438)
+  Ratio 1x4 -> Canvas 560x2240 (scale_w=0.438 scale_h=2.995 selected=0.438)
+  Ratio 2x1 -> Canvas 1120x560 (scale_w=0.875 scale_h=0.749 selected=0.749)
+  Ratio 2x2 -> Canvas 1120x1120 (scale_w=0.875 scale_h=1.497 selected=0.875)
+  Ratio 3x1 -> Canvas 1680x560 (scale_w=1.312 scale_h=0.749 selected=0.749)
+  Ratio 4x1 -> Canvas 2240x560 (scale_w=1.750 scale_h=0.749 selected=0.749)
+Selected scale: 0.875000 (upscale=0)
+Candidate canvas 1120x1120 (area=1254400)
+Final selected canvas 1120x1120
+Get image size fit to canvas: img=1280x748, canvas=1120x1120, tile=560
+Now resize image to size: 1120x654
+Padding image to size 560x560 with aspect ratio 2x2
+Padded image to size 1120x1120
+Splitting into 2x2 tiles
+split_to_tiles: img_width=1120, img_height=1120, tile_width=560, tile_height=560, tiles_x=2, tiles_y=2
+
+Processing tile [0,0], source region: x=0-559, y=0-559
+  Tile[0,0] at (0,0): src=(16,147,193) -> dst=(16.00,147.00,193.00)
+  Tile[0,0] at (1,0): src=(15,146,192) -> dst=(15.00,146.00,192.00)
+  Tile[0,0] at (2,0): src=(12,145,192) -> dst=(12.00,145.00,192.00)
+  Tile[0,0] at (0,1): src=(15,148,194) -> dst=(15.00,148.00,194.00)
+  Tile[0,0] at (1,1): src=(14,148,193) -> dst=(14.00,148.00,193.00)
+  Tile[0,0] at (2,1): src=(10,147,192) -> dst=(10.00,147.00,192.00)
+  Tile[0,0] at (0,2): src=(8,145,189) -> dst=(8.00,145.00,189.00)
+  Tile[0,0] at (1,2): src=(7,145,190) -> dst=(7.00,145.00,190.00)
+  Tile[0,0] at (2,2): src=(5,145,191) -> dst=(5.00,145.00,191.00)
+
+Processing tile [1,0], source region: x=560-1119, y=0-559
+  Tile[1,0] at (0,0): src=(195,221,236) -> dst=(195.00,221.00,236.00)
+  Tile[1,0] at (1,0): src=(195,221,236) -> dst=(195.00,221.00,236.00)
+  Tile[1,0] at (2,0): src=(197,220,236) -> dst=(197.00,220.00,236.00)
+  Tile[1,0] at (0,1): src=(192,217,232) -> dst=(192.00,217.00,232.00)
+  Tile[1,0] at (1,1): src=(194,218,233) -> dst=(194.00,218.00,233.00)
+  Tile[1,0] at (2,1): src=(196,219,235) -> dst=(196.00,219.00,235.00)
+  Tile[1,0] at (0,2): src=(192,216,230) -> dst=(192.00,216.00,230.00)
+  Tile[1,0] at (1,2): src=(194,217,231) -> dst=(194.00,217.00,231.00)
+  Tile[1,0] at (2,2): src=(195,218,232) -> dst=(195.00,218.00,232.00)
+
+Processing tile [0,1], source region: x=0-559, y=560-1119
+  Tile[0,1] at (0,0): src=(38,34,35) -> dst=(38.00,34.00,35.00)
+  Tile[0,1] at (1,0): src=(25,21,23) -> dst=(25.00,21.00,23.00)
+  Tile[0,1] at (2,0): src=(0,0,0) -> dst=(0.00,0.00,0.00)
+  Tile[0,1] at (0,1): src=(24,20,21) -> dst=(24.00,20.00,21.00)
+  Tile[0,1] at (1,1): src=(18,14,15) -> dst=(18.00,14.00,15.00)
+  Tile[0,1] at (2,1): src=(0,0,0) -> dst=(0.00,0.00,0.00)
+  Tile[0,1] at (0,2): src=(13,9,10) -> dst=(13.00,9.00,10.00)
+  Tile[0,1] at (1,2): src=(11,7,8) -> dst=(11.00,7.00,8.00)
+  Tile[0,1] at (2,2): src=(16,11,13) -> dst=(16.00,11.00,13.00)
+
+Processing tile [1,1], source region: x=560-1119, y=560-1119
+  Tile[1,1] at (0,0): src=(126,124,129) -> dst=(126.00,124.00,129.00)
+  Tile[1,1] at (1,0): src=(216,214,220) -> dst=(216.00,214.00,220.00)
+  Tile[1,1] at (2,0): src=(177,176,181) -> dst=(177.00,176.00,181.00)
+  Tile[1,1] at (0,1): src=(109,107,112) -> dst=(109.00,107.00,112.00)
+  Tile[1,1] at (1,1): src=(223,221,227) -> dst=(223.00,221.00,227.00)
+  Tile[1,1] at (2,1): src=(182,181,186) -> dst=(182.00,181.00,186.00)
+  Tile[1,1] at (0,2): src=(109,108,113) -> dst=(109.00,108.00,113.00)
+  Tile[1,1] at (1,2): src=(225,224,230) -> dst=(225.00,224.00,230.00)
+  Tile[1,1] at (2,2): src=(185,184,189) -> dst=(185.00,184.00,189.00)
+Processing tile 0
+Processing tile 1
+Processing tile 2
+Processing tile 3
+n_px=40, n_py=40
+px=560, py=2240
+aspect_ratio=6
+vision_image_encode_mllama: image_size = 560
+vision_image_encode_mllama: num_positions = 1601
+ggml_backend_sched_alloc_splits: failed to allocate graph, reserving (backend_ids_changed = 1)
+ggml_gallocr_reserve_n: reallocating CUDA0 buffer from size 669.48 MiB to 2864.12 MiB
+ggml_gallocr_reserve_n: reallocating CUDA_Host buffer from size 9.01 MiB to 376.05 MiB
+
+Tile 0 first 10 values:
+  [0] = -1.558688
+  [1] = -1.573286
+  [2] = -1.617081
+  [3] = -1.675475
+  [4] = -1.719270
+  [5] = -1.733869
+  [6] = -1.748467
+  [7] = -1.763066
+  [8] = -1.792263
+  [9] = -1.792263
+
+Tile 1 first 10 values:
+  [0] = 1.054431
+  [1] = 1.054431
+  [2] = 1.083627
+  [3] = 1.083627
+  [4] = 1.083627
+  [5] = 1.098226
+  [6] = 1.127423
+  [7] = 1.142021
+  [8] = 1.127423
+  [9] = 1.112824
+
+Tile 2 first 10 values:
+  [0] = -1.237522
+  [1] = -1.427302
+  [2] = -1.792263
+  [3] = -0.288625
+  [4] = -0.098845
+  [5] = -1.047743
+  [6] = -0.040451
+  [7] = -1.164530
+  [8] = -1.660877
+  [9] = -1.558688
+
+Tile 3 first 10 values:
+  [0] = 0.047139
+  [1] = 1.360998
+  [2] = 0.791659
+  [3] = 0.587281
+  [4] = 0.879250
+  [5] = 0.061738
+  [6] = -1.587885
+  [7] = -1.704672
+  [8] = -1.792263
+  [9] = -1.792263
+n_positions bytes: 6404, n_positions: 1601
+check_node_graph_compatibility_and_refresh_copy_ops: disabling CUDA graphs due to batch size > 1 [embeddings_after_position_embd] [1280 1601 4 1]
+check_node_graph_compatibility_and_refresh_copy_ops: disabling CUDA graphs due to batch size > 1 [embeddings_after_tile_position_embd] [1280 1601 4 1]
+update_cuda_graph_executable: CUDA graph update failed
+update_cuda_graph_executable: CUDA graph update failed
+update_cuda_graph_executable: CUDA graph update failed
+ggml_backend_cuda_graph_compute: disabling CUDA graphs due to too many consecutive updates
+vision encoder output[0] = 9.583341
+vision encoder output[1] = 14.313586
+vision encoder output[2] = -3.192569
+vision encoder output[3] = 5.813879
+vision encoder output[4] = 0.386942
+vision encoder output[5] = -13.529299
+vision encoder output[6] = -2.128806
+vision encoder output[7] = 3.152669
+vision encoder output[8] = -7.955503
+vision encoder output[9] = -4.424203
+encoded image
+image patch embeddings are in ctx_vision.vctx.output:
+name: img_patch_embd
+shape: [4096, 1601, 4, 1]
+embd_tensor[0] = 9.583341
+embd_tensor[1] = 14.313586
+embd_tensor[2] = -3.192569
+embd_tensor[3] = 5.813879
+embd_tensor[4] = 0.386942
+embd_tensor[5] = -13.529299
+embd_tensor[6] = -2.128806
+embd_tensor[7] = 3.152669
+embd_tensor[8] = -7.955503
+embd_tensor[9] = -4.424203
+The image is a picture of a city skyline, specifically the New York City skyline.
+
+main: decoded 17 tokens in 3.72 s, speed: 4.57 t/s
+```
+Now, the issue is that the output above was mostly "lucky" as other times it 
+will generate:
+```console
+I don't see an image, but I can try to help you if you describe the image or
+tell me what it's supposed to be.
+```
+I've inspected the output of the vision encoder and as far as I can tell they
+are identical:
+```
+Previous version:
+vision encoder output[0] = 9.583341
+vision encoder output[1] = 14.313586
+vision encoder output[2] = -3.192569
+vision encoder output[3] = 5.813879
+vision encoder output[4] = 0.386942
+vision encoder output[5] = -13.529299
+vision encoder output[6] = -2.128806
+vision encoder output[7] = 3.152669
+vision encoder output[8] = -7.955503
+vision encoder output[9] = -4.424203
+Latest version:
+vision encoder output[0] = 9.583341
+vision encoder output[1] = 14.313586
+vision encoder output[2] = -3.192569
+vision encoder output[3] = 5.813879
+vision encoder output[4] = 0.386942
+vision encoder output[5] = -13.529299
+vision encoder output[6] = -2.128806
+vision encoder output[7] = 3.152669
+vision encoder output[8] = -7.955503
+vision encoder output[9] = -4.424203
+```
+Hmm, but it could also be that it is only the first tile that is identical so
+perhaps I should print out the first 10 values of all 4 tiles.
+
 _work in progress_
 
 ### Model conversion
@@ -360,6 +755,8 @@ allow packing multiple GGUFs (like an archive).
 So I'm going to create two models for Llama 3.2 Vision Instruct and then take
 a look at how packaging multiple GGUFs could be done. Actually, using one .gguf
 for both will work so we will be converting into a single model.
+
+
 
 ### Language model layers (tensors)
 ```console
