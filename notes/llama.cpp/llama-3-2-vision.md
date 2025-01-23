@@ -624,7 +624,110 @@ vision encoder output[8] = -7.955503
 vision encoder output[9] = -4.424203
 ```
 Hmm, but it could also be that it is only the first tile that is identical so
-perhaps I should print out the first 10 values of all 4 tiles.
+perhaps I should print out the first 10 values of all 4 tiles. Lets start by
+printing out the tiles for the vision encoder output.
+
+Vision encoder output for old version:
+```console
+vision encoder output Tile 0 first 10 values:
+  [0] = 9.583341
+  [1] = 14.313586
+  [2] = -3.192569
+  [3] = 5.813879
+  [4] = 0.386942
+  [5] = -13.529299
+  [6] = -2.128806
+  [7] = 3.152669
+  [8] = -7.955503
+  [9] = -4.424203
+
+vision encoder output Tile 1 first 10 values:
+  [0] = 5.986829
+  [1] = -2.915241
+  [2] = -2.784132
+  [3] = -4.247492
+  [4] = 6.727473
+  [5] = 10.927721
+  [6] = -6.980994
+  [7] = -1.603015
+  [8] = 9.635002
+  [9] = -24.777727
+
+vision encoder output Tile 2 first 10 values:
+  [0] = 11.259818
+  [1] = 11.602535
+  [2] = -3.990987
+  [3] = 10.948430
+  [4] = 8.536315
+  [5] = -1.765288
+  [6] = 10.040323
+  [7] = 4.448214
+  [8] = 9.211788
+  [9] = 8.241113
+
+vision encoder output Tile 3 first 10 values:
+  [0] = 0.649771
+  [1] = 0.371095
+  [2] = -0.332472
+  [3] = -2.569907
+  [4] = 1.415616
+  [5] = -0.114935
+  [6] = 0.485733
+  [7] = -1.081182
+  [8] = 0.368833
+  [9] = 0.020522
+```
+
+Vision encoder output for new version:
+```console
+vision encoder output Tile 0 first 10 values:
+  [0] = 9.583341
+  [1] = 14.313586
+  [2] = -3.192569
+  [3] = 5.813879
+  [4] = 0.386942
+  [5] = -13.529299
+  [6] = -2.128806
+  [7] = 3.152669
+  [8] = -7.955503
+  [9] = -4.424203
+
+vision encoder output Tile 1 first 10 values:
+  [0] = 5.986829
+  [1] = -2.915241
+  [2] = -2.784132
+  [3] = -4.247492
+  [4] = 6.727473
+  [5] = 10.927721
+  [6] = -6.980994
+  [7] = -1.603015
+  [8] = 9.635002
+  [9] = -24.777727
+
+vision encoder output Tile 2 first 10 values:
+  [0] = 11.259818
+  [1] = 11.602535
+  [2] = -3.990987
+  [3] = 10.948430
+  [4] = 8.536315
+  [5] = -1.765288
+  [6] = 10.040323
+  [7] = 4.448214
+  [8] = 9.211788
+  [9] = 8.241113
+
+vision encoder output Tile 3 first 10 values:
+  [0] = 0.649771
+  [1] = 0.371095
+  [2] = -0.332472
+  [3] = -2.569907
+  [4] = 1.415616
+  [5] = -0.114935
+  [6] = 0.485733
+  [7] = -1.081182
+  [8] = 0.368833
+  [9] = 0.020522
+```
 
 Things that are different are how the image patch embeddings are handled in the
 newst version. The actual embedding tensor are copied to the context like this:
