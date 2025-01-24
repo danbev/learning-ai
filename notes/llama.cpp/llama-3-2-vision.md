@@ -1048,6 +1048,42 @@ llama_kv_cache_init: layer 38: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
 llama_kv_cache_init: layer 39: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
 ```
 
+The model can respond pretty well sometime but then sometimes it cannot "see"
+the image. Hmm, is the vocab size used in other places perhaps?  What I'm thinking
+is that the vocab size effects the output logits but I'm using the same model
+for both versions now. But just incase I've added a print statement to
+`llama-vocab.cpp` and the `n_tokens()` function.
+
+So at this stage what is different between the old version and the new one?  
+The new version has introduced the `embd_tensor` but I updated the mllama code
+to use `embd` to avoid anything that might have been introduced with this
+feature.
+
+After going through this and checking with the old version I noticed that I had
+removed the flag computation params `cross_attn`:
+```c++
+void llama_set_cross_attention(struct llama_context * ctx, bool cross_attention) {
+    ctx->cparams.cross_attn = cross_attention;
+}
+```
+My intention was that we might not need this flag anymore but then I realized
+that there following code depend on it being there:
+```c++
+            // self-attention
+            if (hparams.cross_attention_layers(il)) {
+                if (!ubatch.embd && !cparams.cross_attn) {
+                    continue;
+                }
+                // cross attention layer
+                ...
+```
+And was set in the old example. If I removed it the old example behaved the
+same way as the new version. So I migth be able to use the `embd_tensor` after
+all.  But we need something like this for the decoding after the initial prompt
+so that the cross attention is enabled. Without this it would be skipped and
+hence the image patch embeddings from in the kv-cache for the cross attention
+layers would not be used.
+
 _work in progress_
 
 ### Model conversion
