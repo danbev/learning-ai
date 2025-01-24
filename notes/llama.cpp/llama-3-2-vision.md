@@ -1084,6 +1084,7 @@ so that the cross attention is enabled. Without this it would be skipped and
 hence the image patch embeddings from in the kv-cache for the cross attention
 layers would not be used.
 
+<a name="wip"></a>
 _work in progress_
 
 ### Model conversion
