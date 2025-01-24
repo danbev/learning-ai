@@ -18,6 +18,8 @@ currently based on the Llava example which uses CLIP (which also uses ViT).
 * [Arxiv Paper](https://arxiv.org/pdf/2407.21783)
 * [Vision API PR](https://github.com/ggerganov/llama.cpp/pull/11292)
 * [Discussing about multi-model .gguf models](https://github.com/ggerganov/llama.cpp/discussions/11139?sort=old)
+* [Mllama branch](https://github.com/danbev/llama.cpp/tree/vision_2_mllama_support)
+* [Example](https://github.com/danbev/llama.cpp/tree/vision_2_mllama_support/examples/vision-mllama)
 
 ### Vocab size issue
 One interesting thing with this model is that is has a vocab size specified as:
