@@ -916,6 +916,138 @@ image. So this does not look like it is the model conversion that is the issue.
 
 How about the .gguf metadata properties, could they be the issue?
 
+Previous version vparams:
+```console
+(gdb) p vparams
+$3 = (ca_hparams &) @0x555555b64f50: {arch = VISION_ARCH_MLLAMA, image_size = 560, patch_size = 14,
+  hidden_size = 1280, n_intermediate = 5120, projection_dim = 7680, n_head = 16, n_layer = 32, max_pos_embd = 1601,
+  proj_n_embd = 4096, n_global_layer = 8, n_tiles = 4, image_mean = {_M_elems = {0.48145467, 0.457827508,
+      0.408210725}}, image_std = {_M_elems = {0.268629551, 0.26130259, 0.275777102}}, eps = 9.99999975e-06,
+  intermediate_layers = {_M_elems = {3, 7, 15, 23, 30}}, aspect_ratios = {_M_elems = {1, 1, 1, 2, 1, 3, 1, 4, 2, 1,
+      2, 2, 3, 1, 4, 1}}}
+```
+New version vparams:
+```console
+(gdb) p vparams
+$1 = (llama_vision_model::vision_hparams &) @0x555555c1f020: {arch = LLM_ARCH_VISION_MLLAMA, image_size = 560, patch_size = 14,
+hidden_size = 1280, n_intermediate = 5120, projection_dim = 7680, n_head = 16, n_layer = 32, max_pos_embd = 1601,
+select_layer = 0, use_gelu = false, eps = 9.99999975e-06, proj_type = VISION_PROJECTOR_TYPE_MLLAMA,
+mm_patch_merge_type = MM_PATCH_MERGE_UNKNOWN, image_mean = {_M_elems = {0.48145467, 0.457827508, 0.408210725}}, image_std = {
+_M_elems = {0.268629551, 0.26130259, 0.275777102}}, image_grid_pinpoints = {_M_elems = {0 <repeats 32 times>}},
+image_crop_resolution = 0, proj_n_embd = 4096, n_global_layer = 8, n_tiles = 4, intermediate_layers = {_M_elems = {3, 7, 15, 23,
+  30}}, aspect_ratios = {_M_elems = {1, 1, 1, 2, 1, 3, 1, 4, 2, 1, 2, 2, 3, 1, 4, 1}}}
+```
+Nothings stands out here either.
+
+So the patch embeddings are correct, the model conversion is correct. I've also
+checked the kv-cache for the cross-attention layers and they are also identical
+between the two versions.
+Previous version:
+```console
+ized
+llama_kv_cache_init: kv_size = 4096, offload = 1, type_k = 'f16', type_v = 'f16', n_layer = 40, can_shift = 1
+init kv cache cross attention layer 3, n_embed_head_k: 128, n_head_kv: 8
+init kv cache cross attention layer 8, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 0: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 13, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 1: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 2: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 18, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 3: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 4: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 5: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 23, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 6: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 28, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 7: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 8: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 9: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 33, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 10: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 11: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 38, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 12: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 13: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 14: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 15: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 16: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 17: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 18: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 19: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 20: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 21: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 22: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 23: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 24: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 25: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 26: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 27: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 28: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 29: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 30: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 31: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 32: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 33: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 34: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 35: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 36: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 37: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 38: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 39: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+```
+New version:
+```console
+llama_kv_cache_init: kv_size = 4096, offload = 1, type_k = 'f16', type_v = 'f16', n_layer = 40, can_shift = 1
+init kv cache cross attention layer 3, n_embed_head_k: 128, n_head_kv: 8
+init kv cache cross attention layer 8, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 0: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 13, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 1: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 2: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 3: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 18, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 4: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 5: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 6: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 23, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 7: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 8: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 9: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 10: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 28, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 11: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 12: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 13: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 33, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 14: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 15: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 16: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+init kv cache cross attention layer 38, n_embed_head_k: 128, n_head_kv: 8
+llama_kv_cache_init: layer 17: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 18: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 19: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 20: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 21: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 22: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 23: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 24: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 25: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 26: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 27: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 28: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 29: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 30: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 31: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 32: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 33: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 34: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 35: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 36: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 37: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 38: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+llama_kv_cache_init: layer 39: n_embd_k_gqa = 1024, n_embd_v_gqa = 1024
+```
+
 _work in progress_
 
 ### Model conversion
