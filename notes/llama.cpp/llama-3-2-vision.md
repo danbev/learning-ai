@@ -895,8 +895,26 @@ it is not able to see the whole image or something as the exact same data is
 being passed to the model each time, but it is responding differently.
 
 So the image preprocessing looks good and it looks like it is copying the data
-correctly. Could this be something with the model conversion or quantization?
+correctly. Could this be something with the model conversion or quantization, or
+perhaps this is an issue with the `<|image|>` token?
 
+I've tried without the `<|image|>` token in the language vocabulary and the
+behavior is the same, is sometimes correctly identifies the image and sometimes
+it does not.
+
+To rule out that I messed up the model conversion I tried using the new model
+with the old version. I had to change some gguf metadata property names to do
+this and also hard code the vocabulary size to 128256. But it worked perfectly
+so far:
+```console
+The image shows a photo of the city of New York, with the Empire State
+Building prominently featured in the center.
+```
+I've run this a number of times but not seen anything incorrect, it is able to
+identify this as New York and often that the Empire State Building is in the 
+image. So this does not look like it is the model conversion that is the issue.
+
+How about the .gguf metadata properties, could they be the issue?
 
 _work in progress_
 
