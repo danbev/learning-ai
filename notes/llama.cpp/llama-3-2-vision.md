@@ -1084,6 +1084,14 @@ so that the cross attention is enabled. Without this it would be skipped and
 hence the image patch embeddings from in the kv-cache for the cross attention
 layers would not be used.
 
+As an example the output now looks like this:
+```console
+The image depicts a cityscape, with a prominent skyscraper in the center of
+the frame. The skyscraper is likely the Empire State Building, which is one of
+the most iconic landmarks in New York City.
+The skyscraper is a tall, slender building with a distinctive art deco design.
+```
+
 <a name="wip"></a>
 _work in progress_
 
