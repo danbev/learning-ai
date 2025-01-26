@@ -43,6 +43,27 @@ This causes problems as there is a tensor that depend on the vocab size being
 ```console
       1:  525336576 |  4096, 128256,    1,     1 | Q6_K    | output.weight
 ```
+And there is also an issue with the tokenization of the `<|image|>` token as
+if it is not in the vocabulary the string '<|image|>' will not be tokenized as
+correctly. For example, it will get tokenized as:
+```console
+prompt: <|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+token = 27
+token = 91
+token = 1843
+token = 91
+token = 29
+token = 3923
+```
+Instead of:
+```console
+prompt: <|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+
+token = 128256
+token = 3923
+```
 
 The image token needs to be in our models vocab, in `vocab.id_to_token` that is,
 so that it is resolved correctly and the correct token id passed to the model.
