@@ -1101,7 +1101,7 @@ that there following code depend on it being there:
                 ...
 ```
 And was set in the old example. If I removed it the old example behaved the
-same way as the new version. So I migth be able to use the `embd_tensor` after
+same way as the new version. So I might be able to use the `embd_tensor` after
 all.  But we need something like this for the decoding after the initial prompt
 so that the cross attention is enabled. Without this it would be skipped and
 hence the image patch embeddings from in the kv-cache for the cross attention
@@ -1114,6 +1114,35 @@ the frame. The skyscraper is likely the Empire State Building, which is one of
 the most iconic landmarks in New York City.
 The skyscraper is a tall, slender building with a distinctive art deco design.
 ```
+
+
+### Cross Attention
+As mentioned previously this model uses cross attention for the image patch
+embeddings. This is different from other models which use "prompt-based"
+approach where the image patch embeddings handled as tokens and passed to decode
+like normal language tokens.
+
+In the case of cross attention the image patch embeddings are instead set in the
+kv-cache for the cross attention layers. This means that the batch for decoding
+an image patch embedding is done by setting `batch.embd` and this will be
+a single token that is passed to `llama_decode`.
+
+How this currently works is that we need to first decode an initial prompt with
+something similar to the following:
+```console
+    <|start_header_id|>user<|end_header_id|>
+
+```
+And the we need to decode the image patch embeddings passed in `batch.embd`.
+
+And then follow that with a prompt that includes the `<|image|>` token:
+```console
+    params.prompt = "<|image|>What is in this image?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
+```
+It would be very nice if it was possible to just pass one prompt to the model
+which contained both the image patch embeddings and the question. I think this
+might have been [discussed](https://github.com/ggerganov/llama.cpp/issues/10381)
+but I need to look into it more closely.
 
 <a name="wip"></a>
 _work in progress_
