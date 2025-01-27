@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Matrix Multiplication Example</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        .matrix {
+            font-family: monospace;
+            white-space: pre;
+            margin: 10px 0;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebGPU Matrix Multiplication Demo</h1>
+    <div id="status">Checking WebGPU support...</div>
+    <div id="matrices">
+        <h3>Input Matrices:</h3>
+        <div id="matrixA" class="matrix"></div>
+        <div id="matrixB" class="matrix"></div>
+        <h3>Result Matrix:</h3>
+        <div id="result" class="matrix"></div>
+    </div>
+
+    <script>
+        if (!navigator.gpu) {
+            document.getElementById('status').innerHTML = 
+                '<span class="error">WebGPU is not supported in your browser. Please use Chrome 113+ or Edge 113+</span>';
+            throw new Error('WebGPU not supported');
+        }
+
+        // Pretty print a matrix
+        function formatMatrix(matrix) {
+            return matrix.map(row => row.map(n => n.toString().padStart(4)).join(' ')).join('\n');
+        }
+
+        // Initialize WebGPU
+        async function initWebGPU() {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (!adapter) throw new Error('No GPU adapter found');
+            const device = await adapter.requestDevice();
+            return device;
+        }
+
+        // Create buffers for our matrices
+        function createBuffers(device, matrixA, matrixB) {
+            const matrixAData = new Float32Array(matrixA.flat());
+            const matrixBData = new Float32Array(matrixB.flat());
+            
+            const bufferA = device.createBuffer({
+                size: matrixAData.byteLength,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+                mappedAtCreation: true,
+            });
+            new Float32Array(bufferA.getMappedRange()).set(matrixAData);
+            bufferA.unmap();
+
+            const bufferB = device.createBuffer({
+                size: matrixBData.byteLength,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+                mappedAtCreation: true,
+            });
+            new Float32Array(bufferB.getMappedRange()).set(matrixBData);
+            bufferB.unmap();
+
+            const resultBufferSize = Float32Array.BYTES_PER_ELEMENT * matrixA.length * matrixB[0].length;
+            const bufferResult = device.createBuffer({
+                size: resultBufferSize,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+
+            const stagingBuffer = device.createBuffer({
+                size: resultBufferSize,
+                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            });
+
+            return { bufferA, bufferB, bufferResult, stagingBuffer };
+        }
+
+        // Our compute shader in WGSL
+        const shaderCode = `
+        @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
+        @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
+        @group(0) @binding(2) var<storage, read_write> resultMatrix: array<f32>;
+
+        @compute @workgroup_size(3, 3)  // Changed to match output dimensions (3x3)
+        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+            let row = global_id.x;
+            let col = global_id.y;
+
+            // Define the dimensions of our matrices
+            let M = 3u;  // Number of rows in A
+            let K = 2u;  // Number of columns in A / rows in B
+            let N = 3u;  // Number of columns in B
+
+            // Only process valid matrix coordinates
+            if (row < M && col < N) {
+                var sum = 0.0;
+                // Iterate over the shared dimension (K)
+                for (var i = 0u; i < K; i = i + 1u) {
+                    // Update matrix indexing to use correct dimensions
+                    let a_index = row * K + i;        // For a 3x2 matrix
+                    let b_index = i * N + col;        // For a 2x3 matrix
+                    sum = sum + matrixA[a_index] * matrixB[b_index];
+                }
+
+                // Store the result using the output matrix dimensions
+                resultMatrix[row * N + col] = sum;
+            }
+        }`;
+
+        async function multiplyMatrices(matrixA, matrixB) {
+            console.log('Starting matrix multiplication...');
+            
+            const device = await initWebGPU();
+            const { bufferA, bufferB, bufferResult, stagingBuffer } = createBuffers(device, matrixA, matrixB);
+
+            const computePipeline = device.createComputePipeline({
+                layout: 'auto',
+                compute: {
+                    module: device.createShaderModule({
+                        code: shaderCode,
+                    }),
+                    entryPoint: 'main',
+                },
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: computePipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: { buffer: bufferA } },
+                    { binding: 1, resource: { buffer: bufferB } },
+                    { binding: 2, resource: { buffer: bufferResult } },
+                ],
+            });
+
+            const commandEncoder = device.createCommandEncoder();
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(computePipeline);
+            computePass.setBindGroup(0, bindGroup);
+            computePass.dispatchWorkgroups(1, 1);
+            computePass.end();
+
+            commandEncoder.copyBufferToBuffer(
+                bufferResult, 0,
+                stagingBuffer, 0,
+                stagingBuffer.size
+            );
+
+            device.queue.submit([commandEncoder.finish()]);
+
+            await stagingBuffer.mapAsync(GPUMapMode.READ);
+            const resultArray = new Float32Array(stagingBuffer.getMappedRange());
+            
+            // Convert to 2D array
+            const resultMatrix = [];
+            for (let i = 0; i < 3; i++) {
+                resultMatrix.push(Array.from(resultArray.slice(i * 3, (i + 1) * 3)));
+            }
+            stagingBuffer.unmap();
+
+            return resultMatrix;
+        }
+
+        // Example matrices
+        const matrixA = [
+            [1, 2],
+            [1, 2],
+            [1, 2],
+        ];
+
+        const matrixB = [
+            [1, 2, 3],
+            [1, 2, 3],
+        ];
+
+        // Display matrices
+        document.getElementById('matrixA').textContent = formatMatrix(matrixA);
+        document.getElementById('matrixB').textContent = formatMatrix(matrixB);
+
+        // Run the multiplication
+        async function runDemo() {
+            try {
+                document.getElementById('status').innerHTML = 
+                    '<span class="success">WebGPU is supported! Running computation...</span>';
+                
+                const result = await multiplyMatrices(matrixA, matrixB);
+                document.getElementById('result').textContent = formatMatrix(result);
+                
+                document.getElementById('status').innerHTML = 
+                    '<span class="success">Computation completed successfully!</span>';
+            } catch (error) {
+                document.getElementById('status').innerHTML = 
+                    `<span class="error">Error: ${error.message}</span>`;
+                console.error('Error:', error);
+            }
+        }
+
+        runDemo();
+    </script>
+</body>
+</html>

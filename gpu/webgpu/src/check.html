@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebGPU Matrix Multiplication</title>
+</head>
+<body>
+    <h1>WebGPU Matrix Multiplication Test</h1>
+    <div id="result"></div>
+
+    <script>
+        // Check for WebGPU support
+        if (!navigator.gpu) {
+            document.getElementById('result').textContent = 
+                'WebGPU is not supported in your browser. Please use Chrome 113+ or Edge 113+';
+            throw new Error('WebGPU not supported');
+        } else {
+            document.getElementById('result').textContent = 'WebGPU is supported in your browser';
+        }
+    </script>
+    
+    <script>
+        // Paste the entire code from the previous example here
+    </script>
+</body>
+</html>
