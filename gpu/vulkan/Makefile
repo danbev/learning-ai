@@ -2,7 +2,8 @@
 LDFLAGS = -lvulkan -ldl -lpthread -lX11 -lXrandr -lXi
 CXXFLAGS += -I/usr/include/glm
 
-VULKAN_SDK_PATH = /home/danbev/work/ai/vulkan/1.3.283.0/x86_64
+VULKAN_SDK_PATH = /home/danbev/work/ai/vulkan/1.4.304.0/x86_64
+
 DXC = $(VULKAN_SDK_PATH)/bin/dxc
 
 simple: src/simple.cpp

@@ -43,7 +43,19 @@ $ tar xvf vulkansdk-linux-x86_64-1.3.275.0.tar.xz
 ```console
 $ source /home/danielbevenius/work/ai/vulkan/1.3.275.0/setup-env.sh
 ```
+```console
+$ sudo apt install libglm-dev
+```
+
 Verify the install:
 ```console
 $ vkvia
 ```
+
+### Ubuntu 24.04
+```console
+$ wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+$ sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list http://packages.lunarg.com/vulkan/lunarg-vulkan-unstable.list
+
+
+$ sudo apt install vulkan-tools libvulkan1 libvulkan-dev

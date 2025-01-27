@@ -1,1 +1,1 @@
-source /home/danbev/work/ai/vulkan/1.3.283.0/setup-env.sh
+source /home/danbev/work/ai/vulkan/1.4.304.0/setup-env.sh

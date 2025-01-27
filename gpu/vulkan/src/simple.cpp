@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 std::vector<char> readFile(const std::string& filename) {
+    std::cout << "Reading file: " << filename << std::endl;
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
     if (!file.is_open()) {
         throw std::runtime_error("failed to open file!");
