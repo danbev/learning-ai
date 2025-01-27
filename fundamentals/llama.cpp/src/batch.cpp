@@ -10,13 +10,14 @@
 #include <set>
 
 std::vector<llama_token> tokenize_prompt(llama_model* model, std::string prompt) {
-    const int add_bos_token = llama_add_bos_token(model);
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    const int add_bos_token = llama_vocab_get_add_bos(vocab);
     const bool add_bos  = add_bos_token != -1 ? bool(add_bos_token) :
-        (llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM); // SPM = SentencePiece Model
+        (llama_vocab_type(vocab) == LLAMA_VOCAB_TYPE_SPM); // SPM = SentencePiece Model
 
     int n_tokens = prompt.length() + add_bos;
     std::vector<llama_token> input_tokens(n_tokens);
-    n_tokens = llama_tokenize(model,
+    n_tokens = llama_tokenize(vocab,
                               prompt.data(),
                               prompt.length(),
                               input_tokens.data(),
@@ -25,7 +26,7 @@ std::vector<llama_token> tokenize_prompt(llama_model* model, std::string prompt)
                               false);
     if (n_tokens < 0) {
         input_tokens.resize(-n_tokens);
-        llama_tokenize(model,
+        llama_tokenize(vocab,
                 prompt.data(),
                 prompt.length(),
                 input_tokens.data(),
@@ -50,6 +51,7 @@ struct token_position {
 std::unordered_map<llama_token, std::vector<token_position>> find_common_tokens(
         const std::vector<std::vector<llama_token>>& input_tokens,
         llama_model* model) {
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
     if (input_tokens.empty()) {
         return {};
     }
@@ -67,7 +69,7 @@ std::unordered_map<llama_token, std::vector<token_position>> find_common_tokens(
 
     std::unordered_map<llama_token, std::vector<token_position>> common_tokens;
     for (const auto& entry : token_positions) {
-        if (llama_add_bos_token(model) && entry.first == 1) {
+        if (llama_vocab_get_add_bos(vocab) && entry.first == 1) {
             continue;
         }
         if (entry.second.size() > 1) {
@@ -153,13 +155,14 @@ void print_batch(llama_batch batch) {
 }
 
 std::string token_as_string(llama_model* model, llama_token token) {
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
     int lsplit = 0;
     bool special = false;
     std::vector<char> piece(8, 0);
-    int n_tokens = llama_token_to_piece(model, token, piece.data(), piece.size(), lsplit, special);
+    int n_tokens = llama_token_to_piece(vocab, token, piece.data(), piece.size(), lsplit, special);
     if (n_tokens < 0) {
         piece.resize(-n_tokens);
-        llama_token_to_piece(model, token, piece.data(), piece.size(), lsplit, special);
+        llama_token_to_piece(vocab, token, piece.data(), piece.size(), lsplit, special);
     } else {
         piece.resize(n_tokens);
     }
@@ -191,7 +194,7 @@ int main(int argc, char** argv) {
     llama_backend_init();
     llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
 
-    llama_model* model = llama_load_model_from_file(model_path.c_str(), model_params);
+    llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (model == NULL) {
         fprintf(stderr , "%s: error: failed to to load model %s\n" , __func__, model_path.c_str());
         return 1;
@@ -206,7 +209,7 @@ int main(int argc, char** argv) {
     ctx_params.n_batch = 80;
     ctx_params.n_ubatch = 32;
 
-    llama_context * ctx = llama_new_context_with_model(model, ctx_params);
+    llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (ctx == NULL) {
         fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
         return 1;
@@ -298,7 +301,7 @@ int main(int argc, char** argv) {
 
     llama_batch_free(batch);
     llama_free(ctx);
-    llama_free_model(model);
+    llama_model_free(model);
     llama_backend_free();
     llama_sampler_free(sampler);
 

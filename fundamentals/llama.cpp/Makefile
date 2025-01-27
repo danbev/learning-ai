@@ -2,72 +2,48 @@ CUDA_DIR = /usr/local/cuda-12.4/lib64
 
 OS := $(shell uname -s)
 
-os:
-ifeq ($(OS),Linux)
-	@echo "This is a Linux system."
-else ifeq ($(OS),Darwin)
-	@echo "This is a macOS system."
-else
-	@echo "This is not a recognized system."
-endif
-
 # Make llama.cpp
 llama: 
-	cd llama.cpp && make -j8
+	cd llama.cpp && cmake --build build
 
 llama-cuda: 
-	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1
+	. ./cuda-env.sh && cd llama.cpp && cmake --build build -DGGML_CUDA=ON
 
 llama-vulkan:
-	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_VULKAN=1
+	. ./cuda-env.sh && cd llama.cpp && cmake --build build -DGGML_VULKAN=ON
 
 llama-kompute:
 	cd llama.cpp && rm -rf build && mkdir build && cd build \
 		&& cmake .. -DGGML_KOMPUTE=ON \
-		&& make -j8
+		&& cmake --build build
 
 llama-cuda-debug:
-	. ./cuda-env.sh && cd llama.cpp && make -j8 GGML_CUDA=1 LLAMA_DEBUG=1 DEBUG=1 LLAMA_METAL=1
+	. ./cuda-env.sh && cd llama.cpp && cmake -build build -DGGML_CUDA=ON -DLLAMA_DEBUG=ON -DCMAKE_BUILD_TYPE=ON -DLLAMA_METAL=1
 
 # Use the following target with causion as it will probably mess up an
 # actual run of a specific program. Just use it for debugging/learning and
 # then switch back to the normal target for testing.
 llama-debug: 
-	cd llama.cpp && make -j8 LLAMA_DEBUG=1 DEBUG=1
+	cd llama.cpp && cmake -build build -DLLAMA_DEBUG=ON -CMAKE_BUILD_TYPE=Debug
 
-CXXFLAGS = -std=c++11 -g3 -Wall -Illama.cpp/include -Illama.cpp/ggml/include -Illama.cpp/common -Illama.cpp/src -Lllama.cpp/ 
+CXXFLAGS = -std=c++17 -g -Wall \
+					 -Illama.cpp/include \
+					 -Illama.cpp/ggml/include \
+					 -Illama.cpp/common \
+					 -Illama.cpp/src \
+					 -Lllama.cpp/build/src \
+					 -lllama \
+					 -Lllama.cpp/build/ggml/src \
+					 -lggml \
+					 -lggml-cpu
+
+LD_PATH = llama.cpp/build/src:llama.cpp/build/ggml/src
 
 ifeq ($(OS),Linux)
 CXXFLAGS += -fopenmp
 else ifeq ($(OS),Darwin)
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 endif
-
-OBJ = \
-	llama.cpp/src/llama.o \
-	llama.cpp/src/llama-vocab.o \
-	llama.cpp/src/llama-grammar.o \
-	llama.cpp/src/llama-sampling.o \
-	llama.cpp/src/unicode.o \
-	llama.cpp/src/unicode-data.o
-
-OBJ_COMMON = llama.cpp/common/common.o \
-	llama.cpp/common/console.o \
-	llama.cpp/common/ngram-cache.o \
-	llama.cpp/common/sampling.o \
-	llama.cpp/common/grammar-parser.o \
-	llama.cpp/common/build-info.o \
-	llama.cpp/common/json-schema-to-grammar.o \
-	llama.cpp/common/log.o
-
-OBJ_GGML += \
-	llama.cpp/ggml/src/ggml.o \
-	llama.cpp/ggml/src/ggml-alloc.o \
-	llama.cpp/ggml/src/ggml-backend.o \
-	llama.cpp/ggml/src/ggml-quants.o \
-	llama.cpp/ggml/src/ggml-aarch64.o \
-	llama.cpp/ggml/src/ggml-cpu.o \
-	llama.cpp/ggml/src/llamafile/sgemm.o
 
 ifeq ($(OS),Darwin)
 OBJ_GGML += llama.cpp/ggml/src/ggml-blas.o
@@ -102,7 +78,11 @@ simple-prompt-multi: src/simple-prompt-multi.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
 
 batch: src/batch.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	env LD_LIBRARY_PATH=${LD_PATH} $(CXX) $< $(CXXFLAGS) -o $@
+
+.PHONY: run-batch
+run-batch: batch
+	env LD_LIBRARY_PATH=${LD_PATH} ./batch
 
 embeddings: src/embeddings.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
