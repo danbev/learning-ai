@@ -48,23 +48,44 @@
 
         // Initialize WebGPU
         async function initWebGPU() {
+            // An adapter is a representation of a physical device.
             const adapter = await navigator.gpu.requestAdapter();
-            if (!adapter) throw new Error('No GPU adapter found');
+            if (!adapter) {
+                throw new Error('No GPU adapter found');
+            }
+            // A device is an virtual instance of a physical device.
             const device = await adapter.requestDevice();
             return device;
         }
 
-        // Create buffers for our matrices
+        // Create buffers for our matrices. This is similar to what we do
+        // when working with CUDA and these bufffers can be accessed by both
+        // the CPU and GPU.
         function createBuffers(device, matrixA, matrixB) {
+            // Input matrices A and B.
             const matrixAData = new Float32Array(matrixA.flat());
             const matrixBData = new Float32Array(matrixB.flat());
             
+            // Notice that we are using the device to create the buffers.
+            // And we are specifying the usage of the buffers, like where
+            // the buffer is located (STORAGE) and how it will be used
+            // (COPY_DST). So this will be stored on the GPU and also used
+            // as the destination for copying data. As this is an input 
+            // buffer it need to be copied from the GPU to the GPU.
             const bufferA = device.createBuffer({
                 size: matrixAData.byteLength,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
                 mappedAtCreation: true,
             });
-            new Float32Array(bufferA.getMappedRange()).set(matrixAData);
+            // Notice the `mappedAtCreation: true` option above. This will
+            // cause the WebGPU to allocate a buffer that both the CPU and GPU
+            // can access.
+            // We can then create a view Float32Array into the buffer and
+            // set the input matrix A data into it (copy the data to the buffer
+            // on the GPU.
+            const mapped_range = bufferA.getMappedRange();
+            console.log('Mapped range:', mapped_range);
+            new Float32Array(mapped_range).set(matrixAData);
             bufferA.unmap();
 
             const bufferB = device.createBuffer({
@@ -89,13 +110,18 @@
             return { bufferA, bufferB, bufferResult, stagingBuffer };
         }
 
-        // Our compute shader in WGSL
+        // Our compute shader in WGSL. This is what actually runs on the GPU.
         const shaderCode = `
+        // This is binding the input matrix A to the variable matrixA.
         @group(0) @binding(0) var<storage, read> matrixA: array<f32>;
+        // This is binding the input matrix B to the variable matrixA.
         @group(0) @binding(1) var<storage, read> matrixB: array<f32>;
+        // This is binding the output matrix to the variable resultMatrix.
         @group(0) @binding(2) var<storage, read_write> resultMatrix: array<f32>;
 
-        @compute @workgroup_size(3, 3)  // Changed to match output dimensions (3x3)
+        // 3x3 grid of parallel computations. Each computaion handles one
+        // element of the output matrix.
+        @compute @workgroup_size(3, 3)
         fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let row = global_id.x;
             let col = global_id.y;
