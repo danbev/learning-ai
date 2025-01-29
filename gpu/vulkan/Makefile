@@ -4,6 +4,8 @@ CXXFLAGS += -I/usr/include/glm
 
 VULKAN_SDK_PATH = /home/danbev/work/ai/vulkan/1.4.304.0/x86_64
 
+#export VK_LOADER_DEBUG=all
+
 DXC = $(VULKAN_SDK_PATH)/bin/dxc
 
 simple: src/simple.cpp
@@ -22,3 +24,6 @@ list-dev: src/list-dev.c
 .PHONY: ctags
 ctags: 
 	ctags -R  ~/work/ai/vulkan/1.3.283.0/x86_64/include/ .
+
+clean:
+	@rm -f simple simple-shader shader list-dev
