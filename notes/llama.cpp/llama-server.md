@@ -101,6 +101,252 @@ Process 94087 stopped
    2439	        return 1;
 Target 0: (llama-server) stopped.
 ```
+
+To be able to step through the actual server processing we can set a breakpoint
+in the repsonse handler:
+```c++
+    auto middleware_server_state = [&res_error, &state](const httplib::Request & req, httplib::Response & res) {
+        server_state current_state = state.load();
+        if (current_state == SERVER_STATE_LOADING_MODEL) {
+            auto tmp = string_split<std::string>(req.path, '.');
+            if (req.path == "/" || tmp.back() == "html") {
+                res.set_content(reinterpret_cast<const char*>(loading_html), loading_html_len, "text/html; charset=utf-8");
+                res.status = 503;
+            } else {
+                res_error(res, format_error_response("Loading model", ERROR_TYPE_UNAVAILABLE));
+            }
+            return false;
+        }
+        return true;
+    };
+```
+I've not used httplib.h before and I'm not 100% sure about how request are
+processed and how these handler, like the one above are called. So lets set
+a breakpoint in httplib.h Server::process_request:
+```console
+(gdb) br httplib.h:7133
+Breakpoint 2 at 0x555555608119: file /home/danbev/work/ai/llama.cpp-debug/examples/server/httplib.h, line 7133.
+```
+With that done we need to call the server and we can do that using curl like
+we showed earlier.
+
+So, that should hit our breakpoint. One thing to keep in mind is that there
+will be multiple threads running and we can disable the other threads by:
+```console
+(gdb) set scheduler-locking on
+```
+```c++
+  // Routing
+  auto routed = false;
+#ifdef CPPHTTPLIB_NO_EXCEPTIONS
+  routed = routing(req, res, strm);
+#else
+```
+```cpp
+inline bool Server::routing(Request &req, Response &res, Stream &strm) {
+  if (pre_routing_handler_ &&
+      pre_routing_handler_(req, res) == HandlerResponse::Handled) {
+    return true;
+  }
+  ...
+```
+This handler is registered in server.cpp:
+```cpp
+    // register server middlewares
+    svr->set_pre_routing_handler([&middleware_validate_api_key, &middleware_server_state](const httplib::Request & req, httplib::Response & res) {
+        res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
+        // If this is OPTIONS request, skip validation because browsers don't include Authorization header
+        if (req.method == "OPTIONS") {
+            res.set_header("Access-Control-Allow-Credentials", "true");
+            res.set_header("Access-Control-Allow-Methods",     "GET, POST");
+            res.set_header("Access-Control-Allow-Headers",     "*");
+            res.set_content("", "text/html"); // blank response, no data
+            return httplib::Server::HandlerResponse::Handled; // skip further processing
+        }
+        if (!middleware_server_state(req, res)) {
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        if (!middleware_validate_api_key(req, res)) {
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
+    auto middleware_server_state = [&res_error, &state](const httplib::Request & req, httplib::Response & res) {
+        server_state current_state = state.load();
+        if (current_state == SERVER_STATE_LOADING_MODEL) {
+            auto tmp = string_split<std::string>(req.path, '.');
+            if (req.path == "/" || tmp.back() == "html") {
+                res.set_content(reinterpret_cast<const char*>(loading_html), loading_html_len, "text/html; charset=utf-8");
+                res.status = 503;
+            } else {
+                res_error(res, format_error_response("Loading model", ERROR_TYPE_UNAVAILABLE));
+            }
+            return false;
+        }
+        return true;
+    };
+```
+So if the request is a CORS (Cross-Origin Resource Sharing) request then it
+will be handled and a response sent back to the browser agent. So this will
+then enter the `middleware_server_state` handler which will check the model
+is still loading and in that case return with an unavailable error.
+So that will then return us to `Server::process_request`:
+```cpp
+  // Regular handler
+  if (req.method == "GET" || req.method == "HEAD") {
+    return dispatch_request(req, res, get_handlers_);
+  } else if (req.method == "POST") {
+    return dispatch_request(req, res, post_handlers_);
+  } else if (req.method == "PUT") {
+    return dispatch_request(req, res, put_handlers_);
+  } else if (req.method == "DELETE") {
+    return dispatch_request(req, res, delete_handlers_);
+  } else if (req.method == "OPTIONS") {
+    return dispatch_request(req, res, options_handlers_);
+  } else if (req.method == "PATCH") {
+    return dispatch_request(req, res, patch_handlers_);
+  }
+
+  res.status = StatusCode::BadRequest_400;
+  return false;
+```
+```console
+(gdb) p post_handlers_.size()
+$10 = 18
+```
+These are handlers that are registered in server.cpp:
+```cpp
+    // register API routes
+    svr->Get ("/health",              handle_health); // public endpoint (no API key check)
+    svr->Get ("/metrics",             handle_metrics);
+    svr->Get ("/props",               handle_props);
+    svr->Post("/props",               handle_props_change);
+    svr->Get ("/models",              handle_models); // public endpoint (no API key check)
+    svr->Get ("/v1/models",           handle_models); // public endpoint (no API key check)
+    svr->Post("/completion",          handle_completions); // legacy
+    svr->Post("/completions",         handle_completions);
+    ...
+```
+```cpp
+    const auto handle_completions = [&handle_completions_impl](const httplib::Request & req, httplib::Response & res) {
+        json data = json::parse(req.body);
+        return handle_completions_impl(
+            SERVER_TASK_TYPE_COMPLETION,
+            data,
+            req.is_connection_closed,
+            res,
+            OAICOMPAT_TYPE_NONE);
+    };
+```
+And this will call the `handle_completions_impl` function:
+```cpp
+    const auto handle_completions_impl = [&ctx_server, &res_error, &res_ok](
+            server_task_type type,
+            json & data,
+            std::function<bool()> is_connection_closed,
+            httplib::Response & res,
+            oaicompat_type oaicompat) {
+        GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
+
+        if (ctx_server.params_base.embedding) {
+            res_error(res, format_error_response("This server does not support completions. Start it without `--embeddings`", ERROR_TYPE_NOT_SUPPORTED));
+            return;
+        }
+
+        auto completion_id = gen_chatcmplid();
+        std::vector<server_task> tasks;
+
+        try {
+            std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server.vocab, data.at("prompt"), true, true);
+            tasks.reserve(tokenized_prompts.size());
+            for (size_t i = 0; i < tokenized_prompts.size(); i++) {
+                server_task task = server_task(type);
+
+                task.id    = ctx_server.queue_tasks.get_new_id();
+                task.index = i;
+
+                task.prompt_tokens    = std::move(tokenized_prompts[i]);
+                task.params           = server_task::params_from_json_cmpl(
+                                            ctx_server.ctx,
+                                            ctx_server.params_base,
+                                            data);
+                task.id_selected_slot = json_value(data, "id_slot", -1);
+
+                // OAI-compat
+                task.params.oaicompat         = oaicompat;
+                task.params.oaicompat_cmpl_id = completion_id;
+                // oaicompat_model is already populated by params_from_json_cmpl
+
+                tasks.push_back(task);
+            }
+        } catch (const std::exception & e) {
+            res_error(res, format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST));
+            return;
+        }
+        ...
+```
+A completion id is generated for this request  (chat completion id), and then 
+the prompt is tokenized:
+```console
+(gdb) p tokenized_prompts
+$19 = std::vector of length 1, capacity 1 = {std::vector of length 6, capacity 15 = {1, 1724, 338, 4309, 4717, 29973}}
+
+(gdb) p type
+$20 = SERVER_TASK_TYPE_COMPLETION
+
+(gdb) ptype server_task
+type = struct server_task {
+    int id;
+    int index;
+    server_task_type type;
+    int id_target;
+    slot_params params;
+    llama_tokens prompt_tokens;
+    int id_selected_slot;
+    server_task::slot_action slot_action;
+    bool metrics_reset_bucket;
+    std::vector<common_adapter_lora_info> set_lora;
+
+    server_task(server_task_type);
+    static slot_params params_from_json_cmpl(const llama_context *, const common_params &, const json &);
+    static std::unordered_set<int> get_list_id(const std::vector<server_task> &);
+}
+```
+After that we have the following line:
+```cpp
+                task.id    = ctx_server.queue_tasks.get_new_id();
+```
+So the `server_context` has a `queue_tasks` member which is of type
+`server_queue`:
+```console
+(gdb) ptype ctx_server.queue_tasks
+type = struct server_queue {
+    int id;
+    bool running;
+    std::deque<server_task> queue_tasks;
+    std::deque<server_task> queue_tasks_deferred;
+    std::mutex mutex_tasks;
+    std::condition_variable condition_tasks;
+    std::function<void(server_task)> callback_new_task;
+    std::function<void()> callback_update_slots;
+
+    int post(server_task, bool);
+    int post(std::vector<server_task> &, bool);
+    void defer(server_task);
+    int get_new_id(void);
+    void on_new_task(std::function<void(server_task)>);
+    void on_update_slots(std::function<void()>);
+    void pop_deferred_task(void);
+    void terminate(void);
+    void start_loop(void);
+  private:
+    void cleanup_pending_task(int);
+}
+```
+We can see that this has a double ended queue (deque), and also the 
+get_new_id function.
+
 _wip_
 
 ### index_html_gz
@@ -197,3 +443,6 @@ And this is how the `index.html.gz` file is included in the server:
 ```cpp
     res.set_content(reinterpret_cast<const char*>(index_html_gz), index_html_gz_len, "text/html; charset=utf-8");
 ```
+
+### Slots
+This section aims to explain what slots are in the context of llama-server.
