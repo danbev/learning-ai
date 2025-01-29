@@ -102,3 +102,98 @@ Process 94087 stopped
 Target 0: (llama-server) stopped.
 ```
 _wip_
+
+### index_html_gz
+In server.cpp we have the following code:
+```console
+            // using embedded static index.html
+            svr->Get("/", [](const httplib::Request & req, httplib::Response & res) {
+                if (req.get_header_value("Accept-Encoding").find("gzip") == std::string::npos) {
+                    res.set_content("Error: gzip is not supported by this browser", "text/plain");
+                } else {
+                    res.set_header("Content-Encoding", "gzip");
+                    res.set_content(reinterpret_cast<const char*>(index_html_gz), index_html_gz_len, "text/html; charset=utf-8");
+                }
+                return false;
+            });
+```
+
+Now, `index_html_gz` gzipped file in `examples/server/public` which is built
+by `examples/server/webui/package.json`:
+```console
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "analyze": "ANALYZE=1 npx vite-bundle-visualizer"
+  },
+```
+We can inspect the vite configuration which is in `vite.config.js`:
+```js
+...
+      writeBundle() {
+        const outputIndexHtml = path.join(config.build.outDir, 'index.html');
+        const content = GUIDE_FOR_FRONTEND + '\n' + fs.readFileSync(outputIndexHtml, 'utf-8');
+        const compressed = zlib.gzipSync(Buffer.from(content, 'utf-8'), { level: 9 });
+
+        // because gzip header contains machine-specific info, we must remove these data from the header
+        // timestamp
+        compressed[0x4] = 0;
+        compressed[0x5] = 0;
+        compressed[0x6] = 0;
+        compressed[0x7] = 0;
+        // OS
+        compressed[0x9] = 0;
+```
+This is reading the `webui/index.html` file and prepending `GUIDE_FOR_FRONTEND`
+warning to it. This is then gzipped and the timestamp and OS fields are zeroed
+out.
+So when we run `npm run build` in the `webui` directory, the `index.html` file
+is built and gzipped and the resulting `index.html.gz` file is copied to the
+
+And then when we build `llama-server` using cmake we can see the following
+in `examples/server/CMakeLists.txt`:
+```cmake
+set(PUBLIC_ASSETS
+    index.html.gz
+    loading.html
+)
+
+foreach(asset ${PUBLIC_ASSETS})
+    set(input "${CMAKE_CURRENT_SOURCE_DIR}/public/${asset}")
+    set(output "${CMAKE_CURRENT_BINARY_DIR}/${asset}.hpp")
+    list(APPEND TARGET_SRCS ${output})
+    add_custom_command(
+        DEPENDS "${input}"
+        OUTPUT "${output}"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${input}" "-DOUTPUT=${output}" -P "${PROJECT_SOURCE_DIR}/scripts/xxd.cmake"
+    )
+    set_source_files_properties(${output} PROPERTIES GENERATED TRUE)
+endforeach()
+```
+Notice that this is actually generateing a `.hpp` file from the `.gz` file:
+```console
+/home/danbev/work/ai/llama.cpp-debug/build/examples/server/index.html.gz.hpp
+```
+
+Now, this is passed to the script `xxd.cmake`:
+```
+# CMake equivalent of `xxd -i ${INPUT} ${OUTPUT}`
+```
+xxd is a hexdump/converter util and the `-i` flag is to output C-style arrays.
+
+
+If we look in includes in server.cpp we find:
+```cpp
+#include "index.html.gz.hpp"
+```
+
+```cpp
+unsigned char index_html_gz[] = {0x1f,0x8b,...
+
+unsigned int index_html_gz_len = 1207150;
+```
+And this is how the `index.html.gz` file is included in the server:
+```cpp
+    res.set_content(reinterpret_cast<const char*>(index_html_gz), index_html_gz_len, "text/html; charset=utf-8");
+```
