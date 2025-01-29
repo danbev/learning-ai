@@ -1,5 +1,5 @@
 ## Large Language and Vision Assistent
-LLaVA is an open-source chatbot/assistent trained by fine-tuning LLaMA/Vicuna on
+LLaVA is an open-source chatbot/assistant trained by fine-tuning LLaMA/Vicuna on
 GPT-generated multimodal instruction-following data. So it is able to take in
 an image and a prompt and it will answer them (this is the instruction part).
 
@@ -1685,7 +1685,7 @@ notes and examples can be found in [ggml.md](./ggml.md#ggml_conv_2dd).
 ```console
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 ```
-Notice that the inputs are the `model.patch_embedings` which will be the kernel:
+Notice that the inputs are the `model.patch_embeddings` which will be the kernel:
 ```console
 $4 = {type = GGML_TYPE_F16, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x555555b49a20,
 ne = {14, 14, 3, 1024}, nb = {2, 28, 392, 1176}, op = GGML_OP_NONE,
@@ -1820,9 +1820,10 @@ $14 = {1024, 576, 1, 1}
 ```
 And then the permuted tensor is made contiguous (a new tensor created with the
 data now guaranteed to be contiguous in memory).
+
 So we went from 24x24x1024x1 -> 1024x576x1x1 which is more like the what we have
-in an NLP where we would have a row for each token, in this case we have a row
-for each patch:
+in an NLP where we would have a row for each token (576 in this case each with
+a dimension of 1024), in this case we have a row for each patch:
 ```
 NLP:
 token 0   : [0       ...           1023]
@@ -1831,8 +1832,9 @@ token 576 : [0       ...           1023]
 
 Vision:
 patch 0   : [0       ...           1023]
-```
+...
 patch 576 : [0       ...           1023]
+```
 
 Next, if the clip context has a patch bias it will be applied:
 ```c
@@ -1849,6 +1851,7 @@ Following that we have:
     struct ggml_tensor * pos_embed = nullptr;
 
     if (ctx->has_llava_projector) {
+
         // concat class_embeddings and patch_embeddings
         if (ctx->has_class_embedding) {
             embeddings = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, num_positions, batch_size);
@@ -2797,6 +2800,13 @@ $21 = 663
 These will be passed to  `select_best_resolution` which will try to figure out
 how the input image can be resized to fit a image resolution that this clip
 model can support.
+
+* 336, 672 : Aspect ratio of 336:672 or 1:2.
+* 672, 336 : Aspect ratio of 2:1.
+* 672, 672 : Aspect ratio of 1:1.
+* 1008, 336: Aspect ratio of 3:1.
+* 336, 1008: Aspect ratio of 1:3.
+
 ```c++
 static std::pair<int, int> select_best_resolution(const std::pair<int, int> & original_size,
     const std::vector<std::pair<int, int>> & possible_resolutions) {
@@ -4297,3 +4307,9 @@ a from the [single-file public domain library](https://github.com/nothings/stb)
 which was created by Sean T. Barrett, hence `std`. The `std_image.h` header
 contains code related to loading and decoding images from files and memory in
 various formats like PNG, JPEG, BMP, PSD, GIF, HDR, PIC.
+
+```
+llama_model_load: error loading model: check_tensor_dims:
+tensor 'v.enc.mmproj.weight' has wrong shape; expected  1280,  5120, got  7680,  4096,     1,     1
+```
+
