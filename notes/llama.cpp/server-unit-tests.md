@@ -5,19 +5,173 @@ When running this test locally (ubuntu 24.04) it fails with the following error:
 ```console
 (venv) $ ./tests.sh unit/test_chat_completion.py::test_completion_with_response_format -s -v -k "response_format3"
 ======================================================== test session starts =========================================================
-platform linux -- Python 3.12.3, pytest-8.3.4, pluggy-1.5.0 -- /home/danbev/work/ai/llama.cpp-debug/examples/server/tests/venv/bin/python3
+platform linux -- Python 3.11.11, pytest-8.3.4, pluggy-1.5.0 -- /home/danbev/work/ai/llama.cpp-debug/examples/server/tests/venv/bin/python3.11
 cachedir: .pytest_cache
 rootdir: /home/danbev/work/ai/llama.cpp-debug/examples/server/tests
 configfile: pytest.ini
 plugins: anyio-4.8.0
 collected 7 items / 6 deselected / 1 selected                                                                                        
 
-unit/test_chat_completion.py::test_completion_with_response_format[response_format3-0-None] FAILED                             [100%]
+unit/test_chat_completion.py::test_completion_with_response_format[response_format3-0-None] bench: starting server with: ../../../build/bin/llama-server --host 127.0.0.1 --port 8080 --temp 0.8 --seed 42 --hf-repo ggml-org/models --hf-file tinyllamas/stories260K.gguf --batch-size 32 --alias tinyllama-2 --ctx-size 256 --parallel 2 --n-predict 64
+server pid=158649, pytest pid=158648
+Waiting for server to start...
+ggml_cuda_init: failed to initialize CUDA: unknown error
+register_backend: registered backend CUDA (0 devices)
+register_backend: registered backend CPU (1 devices)
+register_device: registered device CPU (12th Gen Intel(R) Core(TM) i7-1260P)
+load_backend: failed to find ggml_backend_init in /home/danbev/work/ai/llama.cpp-debug/build/bin/libggml-cuda.so
+load_backend: failed to find ggml_backend_init in /home/danbev/work/ai/llama.cpp-debug/build/bin/libggml-cpu.so
+build: 4621 (6eecde3c) with cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0 for x86_64-linux-gnu (debug)
+system info: n_threads = 4, n_threads_batch = 4, total_threads = 16
+
+system_info: n_threads = 4 (n_threads_batch = 4) / 16 | CUDA : ARCHS = 600,610,700,750 | F16 = 1 | USE_GRAPHS = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | LLAMAFILE = 1 | 
+
+main: HTTP server is listening, hostname: 127.0.0.1, port: 8080, http threads: 15
+main: loading model
+srv    load_model: loading model '/home/danbev/.cache/llama.cpp/ggml-org_models_tinyllamas_stories260K.gguf'
+common_download_file: previous metadata file found /home/danbev/.cache/llama.cpp/ggml-org_models_tinyllamas_stories260K.gguf.json: {"etag":"\"21c86626afafc826a642338679227c24\"","lastModified":"Tue, 20 Feb 2024 09:21:22 GMT","url":"https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf"}
+curl_perform_with_retry: Trying to download from https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf (attempt 1 of 3)...
+request: GET /health 127.0.0.1 503
+Response from server {
+  "error": {
+    "code": 503,
+    "message": "Loading model",
+    "type": "unavailable_error"
+  }
+}
+Waiting for server to start...
+llama_model_loader: loaded meta data with 19 key-value pairs and 48 tensors from /home/danbev/.cache/llama.cpp/ggml-org_models_tinyllamas_stories260K.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                      tokenizer.ggml.tokens arr[str,512]     = ["<unk>", "<s>", "</s>", "<0x00>", "<...
+llama_model_loader: - kv   1:                      tokenizer.ggml.scores arr[f32,512]     = [0.000000, 0.000000, 0.000000, 0.0000...
+llama_model_loader: - kv   2:                  tokenizer.ggml.token_type arr[i32,512]     = [2, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, ...
+llama_model_loader: - kv   3:                       tokenizer.ggml.model str              = llama
+llama_model_loader: - kv   4:                       general.architecture str              = llama
+llama_model_loader: - kv   5:                               general.name str              = llama
+llama_model_loader: - kv   6:            tokenizer.ggml.unknown_token_id u32              = 0
+llama_model_loader: - kv   7:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv   8:                tokenizer.ggml.eos_token_id u32              = 2
+llama_model_loader: - kv   9:          tokenizer.ggml.seperator_token_id u32              = 4294967295
+llama_model_loader: - kv  10:            tokenizer.ggml.padding_token_id u32              = 4294967295
+llama_model_loader: - kv  11:                       llama.context_length u32              = 128
+llama_model_loader: - kv  12:                     llama.embedding_length u32              = 64
+llama_model_loader: - kv  13:                  llama.feed_forward_length u32              = 172
+llama_model_loader: - kv  14:                 llama.attention.head_count u32              = 8
+llama_model_loader: - kv  15:              llama.attention.head_count_kv u32              = 4
+llama_model_loader: - kv  16:                          llama.block_count u32              = 5
+llama_model_loader: - kv  17:                 llama.rope.dimension_count u32              = 8
+llama_model_loader: - kv  18:     llama.attention.layer_norm_rms_epsilon f32              = 0.000010
+llama_model_loader: - type  f32:   48 tensors
+print_info: file format = GGUF V3 (latest)
+print_info: file type   = all F32 (guessed)
+print_info: file size   = 1.12 MiB (32.00 BPW) 
+load: bad special token: 'tokenizer.ggml.seperator_token_id' = 4294967295, using default id -1
+load: bad special token: 'tokenizer.ggml.padding_token_id' = 4294967295, using default id -1
+load: special_eos_id is not in special_eog_ids - the tokenizer config may be incorrect
+load: special tokens cache size = 3
+load: token to piece cache size = 0.0008 MB
+print_info: arch             = llama
+print_info: vocab_only       = 0
+print_info: n_ctx_train      = 128
+print_info: n_embd           = 64
+print_info: n_layer          = 5
+print_info: n_head           = 8
+print_info: n_head_kv        = 4
+print_info: n_rot            = 8
+print_info: n_swa            = 0
+print_info: n_embd_head_k    = 8
+print_info: n_embd_head_v    = 8
+print_info: n_gqa            = 2
+print_info: n_embd_k_gqa     = 32
+print_info: n_embd_v_gqa     = 32
+print_info: f_norm_eps       = 0.0e+00
+print_info: f_norm_rms_eps   = 1.0e-05
+print_info: f_clamp_kqv      = 0.0e+00
+print_info: f_max_alibi_bias = 0.0e+00
+print_info: f_logit_scale    = 0.0e+00
+print_info: n_ff             = 172
+print_info: n_expert         = 0
+print_info: n_expert_used    = 0
+print_info: causal attn      = 1
+print_info: pooling type     = 0
+print_info: rope type        = 0
+print_info: rope scaling     = linear
+print_info: freq_base_train  = 10000.0
+print_info: freq_scale_train = 1
+print_info: n_ctx_orig_yarn  = 128
+print_info: rope_finetuned   = unknown
+print_info: ssm_d_conv       = 0
+print_info: ssm_d_inner      = 0
+print_info: ssm_d_state      = 0
+print_info: ssm_dt_rank      = 0
+print_info: ssm_dt_b_c_rms   = 0
+print_info: model type       = ?B
+print_info: model params     = 292.80 K
+print_info: general.name     = llama
+print_info: vocab type       = SPM
+print_info: n_vocab          = 512
+print_info: n_merges         = 0
+print_info: BOS token        = 1 '<s>'
+print_info: EOS token        = 2 '</s>'
+print_info: UNK token        = 0 '<unk>'
+print_info: LF token         = 13 '<0x0A>'
+print_info: EOG token        = 2 '</s>'
+print_info: max token length = 9
+load_tensors:   CPU_Mapped model buffer size =     1.12 MiB
+llama_init_from_model: n_batch is less than GGML_KQ_MASK_PAD - increasing to 64
+llama_init_from_model: n_seq_max     = 2
+llama_init_from_model: n_ctx         = 256
+llama_init_from_model: n_ctx_per_seq = 128
+llama_init_from_model: n_batch       = 64
+llama_init_from_model: n_ubatch      = 64
+llama_init_from_model: flash_attn    = 0
+llama_init_from_model: freq_base     = 10000.0
+llama_init_from_model: freq_scale    = 1
+llama_kv_cache_init: kv_size = 256, offload = 1, type_k = 'f16', type_v = 'f16', n_layer = 5, can_shift = 1
+llama_kv_cache_init:        CPU KV buffer size =     0.16 MiB
+llama_init_from_model: KV self size  =    0.16 MiB, K (f16):    0.08 MiB, V (f16):    0.08 MiB
+llama_init_from_model:        CPU  output buffer size =     0.00 MiB
+llama_init_from_model:        CPU compute buffer size =     0.63 MiB
+llama_init_from_model: graph nodes  = 166
+llama_init_from_model: graph splits = 1
+common_init_from_params: setting dry_penalty_last_n to ctx_size = 256
+common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
+srv          init: initializing slots, n_slots = 2
+slot         init: id  0 | task -1 | new slot n_ctx_slot = 128
+slot         init: id  1 | task -1 | new slot n_ctx_slot = 128
+main: model loaded
+main: chat template, chat_template: 
+                {%- for message in messages -%}
+                    {{- "<|im_start|>" + message.role + "\n" + message.content + "<|im_end|>\n" -}}
+                {%- endfor -%}
+                {%- if add_generation_prompt -%}
+                    {{- "<|im_start|>assistant\n" -}}
+                {%- endif -%}
+            , example_format: '<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+'
+main: server is listening on http://127.0.0.1:8080 - starting the main loop
+srv  update_slots: all slots are idle
+request: GET /health 127.0.0.1 200
+Response from server {
+  "status": "ok"
+}
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  response_format type must be one of "text" or "json_object", but got: sound
+FAILEDStopping server with pid=158649
+
 
 ============================================================== FAILURES ==============================================================
 ___________________________________ test_completion_with_response_format[response_format3-0-None] ____________________________________
 
-self = <urllib3.connectionpool.HTTPConnectionPool object at 0x7cd48d3023f0>, method = 'POST', url = '/chat/completions'
+self = <urllib3.connectionpool.HTTPConnectionPool object at 0x786fe47b0990>, method = 'POST', url = '/chat/completions'
 body = b'{"max_tokens": 0, "messages": [{"role": "system", "content": "You are a coding assistant."}, {"role": "user", "content": "Write an example"}], "response_format": {"type": "sound"}}'
 headers = {'User-Agent': 'python-requests/2.32.3', 'Accept-Encoding': 'gzip, deflate', 'Accept': '*/*', 'Connection': 'keep-alive', 'Content-Length': '180', 'Content-Type': 'application/json'}
 retries = Retry(total=0, connect=None, read=False, redirect=None, status=None), redirect = False, assert_same_host = False
@@ -236,19 +390,19 @@ destination_scheme = None, conn = None, release_this_conn = True, http_tunnel_re
                 **response_kw,
             )
 
-venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: 
+venv/lib/python3.11/site-packages/urllib3/connectionpool.py:787: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-venv/lib/python3.12/site-packages/urllib3/connectionpool.py:534: in _make_request
+venv/lib/python3.11/site-packages/urllib3/connectionpool.py:534: in _make_request
     response = conn.getresponse()
-venv/lib/python3.12/site-packages/urllib3/connection.py:516: in getresponse
+venv/lib/python3.11/site-packages/urllib3/connection.py:516: in getresponse
     httplib_response = super().getresponse()
-/usr/lib/python3.12/http/client.py:1428: in getresponse
+/usr/lib/python3.11/http/client.py:1395: in getresponse
     response.begin()
-/usr/lib/python3.12/http/client.py:331: in begin
+/usr/lib/python3.11/http/client.py:325: in begin
     version, status, reason = self._read_status()
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <http.client.HTTPResponse object at 0x7cd48d33c2b0>
+self = <http.client.HTTPResponse object at 0x786fe4763610>
 
     def _read_status(self):
         line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
@@ -263,11 +417,11 @@ self = <http.client.HTTPResponse object at 0x7cd48d33c2b0>
                                      " response")
 E           http.client.RemoteDisconnected: Remote end closed connection without response
 
-/usr/lib/python3.12/http/client.py:300: RemoteDisconnected
+/usr/lib/python3.11/http/client.py:294: RemoteDisconnected
 
 During handling of the above exception, another exception occurred:
 
-self = <requests.adapters.HTTPAdapter object at 0x7cd48d302690>, request = <PreparedRequest [POST]>, stream = False
+self = <requests.adapters.HTTPAdapter object at 0x786fe47b0790>, request = <PreparedRequest [POST]>, stream = False
 timeout = Timeout(connect=None, read=None, total=None), verify = True, cert = None, proxies = OrderedDict()
 
     def send(
@@ -338,27 +492,27 @@ timeout = Timeout(connect=None, read=None, total=None), verify = True, cert = No
                 chunked=chunked,
             )
 
-venv/lib/python3.12/site-packages/requests/adapters.py:667: 
+venv/lib/python3.11/site-packages/requests/adapters.py:667: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-venv/lib/python3.12/site-packages/urllib3/connectionpool.py:841: in urlopen
+venv/lib/python3.11/site-packages/urllib3/connectionpool.py:841: in urlopen
     retries = retries.increment(
-venv/lib/python3.12/site-packages/urllib3/util/retry.py:474: in increment
+venv/lib/python3.11/site-packages/urllib3/util/retry.py:474: in increment
     raise reraise(type(error), error, _stacktrace)
-venv/lib/python3.12/site-packages/urllib3/util/util.py:38: in reraise
+venv/lib/python3.11/site-packages/urllib3/util/util.py:38: in reraise
     raise value.with_traceback(tb)
-venv/lib/python3.12/site-packages/urllib3/connectionpool.py:787: in urlopen
+venv/lib/python3.11/site-packages/urllib3/connectionpool.py:787: in urlopen
     response = self._make_request(
-venv/lib/python3.12/site-packages/urllib3/connectionpool.py:534: in _make_request
+venv/lib/python3.11/site-packages/urllib3/connectionpool.py:534: in _make_request
     response = conn.getresponse()
-venv/lib/python3.12/site-packages/urllib3/connection.py:516: in getresponse
+venv/lib/python3.11/site-packages/urllib3/connection.py:516: in getresponse
     httplib_response = super().getresponse()
-/usr/lib/python3.12/http/client.py:1428: in getresponse
+/usr/lib/python3.11/http/client.py:1395: in getresponse
     response.begin()
-/usr/lib/python3.12/http/client.py:331: in begin
+/usr/lib/python3.11/http/client.py:325: in begin
     version, status, reason = self._read_status()
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <http.client.HTTPResponse object at 0x7cd48d33c2b0>
+self = <http.client.HTTPResponse object at 0x786fe4763610>
 
     def _read_status(self):
         line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
@@ -373,7 +527,7 @@ self = <http.client.HTTPResponse object at 0x7cd48d33c2b0>
                                      " response")
 E           urllib3.exceptions.ProtocolError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
 
-/usr/lib/python3.12/http/client.py:300: ProtocolError
+/usr/lib/python3.11/http/client.py:294: ProtocolError
 
 During handling of the above exception, another exception occurred:
 
@@ -405,17 +559,17 @@ unit/test_chat_completion.py:152:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 utils.py:238: in make_request
     response = requests.post(url, headers=headers, json=data, timeout=timeout)
-venv/lib/python3.12/site-packages/requests/api.py:115: in post
+venv/lib/python3.11/site-packages/requests/api.py:115: in post
     return request("post", url, data=data, json=json, **kwargs)
-venv/lib/python3.12/site-packages/requests/api.py:59: in request
+venv/lib/python3.11/site-packages/requests/api.py:59: in request
     return session.request(method=method, url=url, **kwargs)
-venv/lib/python3.12/site-packages/requests/sessions.py:589: in request
+venv/lib/python3.11/site-packages/requests/sessions.py:589: in request
     resp = self.send(prep, **send_kwargs)
-venv/lib/python3.12/site-packages/requests/sessions.py:703: in send
+venv/lib/python3.11/site-packages/requests/sessions.py:703: in send
     r = adapter.send(request, **kwargs)
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <requests.adapters.HTTPAdapter object at 0x7cd48d302690>, request = <PreparedRequest [POST]>, stream = False
+self = <requests.adapters.HTTPAdapter object at 0x786fe47b0790>, request = <PreparedRequest [POST]>, stream = False
 timeout = Timeout(connect=None, read=None, total=None), verify = True, cert = None, proxies = OrderedDict()
 
     def send(
@@ -490,167 +644,10 @@ timeout = Timeout(connect=None, read=None, total=None), verify = True, cert = No
 >           raise ConnectionError(err, request=request)
 E           requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
 
-venv/lib/python3.12/site-packages/requests/adapters.py:682: ConnectionError
--------------------------------------------------------- Captured stdout call --------------------------------------------------------
-bench: starting server with: ../../../build/bin/llama-server --host 127.0.0.1 --port 8080 --temp 0.8 --seed 42 --hf-repo ggml-org/models --hf-file tinyllamas/stories260K.gguf --batch-size 32 --alias tinyllama-2 --ctx-size 256 --parallel 2 --n-predict 64
-server pid=1001376, pytest pid=1001375
-Waiting for server to start...
-Waiting for server to start...
-Waiting for server to start...
-Waiting for server to start...
-ggml_cuda_init: GGML_CUDA_FORCE_MMQ:    no
-ggml_cuda_init: GGML_CUDA_FORCE_CUBLAS: no
-ggml_cuda_init: found 1 CUDA devices:
-  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
-register_backend: registered backend CUDA (1 devices)
-register_device: registered device CUDA0 (NVIDIA GeForce RTX 4070)
-register_backend: registered backend CPU (1 devices)
-register_device: registered device CPU (12th Gen Intel(R) Core(TM) i7-1260P)
-load_backend: failed to find ggml_backend_init in /home/danbev/work/ai/llama.cpp-debug/build/bin/libggml-cuda.so
-load_backend: failed to find ggml_backend_init in /home/danbev/work/ai/llama.cpp-debug/build/bin/libggml-cpu.so
-build: 4607 (aa6fb132) with cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0 for x86_64-linux-gnu (debug)
-system info: n_threads = 4, n_threads_batch = 4, total_threads = 16
-
-system_info: n_threads = 4 (n_threads_batch = 4) / 16 | CUDA : ARCHS = 600,610,700,750 | F16 = 1 | USE_GRAPHS = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | LLAMAFILE = 1 | OPENMP = 1 | 
-
-main: HTTP server is listening, hostname: 127.0.0.1, port: 8080, http threads: 15
-main: loading model
-srv    load_model: loading model '/home/danbev/.cache/llama.cpp/ggml-org_models_tinyllamas_stories260K.gguf'
-common_download_file: previous metadata file found /home/danbev/.cache/llama.cpp/ggml-org_models_tinyllamas_stories260K.gguf.json: {"etag":"\"21c86626afafc826a642338679227c24\"","lastModified":"Tue, 20 Feb 2024 09:21:22 GMT","url":"https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf"}
-curl_perform_with_retry: Trying to download from https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf (attempt 1 of 3)...
-llama_model_load_from_file_impl: using device CUDA0 (NVIDIA GeForce RTX 4070) - 11743 MiB free
-llama_model_loader: loaded meta data with 19 key-value pairs and 48 tensors from /home/danbev/.cache/llama.cpp/ggml-org_models_tinyllamas_stories260K.gguf (version GGUF V3 (latest))
-llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
-llama_model_loader: - kv   0:                      tokenizer.ggml.tokens arr[str,512]     = ["<unk>", "<s>", "</s>", "<0x00>", "<...
-llama_model_loader: - kv   1:                      tokenizer.ggml.scores arr[f32,512]     = [0.000000, 0.000000, 0.000000, 0.0000...
-llama_model_loader: - kv   2:                  tokenizer.ggml.token_type arr[i32,512]     = [2, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6, 6, ...
-llama_model_loader: - kv   3:                       tokenizer.ggml.model str              = llama
-llama_model_loader: - kv   4:                       general.architecture str              = llama
-llama_model_loader: - kv   5:                               general.name str              = llama
-llama_model_loader: - kv   6:            tokenizer.ggml.unknown_token_id u32              = 0
-llama_model_loader: - kv   7:                tokenizer.ggml.bos_token_id u32              = 1
-llama_model_loader: - kv   8:                tokenizer.ggml.eos_token_id u32              = 2
-llama_model_loader: - kv   9:          tokenizer.ggml.seperator_token_id u32              = 4294967295
-llama_model_loader: - kv  10:            tokenizer.ggml.padding_token_id u32              = 4294967295
-llama_model_loader: - kv  11:                       llama.context_length u32              = 128
-llama_model_loader: - kv  12:                     llama.embedding_length u32              = 64
-llama_model_loader: - kv  13:                  llama.feed_forward_length u32              = 172
-llama_model_loader: - kv  14:                 llama.attention.head_count u32              = 8
-llama_model_loader: - kv  15:              llama.attention.head_count_kv u32              = 4
-llama_model_loader: - kv  16:                          llama.block_count u32              = 5
-llama_model_loader: - kv  17:                 llama.rope.dimension_count u32              = 8
-llama_model_loader: - kv  18:     llama.attention.layer_norm_rms_epsilon f32              = 0.000010
-llama_model_loader: - type  f32:   48 tensors
-print_info: file format = GGUF V3 (latest)
-print_info: file type   = all F32 (guessed)
-print_info: file size   = 1.12 MiB (32.00 BPW) 
-load: bad special token: 'tokenizer.ggml.seperator_token_id' = 4294967295, using default id -1
-load: bad special token: 'tokenizer.ggml.padding_token_id' = 4294967295, using default id -1
-load: special_eos_id is not in special_eog_ids - the tokenizer config may be incorrect
-load: special tokens cache size = 3
-load: token to piece cache size = 0.0008 MB
-print_info: arch             = llama
-print_info: vocab_only       = 0
-print_info: n_ctx_train      = 128
-print_info: n_embd           = 64
-print_info: n_layer          = 5
-print_info: n_head           = 8
-print_info: n_head_kv        = 4
-print_info: n_rot            = 8
-print_info: n_swa            = 0
-print_info: n_embd_head_k    = 8
-print_info: n_embd_head_v    = 8
-print_info: n_gqa            = 2
-print_info: n_embd_k_gqa     = 32
-print_info: n_embd_v_gqa     = 32
-print_info: f_norm_eps       = 0.0e+00
-print_info: f_norm_rms_eps   = 1.0e-05
-print_info: f_clamp_kqv      = 0.0e+00
-print_info: f_max_alibi_bias = 0.0e+00
-print_info: f_logit_scale    = 0.0e+00
-print_info: n_ff             = 172
-print_info: n_expert         = 0
-print_info: n_expert_used    = 0
-print_info: causal attn      = 1
-print_info: pooling type     = 0
-print_info: rope type        = 0
-print_info: rope scaling     = linear
-print_info: freq_base_train  = 10000.0
-print_info: freq_scale_train = 1
-print_info: n_ctx_orig_yarn  = 128
-print_info: rope_finetuned   = unknown
-print_info: ssm_d_conv       = 0
-print_info: ssm_d_inner      = 0
-print_info: ssm_d_state      = 0
-print_info: ssm_dt_rank      = 0
-print_info: ssm_dt_b_c_rms   = 0
-print_info: model type       = ?B
-print_info: model params     = 292.80 K
-print_info: general.name     = llama
-print_info: vocab type       = SPM
-print_info: n_vocab          = 512
-print_info: n_merges         = 0
-print_info: BOS token        = 1 '<s>'
-print_info: EOS token        = 2 '</s>'
-print_info: UNK token        = 0 '<unk>'
-print_info: LF token         = 13 '<0x0A>'
-print_info: EOG token        = 2 '</s>'
-print_info: max token length = 9
-load_tensors: offloading 0 repeating layers to GPU
-load_tensors: offloaded 0/6 layers to GPU
-load_tensors:   CPU_Mapped model buffer size =     1.12 MiB
-llama_init_from_model: n_seq_max     = 2
-llama_init_from_model: n_ctx         = 256
-llama_init_from_model: n_ctx_per_seq = 128
-llama_init_from_model: n_batch       = 32
-llama_init_from_model: n_ubatch      = 32
-llama_init_from_model: flash_attn    = 0
-llama_init_from_model: freq_base     = 10000.0
-llama_init_from_model: freq_scale    = 1
-llama_kv_cache_init: kv_size = 256, offload = 1, type_k = 'f16', type_v = 'f16', n_layer = 5, can_shift = 1
-llama_kv_cache_init:        CPU KV buffer size =     0.16 MiB
-llama_init_from_model: KV self size  =    0.16 MiB, K (f16):    0.08 MiB, V (f16):    0.08 MiB
-llama_init_from_model:        CPU  output buffer size =     0.00 MiB
-llama_init_from_model:      CUDA0 compute buffer size =     0.34 MiB
-llama_init_from_model:  CUDA_Host compute buffer size =     0.04 MiB
-llama_init_from_model: graph nodes  = 166
-llama_init_from_model: graph splits = 59 (with bs=32), 1 (with bs=1)
-common_init_from_params: setting dry_penalty_last_n to ctx_size = 256
-common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
-srv          init: initializing slots, n_slots = 2
-slot         init: id  0 | task -1 | new slot n_ctx_slot = 128
-slot         init: id  1 | task -1 | new slot n_ctx_slot = 128
-main: model loaded
-main: chat template, chat_template: 
-                {%- for message in messages -%}
-                    {{- "<|im_start|>" + message.role + "\n" + message.content + "<|im_end|>\n" -}}
-                {%- endfor -%}
-                {%- if add_generation_prompt -%}
-                    {{- "<|im_start|>assistant\n" -}}
-                {%- endif -%}
-            , example_format: '<|im_start|>system
-You are a helpful assistant<|im_end|>
-<|im_start|>user
-Hello<|im_end|>
-<|im_start|>assistant
-Hi there<|im_end|>
-<|im_start|>user
-How are you?<|im_end|>
-<|im_start|>assistant
-'
-main: server is listening on http://127.0.0.1:8080 - starting the main loop
-srv  update_slots: all slots are idle
-request: GET /health 127.0.0.1 200
-Response from server {
-  "status": "ok"
-}
-terminate called after throwing an instance of 'std::runtime_error'
-  what():  response_format type must be one of "text" or "json_object", but got: sound
------------------------------------------------------- Captured stdout teardown ------------------------------------------------------
-Stopping server with pid=1001376
+venv/lib/python3.11/site-packages/requests/adapters.py:682: ConnectionError
 ====================================================== short test summary info =======================================================
 FAILED unit/test_chat_completion.py::test_completion_with_response_format[response_format3-0-None] - requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-================================================== 1 failed, 6 deselected in 3.41s ===================================================
+================================================== 1 failed, 6 deselected in 2.35s ===================================================
 ```
 This error comes from the following test:
 ```python
@@ -698,6 +695,7 @@ static json oaicompat_completion_params_parse(
     }
     ...
 }
+```
 So this is throwing a runtime error.
 I noticed that in other functions is server.cpp, for example in
 `handle_completions_impl` there are try/catch blocks around calls:
@@ -740,7 +738,7 @@ I noticed that in other functions is server.cpp, for example in
         }
 ```
 Perhaps there should be a try-catch block around the call to
-`oaicompat_completion_params_parse. Adding a simliar block allows the test to
+`oaicompat_completion_params_parse`. Adding a simliar block allows the test to
 pass.
 ```console
 diff --git a/examples/server/server.cpp b/examples/server/server.cpp
@@ -806,3 +804,53 @@ Could it be that when running locally the server is to fast in closing the
 connection/terminating the process and the client is not able to handle the
 actual error returned as the connection handler in python is getting a
 connection error before.
+
+Looking closer at the routing in cpp_httplib I noticed that the routing call
+is coming from:
+```c++
+  // Routing
+  auto routed = false;
+#ifdef CPPHTTPLIB_NO_EXCEPTIONS
+  routed = routing(req, res, strm);
+#else
+  try {
+    routed = routing(req, res, strm);
+  } catch (std::exception &e) {
+    if (exception_handler_) {
+      auto ep = std::current_exception();
+      exception_handler_(req, res, ep);
+      routed = true;
+    } else {
+      res.status = StatusCode::InternalServerError_500;
+      std::string val;
+      auto s = e.what();
+      for (size_t i = 0; s[i]; i++) {
+        switch (s[i]) {
+        case '\r': val += "\\r"; break;
+        case '\n': val += "\\n"; break;
+        default: val += s[i]; break;
+        }
+      }
+      res.set_header("EXCEPTION_WHAT", val);
+    }
+  } catch (...) {
+    if (exception_handler_) {
+      auto ep = std::current_exception();
+      exception_handler_(req, res, ep);
+      routed = true;
+    } else {
+      res.status = StatusCode::InternalServerError_500;
+      res.set_header("EXCEPTION_WHAT", "UNKNOWN");
+    }
+  }
+#endif
+```
+And this is set in debug mode in utils.hpp:
+```c++
+#ifndef NDEBUG
+// crash the server in debug mode, otherwise send an http 500 error
+#define CPPHTTPLIB_NO_EXCEPTIONS 1
+#endif
+```
+
+
