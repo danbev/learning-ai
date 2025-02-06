@@ -17,8 +17,11 @@ xcodebuild -project examples/llama.swiftui/llama.swiftui.xcodeproj \
            -scheme llama.swiftui \
            -sdk iphoneos \
            HEADER_SEARCH_PATHS="/Users/danbev/work/llama.cpp/include /Users/danbev/work/llama.cpp/ggml/include" \
+	   LIBRARY_SEARCH_PATHS="/Users/danbev/work/llama.cpp/build/bin/Release" \
+           OTHER_LDFLAGS="-lllama -lggml" \
            CODE_SIGNING_REQUIRED=NO \
            CODE_SIGN_IDENTITY= \
+           -destination generic/platform=iOS build
 ```
 
 ### multiple resources named 'ggml-metal.metal' in target 'llama'
