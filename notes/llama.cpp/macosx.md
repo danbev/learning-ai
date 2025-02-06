@@ -8,13 +8,23 @@ $ xcodebuild -downloadPlatform iOS
 
 To build the project with xcodebuild, use the following command:
 ```console
-$ xcodebuild -scheme llama -destination "generic/platform=iOS"
+$ xcodebuild -scheme llama-Package -destination "generic/platform=iOS"
+```
+
+### Building swifutui example
+```console
+xcodebuild -project examples/llama.swiftui/llama.swiftui.xcodeproj \
+           -scheme llama.swiftui \
+           -sdk iphoneos \
+           HEADER_SEARCH_PATHS="/Users/danbev/work/llama.cpp/include /Users/danbev/work/llama.cpp/ggml/include" \
+           CODE_SIGNING_REQUIRED=NO \
+           CODE_SIGN_IDENTITY= \
 ```
 
 ### multiple resources named 'ggml-metal.metal' in target 'llama'
 I ran into this issue when trying to build the project with xcodebuild. The error message is:
 ```console
-$ xcodebuild -scheme llama -destination "generic/platform=iOS"
+$ xcodebuild -scheme llama-Package -destination "generic/platform=iOS"
 Command line invocation:
     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -scheme llama -destination generic/platform=iOS
 
