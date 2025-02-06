@@ -108,3 +108,66 @@ So on linux it is the environment variable `LLAMA_CACHE` if set, or
 
 The following PR has been opened for this work:
 https://github.com/ggerganov/llama.cpp/pull/11677
+
+### HuggingFace org curated models
+As part of the feedback on the above linked PR it was suggested that we add
+the models that we use to the [ggml-org](https://huggingface.co/ggml-org) in a
+new collection named `llama.cpp presets`. And then we would upload/push (not
+sure how this works get) the models that we use. This allows us to control the
+models and avoid the issue that the model repository are subject to change or
+malicious intervention.
+
+For example, lets take this model (from common/arg.cpp):
+```cpp
+    add_opt(common_arg(
+        {"--embd-gte-small-default"},
+        string_format("use default gte-small model (note: can download weights from the internet)"),
+        [](common_params & params) {
+            params.hf_repo = "ChristianAzinn/gte-small-gguf";
+            params.hf_file = "gte-small.Q8_0.gguf";
+            params.pooling_type = LLAMA_POOLING_TYPE_NONE;
+            params.embd_normalize = 2;
+            params.n_ctx = 512;
+            params.verbose_prompt = true;
+            params.embedding = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_EMBEDDING, LLAMA_EXAMPLE_SERVER}));
+```
+We can use [gguf-my-repo](https://huggingface.co/spaces/ggml-org/gguf-my-repo)
+to create a gguf model from the original model `thenlper/gte-small` as the
+`Hub Model ID`. This will create a model in your user account and show a link
+to it. For example, this is the [repo](https://huggingface.co/danbev/gte-small-Q8_0-GGUF)
+that I created for this model.
+
+We want to transfer this model to the `ggml-org` organization and this can
+be done by clicking on [settings](https://huggingface.co/danbev/gte-small-Q8_0-GGUF/settings)
+and then in the `Rename or transfer this model` section we can transfer the
+model to the `ggml-org` organization.
+
+To create a new collection we can use the `+ New` button (Next to `Activity Feed`
+at the same level as `ggml.ai`).
+
+After the collection has been created, or if it already exists then we can
+click on the `Add to collection` button to add the model to this collection.
+In this case the model name is `ggml-org/gte-small-Q8_0-GGUF`.
+
+After this we should be able to update our preset to use the ggml-org model
+instead:
+```cpp
+    add_opt(common_arg(
+        {"--embd-gte-small-default"},
+        string_format("use default gte-small model (note: can download weights from the internet)"),
+        [](common_params & params) {
+            params.hf_repo = "ggml-org/gte-small-Q8_0-GGUF";
+            params.hf_file = "gte-small-q8_0.gguf";
+            params.pooling_type = LLAMA_POOLING_TYPE_NONE;
+            params.embd_normalize = 2;
+            params.n_ctx = 512;
+            params.verbose_prompt = true;
+            params.embedding = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_EMBEDDING, LLAMA_EXAMPLE_SERVER}));
+```
+
+```
+
