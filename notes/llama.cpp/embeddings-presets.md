@@ -112,8 +112,8 @@ https://github.com/ggerganov/llama.cpp/pull/11677
 ### HuggingFace org curated models
 As part of the feedback on the above linked PR it was suggested that we add
 the models that we use to the [ggml-org](https://huggingface.co/ggml-org) in a
-new collection named `llama.cpp presets`. And then we would upload/push (not
-sure how this works get) the models that we use. This allows us to control the
+new collection named `llama.cpp presets`. And then we would transfer models
+that we convert and quantize to this collection. This allows us to control the
 models and avoid the issue that the model repository are subject to change or
 malicious intervention.
 
@@ -168,6 +168,3 @@ instead:
         }
     ).set_examples({LLAMA_EXAMPLE_EMBEDDING, LLAMA_EXAMPLE_SERVER}));
 ```
-
-```
-
