@@ -168,3 +168,8 @@ instead:
         }
     ).set_examples({LLAMA_EXAMPLE_EMBEDDING, LLAMA_EXAMPLE_SERVER}));
 ```
+
+One thing to notice is that when we transfer the repo to the `ggml-org` the
+old repo name will still be in the README.md file. This can be updated by
+editing the README.md from the model page an replacing the old repo name with
+`ggml-org`.
