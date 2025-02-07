@@ -143,6 +143,10 @@ If we inspect this token id in the models vocabulary we can see:
 (std::vector<llama_vocab::token_data>::value_type) 
 (text = "▁Hinweis", score = -18368, attr = LLAMA_TOKEN_ATTR_NORMAL)
 ```
+Notice that the `__` is the Lower One Eighth Block Unicode character which is used by thi
+model to mark word boundries. So actually if we detokenize this token we should have a
+leading white space.
+
 And we can inspect the probabilities:
 ```console
 (lldb) p probs
@@ -240,6 +244,47 @@ The detokenized token will be the following:
 (lldb) p text
 (std::string) "Hinweis"
 ```
-This is where the mismatch is happening I think.
+This is where the mismatch is happening I think. I'm looking at the response the `text_to_send` is
+`" Hinweis"` but the token id is `18627` and the detokenized token is `"Hinweis"`.
+I believe that if the detokenization will add the leading white space depends on the `add_space_prefix`
+field on the `llama_vocab` object is set to true:
+```console
+(lldb) p this->add_space_prefix
+(bool) true
+```
+```c++
+int32_t llama_vocab::impl::detokenize(
+               const llama_token * tokens,
+                         int32_t   n_tokens,
+                            char * text,
+                         int32_t   text_len_max,
+                            bool   remove_special,
+                            bool   unparse_special) const {
+                                ...
+    // remove the leading space
+    bool remove_space = add_space_prefix;
 
+    if (remove_special && add_bos) {
+        if (n_tokens > 0 && tokens[0] == special_bos_id) {
+            remove_space = false;
+            n_tokens--;
+            tokens++;
+        }
+    }
 
+    if (remove_special && add_eos) {
+        if (n_tokens > 0 && tokens[n_tokens - 1] == special_eos_id) {
+            n_tokens--;
+        }
+    }
+
+    for (int32_t i = 0; i < n_tokens; ++i) {
+        GGML_ASSERT(avail >= 0);
+        int32_t n_chars = token_to_piece(tokens[i], text, avail, remove_space, unparse_special);
+        remove_space = false;
+        ...
+    }
+```
+So I'm not sure how this should be handled in a "proper" way. It seems like the detokenization is
+working as expected but if we want/need a match of the `text_to_send` and the highest probability
+then perhaps adding the check above might be a solution.
