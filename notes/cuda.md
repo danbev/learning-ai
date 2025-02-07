@@ -27,7 +27,7 @@ Drivers:       Linux and Windows device drivers and runtime (no mac?)
 `CUB` (CUDA UnBound) is a library of high-performance primitives for CUDA.
 `AMG-X` (Adaptive General Matrix eXponentiation)
 `NCCL` (NVIDIA Collective Communications Library) is a library that provides
-multi-GPU and multi-node collective communication primitives.
+`multi-GPU` and `multi-node` collective communication primitives.
 
 ### Colab
 For this I chose a runtime with a A100 GPU which is an NVIDIA GPU which uses
@@ -78,16 +78,16 @@ We can compile a simple C++ program to see that is works:
 The `%%cu` magic command is used to compile the cell using nvcc. To see all
 the available magics use `%lsmagic`.
 
+### Compilation units
 A CUDA program would have a `.cu` suffix. The nvcc compiler will separate out
 the host (CPU) code from the device (GPU) code. The host code is compiled by
 the host compiler (gcc, clang, etc.) and the device code is compiled into an
 intermediate representation (PTX) which is later converted into binary code
 for the GPU.
 
-So the host code is compiled by the host and the device code is compiled on
-the GPU. The host will call code on the GPU using something that is called
-kernel calls. A kernel is a function that is executed on the GPU.
-Each kernel functions runs the same code but on different data.
+The host will call code on the GPU using something that is called kernel calls.
+A kernel is a function that is executed on the GPU.  Each kernel functions runs
+the same code but on different data.
 
 ```c++
 __global__ void add_arrays(int *a, int *b, int *c, int size) {
@@ -104,8 +104,8 @@ variable is the thread id. The `blockIdx.x` is the block id and the
 number of threads in a block. The `blockIdx.x * blockDim.x + threadIdx.x`
 is the global thread id.
 
-There is an example in [cuda_exploration](../gpu/cuda/cuda_exploration.ipynb) that
-shows the above example.
+There is an example in [array_add](../gpu/cuda/src/array_add.cu) that shows the
+above example.
 
 ### Parallel Thread Execution (PTX)
 When you compile CUDA code with nvcc, the device code doesn't immediately get
@@ -113,13 +113,18 @@ translated to machine code. Instead, it first gets compiled to this intermediate
 PTX format. The abstraction allows CUDA code to be compiled and then later
 be translated into the binary code of a specific GPU.
 
+### CUBIN (CUDA Binary)
+Is an ELF-formatted file. THis contains CUDA executable code sections and
+sections containing symbols, relocators, debug info. nvcc embeds cubin files
+into the host executable file.
+
 ### nvcc
-nvcc is the CUDA compiler driver. It is used to compile CUDA programs. nvcc
-accepts a range of conventional compiler options, such as for defining macros
-and include/library paths, and for steering the compilation process. nvcc also
-accepts a range of CUDA-specific options for defining the virtual architecture
-targeting which the CUDA program is compiled, and for defining the memory model
-used, and for steering the compilation process.
+nvcc is the CUDA compiler driver (think gcc or clang). It is used to compile
+CUDA programs. nvcc accepts a range of conventional compiler options, such as
+for defining macros and include/library paths, and for steering the compilation
+process. nvcc also accepts a range of CUDA-specific options for defining the
+virtual architecture targeting which the CUDA program is compiled, and for
+defining the memory model used, and for steering the compilation process.
 
 ### Questions
 So when we are going to train a large language model on a GPU we first need to
@@ -182,7 +187,6 @@ When we call `cudaMemcpy` this function is added to the default CUDA stream. The
 default stream operations are all executed in the order they are called/added.
 In this wasy `cudaMemcpy` acts as a synchronization point between the host and
 the device.
-
 
 When using streams we use the async version of memcpy, like `cudaMemcpyAsync`,
 and for launching a kernel we specify a stream as an argument.
