@@ -2,7 +2,7 @@ info: src/info.cu
 	nvcc -o $@ $<
 
 wmma: src/wmma.cu
-	# GeForce RTX 4080 has compute compatibility 8.6 (https://developer.nvidia.com/cuda-gpus)
+	# GeForce RTX 4070 has compute compatibility 8.6 (https://developer.nvidia.com/cuda-gpus)
 	nvcc -arch=sm_89 -o $@ $<
 
 hello-world-ptx: src/hello-world.cu
@@ -27,7 +27,11 @@ graphs: src/graphs.cu
 dump-array-add: array-add
 	cuobjdump $<
 
+array-add-ptx:
+	nvcc -ptx src/array-add.cu
+	@cat array-add.ptx
+
 
 .PHONY: clean
 clean:
-	${RM} hello-world threads inc hello-world.ptx minimal wmma streams graphs array-add
+	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add

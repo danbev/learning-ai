@@ -1,11 +1,13 @@
 #include <stdio.h>
 
-__global__ void add_arrays(int *a, int *b, int *c, int size) {
+// Kernal function that runs on the GPU
+__global__ void add_arrays(int* a, int* b, int* c, int size) {
     printf("blockIdx.x = %d, blockDim.x = %d, threadIdx.x = %d\n", blockIdx.x, blockDim.x, threadIdx.x);
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    printf("GPU: adding i = %d\n", i);
-    if (i < size) {
-        c[i] = a[i] + b[i];
+    // Calculate the index of array index that this thread will process.
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        c[idx] = a[idx] + b[idx];
+        printf("[GPU] array index [%d]: adding %d + %d = %d\n", idx, a[idx], b[idx], c[idx]);
     }
 }
 
@@ -42,9 +44,9 @@ int main() {
     cudaMemcpy(d_a, h_a, size, cudaMemcpyHostToDevice);
     cudaMemcpy(d_b, h_b, size, cudaMemcpyHostToDevice);
 
-    dim3 grid(1);
-    dim3 blocks(N);
-    add_arrays<<<grid, blocks>>>(d_a, d_b, d_c, N);
+    dim3 blocks(2);  // blocks per grid
+    dim3 threads(3); // threads per block
+    add_arrays<<<blocks, threads>>>(d_a, d_b, d_c, N);
 
     cudaDeviceSynchronize();
 
@@ -54,7 +56,7 @@ int main() {
         return 1;
     }
 
-    // Copy the array that the device has incremented back to the host
+    // Copy the array that the device has computed back to the host
     cudaMemcpy(h_c, d_c, size, cudaMemcpyDeviceToHost);
 
     printf("Added on GPU:\n");
