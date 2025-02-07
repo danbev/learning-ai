@@ -211,7 +211,7 @@ If we only have one dimension we can use the x component of the block dimension:
 ```c++
 int threadId = blockIdx.x * blockDim.x + threadIdx.x;
 ```
-So is we access the 5th element in an array then blockIdx.x would be 1, and
+So if we access the 5th element in an array then blockIdx.x would be 1, and
 blockDim.x would be 4. So the threadId would be 5.
 
 It is also possible to have multiple buses between the GPU and system memory
@@ -249,7 +249,7 @@ This means that all the cores on the GPU are executing the same instruction at
 the same time, but on different data. This is why GPU's are so good at matrix
 multiplication. The GPU can multiply each row of the first matrix by each column
 of the second matrix in parallel. This is called a dot product.
-So if we have to matrices, a and b, to produce the matrix c we can see that the
+So if we have two matrices, a and b, to produce the matrix c we can see that the
 value of each element in C does not depend on any other element in C. This means
 that we can calculate each element in C in parallel. All need to have access
 to the matrices a an b but they don't depend on any of the other dot products
@@ -381,7 +381,7 @@ use FP16 (half) precision)
 
 
 ### Ray Tracing Cores
-The are used to serve hyper-realistic graphics rendering.
+These are used to serve hyper-realistic graphics rendering.
 
 ### Shaders
 Shaders are blocks of code that excute on the GPU, similar to how CUDA kernels.
@@ -389,8 +389,8 @@ And in a similar way to CUDA kernels which are defined in a C-like language,
 shaders are defined in languages like High Level Shading Language (HLSL) or
 OpenGL Shading Language (GLSL).
 
-HLSL is used with DirectX (Microsoft) and primary support is for Window. Has and
-c-like syntax. Is often pre-compiled into intermediate bytecode which is then
+HLSL is used with DirectX (Microsoft) and primary support is for Window, and has
+a c-like syntax. Is often pre-compiled into intermediate bytecode which is then
 executed by the GPU.
 
 GLSL is used with OpenGL (Khronos) and is cross-platform and also has a c-like
@@ -400,8 +400,8 @@ as well.
 
 
 #### Vertex Shaders
-For some background to be able to understand the what this shader does and the
-following, imaging defining a triangle in a program consisting of three points
+For some background to be able to understand what a shader does the
+following image is defining a triangle in a program consisting of three points
 in 3D space (x, y, z).
 ```
               +
@@ -521,7 +521,7 @@ over the GPU. The disadvantage is that it pretty verbose.
 [Kompute]: https://github.com/KomputeProject/kompute
 
 ### Kompute
-I built on top of Vulkan and addresses the issue of verbosity as it was observed
+Is built on top of Vulkan and addresses the issue of verbosity as it was observed
 that many project ended up writing simliar boilerplate code to use Vulkan in
 their project. It is easier to use and highly optimized and mobile friendly
 general purpose GPU compute framework (recall that Vulkan has both the graphics
