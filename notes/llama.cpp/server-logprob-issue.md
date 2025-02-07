@@ -287,4 +287,29 @@ int32_t llama_vocab::impl::detokenize(
 ```
 So I'm not sure how this should be handled in a "proper" way. It seems like the detokenization is
 working as expected but if we want/need a match of the `text_to_send` and the highest probability
-then perhaps adding the check above might be a solution.
+then perhaps adding a check might be a solution:
+```console
+diff --git a/examples/server/server.cpp b/examples/server/server.cpp
+index 9cdf2058..fdbb738e 100644
+--- a/examples/server/server.cpp
++++ b/examples/server/server.cpp
+@@ -541,12 +541,16 @@ struct completion_token_output {
+     json to_json(bool post_sampling_probs) const {
+         json probs_for_token = json::array();
+         for (const auto & p : probs) {
+-            std::string txt(p.txt);
++            // If the predicted token id is the same as this.tok, then we use the text_to_send instead
++            // of the detokenized token. This is to avoid a mismatch between the text tokens where
++            // the text_to_send token may include a leading whitespace character but the detokenized
++            // token would not.
++            std::string txt = tok == p.tok ? text_to_send : p.txt;
+             txt.resize(validate_utf8(txt));
+             probs_for_token.push_back(json {
+                 {"id",      p.tok},
+                 {"token",   txt},
+-                {"bytes",   str_to_bytes(p.txt)},
++                {"bytes",   str_to_bytes(txt)},
+                 {
+                     post_sampling_probs ? "prob" : "logprob",
+                     post_sampling_probs ? p.prob : logarithm(p.prob)
+```
