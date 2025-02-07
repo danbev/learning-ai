@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 __global__ void add_arrays(int *a, int *b, int *c, int size) {
+    printf("blockIdx.x = %d, blockDim.x = %d, threadIdx.x = %d\n", blockIdx.x, blockDim.x, threadIdx.x);
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     printf("GPU: adding i = %d\n", i);
     if (i < size) {

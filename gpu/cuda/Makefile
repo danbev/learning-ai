@@ -1,12 +1,9 @@
-minimal: src/minimal.cu
+info: src/info.cu
 	nvcc -o $@ $<
 
 wmma: src/wmma.cu
 	# GeForce RTX 4080 has compute compatibility 8.6 (https://developer.nvidia.com/cuda-gpus)
 	nvcc -arch=sm_89 -o $@ $<
-
-hello-world: src/hello-world.cu
-	nvcc -lnppc -o $@ $<
 
 hello-world-ptx: src/hello-world.cu
 	nvcc -ptx $<
@@ -26,6 +23,10 @@ streams: src/streams.cu
 
 graphs: src/graphs.cu
 	nvcc -lnppc -o $@ $<
+
+dump-array-add: array-add
+	cuobjdump $<
+
 
 .PHONY: clean
 clean:
