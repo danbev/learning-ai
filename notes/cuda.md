@@ -201,3 +201,41 @@ This flag tells nvcc to enable the FP16 code paths in the CUDA code.
 ```console
 $ cmake -S . -B build -DGGML_CUDA=ON -DCMAKE_CUDA_FLAGS="-DFASTFP16_AVAILABLE"
 ```
+
+### Compute Compability (CC)
+https://developer.nvidia.com/cuda-gpus
+
+I have have a `GeForce RTX 4070` which has a compute capability of `8.9`.
+```console
+$ ./minimal
+CUDA Runtime version: 12.6
+CUDA Driver version: 12.6
+CUDA device count: 1
+Device 0 - Total VRAM: 11.62 GB
+
+Device 0:
+  Name: NVIDIA GeForce RTX 4070
+  Compute Capability: 8.9
+  Multiprocessors: 46
+  Clock Rate: 2505 MHz
+  Total Global Memory: 11.62 GB
+  L2 Cache Size: 36.00 MB
+CUDA program ran successfully
+```
+
+CC 8.0, 8.6: Ampere (RTX 30 series, A100)
+CC 8.9:      Ada Lovelace (RTX 40 series)
+CC 9.0:      Hopper (H100)
+
+The compute capability is something that can be set on the command line as the
+`-arch` flag. For example:
+```console
+$ nvcc -arch=sm_89 -o $@ $<
+```
+Where `sm` stands for streaming multiprocessor and `89` is the compute
+capability. Using this tells the compiler to generate code that is optimized
+these specific GPUs.
+
+### NPPC (NVIDIA Performance Primitives Core)
+This is a collection of GPU-accelerated image, video, and signal processing
+functions.
