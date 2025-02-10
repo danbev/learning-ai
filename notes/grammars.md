@@ -28,6 +28,7 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
     gsmpl->set_logits(ctx, idx);
 
 ```
+
 ```console
 (gdb) ptype gsmpl
 type = struct common_sampler {
@@ -146,11 +147,11 @@ static void llama_sampler_logit_bias_apply(struct llama_sampler * smpl, llama_to
         }
     }
 }
-````
+```
 What this sampler does enables a way to modify how likely certain tokens are to
 be selected during sampling. We can see above that is stored in `ctx` which
-I found somewhat confusing (the naming as I though this was a ggml_context or a
-llama_context) but if we look closer it is actual of type
+I found somewhat confusing (the naming as I thougth this was a ggml_context or a
+llama_context) but if we look closer it is actual of type it is of type
 `llama_sampler_logit_bias`. 
 ```console
 (gdb) ptype llama_sampler_logit_bias
@@ -326,6 +327,320 @@ $ ./build/bin/llama-cli --help | grep logit
                                         i.e. `--logit-bias 15043+1` to increase likelihood of token ' Hello',
                                         or `--logit-bias 15043-1` to decrease likelihood of token ' Hello'
 ```
+And the other samplers are added in a similar fashion, for example:
+```c++
+    if (params.mirostat == 0) {
+        for (const auto & cnstr : params.samplers) {
+            switch (cnstr) {
+                case COMMON_SAMPLER_TYPE_DRY:
+                    {
+                        std::vector<const char *> c_breakers;
+                        c_breakers.reserve(params.dry_sequence_breakers.size());
+                        for (const auto & str : params.dry_sequence_breakers) {
+                            c_breakers.push_back(str.c_str());
+                        }
+
+                        llama_sampler_chain_add(result->chain, llama_sampler_init_dry      (vocab, llama_model_n_ctx_train(model), params.dry_multiplier, params.dry_base, params.dry_allowed_length, params.dry_penalty_last_n, c_breakers.data(), c_breakers.size()));
+                    }
+                    break;
+                case COMMON_SAMPLER_TYPE_TOP_K:
+                ...
+```
+TODO: Look into the DRY sampler.
+
+After `llama_decode` has been called `common_sample_sample` will be called which
+we discussed above:
+```c++
+            const llama_token id = common_sampler_sample(smpl, ctx, -1);
+```
+```c++
+llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
+    gsmpl->set_logits(ctx, idx);
+
+    auto & grmr  = gsmpl->grmr;
+    auto & chain = gsmpl->chain;
+    auto & cur_p = gsmpl->cur_p; // initialized by set_logits
+
+    if (grammar_first) {
+        llama_sampler_apply(grmr, &cur_p);
+    }
+
+    llama_sampler_apply(chain, &cur_p);
+```
+```c++
+void llama_sampler_apply(struct llama_sampler * smpl, struct llama_token_data_array * cur_p) {
+    GGML_ASSERT(smpl->iface->apply);
+    smpl->iface->apply(smpl, cur_p);
+}
+
+static void llama_sampler_chain_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
+    auto * chain = (llama_sampler_chain *) smpl->ctx;
+
+    time_meas tm(chain->t_sample_us, chain->params.no_perf);
+
+    for (auto * smpl : chain->samplers) {
+        llama_sampler_apply(smpl, cur_p);
+    }
+}
+```
+And like we say before we will iterate over all the samplers in the chain.
+So this will first call the logit bias sampler. One thing to notice is that
+`cur_p` are the current logits and the logit biases are added to these logits.
+The next sampler will be using these now possibly modified logits. And the
+next sampler will be the repition penalty sampler, and it may modify the logits
+further and so on.
+
+After this one of the tokens will have been selected by the samplers::
+```c++
+llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
+    ...
+
+    const llama_token id = cur_p.data[cur_p.selected].id;
+
+    // check if it the sampled token fits the grammar
+    {
+        llama_token_data       single_token_data       = { id, 1.0f, 0.0f };
+        llama_token_data_array single_token_data_array = { &single_token_data, 1, -1, false };
+
+        llama_sampler_apply(grmr, &single_token_data_array);
+
+        const bool is_valid = single_token_data_array.data[0].logit != -INFINITY;
+        if (is_valid) {
+            return id;
+        }
+    }
+```
+Note here that `llama_sampler_apply` is now being called with the grammar sampler
+and that it is passed a single token data array. So the grammar samplers will
+be given the token selected by the samplers.
+```c++
+static void llama_sampler_grammar_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
+    auto * ctx = (llama_sampler_grammar *) smpl->ctx;
+    if (ctx->grammar) {
+        llama_grammar_apply_impl(*ctx->grammar, cur_p);
+    }
+}
+```
+The grammar will check that the token is valid and if if not the grammar sampler
+will set single_token_data_array.data[0].logit to -INFINITY. 
+
+So the first time that llama_sampler_apply(grmr...) is called it is done so with
+a single token, the one that the samplers selected. If this was not a valid
+token according to the grammer, then it will try again but this time it will
+have access to all the logits. One it has a valid token the other samplers will
+also be run.
+
+To be clear about this the grammar sampler will set the logit to -INFINITY if
+it is invalid:
+```c++
+    const auto rejects = llama_grammar_reject_candidates(grammar.rules, grammar.stacks, candidates_grammar);
+    for (const auto & reject : rejects) {
+-->    cur_p->data[reject.index].logit = -INFINITY;
+    }
+```
+So it modifies the logits which the other samplers than also use. So is kind of
+like filtering out the tokens that don't match the grammar.
+
+Now back in main.cpp we have just called `common_sampler_sample` and will
+proceed to call `common_sampler_accept`:
+```c++
+            const llama_token id = common_sampler_sample(smpl, ctx, -1);
+
+            common_sampler_accept(smpl, id, /* accept_grammar= */ true);
+```
+
+```c++
+void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool accept_grammar) {
+    if (accept_grammar) {
+        llama_sampler_accept(gsmpl->grmr, token);
+    }
+
+    llama_sampler_accept(gsmpl->chain, token);
+
+    gsmpl->prev.push_back(token);
+}
+```
+So lets take a look at what `llama_sampler_accept` for the grammar sampler:
+```c++
+void llama_sampler_accept(struct llama_sampler * smpl, llama_token token) {
+    if (smpl->iface->accept) {
+        smpl->iface->accept(smpl, token);
+    }
+}
+```
+This will end up in:
+```c++
+static void llama_sampler_grammar_accept_impl(struct llama_sampler * smpl, llama_token token) {
+    auto * ctx = (llama_sampler_grammar *) smpl->ctx;
+    if (ctx->grammar) {
+        llama_grammar_accept_impl(*ctx->grammar, token);
+    }
+}
+```
+Lets just inspect some variables to orient ourselves:
+```console
+(gdb) p token
+$18 = 29912
+
+(gdb) p grammar.vocab.pimpl->id_to_token[token]
+$20 = {text = "{", score = -29653, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p grammar.vocab->token_to_piece(token)
+$21 = "{"
+```
+And recall that we are using a JSON grammer so the `{` token is the start of
+an object. 
+
+So lets looks what accept does:
+```c++
+void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
+    GGML_ASSERT(grammar.vocab != nullptr);
+
+    const auto & piece = grammar.vocab->token_to_piece(token);
+
+    if (grammar.awaiting_trigger) {
+        if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
+            grammar.awaiting_trigger = false;
+            grammar.trigger_buffer.clear();
+            llama_grammar_accept_str(grammar, piece);
+            LLAMA_LOG_DEBUG("Grammar triggered on token %u (`%s`)", token, piece.c_str());
+            return;
+        } else {
+            // TODO: consider a smarter incremental substring search algorithm (store last position to search from).
+            grammar.trigger_buffer += piece;
+            for (const auto & word : grammar.trigger_words) {
+                auto pos = grammar.trigger_buffer.find(word);
+                if (pos != std::string::npos) {
+                    grammar.awaiting_trigger = false;
+                    auto constrained_str = grammar.trigger_buffer.substr(pos);
+                    grammar.trigger_buffer.clear();
+                    llama_grammar_accept_str(grammar, constrained_str);
+                    LLAMA_LOG_DEBUG("Grammar triggered on word `%s`", word.c_str());
+                    return;
+                }
+            }
+            LLAMA_LOG_DEBUG("Grammar still awaiting trigger after token %d (`%s`) (buffer: `%s`)\n", token, piece.c_str(), grammar.trigger_buffer.c_str());
+            return;
+        }
+    }
+
+    if (grammar.vocab->is_eog(token)) {
+        for (const auto & stack : grammar.stacks) {
+            if (stack.empty()) {
+                return;
+            }
+        }
+        GGML_ABORT("fatal error");
+    }
+
+    llama_grammar_accept_str(grammar, piece);
+}
+```
+TODO: Look into awaiting trigger.
+In our case `awaiting_trigger` is false so we will go to the next if statement.
+And this token is not an end of generation token that if block will be skipped
+and we will call `llama_grammer_accept_str`:
+```c++
+void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string & piece) {
+    // Note terminating 0 in decoded string
+    const auto   decoded     = decode_utf8(piece, grammar.partial_utf8);
+    const auto & code_points = decoded.first;
+
+    for (auto it = code_points.begin(), end = code_points.end() - 1; it != end; ++it) {
+        llama_grammar_accept(&grammar, *it);
+    }
+
+    grammar.partial_utf8 = decoded.second;
+    if (grammar.stacks.empty()) {
+        throw std::runtime_error("Unexpected empty grammar stack after accepting piece: " + piece);
+    }
+}
+```
+```console
+(gdb) p decoded
+$25 = {first = std::vector of length 2, capacity 2 = {123, 0}, second = {value = 123, n_remain = 0}}
+
+(gdb) p code_points.size()
+$31 = 2
+```
+So this means that this piece is a single unicode character, 123 followed by
+a terminating null value. The second part of the pair is the partial utf8
+structure which is just the same unicode character and the number of remaining
+bytes need (none in this case).
+
+Now, this then the code will iterate over the 2 code points and call:
+```c++
+void llama_grammar_accept(struct llama_grammar * grammar, uint32_t chr) {
+    llama_grammar_stacks stacks_new;
+    stacks_new.reserve(grammar->stacks.size());
+
+    for (const auto & stack : grammar->stacks) {
+        if (stack.empty()) {
+            continue;
+        }
+
+        auto match = llama_grammar_match_char(stack.back(), chr);
+        if (match.first) {
+            const llama_grammar_element * pos = match.second;
+
+            // update top of stack to next element, if any
+            llama_grammar_stack new_stack(stack.begin(), stack.end() - 1);
+            if (!llama_grammar_is_end_of_sequence(pos)) {
+                new_stack.push_back(pos);
+            }
+            llama_grammar_advance_stack(grammar->rules, new_stack, stacks_new);
+        }
+    }
+
+    grammar->stacks = std::move(stacks_new);
+}
+```
+So that was the grammar, but we also have the samplers chain:
+```c++
+void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool accept_grammar) {
+    if (accept_grammar) {
+        llama_sampler_accept(gsmpl->grmr, token);
+    }
+
+    llama_sampler_accept(gsmpl->chain, token);
+
+    gsmpl->prev.push_back(token);
+}
+```
+Some samplers need to keep track of previous tokens, for example the repitition
+penalty sample would need to know which tokens it has seen before:
+```c++
+static void llama_sampler_penalties_accept(struct llama_sampler * smpl, llama_token token) {
+    auto * ctx = (llama_sampler_penalties *) smpl->ctx;
+    if (ctx->penalty_last_n == 0) {
+        return;
+    }
+
+    ctx->token_count[token]++;
+
+    // if the ring buffer is full, remove the oldest token
+    if (ctx->prev.size() >= (size_t) ctx->penalty_last_n) {
+        const auto old = ctx->prev.front();
+
+        ctx->token_count[old]--;
+        if (ctx->token_count[old] == 0) {
+            ctx->token_count.erase(old);
+        }
+    }
+
+    ctx->prev.push_back(token);
+}
+```
+So this will insert or updated the token count for the token that was just
+selected:
+```console
+(gdb) p ctx->token_count
+$47 = std::unordered_map with 0 elements
+```
+So this is what `accept` means. It is the samplers that get a chance to update
+their internal state based on the token that was just selected. And not all
+sampler may need this but some do.
+
 
 ### Low Level Grammar Initialization
 [llguidance.md](./llguidance.md)
