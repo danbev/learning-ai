@@ -135,7 +135,9 @@ $ curl -fsS \
 Notice that tthat the `completion_probabilities` has a leading white space in the `token` field,
 but also note that the token id is `18627`.
 Then in the `top_logprobs` we have the same token but without the leading white space, and the
-same token id `18627`.
+same token id `18627`. I initially though that it was incorrect for the props
+to have the leading white space but it seem to be the other way around, the
+leading white spaces were present previously but are not longer preset.
 
 If we inspect this token id in the models vocabulary we can see:
 ```console
@@ -143,7 +145,7 @@ If we inspect this token id in the models vocabulary we can see:
 (std::vector<llama_vocab::token_data>::value_type) 
 (text = "▁Hinweis", score = -18368, attr = LLAMA_TOKEN_ATTR_NORMAL)
 ```
-Notice that the `__` is the Lower One Eighth Block Unicode character which is used by thi
+Notice that the `__` is the Lower One Eighth Block Unicode character which is used by this
 model to mark word boundries. So actually if we detokenize this token we should have a
 leading white space.
 
@@ -239,6 +241,15 @@ the first 7 values:
   [6] = (id = 25145, logit = 7.2854023, p = 0.00851798616)
 ```
 The first value will be passed to `common_detokenize` to get the text representation of the token.
+We can inspect the token id `18627` in the vocabulary using:
+```console
+(gdb) p slot.ctx.model.vocab.pimpl->id_to_token[18627]
+$8 = {text = "▁Hinweis", score = -18368, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p special
+$10 = false
+```
+
 The detokenized token will be the following:
 ```console
 (lldb) p text
@@ -246,8 +257,9 @@ The detokenized token will be the following:
 ```
 This is where the mismatch is happening I think. I'm looking at the response the `text_to_send` is
 `" Hinweis"` but the token id is `18627` and the detokenized token is `"Hinweis"`.
-I believe that if the detokenization will add the leading white space depends on the `add_space_prefix`
-field on the `llama_vocab` object is set to true:
+
+I believe that if the detokenization will add the leading white space depends on
+the `add_space_prefix` field on the `llama_vocab` object is set to true:
 ```console
 (lldb) p this->add_space_prefix
 (bool) true
@@ -285,31 +297,115 @@ int32_t llama_vocab::impl::detokenize(
         ...
     }
 ```
-So I'm not sure how this should be handled in a "proper" way. It seems like the detokenization is
-working as expected but if we want/need a match of the `text_to_send` and the highest probability
-then perhaps adding a check might be a solution:
+If we inspect `remove_space` we can see that it is set to true:
 ```console
-diff --git a/examples/server/server.cpp b/examples/server/server.cpp
-index 9cdf2058..fdbb738e 100644
---- a/examples/server/server.cpp
-+++ b/examples/server/server.cpp
-@@ -541,12 +541,16 @@ struct completion_token_output {
-     json to_json(bool post_sampling_probs) const {
-         json probs_for_token = json::array();
-         for (const auto & p : probs) {
--            std::string txt(p.txt);
-+            // If the predicted token id is the same as this.tok, then we use the text_to_send instead
-+            // of the detokenized token. This is to avoid a mismatch between the text tokens where
-+            // the text_to_send token may include a leading whitespace character but the detokenized
-+            // token would not.
-+            std::string txt = tok == p.tok ? text_to_send : p.txt;
-             txt.resize(validate_utf8(txt));
-             probs_for_token.push_back(json {
-                 {"id",      p.tok},
-                 {"token",   txt},
--                {"bytes",   str_to_bytes(p.txt)},
-+                {"bytes",   str_to_bytes(txt)},
-                 {
-                     post_sampling_probs ? "prob" : "logprob",
-                     post_sampling_probs ? p.prob : logarithm(p.prob)
+(gdb) p remove_space
+$22 = true
+(gdb) p unparse_special
+$23 = false
 ```
+And calling `token_to_piece` with `remove_space` set to true will remove the leading white space:
+```console
+(gdb) p token_to_piece(tokens[i], text, avail, remove_space, unparse_special)
+$24 = 7
+(gdb) p text
+$25 = 0x7fffffff88f8 "Hinweis"
+```
+And if we set `remove_space` to false we will get the leading white space:
+```console
+(gdb) p token_to_piece(tokens[i], text, avail, false, unparse_special)
+$26 = 8
+(gdb) p text
+$27 = 0x7fffffff88f8 " Hinweis"
+```
+And if I understand this correctly, this is how it used to work before.
+
+So looking at the call to `common_detokenize` in server.cpp:
+```c++
+            result.probs.reserve(n_probs);
+            for (size_t i = 0; i < std::min(n_vocab, n_probs); i++) {
+                result.probs.push_back({
+                    cur[i].id,
+                    common_detokenize(ctx, {cur[i].id}, special),
+                    cur[i].p
+                });
+            }
+```
+This will end up in common.cpp:
+```c++
+std::string common_detokenize(const struct llama_context * ctx, const std::vector<llama_token> & tokens, bool special) {
+    const llama_model * model = llama_get_model(ctx);
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+    return common_detokenize(vocab, tokens, special);
+}
+```
+Which will delegate to the following function:
+```c++
+std::string common_detokenize(const struct llama_vocab * vocab, const std::vector<llama_token> & tokens, bool special) {
+    std::string text;
+    text.resize(std::max(text.capacity(), tokens.size()));
+    int32_t n_chars = llama_detokenize(vocab, tokens.data(), (int32_t)tokens.size(), &text[0], (int32_t)text.size(), false, special);
+    if (n_chars < 0) {
+        text.resize(-n_chars);
+        n_chars = llama_detokenize(vocab, tokens.data(), (int32_t)tokens.size(), &text[0], (int32_t)text.size(), false, special);
+        GGML_ASSERT(n_chars <= (int32_t)text.size());  // whitespace trimming is performed after per-token detokenization
+    }
+
+    text.resize(n_chars);
+
+    // NOTE: the original tokenizer decodes bytes after collecting the pieces.
+    return text;
+}
+```
+```c++
+int32_t llama_detokenize(
+    const struct llama_vocab * vocab,
+           const llama_token * tokens,
+                     int32_t   n_tokens,
+                        char * text,
+                     int32_t   text_len_max,
+                        bool   remove_special,
+                        bool   unparse_special) {
+    return vocab->detokenize(tokens, n_tokens, text, text_len_max, remove_special, unparse_special);
+}
+```
+
+```c++
+int32_t llama_vocab::impl::detokenize(
+               const llama_token * tokens,
+                         int32_t   n_tokens,
+                            char * text,
+                         int32_t   text_len_max,
+                            bool   remove_special,
+                            bool   unparse_special) const {
+    if (type == LLAMA_VOCAB_TYPE_NONE) {
+        return 0;
+    }
+
+    GGML_ASSERT(tokenizer && "Tokenizer not initialized. Call llama_vocab::init_tokenizer() first.");
+
+    int32_t avail = text_len_max;
+    int32_t total = 0;
+
+    // remove the leading space
+    bool remove_space = add_space_prefix;
+
+    if (remove_special && add_bos) {
+        if (n_tokens > 0 && tokens[0] == special_bos_id) {
+            remove_space = false;
+            n_tokens--;
+            tokens++;
+        }
+    }
+```
+Notice that `remove_space` is determined by the `add_space_prefix` field on the
+and not the `remove_special` parameter which I originally thought when looking
+at this. Now, not all vocabularies, or really tokenizers, will use a special
+token to mark word boundaries so this would still have to account for only those
+tokenizers. 
+
+So I wonder if we should have a parameter that allows for passing in the
+`remove_space_prefix` so that we can control if we want to remove the leading
+white space or not. This could be true by default to keep the current behaviour
+and then the server can set this to false to always include the word boundrary
+string prefix.
