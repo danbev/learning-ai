@@ -1,0 +1,95 @@
+{
+"grammars": [
+{
+  "nodes": [
+    {
+      "GenGrammar": {
+        "grammar": 1,
+        "stop_rx": "",
+        "no_initial_skip": true,
+        "temperature": 0.0
+      }
+    }
+  ],
+  "rx_nodes": []
+},
+{
+  "greedy_skip_rx": "[\\x20\\x0A\\x0D\\x09]+",
+  "nodes": [
+    {
+      "Join": {
+        "sequence": [1, 2]
+      }
+    },
+    {
+      "String": {
+        "literal": "{"
+      }
+    },
+    {
+      "Join": {
+        "sequence": [3, 4, 5, 6, 7]
+      }
+    },
+    {
+      "String": {
+        "literal": "\"name\""
+      }
+    },
+    {
+      "String": {
+        "literal": ":"
+      }
+    },
+    {
+      "Lexeme": {
+        "rx": "\"(\\\\([\\\"\\\\\\/bfnrt]|u[a-fA-F0-9]{4})|[^\\\"\\\\\\x00-\\x1F\\x7F]){0,}\"",
+        "contextual": true
+      }
+    },
+    {
+      "String": {
+        "literal": ","
+      }
+    },
+    {
+      "Join": {
+        "sequence": [8, 9, 10, 11]
+      }
+    },
+    {
+      "String": {
+        "literal": "\"age\""
+      }
+    },
+    {
+      "String": {
+        "literal": ":"
+      }
+    },
+    {
+      "Lexeme": {
+        "rx": "-?(?:0|[1-9][0-9]*)",
+        "contextual": true
+      }
+    },
+    {
+      "Select": {
+        "among": [12, 13]
+      }
+    },
+    {
+      "String": {
+        "literal": "}"
+      }
+    },
+    {
+      "String": {
+        "literal": ""
+      }
+    }
+  ],
+  "rx_nodes": []
+}
+]
+}
