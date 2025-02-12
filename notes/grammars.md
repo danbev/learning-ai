@@ -679,6 +679,127 @@ For example:
 So if/when the model generates a `{` or a `[` token the grammar will be applied
 but not otherwise.
 
+So with `grammar_lazy` set to true the sampler will be initialized by:
+```c++
+bool launch_slot_with_task(server_slot & slot, const server_task & task) {
+    ...
+            slot.smpl = common_sampler_init(model, slot.params.sampling);
+            ...
+}
+```
+```c++
+struct common_sampler * common_sampler_init(const struct llama_model * model, const struct common_params_sampling & params) {
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+
+    llama_sampler_chain_params lparams = llama_sampler_chain_default_params();
+
+    lparams.no_perf = params.no_perf;
+
+    std::vector<const char *> trigger_words;
+    trigger_words.reserve(params.grammar_trigger_words.size());
+    for (const auto & str : params.grammar_trigger_words) {
+        trigger_words.push_back(str.word.c_str());
+    }
+
+    struct llama_sampler * grmr;
+    if (params.grammar.compare(0, 11, "%llguidance") == 0) {
+#ifdef LLAMA_USE_LLGUIDANCE
+        grmr = llama_sampler_init_llg(vocab, "lark", params.grammar.c_str());
+#else
+        GGML_ABORT("llguidance (cmake -DLLAMA_LLGUIDANCE=ON) is not enabled");
+#endif // LLAMA_USE_LLGUIDANCE
+    } else {
+        grmr = params.grammar_lazy
+             ? llama_sampler_init_grammar_lazy(vocab, params.grammar.c_str(), "root",
+                                               trigger_words.data(), trigger_words.size(),
+                                               params.grammar_trigger_tokens.data(), params.grammar_trigger_tokens.size())
+             :      llama_sampler_init_grammar(vocab, params.grammar.c_str(), "root");
+    }
+```
+And in this case `llama_sampler_init_grammar_lazy` will be called:
+```c++
+struct llama_sampler * llama_sampler_init_grammar_lazy(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                     const char ** trigger_words,
+                            size_t num_trigger_words,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens) {
+    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ true, trigger_words, num_trigger_words, trigger_tokens, num_trigger_tokens);
+}
+
+static struct llama_sampler * llama_sampler_init_grammar_impl(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                              bool lazy,
+                     const char ** trigger_words,
+                            size_t num_trigger_words,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens) {
+    auto * ctx = new llama_sampler_grammar;
+
+    if (grammar_str != nullptr && grammar_str[0] != '\0') {
+        *ctx = {
+            /* .vocab        = */ vocab,
+            /* .grammar_str  = */ grammar_str,
+            /* .grammar_root = */ grammar_root,
+            /* .grammar      = */ llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, trigger_words, num_trigger_words, trigger_tokens, num_trigger_tokens),
+        };
+    } else {
+        *ctx = {
+            /* .vocab        = */ vocab,
+            /* .grammar_str  = */ {},
+            /* .grammar_root = */ {},
+            /* .grammar      = */ nullptr,
+        };
+    }
+
+    return llama_sampler_init(
+        /* .iface = */ &llama_sampler_grammar_i,
+        /* .ctx   = */ ctx
+    );
+}
+```
+And that will end up in `llama_grammar_init_impl`:
+```c++
+struct llama_grammar * llama_grammar_init_impl(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                              bool lazy,
+                     const char ** trigger_words,
+                            size_t num_trigger_words,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens) {
+    ...
+
+    std::vector<llama_token> vec_trigger_tokens;
+    std::vector<std::string> vec_trigger_words;
+    for (size_t i = 0; i < num_trigger_tokens; i++) {
+        GGML_ASSERT(trigger_tokens != nullptr);
+        vec_trigger_tokens.push_back(trigger_tokens[i]);
+    }
+    for (size_t i = 0; i < num_trigger_words; i++) {
+        GGML_ASSERT(trigger_words != nullptr);
+        vec_trigger_words.push_back(trigger_words[i]);
+    }
+
+    return new llama_grammar {
+        vocab,
+        std::move(vec_rules),
+        std::move(stacks),
+        /* .partial_utf8 = */     {},
+        /* .lazy = */             lazy,
+        /* .awaiting_trigger = */ lazy,
+        /* .trigger_buffer = */   "",
+        std::move(vec_trigger_tokens),
+        std::move(vec_trigger_words),
+    };
+```
+Notice that `awaiting_trigger` is set to `lazy/true`.
+
 So if we set a breakpoint 
 ```console
 (gdb) br server.cpp:361
@@ -689,12 +810,13 @@ And then run the following bash script:
 GRAMMAR_CONTENT=$(cat grammars/json.gbnf)
 
 JSON_PAYLOAD=$(jq -n \
-  --arg prompt "Describe a cat and include its details as JSON" \
+  --arg prompt "Describe a cat in JSON format." \
   --arg grammar "$GRAMMAR_CONTENT" \
   '{
     prompt: $prompt,
-    n_predict: 1,
-    temperature: 2,
+    n_predict: 160,
+    verbose: true,
+    temperature: 0,
     grammar: $grammar,
     grammar_lazy: true,
     grammar_triggers: [
@@ -708,6 +830,7 @@ curl -fsS \
   --url http://127.0.0.1:8080/completion \
   --header "Content-Type: application/json" \
   --data "$JSON_PAYLOAD" | jq
+GRAMMAR_CONTENT=$(cat grammars/json.gbnf)
 ```
 We can then step through the server code and inspect the values:
 ```console
@@ -718,25 +841,21 @@ $5 = {word = "{", at_start = false}
 ```c++
             const auto grammar_triggers = data.find("grammar_triggers");
             if (grammar_triggers != data.end()) {
-                try {
-                    for (const auto & t : *grammar_triggers) {
-                        common_grammar_trigger trigger;
-                        trigger.word = t.at("word");
-                        trigger.at_start = t.at("at_start");
+                for (const auto & t : *grammar_triggers) {
+                    common_grammar_trigger trigger;
+                    trigger.word = t.at("word");
+                    trigger.at_start = t.at("at_start");
 
-                        auto ids = common_tokenize(vocab, trigger.word, /* add_special= */ false, /* parse_special= */ true);
-                        if (ids.size() == 1) {
-                            SRV_DBG("Grammar trigger token: %d (`%s`)\n", ids[0], trigger.word.c_str());
-                            params.sampling.grammar_trigger_tokens.push_back(ids[0]);
-                            params.sampling.preserved_tokens.insert(ids[0]);
-                            continue;
-                        }
-                        SRV_DBG("Grammar trigger word: `%s`\n", trigger.word.c_str());
-                        params.sampling.grammar_trigger_words.push_back(trigger);
+                    auto ids = common_tokenize(vocab, trigger.word, /* add_special= */ false, /* parse_special= */ true);
+                    if (ids.size() == 1) {
+                        SRV_DBG("Grammar trigger token: %d (`%s`)\n", ids[0], trigger.word.c_str());
+                        params.sampling.grammar_trigger_tokens.push_back(ids[0]);
+                        params.sampling.preserved_tokens.insert(ids[0]);
+                        continue;
                     }
-                } catch (const std::exception & e) {
-                    throw std::runtime_error(std::string("Invalid grammar_triggers entry:") + e.what());
-                }
+                    SRV_DBG("Grammar trigger word: `%s`\n", trigger.word.c_str());
+                    params.sampling.grammar_trigger_words.push_back(trigger);
+            }
 ```
 Notice that the above will tokenize the trigger word:
 ```console
@@ -749,6 +868,8 @@ This token will be added to the `grammar_trigger_tokens` vector and also stored
 in `preserved_tokens` which is a set of tokens that should not be modified by
 the samplers (double check this). So this is all done when the server is parsing
 the payload from the client (this is done in handle_completions_impl).
+Also notice that if there is only a single token then the `grammer_trigger_words`
+is not updated. It will only be updated if there are multiple tokens.
 
 Later in `update_slots`, after `llama_decode` we then have:
 ```c++
@@ -895,21 +1016,10 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
     llama_grammar_accept_str(grammar, piece);
 }
 ```
-So the the above will first try to find the token in the `trigger_tokens`
-```console
-(gdb) p token
-$22 = 29889
-(gdb) p grammar.trigger_tokens
-$23 = std::vector of length 1, capacity 1 = {426}
-```
-So the above will enter the else block. But there are no trigger words at this
-point:
-```console
-(gdb) p grammar.trigger_words
-$26 = std::vector of length 0, capacity 0
-```
-So this will just return. Back in update_slots we will then have the following
-call:
+
+
+
+Back in update_slots we will then have the following call:
 ```c++
                 completion_token_output result;
                 result.tok          = id;
@@ -934,4 +1044,343 @@ Lets take a look at `process_token`:
             slot.generated_tokens.push_back(result.tok);
         }
         slot.has_next_token = true;
+```
+
+If we inspect the following call when the trigger token matches, we ill call
+`llama_gramar_accept_str` with the piece (the string representation of the token):
+```c++
+void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
+    GGML_ASSERT(grammar.vocab != nullptr);
+
+    const auto & piece = grammar.vocab->token_to_piece(token);
+
+    if (grammar.awaiting_trigger) {
+        if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
+            grammar.awaiting_trigger = false;
+            grammar.trigger_buffer.clear();
+            llama_grammar_accept_str(grammar, piece);
+            LLAMA_LOG_DEBUG("Grammar triggered on token %u (`%s`)", token, piece.c_str());
+            return;
+```
+So the above will call:
+```c++
+void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string & piece) {
+    // Note terminating 0 in decoded string
+    const auto   decoded     = decode_utf8(piece, grammar.partial_utf8);
+    const auto & code_points = decoded.first;
+
+    for (auto it = code_points.begin(), end = code_points.end() - 1; it != end; ++it) {
+        llama_grammar_accept(&grammar, *it);
+    }
+
+    grammar.partial_utf8 = decoded.second;
+    if (grammar.stacks.empty()) {
+        throw std::runtime_error("Unexpected empty grammar stack after accepting piece: " + piece);
+    }
+}
+```
+So first the string will be decoded into:
+```console
+(gdb) p decoded
+$23 = {first = std::vector of length 3, capacity 3 = {32, 123, 0}, second = {value = 123, n_remain = 0}}
+```
+Now, `decode_utf8` as the following signature:
+```c++
+static std::pair<std::vector<uint32_t>, llama_partial_utf8> decode_utf8(
+        const std::string & src,
+        llama_partial_utf8 partial_start) {
+```
+An UTF-8 encoded string can be 1-4 bytes long. The first part of the pair is
+the code points and the second part is the partial utf8 structure. What partial
+means in this case is that since we are decoding in chunks we might have gotten
+an incomplete utf8 character, like we might have only gotten the two bytes of
+an UTF-8 character that is 3 bytes long. So the second part of the pair is
+telling us if there are any remaining bytes that we need to decode. We need
+this information when decoding the next byte so that we generate valid utf8
+characters.
+```console
+(gdb) p decoded.first
+$25 = std::vector of length 3, capacity 3 = {32, 123, 0}
+(gdb) p piece
+$26 = " {"
+```
+So the white space character is 32, and the `{` character is 123. The 0 is the
+null terminating character.
+The code above will then iterate over the code points, skipping the last one
+which is the null terminating character. So first 32 will be passed to
+`llama_grammar_accept`:
+```c++
+void llama_grammar_accept(struct llama_grammar * grammar, uint32_t chr) {
+    llama_grammar_stacks stacks_new;
+    stacks_new.reserve(grammar->stacks.size());
+
+    for (const auto & stack : grammar->stacks) {
+        if (stack.empty()) {
+            continue;
+        }
+
+        auto match = llama_grammar_match_char(stack.back(), chr);
+        if (match.first) {
+            const llama_grammar_element * pos = match.second;
+
+            // update top of stack to next element, if any
+            llama_grammar_stack new_stack(stack.begin(), stack.end() - 1);
+            if (!llama_grammar_is_end_of_sequence(pos)) {
+                new_stack.push_back(pos);
+            }
+            llama_grammar_advance_stack(grammar->rules, new_stack, stacks_new);
+        }
+    }
+
+    grammar->stacks = std::move(stacks_new);
+}
+```
+```console
+(gdb) p grammar.stacks.size()
+$29 = 1
+
+(gdb) p *stack.front()
+$37 = {type = LLAMA_GRETYPE_CHAR, value = 123}
+```
+So we are first going to try to match the white space.
+
+
+### stacks
+The `llama_grammar` struct has a member `stacks` which is a vector of stacks.
+```c++
+struct llama_grammar {
+    const llama_vocab * vocab;
+
+    const llama_grammar_rules  rules;
+          llama_grammar_stacks stacks;
+    ...
+};
+
+using llama_grammar_stacks = std::vector<llama_grammar_stack>;
+using llama_grammar_stack = std::vector<const llama_grammar_element *>;
+
+```
+So a grammar can have multiple stacks, and one stack is a vector of grammar
+elements:
+```console
+stasks ------> [stack1]  ---> [element1, element2, element3]
+               [stack2]  ---> [element1, element2, element3]
+
+
+struct llama_grammar_stack = std::vector<const llama_grammar_element*>;  // One possible path
+struct llama_grammar_stacks = std::vector<llama_grammar_stack>;         // All possible paths
+```
+```c++
+typedef struct llama_grammar_element {
+    enum llama_gretype type;
+    uint32_t           value; // Unicode code point or rule ID
+} llama_grammar_element;
+```
+```console
+(gdb) p stacks
+$1 = std::vector of length 1, capacity 1 = {std::vector of length 1, capacity 1 = {0x55555e707110}}
+
+(gdb) p *stacks[0][0]
+$11 = {type = LLAMA_GRETYPE_CHAR, value = 123}
+```
+This is the next immediate character that it is expecting. So this is already
+in the stack. Only the next expected character is pushed onto the stack, not
+all possible future characters. When it has seen a '{' then it will push
+something else.
+```console
+root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null") ws
+
+object ::=
+  "{" ws (
+            string ":" ws value
+    ("," ws string ":" ws value)*
+  )? "}" ws
+
+array  ::=
+  "[" ws (
+            value
+    ("," ws value)*
+  )? "]" ws
+
+string ::=
+  "\"" (
+    [^"\\\x7F\x00-\x1F] |
+    "\\" (["\\bfnrt] | "u" [0-9a-fA-F]{4}) # escapes
+  )* "\"" ws
+
+number ::= ("-"? ([0-9] | [1-9] [0-9]{0,15})) ("." [0-9]+)? ([eE] [-+]? [0-9] [1-9]{0,15})? ws
+
+# Optional space: by convention, applied in this grammar after literal chars when allowed
+ws ::= | " " | "\n" [ \t]{0,20}
+```
+So we read this as the root contains an object, ::= means that it is expanded
+or defined. And an object must start with a '{', followed an optional whitespace.
+Following that we have parenthesis that are used for grouping, and in this case
+it is an optional group because of the ? following it. The contents can then be
+a string followed by a ':', an optional whitespace, and then a value.
+So the stack is just the first character expected and as we can see this is the
+'{' character (token 123). 
+
+```c++
+void llama_grammar_accept(struct llama_grammar * grammar, uint32_t chr) {
+    llama_grammar_stacks stacks_new;
+    stacks_new.reserve(grammar->stacks.size());
+
+    for (const auto & stack : grammar->stacks) {
+        if (stack.empty()) {
+            continue;
+        }
+
+        auto match = llama_grammar_match_char(stack.back(), chr);
+        if (match.first) {
+            const llama_grammar_element * pos = match.second;
+
+            // update top of stack to next element, if any
+            llama_grammar_stack new_stack(stack.begin(), stack.end() - 1);
+            if (!llama_grammar_is_end_of_sequence(pos)) {
+                new_stack.push_back(pos);
+            }
+            llama_grammar_advance_stack(grammar->rules, new_stack, stacks_new);
+        }
+    }
+
+    grammar->stacks = std::move(stacks_new);
+}
+```
+Notice that this is calling `llama_grammar_match_char` and passing in the back
+of the vector of which is a llama_grammar_element:
+```console
+(gdb) p chr
+$2 = 32
+(gdb) p grammar->stacks
+$3 = std::vector of length 1, capacity 1 = {std::vector of length 1, capacity 1 = {0x55555e706560}}
+(gdb) p grammar->stacks[0]
+$4 = std::vector of length 1, capacity 1 = {0x55555e706560}
+(gdb) p grammar->stacks[0][0]
+$5 = (const llama_grammar_element *) 0x55555e706560
+(gdb) p *grammar->stacks[0][0]
+$6 = {type = LLAMA_GRETYPE_CHAR, value = 123}
+```
+```c++
+static std::pair<bool, const llama_grammar_element *> llama_grammar_match_char(
+        const llama_grammar_element * pos,
+        const uint32_t                chr) {
+    bool found            = false;
+    bool is_positive_char = pos->type == LLAMA_GRETYPE_CHAR || pos->type == LLAMA_GRETYPE_CHAR_ANY;
+
+    GGML_ASSERT(is_positive_char || pos->type == LLAMA_GRETYPE_CHAR_NOT); // NOLINT
+
+    do {
+        if (pos[1].type == LLAMA_GRETYPE_CHAR_RNG_UPPER) {
+            // inclusive range, e.g. [a-z]
+            found = found || (pos->value <= chr && chr <= pos[1].value);
+            pos += 2;
+        } else if (pos->type == LLAMA_GRETYPE_CHAR_ANY) {
+            // Any character matches "."
+            found = true;
+            pos += 1;
+        } else {
+            // exact char match, e.g. [a] or "a"
+            found = found || pos->value == chr;
+            pos += 1;
+        }
+    } while (pos->type == LLAMA_GRETYPE_CHAR_ALT);
+
+    return std::make_pair(found == is_positive_char, pos);
+}
+```
+There will not be a match because the 32 (space) does not match the 123 ('{'),
+so the above will return a pair with false and pos.
+```console
+(gdb) p match
+$8 = {first = false, second = 0x55555e706568}
+```
+So the grammar expects '{' but it got a space. So the stack will not be updated
+and will become empty instead as the grammar is invalid.
+
+First we get the string representation of the token:
+```c++
+void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
+    GGML_ASSERT(grammar.vocab != nullptr);
+
+    const auto & piece = grammar.vocab->token_to_piece(token);
+```
+Now, this might contains a word boundary character depending on the the models
+tokenizer. So if we have the trigger word '{' this would actually become " {"
+when we get the string representation of the token using token_to_piece. This
+means that the first code point to be matched against the current grammar stack
+will be 32 (space) and not 123 ('{').
+
+We match the trigger on the token:
+```console
+(gdb) p grammar.trigger_tokens
+$21 = std::vector of length 1, capacity 1 = {426}
+$22 = {text = "▁{", score = -167, attr = LLAMA_TOKEN_ATTR_NORMAL}
+(gdb) p grammar.vocab->token_to_piece(426)
+$23 = " {"
+```
+I wondering if this is could possibly be a bug and that this matching should be
+done without the word boundary character?
+I'm not sure if this is a bug or not but making the following change allowed the
+example above to pass and did not cause any test failures:
+```console
+diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
+index 9b518d1a..c2e93d2e 100644
+--- a/src/llama-grammar.cpp
++++ b/src/llama-grammar.cpp
+@@ -1163,7 +1163,17 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
+ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
+     GGML_ASSERT(grammar.vocab != nullptr);
+
+-    const auto & piece = grammar.vocab->token_to_piece(token);
++    std::string piece;
++    piece.resize(piece.capacity());
++    const int len = grammar.vocab->token_to_piece(token, &piece[0], piece.size(), true, true);
++    if (len < 0) {
++        piece.resize(-n_chars);
++        int check = grammar.vocab->token_to_piece(token, &piece[0], piece.size(), true, true);
++        GGML_ASSERT(check == -len);
++    }
++    else {
++        piece.resize(len);
++    }
+
+     if (grammar.awaiting_trigger) {
+         if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
+```
+
+
+
+```console
+Rules programmed into PDA:
+1. When you see '(' -> Push ')' onto stack
+2. When you see ')' -> If top of stack is ')', pop it; otherwise error
+3. Accept if stack is empty at end
+
+Example: "(())"
+Start: Stack = []
+
+1. See '('
+   Rule 1 applies: "Ah, I saw '(', I better remember I need a ')' later"
+   Push ')' onto stack
+   Stack = [')']
+
+2. See '('
+   Rule 1 applies again: "Another '(', I need another ')'"
+   Push ')' onto stack
+   Stack = [')', ')']
+
+3. See ')'
+   Rule 2 applies: "I found a ')', does it match what I was expecting?"
+   Top of stack is ')', so pop it
+   Stack = [')']
+
+4. See ')'
+   Rule 2 applies: "Another ')', does it match?"
+   Top of stack is ')', so pop it
+   Stack = []
+
+5. End of input
+   Stack is empty, so accept!
 ```
