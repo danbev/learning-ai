@@ -1,6 +1,22 @@
 ## Chat templates
 For models that support chat most often (perhaps always) provide a chat template
-with the model.
+with the model. Different models are trained with different types of chat
+interaction and using templates allows client program to interact with the model
+in a way that is compatible with the model. So if a different model is later
+used the the client program should not have to be changed as long as there is
+a chat template for the new model.
+
+So chat templates are only about input to the LLM, taking the input from the
+client program transforming the input into a format that matches a format that
+the model in question was trained on. If the client program later want to use a
+different model only the chat template needs to be updated to match the new
+model but the rest of the client code can stay the same?
+
+Now, just avoid any potential confusion here with grammars and schemas in
+llama.cpp. These make sure that the tokens that the inference engine outputs
+adhere to the grammar. I'm actually just talking about grammars here as for
+json-schemas they are actually converted into a grammar using
+`json_schema_to_grammar`.
 
 For example, if we look at the [meta-llama/Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-70B-Instruct/blob/main/tokenizer_config.json) model, we can
 see that it contains the following chat template in its tokenizer_config.json:
@@ -259,7 +275,6 @@ struct common_chat_templates {
     std::unique_ptr<common_chat_template> template_tool_use;
 };
 ```
-The actual implementation of the chat template can be found in 
 
 ```c++
     try {
@@ -405,7 +420,7 @@ $ gdb --args ./build/bin/llama-cli -m ../llama.cpp/models/Meta-Llama-3.1-8B-Inst
 (gdb) br main.cpp:161
 Breakpoint 1 at 0xe6d7c: file /home/danbev/work/ai/llama.cpp-debug/examples/main/main.cpp, line 161.
 ```
-This time there will a a `chat_template` which will be the contents for
+This time there will a `chat_template` which will be the contents of
 `meta-llama-Llamam-3.1-8B-Instruct.jinja` and it will be passed into:
 ```c++
     auto chat_templates = common_chat_templates_from_model(model, params.chat_template);
@@ -414,8 +429,8 @@ This time there will a a `chat_template` which will be the contents for
 I think that `chat-template.hpp` and `minja.hpp` come from
 https://github.com/google/minja.
 
-
-### "response_format" on the OpenAI compatible "v1/chat/completions" issue
+### json_schema and grammar conflict in server.cpp
+This was an issue that was reported in:
 https://github.com/ggerganov/llama.cpp/issues/11847
 
 ```console
