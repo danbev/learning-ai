@@ -400,6 +400,205 @@ And this will then be set as the prompt and tokenized just like if there was
 no template and just the prompt from this point onwards.
 
 So lets try a chat template which can be found in `models/templates.
+```console
+$ gdb --args ./build/bin/llama-cli -m ../llama.cpp/models/Meta-Llama-3.1-8B-Instruct-Q3_K_S.gguf --no-warmup --prompt '"What is LoRA?"' -ngl 40 --chat-template-file models/templates/meta-llama-Llama-3.1-8B-Instruct.jinja
+(gdb) br main.cpp:161
+Breakpoint 1 at 0xe6d7c: file /home/danbev/work/ai/llama.cpp-debug/examples/main/main.cpp, line 161.
+```
+This time there will a a `chat_template` which will be the contents for
+`meta-llama-Llamam-3.1-8B-Instruct.jinja` and it will be passed into:
+```c++
+    auto chat_templates = common_chat_templates_from_model(model, params.chat_template);
+```
 
 I think that `chat-template.hpp` and `minja.hpp` come from
 https://github.com/google/minja.
+
+
+### "response_format" on the OpenAI compatible "v1/chat/completions" issue
+https://github.com/ggerganov/llama.cpp/issues/11847
+
+```console
+{
+    "error": {
+        "code": 400,
+        "message": "Either \"json_schema\" or \"grammar\" can be specified, but not both",
+        "type": "invalid_request_error"
+    }
+}
+```
+The server log looks like this:
+```console
+srv  log_server_r: response: {"error":{"code":400,"message":"Either \"json_schema\" or \"grammar\" can be specified, but not both","type":"invalid_request_error"}}
+```
+
+If we take a look at this request processing on the server we can look at
+this handler:
+```c++
+    const auto handle_chat_completions = [&ctx_server, &params, &res_error, &handle_completions_impl](const httplib::Request & req, httplib::Response & res) {
+        LOG_DBG("request: %s\n", req.body.c_str());
+        if (ctx_server.params_base.embedding) {
+            res_error(res, format_error_response("This server does not support completions. Start it without `--embeddings`", ERROR_TYPE_NOT_SUPPORTED));
+            return;
+        }
+
+        auto body = json::parse(req.body);
+        json data = oaicompat_completion_params_parse(body, params.use_jinja, params.reasoning_format, ctx_server.chat_templates);
+
+        return handle_completions_impl(
+            SERVER_TASK_TYPE_COMPLETION,
+            data,
+            req.is_connection_closed,
+            res,
+            OAICOMPAT_TYPE_CHAT);
+    };
+```
+We can inspect the body from the request:
+```console
+(gdb) pjson body
+{
+    "model": "llama-2-7b-chat",
+    "messages": [
+        {
+            "role": "user",
+            "content": "hello"
+        }
+    ],
+    "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "chat_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "response": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "response"
+                ],
+                "additionalProperties": false
+            }
+        }
+    }
+}
+```
+And this looks good and there is no `grammar` attribute in the body.
+
+Next we have the call to:
+```c++
+        json data = oaicompat_completion_params_parse(body, params.use_jinja, params.reasoning_format, ctx_server.chat_templates);
+```
+And if we inspect the data after this call we do see the `grammar` attribute:
+```console
+(gdb) pjson data | shell jq
+{
+    "stop": [],
+    "json_schema": {
+        "type": "object",
+        "properties": {
+            "response": {
+                "type": "string"
+            }
+        },
+        "required": [
+            "response"
+        ],
+        "additionalProperties": false
+    },
+    "chat_format": 1,
+    "prompt": "<|im_start|>system\nRespond in JSON format, either with `tool_call` (a request to call tools) or with `response` reply to the user's request<|im_end|>\n<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+    "grammar": "alternative-0 ::= \"{\" space alternative-0-tool-call-kv \"}\" space\nalternative-0-tool-call ::= \nalternative-0-tool-call-kv ::= \"\\\"tool_call\\\"\" space \":\" space alternative-0-tool-call\nalternative-1 ::= \"{\" space alternative-1-response-kv \"}\" space\nalternative-1-response ::= \"{\" space alternative-1-response-response-kv \"}\" space\nalternative-1-response-kv ::= \"\\\"response\\\"\" space \":\" space alternative-1-response\nalternative-1-response-response-kv ::= \"\\\"response\\\"\" space \":\" space string\nchar ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\nroot ::= alternative-0 | alternative-1\nspace ::= | \" \" | \"\\n\" [ \\t]{0,20}\nstring ::= \"\\\"\" char* \"\\\"\" space\n",
+    "grammar_lazy": false,
+    "grammar_triggers": [],
+    "preserved_tokens": [],
+    "model": "llama-2-7b-chat",
+    "messages": [
+        {
+            "role": "user",
+            "content": "hello"
+        }
+    ],
+    "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "chat_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "response": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "response"
+                ],
+                "additionalProperties": false
+            }
+        }
+    }
+}
+```
+If we look in oaicompat_completion_params_parse we can see the following:
+```c++
+    // Apply chat template to the list of messages
+    if (use_jinja) {
+        auto tool_choice = json_value(body, "tool_choice", std::string("auto"));
+        if (tool_choice != "none" && tool_choice != "auto" && tool_choice != "required") {
+            throw std::runtime_error("Invalid tool_choice: " + tool_choice);
+        }
+        if (tool_choice != "none" && llama_params.contains("grammar")) {
+            throw std::runtime_error("Cannot use custom grammar constraints with tools.");
+        }
+        common_chat_inputs inputs;
+        inputs.extract_reasoning   = reasoning_format != COMMON_REASONING_FORMAT_NONE;
+        inputs.messages            = body.at("messages");
+        inputs.tools               = tools;
+        inputs.tool_choice         = tool_choice;
+        inputs.parallel_tool_calls = json_value(body, "parallel_tool_calls", false);
+        if (inputs.parallel_tool_calls && !tmpl.original_caps().supports_parallel_tool_calls) {
+            LOG_DBG("Disabling parallel_tool_calls because the template does not support it\n");
+            inputs.parallel_tool_calls = false;
+        }
+        inputs.stream = stream;
+        // TODO: support mixing schema w/ tools beyond generic format.
+        inputs.json_schema = json_value(llama_params, "json_schema", json());
+        auto chat_params = common_chat_params_init(tmpl, inputs);
+
+        llama_params["chat_format"] = static_cast<int>(chat_params.format);
+        llama_params["prompt"] = chat_params.prompt;
+        llama_params["grammar"] = chat_params.grammar;
+        llama_params["grammar_lazy"] = chat_params.grammar_lazy;
+        auto grammar_triggers = json::array();
+        for (const auto & trigger : chat_params.grammar_triggers) {
+            grammar_triggers.push_back({
+                {"word", trigger.word},
+                {"at_start", trigger.at_start},
+            });
+        }
+        llama_params["grammar_triggers"] = grammar_triggers;
+```
+And if we inspect the `chat_params` we can see that the `grammar` attribute is
+there:
+```console
+(gdb) p chat_params.grammar
+$2 = "alternative-0 ::= \"{\" space alternative-0-tool-call-kv \"}\" space\nalternative-0-tool-call ::= \nalternative-0-tool-call-kv ::= \"\\\"tool_call\\\"\" space \":\" space alternative-0-tool-call\nalternative-1 ::= \""...
+```
+Perhaps the grammer should be conditioned on the json_schama:
+```c++
+        if (inputs.json_schema == nullptr) {
+            llama_params["grammar"] = chat_params.grammar;
+            llama_params["grammar_lazy"] = chat_params.grammar_lazy;
+            auto grammar_triggers = json::array();
+            for (const auto & trigger : chat_params.grammar_triggers) {
+                grammar_triggers.push_back({
+                    {"word", trigger.word},
+                    {"at_start", trigger.at_start},
+                });
+            }
+            llama_params["grammar_triggers"] = grammar_triggers;
+        }
+```
