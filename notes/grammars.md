@@ -1351,36 +1351,86 @@ index 9b518d1a..c2e93d2e 100644
 ```
 
 
-
-```console
-Rules programmed into PDA:
-1. When you see '(' -> Push ')' onto stack
-2. When you see ')' -> If top of stack is ')', pop it; otherwise error
-3. Accept if stack is empty at end
-
-Example: "(())"
-Start: Stack = []
-
-1. See '('
-   Rule 1 applies: "Ah, I saw '(', I better remember I need a ')' later"
-   Push ')' onto stack
-   Stack = [')']
-
-2. See '('
-   Rule 1 applies again: "Another '(', I need another ')'"
-   Push ')' onto stack
-   Stack = [')', ')']
-
-3. See ')'
-   Rule 2 applies: "I found a ')', does it match what I was expecting?"
-   Top of stack is ')', so pop it
-   Stack = [')']
-
-4. See ')'
-   Rule 2 applies: "Another ')', does it match?"
-   Top of stack is ')', so pop it
-   Stack = []
-
-5. End of input
-   Stack is empty, so accept!
+### Grammar parsing background
+Imagine we have rules defined for a grammar like the following:
 ```
+function_call ::= name '(' args ')'
+name ::= [a-zA-Z]+
+args ::= value | value ',' args
+value ::= [0-9]+ | name
+```
+This means that we have a root element called `function_call` that is defined
+as the stuff after `::=` which means expaned to I think. `name` is like a
+variable which is defined on the following row. This is called a non-terminal 
+because it can be expanded. Then name is defined as a sequence of characters
+from a-z or A-Z. The `+` means that it can be repeated one or more times.
+The '(' is a terminal because it is a single character and not a rule.
+
+The parsing uses a stack to keep track of the current state of the parser.
+Lets take the following example:
+```
+"foo(18,"
+```
+So this is intentionally missing the closing parenthesis. The parser will
+start out in the following state:
+```console
+Stack:    [function_call]
+Which we know is defined as:  name '(' args ')'
+1. Push the rules in reverse order onto the stack:
+Push ')'
+Push args
+Push '('
+Push name
+Stack:    [name]
+          ['(']
+          [args]
+          [')']
+
+We pop non-terminal rules, and name is currentlty at the top of the stack. So
+we pop and expand it:
+Pop: name
+Push: [a-zA-Z]+
+Stack:    [a-zA-Z]+
+          ['(']
+          [args]
+          [')']
+```
+Then the parser will read the first character 'f':
+```
+[[a-zA-Z]+ '(' args ')']
+
+'f' matches [a-zA-Z]+
+```
+And since this pattern is still fullfilled it stays on the stack. Then we parse
+'o':
+```
+[[a-zA-Z]+ '(' args ')']
+'o' matches [a-zA-Z]+
+```
+And the same for the following 'o'.
+Next we have '(':
+```
+[[a-zA-Z]+ '(' args ')']
+'(' does not match [a-zA-Z]+, so we pop that rule off the stack.
+```
+
+```
+['(' args ')']
+'(' matches '(' so we pop the stack again and expand the next rule and continue parsing.
+[[0-9]+ | [[a-zA-Z]+ ')']
+```
+Then we have '1' which matches [0-9]+, and the same for '8'. Then we have ','
+which also matches. But then we reach the last character and the stack is not
+empty:
+```
+[[0-9]+ | [[a-zA-Z]+ ')']
+```
+So in this was the grammer knows that the string passed is not a valid function.
+
+This is called pushdown automata which is because future rules can be pushed
+onto the stack for later processing. This enabled handling nested structures.
+
+This is called pushdown automata because rules get pushed down onto a stack and
+then popped off as they're processed, with new rules being pushed down during
+expansion. This stack mechanism enables handling nested structures by keeping
+track of what needs to be matched later.
