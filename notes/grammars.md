@@ -1434,3 +1434,147 @@ This is called pushdown automata because rules get pushed down onto a stack and
 then popped off as they're processed, with new rules being pushed down during
 expansion. This stack mechanism enables handling nested structures by keeping
 track of what needs to be matched later.
+
+
+With some backgound out of the way lets look what the implementation in
+llama.cpp looks like:
+```console
+$ gdb --args ./build/bin/llama-cli -m ../llama.cpp/models/Meta-Llama-3.1-8B-Instruct-Q3_K_S.gguf --no-warmup --prompt '"What is LoRA?"' -ngl 40 --grammar-file grammars/json.gbnf -no-cnv -n 40
+(gdb) br llama_grammar_init_impl
+```
+In main.cpp we have:
+```c++
+    smpl = common_sampler_init(model, sparams);
+```
+```c++
+struct common_sampler * common_sampler_init(const struct llama_model * model, const struct common_params_sampling & params) {
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+    ...
+
+        grmr = params.grammar_lazy
+             ? llama_sampler_init_grammar_lazy(vocab, params.grammar.c_str(), "root",
+                                               trigger_words.data(), trigger_words.size(),
+                                               params.grammar_trigger_tokens.data(), params.grammar_trigger_tokens.size())
+             :      llama_sampler_init_grammar(vocab, params.grammar.c_str(), "root");
+```
+And this will end up in:
+```c++
+struct llama_sampler * llama_sampler_init_grammar(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root) {
+    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ false, nullptr, 0, nullptr, 0);
+}
+
+static struct llama_sampler * llama_sampler_init_grammar_impl(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                              bool lazy,
+                     const char ** trigger_words,
+                            size_t num_trigger_words,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens) {
+    auto * ctx = new llama_sampler_grammar;
+
+    if (grammar_str != nullptr && grammar_str[0] != '\0') {
+        *ctx = {
+            /* .vocab        = */ vocab,
+            /* .grammar_str  = */ grammar_str,
+            /* .grammar_root = */ grammar_root,
+            /* .grammar      = */ llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, trigger_words, num_trigger_words, trigger_tokens, num_trigger_tokens),
+        };
+    } else {
+        *ctx = {
+            /* .vocab        = */ vocab,
+            /* .grammar_str  = */ {},
+            /* .grammar_root = */ {},
+            /* .grammar      = */ nullptr,
+        };
+    }
+
+    return llama_sampler_init(
+        /* .iface = */ &llama_sampler_grammar_i,
+        /* .ctx   = */ ctx
+    );
+}
+```
+Which leads us to (in llama-grammar.cpp):
+```c++
+struct llama_grammar * llama_grammar_init_impl(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                              bool lazy,
+                     const char ** trigger_words,
+                            size_t num_trigger_words,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens) {
+    llama_grammar_parser parser;
+
+    // if there is a grammar, parse it
+    if (!parser.parse(grammar_str)) {
+        return nullptr;
+    }
+    ...
+```
+
+```c++
+bool llama_grammar_parser::parse(const char * src) {
+    try {
+        const char * pos = parse_space(src, true);
+        while (*pos) {
+            pos = parse_rule(pos);
+        }
+```
+The call to `parse_space` is just to skip any leadning whitespaces or comments
+and after that call pos will point to the first character of the rule.
+Now, lets take a look at `parse_rule`, and recall that pos is:
+```console
+(gdb) p pos
+$5 = 0x55555610e930 "root   ::= object\nvalue  ::= object | array | string | number | (\"true\" | \"false\" | \"null\") ws\n\nobject ::=\n  \"{\" ws (\n", ' ' <repeats 12 times>, "string \":\" ws value\n    (\",\" ws string \":\" ws value)*\n  )? \"}\" ws\n\narr"...
+```
+
+```c++
+const char * llama_grammar_parser::parse_rule(const char * src) {
+    const char * name_end = parse_name(src);
+    const char * pos      = parse_space(name_end, false);
+    size_t       name_len = name_end - src;
+    uint32_t     rule_id  = get_symbol_id(src, name_len);
+    const std::string name(src, name_len);
+
+    if (!(pos[0] == ':' && pos[1] == ':' && pos[2] == '=')) {
+        throw std::runtime_error(std::string("expecting ::= at ") + pos);
+    }
+    pos = parse_space(pos + 3, true);
+
+    pos = parse_alternates(pos, name, rule_id, false);
+
+    if (*pos == '\r') {
+        pos += pos[1] == '\n' ? 2 : 1;
+    } else if (*pos == '\n') {
+        pos++;
+    } else if (*pos) {
+        throw std::runtime_error(std::string("expecting newline or end at ") + pos);
+    }
+    return parse_space(pos, true);
+}
+```
+So first the name of the rule will be parsed:
+```c++
+static const char * parse_name(const char * src) {
+    const char * pos = src;
+    while (is_word_char(*pos)) {
+        pos++;
+    }
+    if (pos == src) {
+        throw std::runtime_error(std::string("expecting name at ") + src);
+    }
+    return pos;
+}
+```
+This is done by iterating over the characters until we reach a character that
+is not a word character. And notice the pos will point to the first character
+after the name.
+```c++
+```
