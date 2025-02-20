@@ -23,7 +23,7 @@ And the paper for 1.5 can be found [here](https://arxiv.org/abs/2310.03744).
 Llava has a LLM, a Visual Transformer (CLIP with ViT-L/14 (ViT Large and using
 14x14 patches), and adds a trainable projection layer (Multi-layer projector in
 LLaVA-1.5). The projection layer is used to project/transform the patch
-embeddings into the token embedding space.
+embeddings into the token embedding space of the LLM (the language model).
 
 So a [ViT](vit.md) will produce a patch embedding for the image, and the LLM
 will produce token embeddings:
@@ -59,7 +59,7 @@ ask a specific question about the image.
 For example, we can pass the following image to `llava-cli` which is part of
 llama.cpp and it will describe it:
 
-![image](apollo11.jpg)
+![image](../images/apollo11.jpg)
 
 ```console
 $ ~/work/ai/llama.cpp/llava-cli --no-display-prompt --log-disable --n-gpu-layers 25 -m ~/work/ai/llava-v1.5-7b/ggml-model-f16.gguf --mmproj ~/work/ai/llava-v1.5-7b/mmproj-model-f16.gguf --image ~/work/ai/learning-ai/notes/apollo11.jpg 
