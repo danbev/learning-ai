@@ -32,7 +32,8 @@ $ cp ${GRANITE_PATH}/llava.clip vit/pytorch_model.bin
 $ cp ${GRANITE_PATH}/llava.projector vit/
 $ cp ${GRANITE_PATH}/config.json vit/
 ```
-I had to manually add the following fields to the vision config:
+I had to manually add the fields `layer_norm_eps` and `hidden_act` to vision
+config in vit/config.json:
 ```json
     "vision_config": {
         "hidden_size": 1152,
@@ -82,7 +83,7 @@ Traceback (most recent call last):
                     ~~~~~^^^^^^
 KeyError: 'image_newline'
 ```
-There is a note about this in the README.md and the an error occurs we can try
+There is a note about this in the README.md and that if an occurs we can try
 using the following script to convert the model:
 ```python
 import os
@@ -96,11 +97,12 @@ model = transformers.AutoModelForImageTextToText.from_pretrained(model_path)
 tokenizer.save_pretrained(llm_export_path)
 model.language_model.save_pretrained(llm_export_path)
 ```
+So lets try that:
 ```console
 (venv) $ python convert-granite.py
 Loading checkpoint shards: 100%|████████████████████████████████████████████████████████████████████████| 2/2 [00:00<00:00, 13.20it/s]
 ```
-So this will have produces a director with the language model files:
+So this will have produced a directory with the language model files:
 ```console
 (venv) $ ls models/granite-vision-3.1-2b/
 added_tokens.json       merges.txt                        model-00003-of-00003.safetensors  tokenizer_config.json
@@ -117,6 +119,62 @@ And optionally we can quantize the model to a lower precision.
 /build/bin/llama-quantize models/granite-vision-3.1-2b-f16.gguf models/granite-vision-3.1-2b-Q4_K.gguf Q4_K
 ```
 
+And then we can run the model using `llama-llava-cli`:
 ```console
-./llama-llava-cli -m models/granite-vision-3.1-2b-f16.gguf --mmproj vit/mmproj-model-f16.gguf --image some-image.jpg -c 4096
+./llama-llava-cli -m models/granite-vision-3.1-2b-Q4_K.gguf --mmproj vit/mmproj-model-f16.gguf --image some-image.jpg -c 4096 -ngl 20
 ```
+
+But there might be somethin wrong with the steps above I think. Looking at
+the console ouput I can see:
+```console
+clip_model_load: model name:   vit
+clip_model_load: description:  image encoder for LLaVA
+clip_model_load: GGUF version: 3
+clip_model_load: alignment:    32
+clip_model_load: n_tensors:    451
+clip_model_load: n_kv:         20
+clip_model_load: ftype:        f16
+
+clip_model_load: loaded meta data with 20 key-value pairs and 451 tensors from vit/mmproj-model-f16.gguf
+clip_model_load: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+clip_model_load: - kv   0:                       general.architecture str              = clip
+clip_model_load: - kv   1:                      clip.has_text_encoder bool             = false
+clip_model_load: - kv   2:                    clip.has_vision_encoder bool             = true
+clip_model_load: - kv   3:                   clip.has_llava_projector bool             = true
+clip_model_load: - kv   4:                          general.file_type u32              = 1
+clip_model_load: - kv   5:                               general.name str              = vit
+clip_model_load: - kv   6:                        general.description str              = image encoder for LLaVA
+clip_model_load: - kv   7:                        clip.projector_type str              = mlp
+clip_model_load: - kv   8:                     clip.vision.image_size u32              = 384
+clip_model_load: - kv   9:                     clip.vision.patch_size u32              = 14
+clip_model_load: - kv  10:               clip.vision.embedding_length u32              = 1152
+clip_model_load: - kv  11:            clip.vision.feed_forward_length u32              = 4304
+clip_model_load: - kv  12:                 clip.vision.projection_dim u32              = 0
+clip_model_load: - kv  13:           clip.vision.attention.head_count u32              = 16
+clip_model_load: - kv  14:   clip.vision.attention.layer_norm_epsilon f32              = 0.000010
+clip_model_load: - kv  15:                    clip.vision.block_count u32              = 27
+clip_model_load: - kv  16:                  clip.vision.feature_layer arr[i32,4]       = [4, 8, 16, 27]
+clip_model_load: - kv  17:                     clip.vision.image_mean arr[f32,3]       = [0.481455, 0.457828, 0.408211]
+clip_model_load: - kv  18:                      clip.vision.image_std arr[f32,3]       = [0.268630, 0.261303, 0.275777]
+clip_model_load: - kv  19:                              clip.use_gelu bool             = false
+clip_model_load: - type  f32:  282 tensors
+clip_model_load: - type  f16:  169 tensors
+clip_model_load: CLIP using CPU backend
+key clip.use_silu not found in file
+clip_model_load: text_encoder:   0
+clip_model_load: vision_encoder: 1
+clip_model_load: llava_projector:  1
+clip_model_load: minicpmv_projector:  0
+clip_model_load: glm_projector:  0
+clip_model_load: model size:     851.17 MB
+clip_model_load: metadata size:  0.16 MB
+clip_model_load: params backend buffer size =  851.17 MB (451 tensors)
+key clip.vision.image_grid_pinpoints not found in file
+key clip.vision.mm_patch_merge_type not found in file
+key clip.vision.image_crop_resolution not found in file
+clip_model_load: compute allocated memory: 59.76 MB
+```
+And `clip_image_batch_encode` in `clip.cpp` seems to take a very long time to
+complete `ggml_backend_graph_compute(ctx->backend, gf)`.
+'m not sure if there is something I messed up above or if it could be something
+with configuration or options.
