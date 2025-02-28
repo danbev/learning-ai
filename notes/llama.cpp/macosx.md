@@ -426,3 +426,126 @@ ggml-backend-reg.o:     file format Mach-O arm64
               DW_AT_LLVM_sysroot        ("/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk")
 error: write on a pipe with no reader
 ```
+
+### Validate an application
+In xcode we can validate an application by using the `Product -> Archive` menu item. First make sure
+that you have a `Team` selected for the `Release` configuration in `Signing & Capabilities`, and
+doulbe check that you are not on the `Debug` configuration. Then select `Product -> Archive` and
+and `Validate`. If there are any errors with application, or the xcframeworks (dependencies
+of the app) then they should be displayed here.
+
+You might run into an issue where the application name is already take and the validation fails
+becauase of that. We can rename the app by going to `Build Settings` and search for `Product Name`
+and update it. 
+
+Also make sure to select a device like `Any iOS Device`.
+
+Set `Skip Install` to `YES` in the `Build Settings` for the `Release` configuration. 
+
+
+An archive is a build of your app, including debugging information, that Xcode stores in a bundle.
+Xcode repackages the archive’s contents based on the distribution configuration you choose for
+your distribution.
+
+
+### Signing
+The framework provider (llama.cpp in this case) does NOT need to sign the XCFramework for distribution. You can build and publish the XCFramework unsigned.
+The end user (app developer) who incorporates the XCFramework is responsible for signing everything in their app bundle, including third-party frameworks, during their own build process.
+
+
+### bitcode issue
+Bitcode is the binary representation of llvm IR (intermediate representation) which was used by Apple
+to enable them to potentially recompile the app for different architectures. This is not used anymore
+and it is not clear to me if it was used but it was required for submission to the app store at some
+point. It has now been deprecated and is not required for submission to the app store.
+
+But I ran into this when building an xcframework for llama.cpp:
+```console
+/Users/danbev/work/llama.cpp/build-apple/llama.xcframework/ios-arm64/llama.framework bitcode_strip /Users/danbev/work/llama.cpp/build-apple/llama.xcframework/ios-arm64/llama.framework/Versions/A/llama.dSYM/Contents/Resources/DWARF/llama: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip exited with 1
+```
+```console
+bitcode_strip /Users/danbev/work/llama.cpp/build-apple/llama.xcframework/ios-arm64/llama.framework/Versions/A/llama.dSYM/Contents/Resources/DWARF/llama
+
+
+```console
+    -DCMAKE_XCODE_ATTRIBUTE_ENABLE_BITCODE=NO
+    -DCMAKE_XCODE_ATTRIBUTE_BITCODE_GENERATION_MODE=none
+```
+
+### Signing issue
+When trying to validate an application in xcode I got the following error:
+```console
+Missing signing identifier at "/var/folders/7h/g216wj3x0qldxw27twph8mwr0000gn/T/XcodeDistPipeline.~~~9whq1k/Root/Payload/llama.swiftui.app/Frameworks/llama.framework/Libraries/libggml-base.dylib".
+```
+
+```console
+Missing signing identifier at "/var/folders/7h/g216wj3x0qldxw27twph8mwr0000gn/T/XcodeDistPipeline.~~~0erbQK/Root/Payload/llama.swiftui.app/Frameworks/llama.framework/Versions/A/llama.dSYM/Contents/Resources/DWARF/llama".
+```
+
+### dSYM
+Debugging symbols are extracted and stored in a .dSYM bundle. Each time we build our app xcode will
+generate an UUID for the app and this UUID is stored in the binary. The .dSYM bundle also contains
+this UUID and the debugger can use this to match the binary with the .dSYM bundle. This is how the
+For example:
+```console
+$ dwarfdump -u build-apple/llama.xcframework/ios-arm64/dSYMs/llama.dSYM/Contents/Resources/DWARF/llama
+UUID: 57B0892D-F062-35BB-B7D9-65D2941C7594 (arm64) build-apple/llama.xcframework/ios-arm64/dSYMs/llama.dSYM/Contents/Resources/DWARF/llama
+```
+When a crash occurs the device will collect information about the specific exception, the stack trace
+which only contains raw memory addresses. A list of images (user and system frameworks) loaded by
+the application (each one has a UUID).
+This information is then sent to the crash reporting service which will then look for the .dSYM
+bundle with the matching UUID. If found the crash reporting service can then symbolicate the stack
+trace and provide the developer with a human readable stack trace.
+
+Now, these should not be in the actual bundle of a framework but separate from it or there will
+be validation errors saying that the file containing the symbols is a binary executable and not
+allowed in the bundle. For example:
+```console
+“llama.swiftui.app/Frameworks/llama.framework/llama.dSYM/Contents/Resources/DWARF/llama” binary file
+is not permitted. Your app cannot contain standalone executables or libraries, other than a valid
+CFBundleExecutable of supported bundles.
+For details, visit: https://developer.apple.com/documentation/bundleresources/placing_content_in_a_bundle (ID: ba3bef0c-9f49-47e6-8250-5f3488bcb1a3)
+```
+In a framework there should be a .dSYM bundle next to the framework bundle and not inside of it.
+
+### Missing CFBundleIconName
+```console
+Validation failed
+Missing Info.plist value. A value for the Info.plist key 'CFBundleIconName' is missing in the bundle 'ggml-org.llama'. Apps built with iOS 11 or later SDK must supply app icons in an asset catalog and must also provide a value for this Info.plist key. For more information see http://help.apple.com/xcode/mac/current/#/dev10510b1f7. (ID: c7ab3ccb-c2ec-4dbe-b950-9fef14371fae)
+```
+There is now icon in UI/Assets.xcassets/AppIcon.appiconset/ so I added one. Not sure if there was one before
+or not. 
+
+```console
+Validation failed
+Missing required icon file. The bundle does not contain an app icon for iPhone / iPod Touch of exactly '120x120' pixels, in .png format for iOS versions >= 10.0. To support older versions of iOS, the icon may be required in the bundle outside of an asset catalog. Make sure the Info.plist file includes appropriate entries referencing the file. See https://developer.apple.com/documentation/bundleresources/information_property_list/user_interface (ID: a173b605-820c-46b7-9386-cb5ee4043e2d)
+```
+
+```console
+Validation failed
+Invalid bundle structure. The “llama.swiftui.app/Frameworks/llama.framework/Versions/A/llama” binary file is not permitted. Your app cannot contain standalone executables or libraries, other than a valid CFBundleExecutable of supported bundles. For details, visit: https://developer.apple.com/documentation/bundleresources/placing_content_in_a_bundle (ID: 33e8f4a4-59b4-4c7d-b77c-7e239ecdc1eb)
+```
+
+### iOS App Store Package (IPA)
+This is a file (archive?) that contains everything needed to run an app and distributed it for testing
+to the app store.
+
+
+### Frameworks structure
+The framework structure is a bit different for macos and ios which can be important when creating
+a xcframework. Each arch will need to be packages in the way that is expected by the platform.
+For macos we have a structure like this:
+```console
+
+
+```
+
+### Version warning
+I got this warning when validating an app:
+```console
+SDK version issue. This app was built with the iOS 17.5 SDK. Starting April 24, 2025, all iOS and
+iPadOS apps must be built with the iOS 18 SDK or later, included in Xcode 16 or later, in order to
+be uploaded to App Store Connect or submitted for distribution.
+```
+But the rest of the validation process passed. 
