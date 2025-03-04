@@ -50,7 +50,7 @@ x₂₂ = 0.707 * 190 + 0.707 * -8 = 134.23 - 5.65 = 128.58
 So that was one step, and we can do this for as many steps as we want.
 
 Now, when I saw and read about this below, there is a mention of a forward pass
-which is the process of adding noise to an image. I though that only the last
+which is the process of adding noise to an image. I thought that only the last
 step was recorded and used but all steps are recorded and used as input when
 training. And the original image is used as the target (the truth value) when
 training. So training it not just done on the final step with the original image
@@ -60,7 +60,7 @@ how the model learns to remove noise from the image.
 The guassian noise is chosen using the guassian distribution or normal
 distribution which is a probability distribution that is symmetric about the
 mean, showing that data near the mean are more frequent in occurrence than data
-far from the mean.  we say we sample from this distrubtion which is basically
+far from the mean.  We say we sample from this distrubtion which is basically
 drawing random values from the distribution which will follow the probability
 distribution function.
 
@@ -78,7 +78,7 @@ noice in iteratively small steps T:
 βₜ = the amount of noise to add at step t.
 σₜ = how much of the original image to keep at step t.
 ```
-β is parameter that decides the amount of guassian noise to add at each step.
+β is a parameter that decides the amount of guassian noise to add at each step.
 Its value is decided by the variance schedule which will make the progression
 from the original image to the final image smooth, the amount of noice will
 increase over time.
@@ -107,10 +107,10 @@ The can write the probability distribution function as:
 ```
 q(x₁, ..., xₜ|x₀) = ∏ᵢ q(xᵢ|xᵢ-₁)
 ```
-So I read above as `q(x_1, ..., x_t|x_o)` is a function (like in a programming
+So I read the above as `q(x_1, ..., x_t|x_o)` is a function (like in a programming
 language) which takes `x₀` (the initial input/state) and the body of the
 function will take those values and multiply them together which will then be
-then end result which is returned by the function.
+the end result which is returned by the function.
 We can also write this as:
 ```
 q(xₜ|x₀) = ∏ᵢ q(xᵢ|xᵢ-₁)
@@ -139,11 +139,11 @@ belongs to the open interval (0, 1) (so values greater than 0 and less than 1).
 The notation of N(x ; μ, σ²), here x is the variable of interest, μ is the mean
 of the distribution, and σ² is the variance of the distribution.
 
-I'm trying to visualize this and my current mental model is the number line the
+I'm trying to visualize this and my current mental model is the number line where
 for each time step we will have a different mean for the distribution, hence the
 distribution changes a little for each time step. And the variance, how much the
 samples are spreaad out from the mean is also different for each time step but 
-is the same for all dimensions which is the reason for the identity matrix..
+is the same for all dimensions which is the reason for the identity matrix.
 And this "should" give different/changing sampled random values as time
 progresses. 
 Because the mean of the distribution at each time step is dependent on the
@@ -189,7 +189,7 @@ latent space vector directly, but instead it is sampling from a guassian
 distribution with a mean and variance. But when the backpropagation algorithm
 is used to train the model, it cannot pass the gradient through a random node.
 So the node itself `z` has a value, that is not the problem, the problem is that
-the value in this case is produced randomlly by sampling from the normal
+the value in this case is produced randomly by sampling from the normal
 distribution N(μ, σ). Let say this was a function n(μ, σ) and it returns
 a random value:
 ```
@@ -253,6 +253,96 @@ changes/nudges to the parameters mu and sigma.
 ```
 q(xᵢ|xᵢ-₁) = N(xₜᵢ; √βₜxₜ₋₁, βₜI)
 ```
+
+### Large Language Diffusion Models (LLDM)
+The paper https://arxiv.org/pdf/2502.09992 calls these models LLaDA, a
+Large Language Diffusion with mAsking.
+
+So the idea is to use diffusion for language instead of the normal transformer
+based archtectures. So lets look at how this might work:
+```
+LLM
+
+prompt -> tokenization -> embedding -> transformer ->output
+
+LLaDA:
+prompt -> tokenization -> embedding -> single context vector -> diffusion -> output
+```
+So we can see that our input prompt is still tokenized and token embeddings are
+looked up for the tokens. But instead of feeding these embeddings into the
+transformer, all the token embeddings for the sequence will be combined into
+a single context vector. This can be done with techniques like mean pooling,
+max pooling, or self-attention. This single context vector is then fed into the
+We can think of this single context vector as vector pointing to a specific
+place in an higly dimensional space. This is has a meaning, or context, as the
+the training result (the embedding space) produced this space. What I mean it
+that the context vector is a point in the embedding space that carries some
+meaning of the input prompt.
+
+1. Prompt processing
+ * Prompt is tokenized
+ * Token embeddings are looked up
+ * Token embeddings are combined into a single context vectora (using pooling
+   or other methods)
+
+2. Initial noise generation
+ * We generate random noise x_T
+ * This is not derived from the prompt/context vector!
+
+3. Guided denoising
+  * Reverse diffusion process
+  * At each step the context vector from your prompt guides the denoising direction
+  * The context vector serves as a "target attractor" that pulls the denoising trajectory
+
+Forward diffusion:
+```
+x_t = sqrt(1-β_t) * x_{t-1} + sqrt(β_t) * ε
+
+x_t = the image at time t
+x_{t-1} = the image at time t-1
+β_t = the amount of noise to add at step t
+ε = guassian noise
+
+sqrt(1-β_t): This is the coefficient that determines how much of the previous vector we keep.
+sqrt(β_t): This is the coefficient that determines how much random noise we add.
+```
+We keep (1-β_t) percentage of the signal from the previous step. We add β_t
+percentage of random noise. The square roots ensure the resulting vector has
+the right scale.
+
+Reverse diffusion:
+This is the generation phase.
+```
+x_{t-1} = 1/sqrt(1-β_t) * (x_t - (β_t/sqrt(1-β_t)) * predicted_noise) + sigma_t * z
+
+x_{t-1} = the image at time t-1
+x_t = the image at time t
+β_t = the amount of noise to add at step t
+predicted_noise = the noise predicted by the model
+sigma_t = the noise scale at step t
+z = guassian noise
+```
+Now, an important part is the `predicted_noise` above. This is predicted by the
+neural network. In a conditional diffusion model (which is what we are talking
+about here) the prompt embedding (or is it the context vector?) is used in
+addition to x_t and t:
+```
+predicted_noise = model(x_t, t, prompt_embedding)
+
+x_t = the noisy state
+t   = the time step
+```
+The prompt_embeddings can be used to guide the denoising process, like moving
+steering it to the right region of the embedding space.
+Now, recall that we start with pure noise x_T. And we perform T denoising steps
+going backward to x_{T-1}, x_{T-2}, ..., all the way to x_0. There is no early
+stopping like in auto-regressive models where a stop token might cause generation
+to stop, we always to T steps of denoising. So when T steps are completed we are
+done.
+When we reach x_0 we have the final output which encodes information about the
+entire sequence. This is designed to be decoded back into a sequence of tokens.
+
+_wip_
 
 
 ### Guassian noise
