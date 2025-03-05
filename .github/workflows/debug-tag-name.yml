@@ -17,8 +17,8 @@ jobs:
     steps:
       - name: Checkout with full history
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+          #with:
+          #fetch-depth: 0
       
       - name: Debug Git Info
         id: git_info
