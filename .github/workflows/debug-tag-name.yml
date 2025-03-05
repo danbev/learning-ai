@@ -1,0 +1,81 @@
+name: Debug Tag Name
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+jobs:
+  debug-tag-name:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Debug Git Info
+        id: git_info
+        run: |
+          echo "Current branch: ${{ env.BRANCH_NAME }}"
+          echo "github.ref_name: ${{ github.ref_name }}"
+          echo "github.head_ref: ${{ github.head_ref }}"
+          
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          SHORT_HASH=$(git rev-parse --short=7 HEAD)
+          
+          echo "Build number (commit count): $BUILD_NUMBER"
+          echo "Short hash: $SHORT_HASH"
+          
+          # Set for later steps
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "short_hash=$SHORT_HASH" >> $GITHUB_ENV
+      
+      - name: Determine tag name
+        id: tag
+        shell: bash
+        run: |
+          BUILD_NUMBER="${{ env.build_number }}"
+          SHORT_HASH="${{ env.short_hash }}"
+          
+          echo "Raw values:"
+          echo "BUILD_NUMBER: $BUILD_NUMBER"
+          echo "SHORT_HASH: $SHORT_HASH"
+          echo "BRANCH_NAME: ${{ env.BRANCH_NAME }}"
+          
+          if [[ "${{ env.BRANCH_NAME }}" == "master" || "${{ env.BRANCH_NAME }}" == "main" ]]; then
+            echo "Using master/main branch format"
+            TAG_NAME="b${BUILD_NUMBER}"
+          else
+            echo "Using non-master branch format"
+            SAFE_NAME=$(echo "${{ env.BRANCH_NAME }}" | tr '/' '-')
+            TAG_NAME="${SAFE_NAME}-b${BUILD_NUMBER}-${SHORT_HASH}"
+          fi
+          
+          echo "Final tag name: $TAG_NAME"
+          echo "name=$TAG_NAME" >> $GITHUB_OUTPUT
+      
+      - name: Test output
+        run: |
+          echo "The tag name is: ${{ steps.tag.outputs.name }}"
+          
+          # Create a test file
+          echo "Test content" > test-file.txt
+          
+          # Create a zip file with the tag name
+          zip -r llama-${{ steps.tag.outputs.name }}-test.zip test-file.txt
+          
+          # List the zip file to verify name
+          ls -la *.zip
+      
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-${{ steps.tag.outputs.name }}-test
+          path: llama-${{ steps.tag.outputs.name }}-test.zip
