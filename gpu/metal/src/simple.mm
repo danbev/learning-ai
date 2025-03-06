@@ -21,7 +21,8 @@ int main(int argc, const char * argv[]) {
 
         NSError *error = nil;
         NSString *libraryPath = @"kernel.metallib";
-        id<MTLLibrary> defaultLibrary = [device newLibraryWithFile:libraryPath error:&error];
+        NSURL *libraryURL = [NSURL fileURLWithPath:libraryPath];
+        id<MTLLibrary> defaultLibrary = [device newLibraryWithURL:libraryURL error:&error];
         if (!defaultLibrary) {
             NSLog(@"Failed to load the library. Error: %@", error.localizedDescription);
             return -1;
