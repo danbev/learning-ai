@@ -3,16 +3,16 @@
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-	// Metal (MLT) Device
-	NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
-	id<MTLDevice> device = nil;
-	for (id<MTLDevice> availableDevice in devices) {
-	    if ([availableDevice.name isEqualToString:@"Apple M3"]) {
-		device = availableDevice;
-		NSLog(@"Using Metal device: %@", device.name);
-		break;
-	    }
-	}
+        // Metal (MLT) Device
+        NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
+        id<MTLDevice> device = nil;
+        for (id<MTLDevice> availableDevice in devices) {
+            if ([availableDevice.name isEqualToString:@"Apple M3"]) {
+                device = availableDevice;
+                NSLog(@"Using Metal device: %@", device.name);
+                break;
+            }
+        }
 
         if (!device) {
             NSLog(@"Apple M3 GPU is not available.");
@@ -27,17 +27,17 @@ int main(int argc, const char * argv[]) {
             NSLog(@"Failed to load the library. Error: %@", error.localizedDescription);
             return -1;
         }
-	NSLog(@"Functions in library:");
-	for (NSString *name in defaultLibrary.functionNames) {
-	    NSLog(@"    %@", name);
-	}
+        NSLog(@"Functions in library:");
+        for (NSString *name in defaultLibrary.functionNames) {
+            NSLog(@"    %@", name);
+        }
 
         id<MTLFunction> kernelFunction = [defaultLibrary newFunctionWithName:@"simpleMultiply"];
         if (!kernelFunction) {
             NSLog(@"Failed to find the kernel function.");
             return -1;
         }
-	NSLog(@"Kernel function: %@", kernelFunction.name);
+        NSLog(@"Kernel function: %@", kernelFunction.name);
 
         id<MTLComputePipelineState> computePipelineState = [device newComputePipelineStateWithFunction:kernelFunction error:&error];
         if (!computePipelineState) {
