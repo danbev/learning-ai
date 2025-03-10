@@ -186,6 +186,44 @@ ggml_backend_metal_device_init: error: failed to allocate context
 llama_init_from_model: failed to initialize Metal backend
 Could not load context!
 ```
+So this error is happening when the model is being compiled by by Metal. This is done in
+`ggml/src/ggml-metal/ggml-metal.m`:
+```c++
+static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t dev) {
+    ...
+                metal_library = [device newLibraryWithSource:src options:options error:&error];
+                if (error) {
+                    GGML_LOG_ERROR("%s: error: %s\n", __func__, [[error description] UTF8String]);
+                    return NULL;
+                }
+```
+When `newLibraryWithSource` is called it will take the kernel sources and send them to the
+Metal compiler XPC service for compilation. 
+```console
+(lldb) p src
+(__NSCFString *) 0x0000000148058000 @"#define GGML_COMMON_DECL_METAL\n#define GGML_COMMON_IMPL_METAL\n#if defined(GGML_METAL_EMBED_LIBRARY)\n#ifndef GGML_COMMON_DECL\n\n#if defined(GGML_COMMON_DECL_C)\n#include <stdint.h>\n\ntypedef uint16_t ggml_half;\ntypedef uint32_t ggml_half2;\n\n#define GGML_COMMON_AGGR_U\n#define GGML_COMMON_AGGR_S\n\n#define GGML_COMMON_DECL\n#elif defined(GGML_COMMON_DECL_CPP)\n#include <cstdint>\n\ntypedef uint16_t ggml_half;\ntypedef uint32_t ggml_half2;\n\n// std-c++ allow anonymous unions but some compiler warn on it\n#define GGML_COMMON_AGGR_U data\n// std-c++ do not allow it.\n#define GGML_COMMON_AGGR_S data\n\n#define GGML_COMMON_DECL\n#elif defined(GGML_COMMON_DECL_METAL)\n#include <metal_stdlib>\n\ntypedef half  ggml_half;\ntypedef half2 ggml_half2;\n\n#define GGML_COMMON_AGGR_U\n#define GGML_COMMON_AGGR_S\n\n#define GGML_COMMON_DECL\n#elif defined(GGML_COMMON_DECL_CUDA)\n#if defined(GGML_COMMON_DECL_MUSA)\n#include <musa_fp16.h>\n#else\n#include <cuda_fp16.h>\n#endif\n#include <cstdint>\n\ntypedef half  ggml_half;\ntypedef half2 ggml_half2;\n\n#define GGML_"
+```
+This is beginning of the content of the file `ggml/src/ggml-metal/ggml-metal.metal`.
+
+So the `XPC_ERROR_CONNECTION_INTERRUPTED` error is happening perhaps because the XPC service
+is experiencing some kind of interruptions while trying to compile the src (the shader code).
+So the issue seems to be with the compilation of the metal shader code. In the output above
+we see the following message:
+```console
+Memory pressure warning received
+```
+Perhaps the system is terminating the XPC service because of memory pressure.
+
+
+Notice that the logged free GPU memory availabe is 5461 MiB.
+```console
+llama_model_load_from_file_impl: using device Metal (Apple A18 Pro GPU) - 5461 MiB free
+```
+The model size in this case is 2.64 GiB which is about 2703 MiB, so the it does not seem
+that the model will not fit into the GPU memory, in fact is should be able to fit without
+any issue.
+
+
 And the rest of the error in the issue is:
 ```console
 Memory pressure warning received
