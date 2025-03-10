@@ -178,7 +178,7 @@ $L__BB0_2:
 ```
 
 ### CUBIN (CUDA Binary)
-Is an ELF-formatted file. THis contains CUDA executable code sections and
+Is an ELF-formatted file. This contains CUDA executable code sections and
 sections containing symbols, relocators, debug info. nvcc embeds cubin files
 into the host executable file.
 
@@ -249,7 +249,7 @@ like `cudaMemcpy` this is a synchronous operation, the host program will not
 progress (it will block) until the entire memory transfer is complete.
 When we call `cudaMemcpy` this function is added to the default CUDA stream. The
 default stream operations are all executed in the order they are called/added.
-In this wasy `cudaMemcpy` acts as a synchronization point between the host and
+In this way `cudaMemcpy` acts as a synchronization point between the host and
 the device.
 
 When using streams we use the async version of memcpy, like `cudaMemcpyAsync`,
