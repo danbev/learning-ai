@@ -303,3 +303,280 @@ these specific GPUs.
 ### NPPC (NVIDIA Performance Primitives Core)
 This is a collection of GPU-accelerated image, video, and signal processing
 functions.
+
+### Threads/memory
+If we think about how memory cells for we have small
+[capacitators](https://github.com/danbev/learning-iot?tab=readme-ov-file#capacitors)
+that can store a 0 or a 1. These cells are arranged in a grid and can be read
+using an row address and a column addres. The row address part of the request
+address to read will activate a row in this grid. This will cause the cells in
+the row to be connected to the column lines which will then be available to be
+read from the sense amplifiers.
+```
+Address:   00110001001001111010001101101110011
+          |<--- ROW ADDR --->|<-- COL ADDR -->|
+               │                    │
+               │                    │
+               ▼                    ▼
+    ┌──────────────┐         ┌────────────────┐
+    │              │         │                │
+    │ ROW DECODER  │         │ COLUMN DECODER │
+    │              │         │                │
+    └──────┬───────┘         └───────┬────────┘
+           │                         │
+           │                         │
+           │                         │
+           │                         ▼
+           │            ┌──────────────────────────────┐
+           │            │      SENSE AMPLIFIERS        │
+           │            │  ▲   ▲   ▲   ▲   ▲   ▲   ▲   │────► DATA
+           │            │  │   │   │   │   │   │   │   │     BUFFERS
+           │            └──┼───┼───┼───┼───┼───┼───┼───┘
+           │       |   |   │   │   │   │   │   │   │
+           │       |   |   │   │   │   │   │   │   │
+           │       |   |   │   │   │   │   │   │   │
+           │       |   |   │   │   │   │   │   │   │
+           │       |   |   │   │   │   │   │   │   │
+           │    Selected   │   │   │   │   │   │   │
+           │    Row|   |   │   │   │   │   │   │   │
+           ▼       |   |   │   │   │   │   │   │   │
+    ┌─────────────►┌───┬───┬───┬───┬───┬───┬───┬───┐
+    │              │ C │ C │ C │ C │ C │ C │ C │ C │  Activated Row
+    │              └─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┘  (Word Line)
+    │                │   │   │   │   │   │   │   │
+    │              ┌─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┐
+    │              │ C │ C │ C │ C │ C │ C │ C │ C │
+    │              └─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┘
+    │              ┌─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┐
+    │              │ C │ C │ C │ C │ C │ C │ C │ C │
+    │              └─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┘
+    │              ┌─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┐
+    │              │ C │ C │ C │ C │ C │ C │ C │ C │
+    │              └─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┘
+    │              ┌─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┐
+    │              │ C │ C │ C │ C │ C │ C │ C │ C │
+    │              └─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┘
+    |              ┌─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┐
+    |              │ C │ C │ C │ C │ C │ C │ C │ C │
+    |              └─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┴─┬─┘
+    │
+    │               Bit Lines
+    │              (connecting cells to sense amplifiers)
+    └──────────────────────────────────────────────────┘
+                          MEMORY ARRAY
+
+ ┌───┐
+ │ 1 │ READ OPERATION:
+ └───┘
+     1. Row address is decoded by row decoder
+     2. Selected word line activates ALL cells in that row
+     3. ALL cells in row connect to bit lines
+     4. Data from entire row flows UP to sense amplifiers
+     5. Column decoder selects which bit from sense amplifiers to read
+     6. Reading drains ALL capacitors in the row (destructive read)
+     7. Data must be written back to entire row after reading
+```
+When a cell is read it is drained, this charge (or lack of charge) creates only
+a very small voltage difference on the bit line (typically just tens of
+millivolts). The sense amplifier detects this extremely weak signal. Once
+detected, the sense amplifier boosts this tiny voltage difference to full logic
+levels (0V for a logic "0" and typically 1.1-3.3V for a logic "1").
+
+Reading a memory cell is a destructive operation. The act of reading the cell
+drains the charge from the cell, so the data must be written back to the cell
+after reading. This is done by sense amplifiers, the refresh the memory cells
+which makes sense since they have the data that was read. This is called 
+write back. So when a new row need to be read the old row has be be written back
+first.
+
+One thing to keep in mind is that a row and a page often means the same thing,
+so if you hear the term page in the context of memory it is often referring to
+a row in the memory array. So reading a page is the same thing as reading a row.
+
+Now the column address is actually just accessing a single column/bitline/memory
+cell, and this is read from the strong voltage in the sense amplifier. Now, we
+can read repeatably from the sense amplifier and note that all cells in the row
+are actually available, not just the column that we want to read. This is where
+the one advantage of storing data in consecutive memory cells is an advantage.
+They can be read without having to got through the row selection process.
+
+So lets say that a the time to read a new column is 16 cycles, and the time
+to read a new row/page is also 16 cycles, as well as the time to write back
+a row/page is 16 cycles.
+Then to read a new page we have to read the row, read the column and write it
+back which is 16 + 16 + 16 = 48 cycles. If we want to read the next column
+we only have to read the column which is 16 cycles. So reading the next column
+is faster than reading the next page.
+
+This is why data read patterns are important. If we read data in a sequential
+pattern we can take advantage of the fact that the data is already in the sense
+amplifiers and we can read it faster.
+
+
+So this only depends on how I access the memory of my input for example. Like
+there is nothing that CUDA does to "introspect" my code or anything, it is only
+the access patterns that I use that determines if my code will be efficient
+regarding memory. If I access memory in consecutively the memory subsystem
+(like we discussed above) will work efficiently, but if I read data in patterns
+that "jump" around and access different rows things will not be as performant.
+
+To tie this back to CUDA, lets take a look a the following kernel function:
+```c++
+__global__ void add_arrays(int* a, int* b, int* c, int size) {
+    // Calculate the index of array index that this thread will process.
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        c[idx] = a[idx] + b[idx];
+        printf("[GPU] array index [%d]: adding %d + %d = %d\n", idx, a[idx], b[idx], c[idx]);
+    }
+}
+```
+Say we have 2 thread blocks and 4 threads in each block:
+```
+block_0: thread_0, thread_1, thread_2, thread_3
+block_1: thread_0, thread_1, thread_2, thread_3
+```
+Now, the variable `idx` will be the following for these threads:
+```
+Block 0:
+Thread 0: 0 * 4 + 0 = 0
+Thread 1: 0 * 4 + 1 = 1
+Thread 2: 0 * 4 + 2 = 2
+Thread 3: 0 * 4 + 3 = 3
+
+Block 1:
+Thread 0: 1 * 4 + 0 = 4
+Thread 1: 1 * 4 + 1 = 5
+Thread 2: 1 * 4 + 2 = 6
+Thread 3: 1 * 4 + 3 = 7
+```
+So when the function runs the accesses will be like this:
+```
+Block 0, Warp 0 (contains threads 0-3):
+Thread 0: a[0], b[0], c[0]
+Thread 1: a[1], b[1], c[1]
+Thread 2: a[2], b[2], c[2]
+Thread 3: a[3], b[3], c[3]
+
+Block 1, Warp 0 (contains threads 4-7):
+Thread 0: a[4], b[4], c[4]
+Thread 1: a[5], b[5], c[5]
+Thread 2: a[6], b[6], c[6]
+Thread 3: a[7], b[7], c[7]
+```
+So when these threads execute they are accessing memory in a consecutive pattern
+so the GPU memory subsystem can read a single DRAM row and read many values in
+on memory transaction.
+
+There's no special "magic" or introspection that CUDA brings to memory access
+patterns. The memory subsystem in GPUs works on the same fundamental DRAM
+principles we discussed earlier - with rows, columns, sense amplifiers, and the
+efficiency advantage of accessing consecutive locations within the same row.
+
+In CUDA we have a grid or work, which gets split into many blocks, and there
+are many threads in each block.
+
+Thread block:
+```
+  +-----------------------------------+
+  | | | | | | | | | | | | | | | | | | |
+  | | | | | | | | | | | | | | | | | | |
+  | | | | | | | | | | | | | | | | | | |
+  | | | | | | | | | | | | | | | | | | |
+  | ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ |
+  +-----------------------------------+
+```
+A block has a fixed number of threads and these are guarenteed to run
+simultaneously on the same SM.
+
+Each thread as it's own registers and can maintain it's own state. But the
+program counter is not per thread but instead per group of 32 threads called
+a warp.
+
+```c++
+__global__ void add_arrays(int* a, int* b, int* c, int size) {
+    // Calculate the index of array index that this thread will process.
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        if (idx == 4) {
+            printf("Thread idx: %d\n", idx);
+            // skip this compuation.
+        }
+        c[idx] = a[idx] + b[idx];
+        printf("[GPU] array index [%d]: adding %d + %d = %d\n", idx, a[idx], b[idx], c[idx]);
+    }
+}
+```
+What will happen is that there will be a hardware activity mask which will
+mask all threads but thread 4 as active. There state will be maintained but
+the won't actually execute. When a warp executes a path that only some threads
+need to take, the execution units for the inactive threads sit idle. In our
+example, while executing the if (idx == 4) block, 31 out of 32 execution units
+(97%) are doing nothing.
+
+The hardware masking is specific to the GPU architecture. Each warp has a 32 bit
+mask (one for each thread) where a 1 means that the thread is active and a 0
+means that the thread is inactive. When a conditional statement is encountered
+in a kernel, the hardware evaluates the condition for each thread in the warp
+and sets the mask accordingly. This is sometimes called a predicate mask as it
+is a predicate for the execution of the thread.
+
+So how does the code I write: if (idx == 4) set the predicate mask? Is there an
+instruction that is added to the intermediate representation and then compiled
+into the resulting binary?
+
+The compiler, nvcc will add this to the generated PTX code. If we inspect
+the PTX code we can see this in action:
+```console
+$ make array-add-ptx 
+nvcc -ptx src/array-add.cu
+//
+// Generated by NVIDIA NVVM Compiler
+//
+// Compiler Build ID: CL-35059454
+// Cuda compilation tools, release 12.6, V12.6.85
+// Based on NVVM 7.0.1
+//
+
+.version 8.5
+.target sm_52
+.address_size 64
+
+	// .globl	_Z10add_arraysPiS_S_i
+.extern .func  (.param .b32 func_retval0) vprintf
+(
+	.param .b64 vprintf_param_0,
+	.param .b64 vprintf_param_1
+)
+;
+...
+.visible .entry _Z10add_arraysPiS_S_i(
+	.param .u64 _Z10add_arraysPiS_S_i_param_0,
+	.param .u64 _Z10add_arraysPiS_S_i_param_1,
+	.param .u64 _Z10add_arraysPiS_S_i_param_2,
+	.param .u32 _Z10add_arraysPiS_S_i_param_3
+)
+{
+    ...
+    // This is what calculates the idx variable. MAD = multiple and add
+    // lo = use lower bits of the result
+    // %r1 = destination register
+    // %r4, %r3, %r5 = source registers
+    mad.lo.s32 	%r1, %r4, %r3, %r5;
+
+    // First predicate, idx < size
+	setp.ge.s32 	%p1, %r1, %r2;
+	@%p1 bra 	$L__BB0_4;
+
+    // Second predicate, if (idx == 4)
+	setp.ne.s32 	%p2, %r1, 4;
+	@%p2 bra 	$L__BB0_3;
+```
+`setp` is the set predicate.
+setp.ne.s32 %p2, %r1, 4; compares if idx != 4
+The predicate register %p2 is set to true if idx ≠ 4
+@%p2 bra $L__BB0_3; means "if %p2 is true, branch to label L__BB0_3"
+This is negated logic - "if idx is NOT 4, skip the special case"
+L__BB0_3 is the label for the code after your if-block
+
+So this is how the masking works.
