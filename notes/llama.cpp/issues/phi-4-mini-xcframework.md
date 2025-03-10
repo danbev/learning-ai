@@ -1,6 +1,6 @@
 ## PHI 4 Mini XCFramework issue
 
-This [issue](Isssue: https://github.com/ggml-org/llama.cpp/issues/12232) is about
+This [issue](https://github.com/ggml-org/llama.cpp/issues/12232) is about
 loading the model `bartowski/microsoft_Phi-4-mini-instruct-GGUF` in combination with
 using the new llama.cpp XCFramework.
 
