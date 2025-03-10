@@ -8,5 +8,8 @@ simple: src/simple.mm src/kernel.metal
 	xcrun metal -c src/kernel.metal -o - | xcrun metallib - -o kernel.metallib
 	$(CC) $(CFLAGS) src/simple.mm -o simple
 
+simple-source: src/simple-source.mm
+	$(CC) $(CFLAGS) $< -o $@
+
 clean:
-	rm -f simple *.air *.metallib
+	rm -f simple* *.air *.metallib

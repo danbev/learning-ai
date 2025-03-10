@@ -1,4 +1,5 @@
 kernel.air
 kernel.metallib
 simple
+simple-source
 .build
