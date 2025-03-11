@@ -645,4 +645,36 @@ Thread 1: Read row A0 from global memory, read column B1 from global memory, cal
 ```
 This is not very efficient since we are reading the same row from global memory
 multiple times. And as we discussed previously reading from global memory is
-expensive. This is where shared memory comes in.
+expensive. This is where shared memory comes in. So instead of reading from
+global memory multiple times we only want to read one and store the data in
+shared memory, which is memory that is on the SM itself. 
+For example, we can define a shared memory matrix like this:
+```c++
+    __shared__ float sharedA[4][4];
+```
+Then each thread can read one value from global memory, the input matrix A in
+this case and store that value in shared memory:
+```c++
+   sharedA[threadIdx.y][threadIdx.x] = A[row * width + threadIdx.x];
+```
+Keep in mind that we most likely have 16 thread running this kernel at the same
+time so these will be read in parallel.
+We would do the same thing for matrix B as well, the other input matrix.
+
+We need to synchronize the threads after this so that all threads have written:
+```c++
+    __syncthreads();
+```
+After that we can perform the matrix multiplication using the shared memory:
+```c++
+    if (row < width && col < width) {
+        float sum = 0.0f;
+        
+        // Compute the dot product using shared memory
+        for (int k = 0; k < width; k++) {
+            sum += sharedA[threadIdx.y][k] * sharedB[k][threadIdx.x];
+        }
+        
+        C[row * width + col] = sum;
+    }
+```
