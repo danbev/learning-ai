@@ -257,6 +257,14 @@ and for launching a kernel we specify a stream as an argument.
 
 An example can be found in [streams.cu](../gpu/cuda/src/streams.cu).
 
+### Copy engine
+Some (perhaps all I'm not sure) NVidia GPUs have a copy engine. This is a
+dedicated hardware unit that can copy data between the host and the device
+without involving the GPU's compute units. This can be used in combination with
+streams to overlap data transfers with computation. Most have a host-to-device
+copy engine and a device-to-host copy engine.
+
+
 ###  CMAKE_CUDA_FLAGS
 This is a cmake variable that is passed to `nvcc` when compiling CUDA code.
 
@@ -580,3 +588,31 @@ This is negated logic - "if idx is NOT 4, skip the special case"
 L__BB0_3 is the label for the code after your if-block
 
 So this is how the masking works.
+
+32 threads per warp and we have 4 of them active at once this gives 128 threads
+per excecution. If we access 8 bytes for this gives 128 * 8 = 1024 bytes which
+is the row/page size. So this means that each time we execute one row/page will
+be accessed which is very efficient.
+
+Thread Organization:
+* 32 threads per warp (standard CUDA warp size)
+* 4 warps active concurrently (typical for one SM/streaming multiprocessor)
+* Total of 128 threads executing in parallel
+
+Memory Access Pattern:
+* Each thread accesses 8 bytes of data (e.g., a double or two integers)
+* 128 threads × 8 bytes = 1024 bytes (1 KB) total accessed
+
+
+DRAM Organization:
+* DRAM page/row size is 1 KB
+* This means all 128 threads' memory accesses fit perfectly in one DRAM row
+
+The efficiency comes from this alignment: when all these threads execute
+together, they collectively access exactly one full DRAM row. This is maximally
+efficient because:
+
+* Row Activation Efficiency: A single row activation serves all 128 threads
+* Memory Throughput: You get full utilization of the activated row
+* No Row Conflicts: All threads work within the same row, avoiding the penalty
+  of switching between rows
