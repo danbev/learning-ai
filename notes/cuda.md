@@ -678,3 +678,95 @@ After that we can perform the matrix multiplication using the shared memory:
         C[row * width + col] = sum;
     }
 ```
+
+### cuda-gdb
+Is we compile a program using `-G` then we can break in kernel functions:
+```console
+(cuda-gdb) br matrixMulShared
+```
+We can list the available devices:
+```console
+(cuda-gdb) info cuda devices
+  Dev PCI Bus/Dev ID                    Name Description SM Type SMs Warps/SM Lanes/Warp Max Regs/Lane Active SMs Mask
+*   0        04:00.0 NVIDIA GeForce RTX 4070     AD104-A   sm_89  46       48         32           255  0x000000000001
+```
+Notice that this shows how many warps per sm, and also how many lanes per warp.
+A lane is specific position within a warp, corresponding to a single thread. More
+on this a bit further down.
+
+And the streaming multiprocessors (SMs):
+```console
+(cuda-gdb) info cuda sms
+  SM  Active Warps Mask
+Device 0
+*  0 0x0000000000000001
+```
+And the warps:
+```console
+(cuda-gdb) info cuda warps
+  Wp Active Lanes Mask Divergent Lanes Mask          Active PC Kernel BlockIdx First Active ThreadIdx 
+Device 0 SM 0
+*  0        0x0000ffff           0x00000000 0x00007fffdb2597f0      0  (0,0,0)                (0,0,0) 
+```
+
+Like we mentioned above lanes are specific positions within a warp, corresponding
+to a single thread. Each warp has 32 lanes, and each lane corresponds to a
+specific thread:
+```console
+(cuda-gdb) info cuda lanes
+  Ln  State         PC         ThreadIdx Exception
+Device 0 SM 0 Warp 0
+*  0 active 0x00007fffdb2597f0   (0,0,0)    None
+   1 active 0x00007fffdb2597f0   (1,0,0)    None
+   2 active 0x00007fffdb2597f0   (2,0,0)    None
+   3 active 0x00007fffdb2597f0   (3,0,0)    None
+   4 active 0x00007fffdb2597f0   (0,1,0)    None
+   5 active 0x00007fffdb2597f0   (1,1,0)    None
+   6 active 0x00007fffdb2597f0   (2,1,0)    None
+   7 active 0x00007fffdb2597f0   (3,1,0)    None
+   8 active 0x00007fffdb2597f0   (0,2,0)    None
+   9 active 0x00007fffdb2597f0   (1,2,0)    None
+  10 active 0x00007fffdb2597f0   (2,2,0)    None
+  11 active 0x00007fffdb2597f0   (3,2,0)    None
+  12 active 0x00007fffdb2597f0   (0,3,0)    None
+  13 active 0x00007fffdb2597f0   (1,3,0)    None
+  14 active 0x00007fffdb2597f0   (2,3,0)    None
+  15 active 0x00007fffdb2597f0   (3,3,0)    None
+```
+
+```console
+(cuda-gdb) info cuda threads
+  BlockIdx ThreadIdx To BlockIdx To ThreadIdx Count                 PC                     Filename  Line
+Kernel 0
+*  (0,0,0)   (0,0,0)     (0,0,0)      (3,3,0)    16 0x00007fffdb2597f0 src/matrix-mul-shared-mem.cu    11
+```
+
+And we can also list the kernels:
+```console
+(cuda-gdb) info cuda kernels
+  Kernel Parent Dev Grid Status       SMs Mask GridDim BlockDim Invocation
+*      0      -   0    1 Active 0x000000000001 (1,1,1)  (4,4,1) matrixMulShared()
+```
+
+We can inspect values when breaking in the kernel:
+```console
+(cuda-gdb) f
+#0  matrixMulShared<<<(1,1,1),(4,4,1)>>> (A=0x7fffd7e00000, B=0x7fffd7e00200, C=0x7fffd7e00400, width=4)
+    at src/matrix-mul-shared-mem.cu:11
+11	    int row = blockIdx.y * blockDim.y + threadIdx.y;
+(cuda-gdb) p row
+$1 = 0
+(cuda-gdb) p A[3]
+$6 = 3
+```
+And we can switch to another thread by using (threadId.x, threadId.y, threadId.z):
+```console
+(cuda-gdb) cuda thread (3,3,0)
+[Switching focus to CUDA kernel 0, grid 1, block (0,0,0), thread (3,3,0), device 0, sm 0, warp 0, lane 15]
+12	    int col = blockIdx.x * blockDim.x + threadIdx.x;
+```
+
+
+
+
+```
