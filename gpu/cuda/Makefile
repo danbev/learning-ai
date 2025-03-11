@@ -27,6 +27,9 @@ graphs: src/graphs.cu
 matrix-mul: src/matrix-mul.cu
 	nvcc -lnppc -o $@ $<
 
+matrix-mul-shared-mem: src/matrix-mul-shared-mem.cu
+	nvcc -lnppc -o $@ $<
+
 dump-array-add: array-add
 	cuobjdump $<
 

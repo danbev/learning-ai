@@ -616,3 +616,33 @@ efficient because:
 * Memory Throughput: You get full utilization of the activated row
 * No Row Conflicts: All threads work within the same row, avoiding the penalty
   of switching between rows
+
+### Shared Memory
+Before trying to understand shared memory and how it is useful I think it
+might help to understand a basic matrix multiplication example.
+
+```
+                      B0 B1 B2 B3
+    +--+--+--+--+    +--+--+--+--+    +-----+-----+-----+-----+
+A0  |  |  |  |  |    |  |  |  |  |    |A0/B0|A0/B1|A0/B2|A0/B3|
+    +--+--+--+--+    +--+--+--+--+    +-----+-----+-----+-----+
+A1  |  |  |  |  | x  |  |  |  |  | =  |A1/B0|A1/B1|A1/B2|A1/B3|
+    +--+--+--+--+    +--+--+--+--+    +-----+-----+-----+-----+
+A2  |  |  |  |  |    |  |  |  |  |    |A2/B0|A2/B1|A2/B2|A2/B3|
+    +--+--+--+--+    +--+--+--+--+    +-----+-----+-----+-----+
+A3  |  |  |  |  |    |  |  |  |  |    |A3/B0|A3/B1|A3/B2|A3/B3|
+    +--+--+--+--+    +--+--+--+--+    +-----+-----+-----+-----+
+```
+Now, each of the elements in the output matrix are independent of each other
+and can be calculated in parallel which is great. But we must also consider
+that while C(0,0) uses the A0 row, C(0,1) does as well.
+Imaging we have 16 threads to perform this, each thread calculating one element
+of the output matrix C:
+```
+Thread 0: Read row A0 from global memory, read column B0 from global memory, calculate C(0,0)
+Thread 1: Read row A0 from global memory, read column B1 from global memory, calculate C(0,1)
+...
+```
+This is not very efficient since we are reading the same row from global memory
+multiple times. And as we discussed previously reading from global memory is
+expensive. This is where shared memory comes in.
