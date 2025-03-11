@@ -24,6 +24,9 @@ streams: src/streams.cu
 graphs: src/graphs.cu
 	nvcc -lnppc -o $@ $<
 
+matrix-mul: src/matrix-mul.cu
+	nvcc -lnppc -o $@ $<
+
 dump-array-add: array-add
 	cuobjdump $<
 
