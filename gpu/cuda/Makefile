@@ -25,10 +25,13 @@ graphs: src/graphs.cu
 	nvcc -lnppc -o $@ $<
 
 matrix-mul: src/matrix-mul.cu
-	nvcc -lnppc -o $@ $<
+	nvcc -lnppc -g -o $@ $<
 
 matrix-mul-shared-mem: src/matrix-mul-shared-mem.cu
-	nvcc -lnppc -o $@ $<
+	nvcc -lnppc -G -g -o $@ $<
+
+debug-matrix-mul-shared: matrix-mul-shared-mem
+	cuda-gdb matrix-mul-shared-mem
 
 dump-array-add: array-add
 	cuobjdump $<
