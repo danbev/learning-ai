@@ -140,6 +140,26 @@ Bin 61-80: 5000-8000Hz (about 150Hz per bin)
 Converting to mel spectrograms reduces the input data dimensionality while
 preserving perceptually important information.
 
+### Inference Processing
+The raw audio is first split into smaller segment of 30 second chunks. This 30
+second limit comes from Whispers training where 30 second segments where used
+and its position embeddings are designed for this duration.
+
+Then for each chunk:
+The chunk is converted into a mel spectrogram which is then processed by the
+encoder.
+The decoder starts with initial tokens: `<SOT>`, language token (like `<EN>`),
+task token (like `<TRANSCRIBE>`), and optionally timestamp token.
+The decoder generates one token at a time.
+
+For a single 30-second chunk, the result will be the transcribed tokens
+corresponding to the speech in that 30-second segment. 
+
+The special tokens (like language markers, timestamp indicators) provide task
+control. By intermixing these with the text, Whisper can perform multiple tasks
+with a single model, directing it to transcribe, translate, or identify the
+language.
+
 
 ### Diarization
 There is a parameter named 'diarize' which indicates if speaker identification
