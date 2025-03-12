@@ -54,9 +54,91 @@ Whisper uses mel spectrogram which is a spectrogram where the frequencies are
 converted to the mel scale. The mel scale is a scale of pitches that are
 perceived by humans as being equally spaced.
 
+### Mel Spectrograms
+In the spectrogram we saw above the y-axis was the frequency in Hz. But this is
+not great for humans because we don't perceive frequencies linearly. We perceive
+frequencies logarithmically. So what do we mean by that?  
+Well, if we have a sound at 1000Hz and another at 2000Hz the difference between
+them is 1000Hz. Now, if we have a sound at 10000Hz and another at 11000Hz the
+difference is is also 1000Hz. But we perceive the difference between 1000Hz and
+2000Hz as being much greater than the difference between 10000Hz and 11000Hz. So
+the mel scale is a scale that is designed to mimic the way humans perceive sound.
+The mel scale is a logarithmic scale that is linear below 1000Hz and logarithmic
+above 1000Hz.
 
-### whisper-cli
-TODO:
+So to recap a little and get an overview of the process:  
+1. We start with the original analog signal which is continuous in time and
+   amplitude.
+
+2. Digitalize the signal by sampling it at a certain rate to create a digital
+   waveform. This is now digital (descrete) but still just amplitude values over
+   time.
+ 
+3. Standard spectrogram: The digitized audio undergoes a Short-Time Fourier
+   Transform (STFT) to break it into frequency components. Say we sample at a
+   rate of 16Khz this would show frequencies up to 8Khz (Nyquist limit).
+   A standard spectrogram might have frequency resolution of 10Hz per bin,
+   resulting in 800 bins for 8000Hz.
+
+4. Mel spectrogram: This is where the data reduction happens. Instead of keeping
+   all the 800 frequency bins, we combine them into just 80 mel scaled bins.
+   In this process of converting from the spectrogram to the mel spectrogram we
+   apply a set of overlapping triangular filters to the spectrogram which are
+   called mel filterbanks. These filters combine multiple frequency bins into
+   a single mel bin.
+
+   For example, to create mel bin #10, we might take a weighted average of linear
+   frequency bins 50-70, giving us a single value that represents that entire
+   frequency range.
+   After this process, each time frame now has only 80 amplitude values instead
+   of 800.
+
+Visualize this as a matrix:
+```
+spectrogram:
+              800 (frequency bins)
+        +-----------------------------+
+        |                             |
+        |                             |
+        |                             |  500 (time frames)
+        |                             |
+        |                             |
+        |                             |
+        |                             |
+        +-----------------------------+
+                       |
+                       ↓ 
+mel spectrogram:
+              80 (frequency bins)
+        +------------+
+        |            |
+        |            |
+        |            |  500 (time frames)
+        |            |
+        |            |
+        |            |
+        |            |
+        +------------+
+```
+This is like resizing an image from 800x500 to 80x500. Like we are compressing
+the data and it will take up less space. But also it will contain more of the
+information that is important to humans speech which is what we want for 
+whisper.
+
+For example, in our above spectrogram we had 8000Hz as the max frequency. And
+these are evenly divided into ranges, lets say there might be 800+ frequency
+ranges (or bins) for 8000Hz.
+
+This might get divided into 80 "bins/buckets" in the mel spectrogram:
+```
+Bin 1-20:     0-1000Hz (about 50Hz per bin)
+Bin 21-40: 1000-2500Hz (about 75Hz per bin)
+Bin 41-60: 2500-5000Hz (about 125Hz per bin)
+Bin 61-80: 5000-8000Hz (about 150Hz per bin)
+```
+
+Converting to mel spectrograms reduces the input data dimensionality while
+preserving perceptually important information.
 
 
 ### Diarization
@@ -64,3 +146,176 @@ There is a parameter named 'diarize' which indicates if speaker identification
 or diarization should be performed. This is about who spoke when. The system
 will attempt to identify the speaker and assign a label to each speaker. So
 the output will have an identifier like "Speaker 0", "Speaker 1", etc.
+
+
+### Dynamic Time Warping (DTW)
+This is about aligning the transcribed text with precise timestamps in the
+audio. When whisper generated text from audio it needs to determine preciely
+when each word was spoken. But the encoder-decoder model does not have this
+concept of timestamps. 
+
+### Model
+
+```c++
+struct whisper_model {
+    e_model type = MODEL_UNKNOWN;
+
+    whisper_hparams hparams;
+    whisper_filters filters;
+
+    // encoder.positional_embedding
+    struct ggml_tensor * e_pe;
+
+    // encoder.conv1
+    struct ggml_tensor * e_conv_1_w;
+    struct ggml_tensor * e_conv_1_b;
+
+    // encoder.conv2
+    struct ggml_tensor * e_conv_2_w;
+    struct ggml_tensor * e_conv_2_b;
+
+    // encoder.ln_post
+    struct ggml_tensor * e_ln_w;
+    struct ggml_tensor * e_ln_b;
+
+    // decoder.positional_embedding
+    struct ggml_tensor * d_pe;
+
+    // decoder.token_embedding
+    struct ggml_tensor * d_te;
+
+    // decoder.ln
+    struct ggml_tensor * d_ln_w;
+    struct ggml_tensor * d_ln_b;
+
+    std::vector<whisper_layer_encoder> layers_encoder;
+    std::vector<whisper_layer_decoder> layers_decoder;
+
+    // ggml context that contains all the meta information about the model tensors
+    struct ggml_context * ctx = nullptr;
+
+    // the model backend data is read-only and can be shared between processors
+    ggml_backend_buffer_t buffer = nullptr;
+
+    // tensors
+    int n_loaded;
+    std::map<std::string, struct ggml_tensor *> tensors;
+};
+```
+```console
+(gdb) p model.e_pe.ne
+$35 = {384, 1500, 1, 1}
+```
+
+
+### whisper-cli
+An initial walk through of the cli example to get familiar with the code.
+```console
+gdb --args ./build/bin/whisper-cli \
+	-m models/ggml-tiny.en.bin \
+	-f samples/jfk.wav \
+	-di
+```
+
+```c++
+int main(int argc, char ** argv) {
+    whisper_params params;
+    ...
+
+    struct whisper_context_params cparams = whisper_context_default_params();
+    ...
+    struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
+}
+```
+```console
+(gdb) set print pretty on
+(gdb) p params
+$4 = {
+  n_threads = 4,
+  n_processors = 1,
+  offset_t_ms = 0,
+  offset_n = 0,
+  duration_ms = 0,
+  progress_step = 5,
+  max_context = -1,
+  max_len = 0,
+  best_of = 5,
+  beam_size = 5,
+  audio_ctx = 0,
+  word_thold = 0.00999999978,
+  entropy_thold = 2.4000001,
+  logprob_thold = -1,
+  no_speech_thold = 0.600000024,
+  grammar_penalty = 100,
+  temperature = 0,
+  temperature_inc = 0.200000003,
+  debug_mode = false,
+  translate = false,
+  detect_language = false,
+  diarize = true,
+  tinydiarize = false,
+  split_on_word = false,
+  no_fallback = false,
+  output_txt = false,
+  output_vtt = false,
+  output_srt = false,
+  output_wts = false,
+  output_csv = false,
+  output_jsn = false,
+  output_jsn_full = false,
+  output_lrc = false,
+  no_prints = false,
+  print_special = false,
+  print_colors = false,
+  print_progress = false,
+  no_timestamps = false,
+  log_score = false,
+  use_gpu = true,
+  flash_attn = false,
+  suppress_nst = false,
+  language = "en",
+  prompt = "",
+  font_path = "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+  model = "models/ggml-tiny.en.bin",
+  grammar = "",
+  grammar_rule = "",
+  tdrz_speaker_turn = " [SPEAKER_TURN]",
+  suppress_regex = "",
+  openvino_encode_device = "CPU",
+  dtw = "",
+  fname_inp = std::vector of length 1, capacity 1 = {"samples/jfk.wav"},
+  fname_out = std::vector of length 0, capacity 0,
+  grammar_parsed = {
+    symbol_ids = std::map with 0 elements,
+    rules = std::vector of length 0, capacity 0
+  }
+}
+
+gdb) p cparams
+$5 = {
+  use_gpu = true,
+  flash_attn = false,
+  gpu_device = 0,
+  dtw_token_timestamps = false,
+  dtw_aheads_preset = WHISPER_AHEADS_NONE,
+  dtw_n_top = -1,
+  dtw_aheads = {
+    n_heads = 0,
+    heads = 0x0
+  },
+  dtw_mem_size = 134217728
+}
+
+```
+So lets take a look at the model is loaded:
+```console
+(gdb) br whisper_init_from_file_with_params_no_state
+(gdb) c
+```
+```c++
+struct whisper_context * whisper_init_from_file_with_params_no_state(const char * path_model,
+    struct whisper_context_params params) {
+    WHISPER_LOG_INFO("%s: loading model from '%s'\n", __func__, path_model);
+
+
+```
