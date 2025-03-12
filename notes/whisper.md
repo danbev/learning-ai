@@ -33,6 +33,14 @@ releasing it. They tend to be quieter than vowels.
 The parallel horizontal lines above the fundamental frequency (at ~200Hz, ~300Hz,
 etc.) - these are the harmonics.
 
+"a" in "Daniel" and "e" in "Bevenius" are vowels and they have a lot of energy
+in the higher frequencies. The "a" sound has a lot of energy at around 800Hz and
+
+Consonants like "n", "l", "b", "v" each have distinctive patterns. By using
+the spectrogram it is actually possible to "read" what letters are being spoken
+and this is what the ASR system use. But the ARS systems are trained on a lot
+of millions of examples and use statistical models to predict what is being
+said.
 
 The Fourier Transform decomposes this signal into its constituent frequencies.
 The x-axis is time just like in the wave form, but the y-axis is frequency (not
@@ -42,29 +50,13 @@ time/frequence (x, y) intersection represents the amplitude/energy at that point
 
 ![image](./images/spectrogram.png)
 
+Whisper uses mel spectrogram which is a spectrogram where the frequencies are
+converted to the mel scale. The mel scale is a scale of pitches that are
+perceived by humans as being equally spaced.
 
-So these value represent compressed audio in the frequency domain. Now, to recap
-a little, normal sound when we record we are capturing the pressure the air
-waves are hitting the microphone. This is sampled thousands of times per second
-and each number, sample, is the amount of how much the microphone membrane is
-pushed in or pushed out. These would be numbers like 0.2, 0.3, -0.1 etc.
-An audio signal would be store something like this:
-```console
-Original Audio --> Fourier Transform --> Magnitude and Phase
-
-Time Domain                              Frequency Domain
-```
-The Fourier Transform that says that any signal can be represented as a sum of
-sine and cosine waves. And each sine wave has two properties magnitude and
-phase. Note that this is magnitude and not amplitude so this is a how far value
-differs from zero. The magnitude is always positive (the values above in the
-first half of embd are in logarithmic scale so they need to be exponentiated to
-get the actual values which we can then see are positive). Imagine the final
-audio wave for the word "Hello", it will first have a frequencies for the H and
-the transition to the frequencies for e, and it need to know where along then
-final audio wave to do this transition, this is what phase is for.
 
 ### whisper-cli
+TODO:
 
 
 ### Diarization
