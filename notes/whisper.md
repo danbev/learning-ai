@@ -174,6 +174,41 @@ audio. When whisper generated text from audio it needs to determine preciely
 when each word was spoken. But the encoder-decoder model does not have this
 concept of timestamps. 
 
+
+### Pulse Code Modulation (PCM)
+So when we a raw audio signal which is continuous, we sample it at a certain
+fixed rate called the sample rate. This is measuring the amplitude of the sound
+wave at regular intervals. Each value is then quantied to a fixed number of bits
+, the number is determined by the bit depth. This gives us a discrete value.
+```
+8  bits = 2^8  = 256 levels
+16 bits = 2^16 = 65536 levels
+24 bits = 2^24 = 16777216 levels
+32 bits = 2^32 = 4294967296 levels
+```
+These quantized values are the codes in Pulse Code Modulation (PCM). Each code
+represents the amplitude of the sound wave at that point in time. This data
+can then be stored in a file and for a WAV file the header will contain metadata
+like the sample rate, bit depth, number of channels, etc.
+
+### Waveform Audio File Format (WAV)
+This is a subset of Microsoft's Microsoft’s Resource Interchange File Format (RIFF)
+specification for the storage of digital audio. There is no compression involved
+in this format.
+
+We can inspect the wav metadata using the `mediainfo` command:
+```console
+$ hexdump -C -n 500 samples/jfk.wav
+00000000  52 49 46 46 46 5f 05 00  57 41 56 45 66 6d 74 20  |RIFFF_..WAVEfmt |
+00000010  10 00 00 00 01 00 01 00  80 3e 00 00 00 7d 00 00  |.........>...}..|
+00000020  02 00 10 00 4c 49 53 54  1a 00 00 00 49 4e 46 4f  |....LIST....INFO|
+00000030  49 53 46 54 0e 00 00 00  4c 61 76 66 35 39 2e 32  |ISFT....Lavf59.2|
+00000040  37 2e 31 30 30 00 64 61  74 61 00 5f 05 00 00 00  |7.100.data._....|
+00000050  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+```
+whisper.cpp uses [miniaudio](https://github.com/mackron/miniaudio) to read wav
+files.
+
 ### Model
 
 ```c++
@@ -222,11 +257,103 @@ struct whisper_model {
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 ```
+In `whisper_model_load` the model tensor are created:
+```c++
+        // encoder
+        {
+            model.e_pe = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_audio_state, n_audio_ctx);
+```
+This is the encoders position encoder (pe)
 ```console
 (gdb) p model.e_pe.ne
 $35 = {384, 1500, 1, 1}
-```
 
+(gdb) p model.hparams.n_audio_state 
+$9 = 384
+(gdb) p model.hparams.n_audio_ctx 
+$10 = 1500
+```
+So we can see this is a matrix with 384 dimensions and 1500 rows.
+```
+0     [0                  383]
+            .
+            .
+            .
+1499  [0                  383]
+```
+Audio is processed at 50 frames per second so 1500 frames corresponds to 30
+seconds of audio (1500/50 = 30). So each row in this matrix represents a specific
+time position the 30 second audio chunk or segment. The positional information
+is added so that the model know not only the spectral information (which frequencies
+are present) but also when they occur.
+
+Next we have the two 1D convolutions:
+```c++
+            model.e_conv_1_w     = ggml_new_tensor_3d(ctx, vtype,         3, n_mels,     n_audio_state);
+            model.e_conv_1_b     = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,         1,     n_audio_state);
+
+            model.e_conv_2_w     = ggml_new_tensor_3d(ctx, vtype,         3, n_audio_state, n_audio_state);
+            model.e_conv_2_b     = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,                1, n_audio_state);
+```
+```console
+(gdb) p model.e_conv_1_w->ne
+$12 = {3, 80, 384, 1}
+
+(gdb) p model.e_conv_2_w->ne
+$13 = {3, 384, 384, 1}
+```
+TODO: Add more information about the convolutions.
+
+Next, we have the encoder layers.
+And following that we have the decoder tensors.
+```c++
+        // decoder
+        {
+            model.d_pe   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_text_state, n_text_ctx);
+
+            model.d_te   = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_vocab);
+```
+These are the decoders positional embedding and token embedding tensors.
+```console
+(gdb) p model.d_pe->ne
+$19 = {384, 448, 1, 1}
+
+(gdb) p model.d_te->ne
+$20 = {384, 51864, 1, 1}
+```
+These tensors are later used in :
+```c++
+static struct ggml_cgraph * whisper_build_graph_conv(
+        whisper_context & wctx,
+          whisper_state & wstate) {
+    ...
+    struct ggml_tensor * mel = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 2*n_ctx, n_mels);
+    ggml_set_name(mel, "mel");
+    ggml_set_input(mel);
+
+    struct ggml_tensor * cur = nullptr;
+
+    if (!whisper_encode_external(wstate)) {
+        // convolution + gelu
+        {
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_1_w, mel, 1, 1);
+            cur = ggml_add(ctx0, cur, model.e_conv_1_b);
+
+            cur = ggml_gelu(ctx0, cur);
+
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_2_w, cur, 2, 1);
+            cur = ggml_add(ctx0, cur, model.e_conv_2_b);
+
+            cur = ggml_gelu(ctx0, cur);
+        }
+
+        ggml_set_name(cur, "embd_conv");
+        wstate.embd_conv = cur;
+```
+```console
+(gdb) p mel->ne
+$31 = {3000, 80, 1, 1}
+```
 
 ### whisper-cli
 An initial walk through of the cli example to get familiar with the code.
