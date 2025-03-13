@@ -1,0 +1,19 @@
+[alias]
+    co = checkout
+    ci = commit
+    st = status
+    br = branch
+    contributors = shortlog -e --summary --numbered
+    preview-msg = !git rev-parse --git-dir | xargs -I {} cat {}/COMMIT_EDITMSG > /tmp/commit-preview.md && grip -b /tmp/commit-preview.md
+[user]
+	email = daniel.bevenius@gmail.com
+	name = Daniel Bevenius
+[core]
+	editor = vi
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+[credential]
+	helper = store

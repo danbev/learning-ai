@@ -1,0 +1,39 @@
+FROM ubuntu:20.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install development tools
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    g++ \
+    git \
+    cmake \
+    libcurl4-openssl-dev \
+    wget \
+    make \
+    vim \
+    grip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Setup git configuration from external file
+COPY gitconfig /root/.gitconfig
+
+# Create a working directory
+WORKDIR /app
+
+# Clone the latest version of whisper.cpp
+RUN git clone https://github.com/ggerganov/whisper.cpp.git
+
+# Set the working directory to the whisper.cpp project
+WORKDIR /app/whisper.cpp
+
+# This is just to verify the clone worked - you can remove this if you prefer
+RUN ls -la
+
+# Optional: Pre-download a model
+# RUN bash ./models/download-ggml-model.sh base.en
+
+# Set the default command to bash so you can interactively use the container
+CMD ["/bin/bash"]
