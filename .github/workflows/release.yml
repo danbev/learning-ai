@@ -1,4 +1,4 @@
-name: Debug Tag Name
+name: Release
 
 on:
   push:
@@ -64,7 +64,7 @@ jobs:
           echo "Final tag name: $TAG_NAME"
           echo "name=$TAG_NAME" >> $GITHUB_OUTPUT
 
-  debug-tag-name:
+  build:
     runs-on: ubuntu-latest
     needs: determine-tag
 
@@ -117,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
-      - determine-tag
+      - build
       - debug-tag-name
 
     steps:
