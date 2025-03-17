@@ -12,7 +12,7 @@ on:
         required: true
         type: boolean
       custom_tag:
-        description: 'Custom tag name (leave empty for auto-generated)'
+        description: 'Custom tag name'
         required: false
         type: string
 
@@ -23,9 +23,51 @@ env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
 jobs:
+  determine-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.tag.outputs.name }}
+
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine tag name
+        id: tag
+        shell: bash
+        run: |
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          SHORT_HASH=$(git rev-parse --short=7 HEAD)
+          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
+
+          echo "Raw values:"
+          echo "BUILD_NUMBER: $BUILD_NUMBER"
+          echo "SHORT_HASH: $SHORT_HASH"
+          echo "BRANCH_NAME: ${{ env.BRANCH_NAME }}"
+          echo "CUSTOM_TAG: $CUSTOM_TAG"
+
+          # Use custom tag if provided
+          if [[ -n "$CUSTOM_TAG" ]]; then
+            echo "Using custom tag"
+            TAG_NAME="${CUSTOM_TAG}"
+          elif [[ "${{ env.BRANCH_NAME }}" == "master" ]]; then
+            echo "Using master branch format"
+            TAG_NAME="b${BUILD_NUMBER}"
+          else
+            echo "Using non-master branch format"
+            SAFE_NAME=$(echo "${{ env.BRANCH_NAME }}" | tr '/' '-')
+            TAG_NAME="${SAFE_NAME}-b${BUILD_NUMBER}-${SHORT_HASH}"
+          fi
+
+          echo "Final tag name: $TAG_NAME"
+          echo "name=$TAG_NAME" >> $GITHUB_OUTPUT
+
   debug-tag-name:
     runs-on: ubuntu-latest
-    
+    needs: determine-tag
+
     steps:
       - name: Checkout with full history
         uses: actions/checkout@v4
@@ -49,35 +91,6 @@ jobs:
           echo "build_number=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "short_hash=$SHORT_HASH" >> $GITHUB_ENV
       
-      - name: Determine tag name
-        id: tag
-        shell: bash
-        run: |
-          BUILD_NUMBER="${{ env.build_number }}"
-          SHORT_HASH="${{ env.short_hash }}"
-          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
-          
-          echo "Raw values:"
-          echo "BUILD_NUMBER: $BUILD_NUMBER"
-          echo "SHORT_HASH: $SHORT_HASH"
-          echo "BRANCH_NAME: ${{ env.BRANCH_NAME }}"
-          echo "CUSTOM_TAG: $CUSTOM_TAG"
-          
-          if [[ -n "$CUSTOM_TAG" ]]; then
-            echo "Using custom tag"
-            TAG_NAME="${CUSTOM_TAG}"
-          elif [[ "${{ env.BRANCH_NAME }}" == "master" ]]; then
-            echo "Using master branch format"
-            TAG_NAME="b${BUILD_NUMBER}"
-          else
-            echo "Using non-master branch format"
-            SAFE_NAME=$(echo "${{ env.BRANCH_NAME }}" | tr '/' '-')
-            TAG_NAME="${SAFE_NAME}-b${BUILD_NUMBER}-${SHORT_HASH}"
-          fi
-          
-          echo "Final tag name: $TAG_NAME"
-          echo "name=$TAG_NAME" >> $GITHUB_OUTPUT
-      
       - name: Test output
         run: |
           echo "The tag name is: ${{ steps.tag.outputs.name }}"
@@ -86,7 +99,7 @@ jobs:
           echo "Test content" > test-file.txt
           
           # Create a zip file with the tag name
-          zip -r llama-${{ steps.tag.outputs.name }}-test.zip test-file.txt
+          zip -r llama-${{ needs.determine-tag.outputs.tag_name }}-test.zip test-file.txt
           
           # List the zip file to verify name
           ls -la *.zip
@@ -95,8 +108,8 @@ jobs:
         if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: llama-${{ steps.tag.outputs.name }}-test
-          path: llama-${{ steps.tag.outputs.name }}-test.zip
+          name: llama-${{ needs.determine-tag.outputs.tag_name }}-test
+          path: llama-${{ needs.determine-tag.outputs.tag_name }}-test.zip
 
   release:
     if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
@@ -104,6 +117,7 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
+      - determine-tag
       - debug-tag-name
 
     steps:
@@ -118,25 +132,6 @@ jobs:
         with:
           key: release
           evict-old-files: 1d
-
-      - name: Determine tag name
-        id: tag
-        shell: bash
-        run: |
-          BUILD_NUMBER="$(git rev-list --count HEAD)"
-          SHORT_HASH="$(git rev-parse --short=7 HEAD)"
-          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
-
-          # Use custom tag if provided
-          if [[ -n "$CUSTOM_TAG" ]]; then
-            echo "Using custom tag in release job"
-            echo "name=$CUSTOM_TAG" >> $GITHUB_OUTPUT
-          elif [[ "${{ env.BRANCH_NAME }}" == "master" ]]; then
-            echo "name=b${BUILD_NUMBER}" >> $GITHUB_OUTPUT
-          else
-            SAFE_NAME=$(echo "${{ env.BRANCH_NAME }}" | tr '/' '-')
-            echo "name=${SAFE_NAME}-b${BUILD_NUMBER}-${SHORT_HASH}" >> $GITHUB_OUTPUT
-          fi
 
       # Downloads all the artifacts from the previous jobs
       - name: Download artifacts
@@ -155,7 +150,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
+          tag_name: ${{ needs.determine-tag.outputs.tag_name }}
           prerelease: ${{ github.event.inputs.custom_tag != '' }}
 
       - name: Upload release
