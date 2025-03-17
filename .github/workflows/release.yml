@@ -93,7 +93,7 @@ jobs:
       
       - name: Test output
         run: |
-          echo "The tag name is: ${{ steps.tag.outputs.name }}"
+          echo "The tag name is: ${{ needs.determine-tag.outputs.tag_name }}"
           
           # Create a test file
           echo "Test content" > test-file.txt
