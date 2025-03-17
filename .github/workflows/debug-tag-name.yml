@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
-      - debug-tag-name:
+      - debug-tag-name
 
     steps:
       - name: Clone
