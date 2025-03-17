@@ -12,7 +12,7 @@ on:
         required: true
         type: boolean
       custom_tag:
-        description: 'Custom tag name'
+        description: 'Pre-release tag name'
         required: false
         type: string
 
