@@ -148,8 +148,15 @@ and its position embeddings are designed for this duration.
 Then for each chunk:
 The chunk is converted into a mel spectrogram which is then processed by the
 encoder.
-The decoder starts with initial tokens: `<SOT>`, language token (like `<EN>`),
-task token (like `<TRANSCRIBE>`), and optionally timestamp token.
+
+The decoder starts with initial tokens:
+* `<SOT>` (Start of Transcript),
+* language token (like `<EN>`),
+* task token which will be one of:
+  - `<TRANSCRIBE>`
+  - `<TRANSLATE>`
+* no timestamp token
+
 The decoder generates one token at a time.
 
 For a single 30-second chunk, the result will be the transcribed tokens
@@ -160,6 +167,33 @@ control. By intermixing these with the text, Whisper can perform multiple tasks
 with a single model, directing it to transcribe, translate, or identify the
 language.
 
+In whisper.cpp, these tokens are setup in the `whisper_full_with_state` function:
+```c++
+int whisper_full_with_state(
+        struct whisper_context * ctx,
+          struct whisper_state * state,
+    struct whisper_full_params   params,
+                   const float * samples,
+                           int   n_samples) {
+    ...
+
+    std::vector<whisper_token> prompt_init = { whisper_token_sot(ctx), };
+```
+And we can inspect the tokes added when translation is enabled using the
+command line option `-tr`:
+```console
+(std::vector<int>) size=3 {
+  [0] = 50258
+  [1] = 50259
+  [2] = 50358
+}
+(lldb) p ctx->vocab.id_to_token.at(50258)
+(std::map<int, std::string>::mapped_type) "[_SOT_]"
+(lldb) p ctx->vocab.id_to_token.at(50259)
+(std::map<int, std::string>::mapped_type) "[_LANG_en]"
+(lldb) p ctx->vocab.id_to_token.at(50358)
+(std::map<int, std::string>::mapped_type) "[_TRANSLATE_]"
+```
 
 ### Diarization
 There is a parameter named 'diarize' which indicates if speaker identification
