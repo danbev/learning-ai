@@ -11,7 +11,7 @@ on:
         description: 'Create new release'
         required: true
         type: boolean
-    custom_tag:
+      custom_tag:
         description: 'Custom tag name (leave empty for auto-generated)'
         required: false
         type: string
