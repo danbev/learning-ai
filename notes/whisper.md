@@ -194,6 +194,23 @@ command line option `-tr`:
 (lldb) p ctx->vocab.id_to_token.at(50358)
 (std::map<int, std::string>::mapped_type) "[_TRANSLATE_]"
 ```
+Transcribe is token:
+```console
+(lldb) p ctx->vocab.id_to_token.at(50359)
+(std::map<int, std::string>::mapped_type) "[_TRANSCRIBE_]"
+```
+
+In Whisper models (including implementations like whisper.cpp), the task token (<|transcribe|> or <|translate|>) fundamentally changes what the model does with the audio input. These are mutually exclusive paths in the model's processing:
+
+<|transcribe|> instructs the model to output text in the same language as the audio
+<|translate|> instructs the model to translate the speech into English
+
+To get both the original transcription and an English translation, you would indeed need to run two separate inference passes over the same audio:
+
+First pass with <|transcribe|> to get the original language transcription
+Second pass with <|translate|> to get the English translation
+
+This is a fundamental limitation of how the model was designed and trained. It's not simply a software limitation that could be worked around in the implementation - the model architecture itself expects to perform one task at a time.
 
 ### Diarization
 There is a parameter named 'diarize' which indicates if speaker identification
