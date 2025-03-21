@@ -176,3 +176,37 @@ library. When we call `makeFunction` that is similar to using `dlsym` to get a f
 from a dynamic library.
 
 
+
+### GGML_USE_METAL
+It was no clear to me where this variable was being set. I searched for it but could not find it:
+```console
+$ find . -name CMakeLists.txt | xargs grep -n GGML_USE_METAL
+$
+```
+This is because is set programatically in cmake. If we look in `ggml/src/CMakeLists.txt` we see:
+```cmake
+ggml_add_backend(BLAS)
+ggml_add_backend(CANN)
+ggml_add_backend(CUDA)
+ggml_add_backend(HIP)
+ggml_add_backend(Kompute)
+ggml_add_backend(METAL)
+ggml_add_backend(MUSA)
+ggml_add_backend(RPC)
+ggml_add_backend(SYCL)
+ggml_add_backend(Vulkan)
+ggml_add_backend(OpenCL)
+
+function(ggml_add_backend backend)
+    string(TOUPPER "GGML_${backend}" backend_id)
+    if (${backend_id})
+        string(TOLOWER "ggml-${backend}" backend_target)
+        add_subdirectory(${backend_target})
+        message(STATUS "Including ${backend} backend")
+        if (NOT GGML_BACKEND_DL)
+            string(TOUPPER "GGML_USE_${backend}" backend_use)
+            target_compile_definitions(ggml PUBLIC ${backend_use})
+        endif()
+    endif()
+endfunction()
+```
