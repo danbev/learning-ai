@@ -1150,7 +1150,7 @@ Now, recall that each sample is independent when sampled from the distribution a
 token 50363 has a probability of 0.837067842. So it is not surprising that it is sampled
 multiple times.
 
-This is the third (j=1):
+These are the values for j=1:
 ```console
 (lldb) p tokens_new
 (const std::vector<whisper_token_data>) size=5 {
@@ -1161,7 +1161,7 @@ This is the third (j=1):
   [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
 }
 ```
-This is the third (j=2):
+These are the values for j=2:
 ```console
 (lldb) p tokens_new
 (const std::vector<whisper_token_data>) size=5 {
@@ -1172,7 +1172,7 @@ This is the third (j=2):
   [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
 }
 ```
-This is the third (j=3):
+These are the values for j=3:
 ```console
 (lldb) p tokens_new
 (const std::vector<whisper_token_data>) size=5 {
@@ -1183,7 +1183,7 @@ This is the third (j=3):
   [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
 }
 ```
-This is the third (j=4):
+These are the values for j=4:
 ```console
 (lldb) p tokens_new
 (const std::vector<whisper_token_data>) size=5 {
