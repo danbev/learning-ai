@@ -1,5 +1,5 @@
 ## GGML_NATIVE
-By default this option is true and this will quiery the current cpu for available
+By default this option is true and this will query the current CPU for available
 features and enable them. This allows for an optimized build for the current cpu.
 But if you want to build and distribute a binary this may not work unles you
 know that the target cpu has the same features as the build machine.
