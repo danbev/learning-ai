@@ -517,3 +517,681 @@ struct whisper_context * whisper_init_from_file_with_params_no_state(const char 
 
 
 ```
+
+### Beam Search
+Lets take the whisper-cli as the example and see how the beam search works.
+```c++
+int main(int argc, char ** argv) {
+    ...
+    struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
+```
+```c++
+struct whisper_context * whisper_init_from_file_with_params(const char * path_model, struct whisper_context_params params) {
+    whisper_context * ctx = whisper_init_from_file_with_params_no_state(path_model, params);
+    if (!ctx) {
+        return nullptr;
+    }
+
+    ctx->state = whisper_init_state(ctx);
+    if (!ctx->state) {
+        whisper_free(ctx);
+        return nullptr;
+    }
+
+    return ctx;
+}
+```
+```c++
+struct whisper_context * whisper_init_from_file_with_params_no_state(const char * path_model, struct whisper_context_params params) {
+    WHISPER_LOG_INFO("%s: loading model from '%s'\n", __func__, path_model);
+#ifdef _MSC_VER
+    // Convert UTF-8 path to wide string (UTF-16) for Windows, resolving character encoding issues.
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+    std::wstring path_model_wide = converter.from_bytes(path_model);
+    auto fin = std::ifstream(path_model_wide, std::ios::binary);
+#else
+    auto fin = std::ifstream(path_model, std::ios::binary);
+#endif
+    if (!fin) {
+        WHISPER_LOG_ERROR("%s: failed to open '%s'\n", __func__, path_model);
+        return nullptr;
+    }
+
+    whisper_model_loader loader = {};
+    ...
+
+    auto ctx = whisper_init_with_params_no_state(&loader, params);
+```
+```c++
+struct whisper_context * whisper_init_with_params_no_state(struct whisper_model_loader * loader, struct whisper_context_params params) {
+    ...
+
+    whisper_context * ctx = new whisper_context;
+    ctx->params = params;
+
+    if (!whisper_model_load(loader, *ctx)) {
+        loader->close(loader->context);
+        WHISPER_LOG_ERROR("%s: failed to load model\n", __func__);
+        delete ctx;
+        return nullptr;
+    }
+}
+```
+```c++
+static bool whisper_model_load(struct whisper_model_loader * loader, whisper_context & wctx) {
+    WHISPER_LOG_INFO("%s: loading model\n", __func__);
+
+    const int64_t t_start_us = ggml_time_us();
+
+    wctx.t_start_us = t_start_us;
+
+    auto & model = wctx.model;
+    auto & vocab = wctx.vocab;
+
+    // verify magic
+    {
+        uint32_t magic;
+        read_safe(loader, magic);
+        if (magic != GGML_FILE_MAGIC) {
+            WHISPER_LOG_ERROR("%s: invalid model data (bad magic)\n", __func__);
+            return false;
+        }
+    }
+```
+TODO: take a closer look at the verify magic check in combination with using a Core ML
+model. This check forces there to be an ggml model even though there might be cases
+where only a Core ML model is used.
+
+The actual inference is started by `cli.cpp`:
+```c++
+    whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    ...
+    if (whisper_full_parallel(ctx, wparams, pcmf32.data(), pcmf32.size(), params.n_processors) != 0) {
+        fprintf(stderr, "%s: failed to process audio\n", argv[0]);
+        return 10;
+    }
+```
+```c++
+int whisper_full_parallel(
+        struct whisper_context * ctx,
+        struct whisper_full_params params,
+        const float * samples,
+        int n_samples,
+        int n_processors) {
+    if (n_processors == 1) {
+        return whisper_full(ctx, params, samples, n_samples);
+    }
+```
+```c++
+int whisper_full(
+        struct whisper_context * ctx,
+    struct whisper_full_params   params,
+                   const float * samples,
+                           int   n_samples) {
+    return whisper_full_with_state(ctx, ctx->state, params, samples, n_samples);
+}
+```
+```c++
+int whisper_full_with_state(
+        struct whisper_context * ctx,
+          struct whisper_state * state,
+    struct whisper_full_params   params,
+                   const float * samples,
+                           int   n_samples) {
+    ...
+    if (n_samples > 0) {
+        // compute log mel spectrogram
+        if (whisper_pcm_to_mel_with_state(ctx, state, samples, n_samples, params.n_threads) != 0) {
+            WHISPER_LOG_ERROR("%s: failed to compute log mel spectrogram\n", __func__);
+            return -2;
+        }
+    }
+}
+```
+```console
+(lldb) p n_samples
+(int) 176000
+```
+
+Next we have the temperatures:
+```c++
+    // a set of temperatures to use
+    // [ t0, t0 + delta, t0 + 2*delta, ..., < 1.0f + 1e-6f ]
+    std::vector<float> temperatures;
+    if (params.temperature_inc > 0.0f) {
+        for (float t = params.temperature; t < 1.0f + 1e-6f; t += params.temperature_inc) {
+            temperatures.push_back(t);
+        }
+    } else {
+        temperatures.push_back(params.temperature);
+    }
+```
+```console
+(std::vector<float>) size=6 {
+  [0] = 0
+  [1] = 0.200000003
+  [2] = 0.400000006
+  [3] = 0.600000024
+  [4] = 0.800000011
+  [5] = 1
+}
+```
+These are described in the whisper paper. So we start with a temperature of 0,
+and increment in approximately 0.2 steps up to 1.0.
+So for a single inference, from the point of view of the caller, it would potentially cause
+multiple inferences to happen if the heuristic (issues discovered in practice) happen.
+From the caller's perspective, what appears to be a single transcription request could
+potentially trigger multiple inference passes behind the scenes.
+
+Next, the decoders are initalized:
+```c++
+    // initialize the decoders
+    int n_decoders = 1;
+
+    switch (params.strategy) {
+        case WHISPER_SAMPLING_GREEDY:
+            {
+                n_decoders = params.greedy.best_of;
+            } break;
+        case WHISPER_SAMPLING_BEAM_SEARCH:
+            {
+                n_decoders = std::max(params.greedy.best_of, params.beam_search.beam_size);
+            } break;
+    };
+
+    n_decoders = std::max(1, n_decoders);
+
+    if (n_decoders > WHISPER_MAX_DECODERS) {
+        WHISPER_LOG_ERROR("%s: too many decoders requested (%d), max = %d\n", __func__, n_decoders, WHISPER_MAX_DECODERS);
+        return -4;
+    }
+
+    // TAGS: WHISPER_DECODER_INIT
+    for (int j = 1; j < n_decoders; j++) {
+        auto & decoder = state->decoders[j];
+
+        decoder.sequence.tokens.reserve(state->decoders[0].sequence.tokens.capacity());
+
+        decoder.probs.resize   (ctx->vocab.n_vocab);
+        decoder.logits.resize  (ctx->vocab.n_vocab);
+        decoder.logprobs.resize(ctx->vocab.n_vocab);
+        decoder.logits_id.reserve(ctx->model.hparams.n_vocab);
+
+        decoder.rng = std::mt19937(0);
+    }
+```
+Then the prompt is prepared:
+```c++
+    // prepare prompt
+    {
+        std::vector<whisper_token> prompt_tokens;
+
+        // initial prompt
+        if (!params.prompt_tokens && params.initial_prompt) {
+            prompt_tokens.resize(1024);
+            int n_needed = whisper_tokenize(ctx, params.initial_prompt, prompt_tokens.data(), prompt_tokens.size());
+            if (n_needed < 0) {
+                prompt_tokens.resize(-n_needed);
+                n_needed = whisper_tokenize(ctx, params.initial_prompt, prompt_tokens.data(), prompt_tokens.size());
+            }
+            prompt_tokens.resize(n_needed);
+            params.prompt_tokens   = prompt_tokens.data();
+            params.prompt_n_tokens = prompt_tokens.size();
+        }
+
+        // prepend the prompt tokens to the prompt_past
+        if (params.prompt_tokens && params.prompt_n_tokens > 0) {
+            // parse tokens from the pointer
+            for (int i = 0; i < params.prompt_n_tokens; i++) {
+                prompt_past.push_back(params.prompt_tokens[i]);
+            }
+            std::rotate(prompt_past.begin(), prompt_past.end() - params.prompt_n_tokens, prompt_past.end());
+        }
+    }
+```
+Then the tokens are set up:
+```c++
+    // these tokens determine the task that will be performed
+    std::vector<whisper_token> prompt_init = { whisper_token_sot(ctx), };
+
+    if (whisper_is_multilingual(ctx)) {
+        const int lang_id = whisper_lang_id(params.language);
+        state->lang_id = lang_id;
+        prompt_init.push_back(whisper_token_lang(ctx, lang_id));
+        if (params.translate) {
+            prompt_init.push_back(whisper_token_translate(ctx));
+        } else {
+            prompt_init.push_back(whisper_token_transcribe(ctx));
+        }
+    }
+```
+`sot` is start of transcript. 
+
+`whisper_state` contains a a list of `whisper_decoder`:
+```c++
+struct whisper_state {
+    ...
+    whisper_decoder decoders[WHISPER_MAX_DECODERS];
+    ...
+};
+```
+```c++
+struct whisper_decoder {
+    // the currently generated sequence of tokens
+    whisper_sequence sequence;
+
+    // grammar parse state of generated sequence of tokens
+    whisper_grammar  grammar;
+
+    int i_batch;    // the index of the token in the current batch
+    int seek_delta; // the window shift found so far based on the decoded timestamp tokens
+
+    bool failed;    // has the current segment failed to decode?
+    bool completed; // has the decoder completed the current segment?
+    bool has_ts;    // have we already sampled a non-beg timestamp token for the current segment?
+
+    // new token probs, logits and logprobs after the last whisper_decode (1-dimensional array: [n_vocab])
+    std::vector<float> probs;
+    std::vector<float> logits;
+    std::vector<float> logprobs;
+
+    // work container used to avoid memory allocations
+    std::vector<whisper_pair<double, whisper_vocab::id>> logits_id;
+
+    mutable std::mt19937 rng; // used for sampling at t > 0.0
+};
+
+struct whisper_sequence {
+    std::vector<whisper_token_data> tokens;
+
+    // the accumulated transcription in the current iteration (used to truncate the tokens array)
+    int result_len;
+
+    double sum_logprobs_all; // the sum of the log probabilities of the tokens
+    double sum_logprobs;     // the sum of the log probabilities of the tokens (first result_len tokens)
+    double avg_logprobs;     // the average log probability of the tokens
+    double entropy;          // the entropy of the tokens
+    double score;            // likelihood rank score
+};
+```
+
+```console
+-bo N,     --best-of N         [5      ] number of best candidates to keep
+-bs N,     --beam-size N       [5      ] beam size for beam search
+```
+
+```c++
+int whisper_full_with_state(
+        struct whisper_context * ctx,
+          struct whisper_state * state,
+    struct whisper_full_params   params,
+                   const float * samples,
+                           int   n_samples) {
+    ...
+    // initialize the decoders
+    int n_decoders = 1;
+
+    switch (params.strategy) {
+        case WHISPER_SAMPLING_GREEDY:
+            {
+                n_decoders = params.greedy.best_of;
+            } break;
+        case WHISPER_SAMPLING_BEAM_SEARCH:
+            {
+                n_decoders = std::max(params.greedy.best_of, params.beam_search.beam_size);
+            } break;
+    };
+
+    n_decoders = std::max(1, n_decoders);
+
+    if (n_decoders > WHISPER_MAX_DECODERS) {
+        WHISPER_LOG_ERROR("%s: too many decoders requested (%d), max = %d\n", __func__, n_decoders, WHISPER_MAX_DECODERS);
+        return -4;
+    }
+
+    // TAGS: WHISPER_DECODER_INIT
+    for (int j = 1; j < n_decoders; j++) {
+        auto & decoder = state->decoders[j];
+
+        decoder.sequence.tokens.reserve(state->decoders[0].sequence.tokens.capacity());
+
+        decoder.probs.resize   (ctx->vocab.n_vocab);
+        decoder.logits.resize  (ctx->vocab.n_vocab);
+        decoder.logprobs.resize(ctx->vocab.n_vocab);
+        decoder.logits_id.reserve(ctx->model.hparams.n_vocab);
+
+        decoder.rng = std::mt19937(0);
+    }
+    ...
+    struct beam_candidate {
+        int decoder_idx;  // which decoder this candidate came from.
+        int seek_delta;   // position in the audio?
+
+        bool has_ts;      // has timestamp information.
+
+        whisper_sequence sequence; // the token sequence for this candidate
+        whisper_grammar grammar;   // the grammar for this candidate
+    };
+
+    std::vector<std::vector<beam_candidate>> bc_per_dec(n_decoders);
+    std::vector<beam_candidate> beam_candidates;
+   
+    ...
+
+    struct beam_candidate {
+        int decoder_idx;
+        int seek_delta;
+
+        bool has_ts;
+
+        whisper_sequence sequence;
+        whisper_grammar grammar;
+    };
+
+    std::vector<std::vector<beam_candidate>> bc_per_dec(n_decoders);
+    std::vector<beam_candidate> beam_candidates;
+
+    // main loop
+    while (true) {
+        if (params.progress_callback) {
+            const int progress_cur = (100*(seek - seek_start))/(seek_end - seek_start);
+
+            params.progress_callback(
+                ctx, state, progress_cur, params.progress_callback_user_data);
+        }
+
+        // if only 1 second left, then stop
+        if (seek + 100 >= seek_end) {
+            break;
+        }
+
+        if (params.encoder_begin_callback) {
+            if (params.encoder_begin_callback(ctx, state, params.encoder_begin_callback_user_data) == false) {
+                WHISPER_LOG_ERROR("%s: encoder_begin_callback returned false - aborting\n", __func__);
+                break;
+            }
+        }
+
+        // encode audio features starting at offset seek
+        if (!whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {
+            WHISPER_LOG_ERROR("%s: failed to encode\n", __func__);
+            return -6;
+        }
+```
+So here we have the inference loop. First the encoder is called which is taking the log mel
+spectrogram and passing it to the encoder part of th model. A nice diagram of this can be
+found on page 4 of the paper. First there is a Cov1D layer followed by a GELU activation,
+and then another Conv1D layer followed by another GELU activation. The output of this then
+as position encodings added to it.
+This function is also what delegates to the Core ML or OpenVINO external encoders if one
+of them are enabled.
+
+```c++
+const auto tokens_new = whisper_sample_token_topk(*ctx, decoder, params.beam_search.beam_size);
+```
+```console
+(lldb) p params.beam_search.beam_size
+(int) 5
+
+(lldb) p tokens_new
+(const std::vector<whisper_token_data>) size=5 {
+  [0] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [1] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [2] = (id = 50365, tid = 50365, p = 0.00626884214, plog = -5.07216358, pt = 0.00626884214, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [3] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+}
+```
+
+```c++
+// init new transcription with sot, language (opt) and task tokens
+prompt.insert(prompt.end(), prompt_init.begin(), prompt_init.end());
+```
+```console
+(lldb) p prompt
+(std::vector<int>) size=1 {
+  [0] = 50257
+}
+```
+Then we have the decoding part of the model:
+```c++
+                whisper_kv_cache_clear(state->kv_self);
+
+                whisper_batch_prep_legacy(state->batch, prompt.data(), prompt.size(), 0, 0);
+
+                if (!whisper_decode_internal(*ctx, *state, state->batch, params.n_threads, false, params.abort_callback, params.abort_callback_user_data)) {
+                    WHISPER_LOG_ERROR("%s: failed to decode\n", __func__);
+                    return -8;
+                }
+```
+```c++
+                // Calculate no_speech probability after first decode.
+                // This has to be done before any logit filtering. Hence we cannot use the probs from the whisper_process_logits.
+                {
+                    const int n_logits = ctx->vocab.id_to_token.size();
+                    std::vector<float> logprobs(n_logits);
+                    std::vector<float> probs(n_logits);
+
+                    whisper_compute_logprobs(state->logits, n_logits, logprobs);
+                    whisper_compute_probs(state->logits, n_logits, logprobs, probs);
+                    state->no_speech_prob = probs[whisper_token_nosp(ctx)];
+                }
+```
+```c++
+                {
+                    const int64_t t_start_sample_us = ggml_time_us();
+
+                    state->decoders[0].i_batch = prompt.size() - 1;
+
+                    whisper_process_logits(*ctx, *state, state->decoders[0], params, t_cur);
+
+                    for (int j = 1; j < n_decoders_cur; ++j) {
+                        auto & decoder = state->decoders[j];
+
+                        whisper_kv_cache_seq_cp(state->kv_self, 0, j, -1, -1);
+
+                        memcpy(decoder.probs.data(),    state->decoders[0].probs.data(),    decoder.probs.size()*sizeof(decoder.probs[0]));
+                        memcpy(decoder.logits.data(),   state->decoders[0].logits.data(),   decoder.logits.size()*sizeof(decoder.logits[0]));
+                        memcpy(decoder.logprobs.data(), state->decoders[0].logprobs.data(), decoder.logprobs.size()*sizeof(decoder.logprobs[0]));
+                    }
+
+                    state->t_sample_us += ggml_time_us() - t_start_sample_us;
+                }
+```
+
+Notice that this is passing the first decoder to the `whisper_process_logits` function:
+```c++
+static void whisper_process_logits(
+              struct whisper_context & ctx,
+               struct whisper_state  & state,
+              struct whisper_decoder & decoder,
+    const struct whisper_full_params   params,
+                               float   temperature) {
+        ...
+        if (params.suppress_blank) {
+            if (is_initial) {
+                logits[vocab.token_eot]           = -INFINITY;
+                logits[vocab.token_to_id.at(" ")] = -INFINITY;
+            }
+        }
+```
+And in this case the filtering is basically just setting the vocab tokens for these specific
+tokens to negative infinity so they will not have any influence on the logprobability calculation?
+In this case the filter is preventing the model from starting a transcription with a blank space
+or an end-of-transcript token.
+This is also how timestamps are not generated:
+```c++
+        if (params.no_timestamps) {
+            for (int i = vocab.token_beg; i < n_logits; ++i) {
+                logits[i] = -INFINITY;
+            }
+        }
+```
+When we set a logit which recall is the raw values (unnormalized probabilities) from the
+final layer of the decoder. They can range from very negative to very positive values.
+So they are not constrained to any range like [0,1] and do not sum to 1. There basically
+"confidence scores" that indicate how strongly the model believes that a particular token
+should be the next token in the sequence.
+
+When we set a logit to negative infinity, we are effectively saying that the probability
+of that token is zero. This is a way to filter out tokens that we do not want to consider
+in the decoding process.
+```c++
+        whisper_compute_logprobs(logits, n_logits, logprobs);
+```
+
+```c++
+static void whisper_compute_logprobs(
+                const std::vector<float> & logits,
+                              const int    n_logits,
+                      std::vector<float> & logprobs) {
+    const float logit_max = *std::max_element(logits.begin(), logits.end());
+    float logsumexp = 0.0f;
+    for (int i = 0; i < n_logits; ++i) {
+        if (logits[i] > -INFINITY) {
+            logsumexp += expf(logits[i] - logit_max);
+        }
+    }
+    logsumexp = logf(logsumexp) + logit_max;
+
+    for (int i = 0; i < n_logits; ++i) {
+        if (logits[i] > -INFINITY) {
+            logprobs[i] = logits[i] - logsumexp;
+        } else {
+            logprobs[i] = -INFINITY;
+        }
+    }
+}
+```
+So we first get the maximum logit value. This is used for numerical stability, notice
+that is is subtracted from the logits before exponentiation. And also notice that
+logits with the value of -INFINITY are not considered in the calculation, which is
+what the filtering above is for.
+
+After processing the logits the decoders (starting from 1) are updated:
+```c++
+                    for (int j = 1; j < n_decoders_cur; ++j) {
+                        auto & decoder = state->decoders[j];
+
+                        whisper_kv_cache_seq_cp(state->kv_self, 0, j, -1, -1);
+
+                        memcpy(decoder.probs.data(),    state->decoders[0].probs.data(),    decoder.probs.size()*sizeof(decoder.probs[0]));
+                        memcpy(decoder.logits.data(),   state->decoders[0].logits.data(),   decoder.logits.size()*sizeof(decoder.logits[0]));
+                        memcpy(decoder.logprobs.data(), state->decoders[0].logprobs.data(), decoder.logprobs.size()*sizeof(decoder.logprobs[0]));
+                    }
+```
+So this is setting the logits which are the raw values (unnormalized probabilities). And also
+the logprobs which are calculated by:
+```c++
+logprobs[i] = log(exp(logits[i]) / sum(exp(logits)))
+```
+Logprobs will always be <= 0.0, with 0 representing a probability of 100% probability and
+very negative values representing probilities close to 0. These are useful for working with
+scoring when computing scores and ranking in beam search.
+
+And the decoders also have the actual normalized probabilites of each token. This is obtained
+by applying the softmax function to the logits.
+
+The we have the process function()
+```c++
+
+case whisper_sampling_strategy::WHISPER_SAMPLING_BEAM_SEARCH:
+    {
+        const auto tokens_new = whisper_sample_token_topk(*ctx, decoder, params.beam_search.beam_size);
+
+        for (const auto & token : tokens_new) {
+            bc_per_dec[j].push_back({ j, decoder.seek_delta, decoder.has_ts, decoder.sequence, decoder.grammar, });
+            bc_per_dec[j].back().sequence.tokens.push_back(token);
+            bc_per_dec[j].back().sequence.sum_logprobs_all += token.plog;
+        }
+    } break;
+```
+So for each of the decoders we are going to call `whisper_sample_token_topk`:
+```c++
+static std::vector<whisper_token_data> whisper_sample_token_topk(
+            whisper_context & ctx,
+            whisper_decoder & decoder,
+                        int   k) {
+    ...
+    std::discrete_distribution<> dist(probs.begin(), probs.end());
+
+    for (int i = 0; i < k; ++i) {
+        const auto id = dist(decoder.rng);
+        //printf("XXX %d %d %f %f %f %f\n", id, tid, probs[id], logprobs[id], pt, ptsum);
+
+        result.push_back({ id, tid, probs[id], logprobs[id], pt, ptsum, -1, -1, -1, 0.0f, });
+
+        if (result[i].id >= vocab.token_beg) {
+            result[i].tid = result[i].id;
+            result[i].pt  = result[i].p;
+        }
+    }
+```
+Notice that this is using dist which is a discrete distribution. Each decoder has its own
+random number generator so when sampling from this distribution, which is done k times,
+the values will be different.
+```c++
+    std::discrete_distribution<> dist(probs.begin(), probs.end());
+```
+This creates a distribution where the probability of selecting token i is
+proporitional to probs[i], the probability value. Higher probability values are more
+likely and lower probability values are less likely.
+
+```console
+(lldb) p tokens_new
+(const std::vector<whisper_token_data>) size=5 {
+  [0] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [1] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [2] = (id = 50365, tid = 50365, p = 0.00626884214, plog = -5.07216358, pt = 0.00626884214, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [3] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+```
+Now, recall that each sample is independent when sampled from the distribution and that the
+token 50363 has a probability of 0.837067842. So it is not surprising that it is sampled
+multiple times.
+
+This is the third (j=1):
+```console
+(lldb) p tokens_new
+(const std::vector<whisper_token_data>) size=5 {
+  [0] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [1] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [2] = (id = 50365, tid = 50365, p = 0.00626884214, plog = -5.07216358, pt = 0.00626884214, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [3] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+}
+```
+This is the third (j=2):
+```console
+(lldb) p tokens_new
+(const std::vector<whisper_token_data>) size=5 {
+  [0] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [1] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [2] = (id = 50365, tid = 50365, p = 0.00626884214, plog = -5.07216358, pt = 0.00626884214, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [3] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+}
+```
+This is the third (j=3):
+```console
+(lldb) p tokens_new
+(const std::vector<whisper_token_data>) size=5 {
+  [0] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [1] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [2] = (id = 50365, tid = 50365, p = 0.00626884214, plog = -5.07216358, pt = 0.00626884214, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [3] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+}
+```
+This is the third (j=4):
+```console
+(lldb) p tokens_new
+(const std::vector<whisper_token_data>) size=5 {
+  [0] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [1] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [2] = (id = 50365, tid = 50365, p = 0.00626884214, plog = -5.07216358, pt = 0.00626884214, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [3] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+  [4] = (id = 50363, tid = 50363, p = 0.837067842, plog = -0.177850127, pt = 0.837067842, ptsum = 0.985369741, t0 = -1, t1 = -1, t_dtw = -1, vlen = 0)
+}
+```
+
