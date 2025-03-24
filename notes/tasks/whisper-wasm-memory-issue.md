@@ -62,3 +62,76 @@ We can then check this in the devtools console:
 ```
 This is a TypedArrayBuffer (Int8Array), and this is getting the size of the ArrayBuffer
 in bytes (because we are using the Int8Array view).
+
+One thing I've tried it to manually trigger an error in main.js where the
+WebAssembly.Memory is requested:
+build-em/bin/whisper.wasm/main.js:
+```javascript
+if (ENVIRONMENT_IS_PTHREAD) {
+    wasmMemory = Module["wasmMemory"];
+    buffer = Module["buffer"];
+} else {
+    if (Module["wasmMemory"]) {
+        wasmMemory = Module["wasmMemory"];
+    } else {
+        throw Error("danbev simulating memory issue");
+
+        wasmMemory = new WebAssembly.Memory({
+            "initial": INITIAL_MEMORY / 65536,
+            "maximum": INITIAL_MEMORY / 65536,
+            "shared": true
+        });
+        if (!(wasmMemory.buffer instanceof SharedArrayBuffer)) {
+           err("requested a shared WebAssembly.Memory but the returned buffer is not a SharedArrayBuffer, indicating that while the browser has SharedArrayBuffer it does not have WebAssembly threads support - you may need to set a flag");
+            if (ENVIRONMENT_IS_NODE) {                                                   
+                console.log("(on node you may need: --experimental-wasm-threads --experimental-wasm-bulk-memory and also use a recent version)");
+            }
+            throw Error("bad memory");
+            }
+     }
+}
+```
+This will produce and initial error like this when the example is loaded:
+```console
+main.js:1049 Uncaught Error: danbev simulating memory issue
+    at main.js:1049:10
+```
+When trying to load a model I get:
+```console
+loadRemote: storage quota: 603520792166 bytes
+helpers.js:14 loadRemote: storage usage: 109873656 bytes
+helpers.js:14 loadRemote: "https://whisper.ggerganov.com/ggml-model-whisper-tiny.en-q5_1.bin" is already in the IndexedDB
+whisper.wasm/:291 Uncaught TypeError: Module.FS_createDataFile is not a function
+    at storeFS (whisper.wasm/:291:24)
+    at rq.onsuccess (helpers.js:124:17)
+```
+And loading a sample:
+```console
+js: loading audio: jfk.wav, size: 352078 bytes
+helpers.js:14 js: please wait ...
+helpers.js:14 js: audio loaded, size: 176000
+```
+And then when I try to transcribe the audio I get:
+```console
+js: loading audio: jfk.wav, size: 352078 bytes
+helpers.js:14 js: please wait ...
+helpers.js:14 js: audio loaded, size: 176000
+```
+This at least matches the reported errors. So the the theory is that the
+initial memory we request for WebAssembly.Memory is too large, it is currently
+2GB. We could reduce this to 256MB and allow it to grow, but still leave the
+max/total at 2GB:
+```console
+set_target_properties(${TARGET} PROPERTIES LINK_FLAGS " \
+    --bind \
+    -s USE_PTHREADS=1 \
+    -s PTHREAD_POOL_SIZE_STRICT=0 \
+    -s INITIAL_MEMORY=256MB \
+    -s TOTAL_MEMORY=2000GB \
+    -s ALLOW_MEMORY_GROWTH=1 \
+    --emit-symbol-map -g3 --source-map-base ./ -O0 \
+    -s FORCE_FILESYSTEM=1 \
+    -s EXPORTED_RUNTIME_METHODS=\"['print', 'printErr', 'ccall', 'cwrap']\" \
+    ${EXTRA_FLAGS} \
+    ")
+```
