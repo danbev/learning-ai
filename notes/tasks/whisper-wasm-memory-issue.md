@@ -135,3 +135,120 @@ set_target_properties(${TARGET} PROPERTIES LINK_FLAGS " \
     ${EXTRA_FLAGS} \
     ")
 ```
+Actually, there is another issue here. The `INITIAL_MEMORY` and `TOTAL_MEMORY`
+are actually specifying the same thing: 
+https://emscripten.org/docs/tools_reference/settings_reference.html#initial-memory
+
+We should be specifing:
+```
+    -s INITIAL_MEMORY=256MB \
+    -s MAXIMUM_MEMORY=2000MB \
+```
+
+Lets try this out using a new chrome brower and restrict the memory it has
+available to it:
+To try this out we can start a new chrome instance:
+```console
+$ mkdir -p /tmp/chrome-test-profile
+```
+First we try using 3200 pages (64KB) which is 200MB:
+```console
+google-chrome --user-data-dir=/tmp/chrome-test-profile --no-sandbox --js-flags="--wasm-max-mem-pages=3200" http://localhost:8000/whisper.wasm/
+```
+
+```console
+Uncaught RangeError: WebAssembly.Memory(): could not allocate memory
+    at main.js:1:12464Understand this errorAI
+favicon.ico:1 
+            
+            
+           Failed to load resource: the server responded with a status of 404 (File not found)Understand this errorAI
+helpers.js:14 loadRemote: storage quota: 603520792166 bytes
+helpers.js:14 loadRemote: storage usage: 0 bytes
+helpers.js:14 loadRemote: "https://whisper.ggerganov.com/ggml-model-whisper-tiny.en.bin" is already in the IndexedDB
+whisper.wasm/:291 Uncaught TypeError: Module.FS_createDataFile is not a function
+    at storeFS (whisper.wasm/:291:24)
+    at rq.onsuccess (helpers.js:124:17)
+storeFS @ whisper.wasm/:291
+rq.onsuccess @ helpers.js:124Understand this errorAI
+helpers.js:14 js: loading audio: jfk.wav, size: 352078 bytes
+helpers.js:14 js: please wait ...
+helpers.js:14 js: audio loaded, size: 176000
+whisper.wasm/:623 Uncaught TypeError: Module.init is not a function
+    at onProcess (whisper.wasm/:623:39)
+    at HTMLButtonElement.onclick (whisper.wasm/:192:61)
+```
+
+Now, lets try with with 4800 pages (300MB) which should be enough::
+```console
+google-chrome --user-data-dir=/tmp/chrome-test-profile --no-sandbox --js-flags="--wasm-max-mem-pages=4800" http://localhost:8000/whisper.wasm/
+```
+```console
+js: Running...
+favicon.ico:1
+
+
+           Failed to load resource: the server responded with a status of 404 (File not found)Understand this errorAI
+helpers.js:14 js:
+helpers.js:14 loadRemote: storage quota: 603520792166 bytes
+helpers.js:14 loadRemote: storage usage: 0 bytes
+helpers.js:14 loadRemote: "https://whisper.ggerganov.com/ggml-model-whisper-tiny.en-q5_1.bin" is not in the IndexedDB
+helpers.js:14 fetchRemote: downloading with fetch()...
+helpers.js:14 fetchRemote: fetching 0% ...
+helpers.js:14 fetchRemote: fetching 10% ...
+helpers.js:14 fetchRemote: fetching 20% ...
+helpers.js:14 fetchRemote: fetching 30% ...
+helpers.js:14 fetchRemote: fetching 40% ...
+helpers.js:14 fetchRemote: fetching 50% ...
+helpers.js:14 fetchRemote: fetching 60% ...
+helpers.js:14 fetchRemote: fetching 70% ...
+helpers.js:14 fetchRemote: fetching 80% ...
+helpers.js:14 fetchRemote: fetching 90% ...
+helpers.js:14 fetchRemote: fetching 100% ...
+helpers.js:14 loadRemote: "https://whisper.ggerganov.com/ggml-model-whisper-tiny.en-q5_1.bin" stored in the IndexedDB
+helpers.js:14 storeFS: stored model: whisper.bin size: 32166155
+helpers.js:14 js: loading audio: jfk.wav, size: 352078 bytes
+helpers.js:14 js: please wait ...
+helpers.js:14 js: audio loaded, size: 176000
+helpers.js:14 whisper_init_from_file_with_params_no_state: loading model from 'whisper.bin'
+helpers.js:14 whisper_init_with_params_no_state: use gpu    = 1
+helpers.js:14 whisper_init_with_params_no_state: flash attn = 0
+helpers.js:14 whisper_init_with_params_no_state: gpu_device = 0
+helpers.js:14 whisper_init_with_params_no_state: dtw        = 0
+helpers.js:14 whisper_init_with_params_no_state: devices    = 1
+helpers.js:14 whisper_init_with_params_no_state: backends   = 1
+helpers.js:14 whisper_model_load: loading model
+helpers.js:14 whisper_model_load: n_vocab       = 51864
+helpers.js:14 whisper_model_load: n_audio_ctx   = 1500
+helpers.js:14 whisper_model_load: n_audio_state = 384
+helpers.js:14 whisper_model_load: n_audio_head  = 6
+helpers.js:14 whisper_model_load: n_audio_layer = 4
+helpers.js:14 whisper_model_load: n_text_ctx    = 448
+helpers.js:14 whisper_model_load: n_text_state  = 384
+helpers.js:14 whisper_model_load: n_text_head   = 6
+helpers.js:14 whisper_model_load: n_text_layer  = 4
+helpers.js:14 whisper_model_load: n_mels        = 80
+helpers.js:14 whisper_model_load: ftype         = 9
+helpers.js:14 whisper_model_load: qntvr         = 1
+helpers.js:14 whisper_model_load: type          = 1 (tiny)
+helpers.js:14 whisper_model_load: adding 1607 extra tokens
+helpers.js:14 whisper_model_load: n_langs       = 99
+helpers.js:14 whisper_model_load:      CPU total size =    31.57 MB
+helpers.js:14 whisper_model_load: model size    =   31.57 MB
+helpers.js:14 whisper_backend_init_gpu: no GPU found
+helpers.js:14 whisper_init_state: kv self size  =    3.15 MB
+helpers.js:14 whisper_init_state: kv cross size =    9.44 MB
+helpers.js:14 whisper_init_state: kv pad  size  =    2.36 MB
+helpers.js:14 whisper_init_state: compute buffer (conv)   =   12.78 MB
+helpers.js:14 whisper_init_state: compute buffer (encode) =   64.38 MB
+helpers.js:14 whisper_init_state: compute buffer (cross)  =    3.47 MB
+helpers.js:14 ggml_aligned_malloc: insufficient memory (attempted to allocate  20.06 MB)
+helpers.js:14 /home/danbev/work/ai/whisper-work/ggml/src/ggml.c:1450: GGML_ASSERT(ctx->mem_buffer != NULL) failed
+```
+So we did not get the intial WebAssembly.Memory error but we do need a little
+more memory it seems.
+```console
+$ google-chrome --user-data-dir=/tmp/chrome-test-profile --no-sandbox --js-flags="--wasm-max-mem-pages=8192" http://localhost:8000/whisper.wasm/
+```
+This worked. So perhaps the inital size should be a little higher that 256MB.
+Perhaps setting it to 512MB would be a good option.
