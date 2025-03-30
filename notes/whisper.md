@@ -1390,7 +1390,6 @@ Layer 5: Head 1, 5, 7
 ```
 
 
-
 ```c++
     typedef struct whisper_ahead {
         int n_text_layer;
@@ -1449,23 +1448,285 @@ struct whisper_context_params whisper_context_default_params() {
 }
 ```
 
+### KV Caches in whisper.cpp
+In whisper.cpp there are three kv-caches. One for the self-attention, one for
+the cross attention, and one for padding (flash attention I think).
+
+Now, the self-attention cache is what we might be used to from a normal LLM
+where the key and values are computed for each generated token, and then stored
+in the cache to save computating them again.
+
+The encoder processes the audio frames and generates some form of embeddings for
+them. We can think of then as a matrix where each row represents a certain time
+interval in the input audio. This matrix is what is used to populate the cross
+attention cache and it does not change during the decoding process, it is of
+fixed size and content. This matrix, or sequence of vector embeddings each vector
+corresponds to about 20ms of audio.
+
+- Each row represents a specific time interval in the original audio
+- The number of columns equals the embedding dimension (the model's hidden state size)
+
+Also recall that there can be multiple decoders in whisper but there is still
+only one kv-cache in the state. Each decoder is like a separate sequence and can
+use a separate sequence id for its entries in the cache.
+
+So the first cache to be updated is the cross kv cache as the encoder is first.
+That is then fixed for the duration of the decoding. After that the decoding
+will proceed and it will start with a single token (start of sequence) which
+till then attend to the cross attention and after that a self attention. And
+the result of the Key and Value for this will be appended to the self attention
+cache.
+
+So in the decoder transformer blocks, each block will first have self-attention
+then cross-attention, followed by a feed forward network (MLP).
 
 ```c++
-    enum whisper_alignment_heads_preset {
-        WHISPER_AHEADS_NONE,
-        WHISPER_AHEADS_N_TOP_MOST,  // All heads from the N-top-most text-layers
-        WHISPER_AHEADS_CUSTOM,
-        WHISPER_AHEADS_TINY_EN,
-        WHISPER_AHEADS_TINY,
-        WHISPER_AHEADS_BASE_EN,
-        WHISPER_AHEADS_BASE,
-        WHISPER_AHEADS_SMALL_EN,
-        WHISPER_AHEADS_SMALL,
-        WHISPER_AHEADS_MEDIUM_EN,
-        WHISPER_AHEADS_MEDIUM,
-        WHISPER_AHEADS_LARGE_V1,
-        WHISPER_AHEADS_LARGE_V2,
-        WHISPER_AHEADS_LARGE_V3,
-        WHISPER_AHEADS_LARGE_V3_TURBO,
-    };
+struct whisper_state * whisper_init_state(whisper_context * ctx) {
+    ...
+    state->kv_self_n_dec = 1;
+    if (!whisper_kv_cache_init(state->kv_self, state->backends[0], ctx->itype,
+                ctx->model.hparams.n_text_state,
+                ctx->model.hparams.n_text_layer,
+                GGML_PAD(ctx->model.hparams.n_text_ctx, 256))) {
+        WHISPER_LOG_ERROR("%s: whisper_kv_cache_init() failed for self-attention cache\n", __func__);
+        whisper_free_state(state);
+        return nullptr;
+    }
 ```
+And this is what the signature of the `whisper_kv_cache_init` function looks
+like:
+```c++
+static bool whisper_kv_cache_init(
+             struct whisper_kv_cache & cache,
+                      ggml_backend_t   backend,
+                           ggml_type   wtype,
+                             int64_t   n_text_state,
+                             int64_t   n_text_layer,
+                                 int   n_ctx) {
+    const int64_t n_mem      = n_text_layer*n_ctx;
+    const int64_t n_elements = n_text_state*n_mem;
+```
+```console
+(gdb) p ctx->model.hparams.n_text_state
+$8 = 512
+(gdb) p ctx->model.hparams.n_text_layer
+$9 = 6
+(gdb) p ctx->model.hparams.n_text_ctx
+$10 = 448
+(gdb) p ctx->itype
+$11 = GGML_TYPE_F16
+(gdb) p n_ctx
+$30 = 512
+```
+Recall that this particular cache if for the self-attention, that is the decoder.
+So in this case we have 6 layers. And each layer need to store/cache up to
+c_ctx (512) tokens.
+```
+Key cache:
+           <- n_text_state   ->
+Layer 0: 0 [0              512]   ^                  Per layer: 512 * 512 = 262144
+                  ...             |
+                  ...             n_ctx
+                  ...             |
+       511 [0              512]   v
+...
+...
+
+Layer 5: 0 [0              512]   ^
+                  ...             |
+                  ...             n_ctx
+                  ...             |
+       511 [0              512]   v
+
+Total: 6 * 262144 = 1572864 (values of some type like float16 etc)
+
+And we have the same for the Value cache
+Total: 6 * 262144 = 1572864
+
+Key + Value = 3145728
+
+And if we have 2 bytes per element/value:
+3145728 * 2 = 6291456 bytes (6MB)
+```
+So we have a max context size of 512 tokens. And we have 6 layers. This means
+that there will be 6 self-attention "blocks" in the decoder and each one will
+have to store the computation of the Key and Values for that block.
+
+```console
+(gdb) p n_mem
+$15 = 3072
+(gdb) p n_elements
+$16 = 1572864
+```
+If we look at the `whisper_kv_cache` struct we see that is has the following
+fields:
+```c++
+struct whisper_kv_cache {
+    uint32_t head = 0;
+    uint32_t size = 0;
+
+    // computed before each graph build
+    uint32_t n = 0;
+
+    std::vector<whisper_kv_cell> cells;
+
+    struct ggml_tensor * k;
+    struct ggml_tensor * v;
+
+    ggml_backend_buffer_t buffer = nullptr;
+
+    std::vector<uint8_t> ctx_buf;
+};
+```
+Now, one thing that I did not understand was the `ctx_buf` field. I understand
+that the cache itself if stored in teh `ggml_backend_buffer` but what is the
+`ctx_buf` for?
+Well if we continue looking at the init function we find:
+```c++
+    cache.ctx_buf.resize(2*ggml_tensor_overhead());
+```
+This resizing the `ctx_buf` to twice the overhead of a tensor:
+```console
+(gdb) p ggml_tensor_overhead()
+$17 = 368
+(gdb) p 2*ggml_tensor_overhead()
+$18 = 736
+```
+Then a ggml context will be created:
+```c++
+    struct ggml_init_params params = {
+        /*.mem_size   =*/ cache.ctx_buf.size(),
+        /*.mem_buffer =*/ cache.ctx_buf.data(),
+        /*.no_alloc   =*/ true,
+    };
+    struct ggml_context * ctx = ggml_init(params);
+```
+Then we create tensors for the key and value caches:
+```c++
+    cache.k = ggml_new_tensor_1d(ctx, wtype, n_elements);
+    cache.v = ggml_new_tensor_1d(ctx, wtype, n_elements);
+
+    cache.buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+    ...
+
+    ggml_free(ctx);
+```
+Now, `ggml_backend_alloc_ctx_tensors` will take the tensors that have been
+created in the context. And notice that the `ggml_context` is then freed.
+So having the `ctx_buf` is a way to store the tensors in the context and then
+be able to allocate them in a backend.
+Now, one thing to keep in mind is that even though we are freeing the context
+the data, like metadata for the tensors are still stored in the `ctx_buf`. One
+migth think that this is what cache.k and cache.v are for but notice that these
+are just pointers, and they actually point to the data stored in the `ctx_buf`:
+```console
+(gdb) p cache.k
+$61 = (ggml_tensor *) 0x555555f451a0
+
+(gdb) p cache.ctx_buf.data()
+$63 = (unsigned char *) 0x555555f45180 " "
+
+(gdb) p 0x555555f451a0 - 0x555555f45180
+$65 = 32
+```
+So we can see that the tensor is stored 32 bytes after the start of the `ctx_buf`.
+```
+(gdb) p cache.ctx_buf.data() + 32
+$71 = (unsigned char *) 0x555555f451a0 "\001
+
+(gdb) p *(ggml_tensor*)(cache.ctx_buf.data() + 32)
+$74 = {type = GGML_TYPE_F16, buffer = 0x555555717320, ne = {1572864, 1, 1, 1}, nb = {2, 3145728, 3145728, 3145728},
+  op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+  view_src = 0x0, view_offs = 0, data = 0x7fffee174040, name = '\000' <repeats 63 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p *cache.k
+$75 = {type = GGML_TYPE_F16, buffer = 0x555555717320, ne = {1572864, 1, 1, 1}, nb = {2, 3145728, 3145728, 3145728},
+  op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+  view_src = 0x0, view_offs = 0, data = 0x7fffee174040, name = '\000' <repeats 63 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+```
+
+Next we have the cross-attention cache which is for the output of the encoder
+and is used by the decoder.
+```c++
+    if (!whisper_kv_cache_init(state->kv_cross, state->backends[0], ctx->itype,
+                ctx->model.hparams.n_text_state,
+                ctx->model.hparams.n_text_layer,
+                GGML_PAD(ctx->model.hparams.n_audio_ctx, 256))) {
+        WHISPER_LOG_ERROR("%s: whisper_kv_cache_init() failed for cross-attention cache\n", __func__);
+        whisper_free_state(state);
+        return nullptr;
+    }
+```
+The difference here is that we are passing in a different cache, `kv_cross` and
+also a different context size, `n_audio_ctx` instead of `n_text_ctx`.
+```console
+(gdb) p ctx->model.hparams.n_audio_ctx
+$78 = 1500
+```
+
+Again we have 6 layers. But this time each layer need to store/cache up to n_ctx
+(1536) tokens (1500 tokens padded to multiples of 256).
+```
+Key cache:
+           <- n_text_state   ->
+Layer 0: 0 [0              512]   ^                  Per layer: 512 * 1536 = 786432
+                  ...             |
+                  ...             n_ctx
+                  ...             |
+                  ...             |
+                  ...             |
+                  ...             |
+      1535 [0              512]   v
+...
+...
+
+Layer 5: 0 [0              512]   ^
+                  ...             |
+                  ...             n_ctx
+                  ...             |
+                  ...             |
+                  ...             |
+                  ...             |
+      1535 [0              512]   v
+
+Total: 6 * 786432 = 4718592 (values of some type like float16 etc)
+
+And we have the same for the Value cache
+Total: 6 * 786432 = 4718592
+
+Key + Value = 9437184
+
+And if we have 2 bytes per element/value:
+9437184 * 2 = 18874368 bytes (18MB)
+```
+
+After that we have the `kv_pad` cache:
+```c++
+    if (!whisper_kv_cache_init(state->kv_pad, state->backends[0], ctx->itype,
+                ctx->model.hparams.n_audio_state,
+                1,
+                GGML_PAD(ctx->model.hparams.n_audio_ctx, 256))) {
+        WHISPER_LOG_ERROR("%s: whisper_kv_cache_init() failed for self-attention cache\n", __func__);
+        whisper_free_state(state);
+        return nullptr;
+    }
+```
+Now this is interesting, we are passing in `n_audio_state` instead of
+`n_text_state`, and also `1` instead of `n_text_layer`.
+```console
+(gdb) p ctx->model.hparams.n_audio_state
+$86 = 512
+```
+So in this case there will only be a single layer:
+```
+
+Layer 0: 
+        0 [0                1536]
+                  ...
+                  ...
+                  ...
+      511 [0                1536]
+```
+_wip_
