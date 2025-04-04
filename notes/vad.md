@@ -15,10 +15,10 @@ mobil or IoT devices to detace human speech for example.
 So the input is a small audio segment/chunk and the output is a probability
 that this chunk contains speech.
 
-### Silaro-VAD
+### Silero-VAD
 github: https://github.com/snakers4/silero-vad
 
-The model that Silaro-VAD has is not publicly available yet. I found this
+The model that Silero-VAD has is not publicly available yet. I found this
 discussion:
 https://github.com/snakers4/silero-vad/discussions/371
 
@@ -164,7 +164,7 @@ encoded features → LSTM Cell → Dropout → ReLU → Conv1D → Sigmoid → s
 Notice that this is using an LSTM so it is maintaining a hidden state.
 The LSTM cell holds state between calls, allowing it to "remember" previous
 audio frames. I was a little surprised to see an LSTM here as I read a blog
-post prior to looking into Silaro-VAD which contained:
+post prior to looking into Silero-VAD which contained:
 ```
 A few days back we published a new totally reworked Silero VAD. You can try it
 on your own voice via interactive demo with a video here or via basic demo here.
