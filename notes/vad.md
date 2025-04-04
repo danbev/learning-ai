@@ -1,0 +1,213 @@
+## Voice Activity Detection (VAD)
+Also knowas as speech activity detection (SAD) or speech detection.
+
+Now, keep in mind that this is different than Automatic Speech Recognition (ASR)
+which is the process of converting speech into text. VAD is used to determine
+whether a segment of audio contains speech or not. It is often used as a
+preprocessing step in ASR systems to filter out non-speech segments and reduce
+the amount of data that needs to be processed. So it would be like a preprocessor
+of an audio signal to remove silence or non-speech segments.
+For example ASR systems may struggle with long periods of silence or noise, and
+can output strange results if they are not filtered out.
+
+So VAD should tell speech apart from noise and silence. It could be used in
+mobil or IoT devices to detace human speech for example.
+So the input is a small audio segment/chunk and the output is a probability
+that this chunk contains speech.
+
+### Silaro-VAD
+github: https://github.com/snakers4/silero-vad
+
+The model that Silaro-VAD has is not publicly available yet. I found this
+discussion:
+https://github.com/snakers4/silero-vad/discussions/371
+
+But they do provide their model in two formats, one which I think is in a
+PyTorch JIT (Just In Time) format and one in ONNX format.
+
+We can get information from the jit model using the following script:
+```console
+$ cd audio/silero-vad
+$ source venv/bin/activate
+(venv) $ python src/jit-info.py
+```
+The output looks like this (taking it in pieces):
+```
+RecursiveScriptModule(
+  original_name=VADRNNJITMerge
+  (_model): RecursiveScriptModule(
+    original_name=VADRNNJIT
+    (stft): RecursiveScriptModule(
+      original_name=STFT
+      (padding): RecursiveScriptModule(original_name=ReflectionPad1d)
+    )
+    (encoder): RecursiveScriptModule(
+      original_name=Sequential
+      (0): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+      (1): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+      (2): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+      (3): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+    )
+    (decoder): RecursiveScriptModule(
+      original_name=VADDecoderRNNJIT
+      (rnn): RecursiveScriptModule(original_name=LSTMCell)
+      (decoder): RecursiveScriptModule(
+        original_name=Sequential
+        (0): RecursiveScriptModule(original_name=Dropout)
+        (1): RecursiveScriptModule(original_name=ReLU)
+        (2): RecursiveScriptModule(original_name=Conv1d)
+        (3): RecursiveScriptModule(original_name=Sigmoid)
+      )
+    )
+  )
+  (_model_8k): RecursiveScriptModule(
+    original_name=VADRNNJIT
+    (stft): RecursiveScriptModule(
+      original_name=STFT
+      (padding): RecursiveScriptModule(original_name=ReflectionPad1d)
+    )
+    (encoder): RecursiveScriptModule(
+      original_name=Sequential
+      (0): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+      (1): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+      (2): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+      (3): RecursiveScriptModule(
+        original_name=SileroVadBlock
+        (se): RecursiveScriptModule(original_name=Identity)
+        (activation): RecursiveScriptModule(original_name=ReLU)
+        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+      )
+    )
+    (decoder): RecursiveScriptModule(
+      original_name=VADDecoderRNNJIT
+      (rnn): RecursiveScriptModule(original_name=LSTMCell)
+      (decoder): RecursiveScriptModule(
+        original_name=Sequential
+        (0): RecursiveScriptModule(original_name=Dropout)
+        (1): RecursiveScriptModule(original_name=ReLU)
+        (2): RecursiveScriptModule(original_name=Conv1d)
+        (3): RecursiveScriptModule(original_name=Sigmoid)
+      )
+    )
+  )
+)
+```
+There are two main components in the model, one named `_model` which takes care
+of the 16kHz audio signal and the other one is named `_model_8k` which takes
+care of the 8kHz audio signal. 
+
+Both have the same layers but there tensor shapes might be different (more on
+this later when we look at them).
+
+#### STFT
+So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
+16kHz or 256 samples at 8kHz. The sample rate determines which model is to
+be used.
+```
+audio samples -> STFT -> spectral features (129 frequency bins for 16kHz)
+or 
+audio samples -> STFT -> spectral features (85 frequency bins for 8kHz)
+```
+
+#### Encoder block
+The there is an encoder, `(encoder)` above, block which has 4 layers:
+```
+spectral features → 
+Conv1D → ReLU →             Expands to 128 channels
+Conv1D → ReLU →             Reduces to 64 channels
+Conv1D → ReLU →             Maintains 64 channels
+Conv1D → ReLU →             Expands to 128 channels
+
+Kernel size: 3
+```
+
+#### Decoder block
+Then we have a decoder, `(decoder)` above, block which has 4 layers:
+```
+encoded features → LSTM Cell → Dropout → ReLU → Conv1D → Sigmoid → speech probability
+```
+Notice that this is using an LSTM so it is maintaining a hidden state.
+The LSTM cell holds state between calls, allowing it to "remember" previous
+audio frames. I was a little surprised to see an LSTM here as I read a blog
+post prior to looking into Silaro-VAD which contained:
+```
+A few days back we published a new totally reworked Silero VAD. You can try it
+on your own voice via interactive demo with a video here or via basic demo here.
+We employ a multi-head attention (MHA) based neural network under the hood with
+the Short-time Fourier transform as features. This architecture was chosen due
+to the fact that MHA-based networks have shown promising results in many
+applications ranging from natural language processing to computer vision and
+speech processing, but our experiments and recent papers show that you can
+achieve good results with any sort of fully feedforward network, you just need
+to do enough experiments (i.e. typical choices are MHA-only or transformer
+networks, convolutional neural networks or their hybrids) and optimize the
+architecture.
+```
+Perhaps this newer version has not been made available, or have I been looking
+at an older version of the model perhaps?
+TODO: Look into this and try to figure out what is going on.
+
+The final sigmoid outputs probability (0-1) of speech presence.
+
+
+For the `_model` we have the following parameters:
+```
+First encoder layer (input 129 frequency bins, output 128 channels, 3 kernel size),
+and the bias for that layer:
+_model.encoder.0.reparam_conv.weight, Shape: torch.Size([128, 129, 3])
+_model.encoder.0.reparam_conv.bias, Shape: torch.Size([128])
+
+_model.encoder.1.reparam_conv.weight, Shape: torch.Size([64, 128, 3])
+_model.encoder.1.reparam_conv.bias, Shape: torch.Size([64])
+
+_model.encoder.2.reparam_conv.weight, Shape: torch.Size([64, 64, 3])
+_model.encoder.2.reparam_conv.bias, Shape: torch.Size([64])
+
+_model.encoder.3.reparam_conv.weight, Shape: torch.Size([128, 64, 3])
+_model.encoder.3.reparam_conv.bias, Shape: torch.Size([128])
+
+The decoder LSTM cell has the following parameters:
+_model.decoder.rnn.weight_ih, Shape: torch.Size([512, 128])
+_model.decoder.rnn.weight_hh, Shape: torch.Size([512, 128])
+_model.decoder.rnn.bias_ih, Shape: torch.Size([512])
+_model.decoder.rnn.bias_hh, Shape: torch.Size([512])
+
+Final output layer:
+_model.decoder.decoder.2.weight, Shape: torch.Size([1, 128, 1])
+_model.decoder.decoder.2.bias, Shape: torch.Size([1])
+```
