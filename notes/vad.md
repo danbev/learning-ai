@@ -248,4 +248,53 @@ This would be more effient then passing the entire audio file (like if would
 have considered a mask of some sort instead) as whisper.cpp only has to process
 the actual speech segments.
 
+We need to convert the model to a format that can be uses with whisper.cpp.
+Something along the lines of:
+```console
+(venv) $ python models/convert-solero-vad-to-ggml.py --output models/silero-vad.bin
+Converting 16kHz model
+Saving GGML Silero-VAD model to models/silero-vad-v5.1.2_16k-ggml.bin
+Writing model weights:
+  Writing _model.encoder.0.reparam_conv.weight with shape torch.Size([128, 129, 3])
+  Writing _model.encoder.0.reparam_conv.bias with shape torch.Size([128])
+  Writing _model.encoder.1.reparam_conv.weight with shape torch.Size([64, 128, 3])
+  Writing _model.encoder.1.reparam_conv.bias with shape torch.Size([64])
+  Writing _model.encoder.2.reparam_conv.weight with shape torch.Size([64, 64, 3])
+  Writing _model.encoder.2.reparam_conv.bias with shape torch.Size([64])
+  Writing _model.encoder.3.reparam_conv.weight with shape torch.Size([128, 64, 3])
+  Writing _model.encoder.3.reparam_conv.bias with shape torch.Size([128])
+  Writing lstm_weight_ih with shape torch.Size([512, 128])
+  Writing lstm_weight_hh with shape torch.Size([512, 128])
+  Writing lstm_bias_ih with shape torch.Size([512])
+  Writing lstm_bias_hh with shape torch.Size([512])
+  Writing final_conv_weight with shape torch.Size([1, 128, 1])
+  Writing final_conv_bias with shape torch.Size([1])
+Done! 16kHz model has been converted to GGML format: models/silero-vad-v5.1.2_16k-ggml.bin
+```
+And the 8kHz model:
+```console
+(venv) $ python models/convert-solero-vad-to-ggml.py --output models/silero-vad.bin --sample-rate 8000
+Converting 8kHz model
+Saving GGML Silero-VAD model to models/silero-vad-v5.1.2_8k-ggml.bin
+Writing model weights:
+  Writing _model_8k.encoder.0.reparam_conv.weight with shape torch.Size([128, 65, 3])
+  Writing _model_8k.encoder.0.reparam_conv.bias with shape torch.Size([128])
+  Writing _model_8k.encoder.1.reparam_conv.weight with shape torch.Size([64, 128, 3])
+  Writing _model_8k.encoder.1.reparam_conv.bias with shape torch.Size([64])
+  Writing _model_8k.encoder.2.reparam_conv.weight with shape torch.Size([64, 64, 3])
+  Writing _model_8k.encoder.2.reparam_conv.bias with shape torch.Size([64])
+  Writing _model_8k.encoder.3.reparam_conv.weight with shape torch.Size([128, 64, 3])
+  Writing _model_8k.encoder.3.reparam_conv.bias with shape torch.Size([128])
+  Writing lstm_weight_ih with shape torch.Size([512, 128])
+  Writing lstm_weight_hh with shape torch.Size([512, 128])
+  Writing lstm_bias_ih with shape torch.Size([512])
+  Writing lstm_bias_hh with shape torch.Size([512])
+  Writing final_conv_weight with shape torch.Size([1, 128, 1])
+  Writing final_conv_bias with shape torch.Size([1])
+Done! 8kHz model has been converted to GGML format: models/silero-vad-v5.1.2_8k-ggml.bin
+```
+So it should then be possible to specify a VAD model when using whisper.cpp
+in some way. This would then load the this VAD model and process the audio, get
+the speech timestamps for each segment. 
 
+_wip_
