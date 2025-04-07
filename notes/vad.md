@@ -278,41 +278,18 @@ std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 ```
 
 ### Whisper.cpp integration
-So the idea is that the raw audio file is processed by a VAD model, simliar to
-how an image encoder might process an image into patch embedding tokens and the
-pass those to an LLM. In this case what the VAD model does is process the raw
-audio and outputs the timestamps where there is speech in the audio:
-```
-[
-    {'start': 0.3, 'end': 2.2},
-    {'start': 3.3, 'end': 3.8},
-    {'start': 4.0, 'end': 4.3},
-    {'start': 5.4, 'end': 7.6},
-    {'start': 8.2, 'end': 10.6}
-]
-```
-And using this information we can then extract only those speech segments from
-the audio:
-```c++
-std::vector<float> filter_non_speech(const std::vector<float>& audio, float sample_rate) {
-    auto vad_model = load_silero_vad_model();
-    auto timestamps = vad_model.detect_speech(audio, sample_rate);
 
-    std::vector<float> speech_only;
-    for (const auto& segment : timestamps) {
-        int start_sample = segment.start * sample_rate;
-        int end_sample = segment.end * sample_rate;
-        speech_only.insert(speech_only.end(),
-                          audio.begin() + start_sample,
-                          audio.begin() + end_sample);
-    }
+Branch:  https://github.com/danbev/whisper.cpp/tree/vad
 
-    return speech_only;
-}
-```
-This would be more effient then passing the entire audio file (like if would
-have considered a mask of some sort instead) as whisper.cpp only has to process
-the actual speech segments.
+The initial goal is to get the model conversion working and then be able to
+load the model and run the graph computation. This currently works and the
+test below will run the model and output some results (which don't seem to
+be correct).
+
+With this in place I'll start iterating upon this and going through and making
+sure that the weights are loaded correctly, and that dimensions for tensors
+are correct. Also clean up the code while doing that as I only wanted to get
+something working at this stage.
 
 #### Model conversion
 To convert silero-vad model first create a virtual environment and install
@@ -370,9 +347,7 @@ Processing variable: _model.stft.forward_basis_buffer with shape: (258, 256)
 Done! Model has been converted to GGML format: models/silero-v5.1.2-ggml.bin
 ```
 
-### Working branch
-Branch:  https://github.com/danbev/whisper.cpp/tree/vad
-
+#### Running Test
 Run the test:
 ```console
 $ cmake --build build --target test-vad && \
