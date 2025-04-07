@@ -80,51 +80,6 @@ RecursiveScriptModule(
       )
     )
   )
-  (_model_8k): RecursiveScriptModule(
-    original_name=VADRNNJIT
-    (stft): RecursiveScriptModule(
-      original_name=STFT
-      (padding): RecursiveScriptModule(original_name=ReflectionPad1d)
-    )
-    (encoder): RecursiveScriptModule(
-      original_name=Sequential
-      (0): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-      (1): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-      (2): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-      (3): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-    )
-    (decoder): RecursiveScriptModule(
-      original_name=VADDecoderRNNJIT
-      (rnn): RecursiveScriptModule(original_name=LSTMCell)
-      (decoder): RecursiveScriptModule(
-        original_name=Sequential
-        (0): RecursiveScriptModule(original_name=Dropout)
-        (1): RecursiveScriptModule(original_name=ReLU)
-        (2): RecursiveScriptModule(original_name=Conv1d)
-        (3): RecursiveScriptModule(original_name=Sigmoid)
-      )
-    )
-  )
 )
 ```
 There are two main components in the model, one named `_model` which takes care
@@ -134,15 +89,47 @@ care of the 8kHz audio signal.
 Both have the same layers but there tensor shapes might be different (more on
 this later when we look at them).
 
-#### STFT
+### Tensors
+The following are the tensor that are in the the model (only focusing on the 16kHz
+and skipping the 8kHz model for now):
+```console
+Tensors to be written:
+_model.stft.forward_basis_buffer: torch.Size([258, 1, 256])
+_model.encoder.0.reparam_conv.weight: torch.Size([128, 129, 3])
+_model.encoder.0.reparam_conv.bias: torch.Size([128])
+_model.encoder.1.reparam_conv.weight: torch.Size([64, 128, 3])
+_model.encoder.1.reparam_conv.bias: torch.Size([64])
+_model.encoder.2.reparam_conv.weight: torch.Size([64, 64, 3])
+_model.encoder.2.reparam_conv.bias: torch.Size([64])
+_model.encoder.3.reparam_conv.weight: torch.Size([128, 64, 3])
+_model.encoder.3.reparam_conv.bias: torch.Size([128])
+_model.decoder.rnn.weight_ih: torch.Size([512, 128])
+_model.decoder.rnn.weight_hh: torch.Size([512, 128])
+_model.decoder.rnn.bias_ih: torch.Size([512])
+_model.decoder.rnn.bias_hh: torch.Size([512])
+_model.decoder.decoder.2.weight: torch.Size([1, 128, 1])
+_model.decoder.decoder.2.bias: torch.Size([1])
+```
+
+#### Short-Time Fourier Transform (STFT)
 So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
 16kHz or 256 samples at 8kHz. The sample rate determines which model is to
-be used.
+be used. In the case of whisper.cpp I think only 16kHz is supported so I'll
+focus on that for  now.
 ```
 audio samples -> STFT -> spectral features (129 frequency bins for 16kHz)
-or 
-audio samples -> STFT -> spectral features (85 frequency bins for 8kHz)
 ```
+
+If we inspect the models tensors (see below for details) we find that the
+model contains a precomputed STFT basis buffer:
+```console
+_model.stft.forward_basis_buffer: torch.Size([258, 1, 256])
+```
+This is a tensor that contains the sines and cosine waves used to break down
+the audio signal into its frequency components. The prepopulated STFT basis allows
+us to not have to recompute the STFT basis every time we want to process an audio
+We can simply multiply segments of the audio by this tensor to get the frequency
+spectrogram for the segment and then pass it along to the encoder blocks.
 
 #### Encoder block
 The there is an encoder, `(encoder)` above, block which has 4 layers:
@@ -154,6 +141,29 @@ Conv1D → ReLU →             Maintains 64 channels
 Conv1D → ReLU →             Expands to 128 channels
 
 Kernel size: 3
+```
+So lets take a look at the first layer:
+```
+Writing _model.encoder.0.reparam_conv.weight with shape torch.Size([128, 129, 3])
+
+128 output channels
+129 input channels
+3 kernel size
+
+In ggml this will become a 3D tensor of shape [3, 129, 128]
+So this would looks something like this:
+
+0
+   0  [0  2]
+      ...
+ 129  [0  2]
+
+...
+127
+   0  [0  2]
+      ...
+ 129  [0  2]
+
 ```
 
 #### Decoder block
@@ -179,10 +189,14 @@ networks, convolutional neural networks or their hybrids) and optimize the
 architecture.
 ```
 Perhaps this newer version has not been made available, or have I been looking
-at an older version of the model perhaps?
+at an older version of the model perhaps?  
 TODO: Look into this and try to figure out what is going on.
 
 The final sigmoid outputs probability (0-1) of speech presence.
+
+```
+
+```
 
 For the `_model` we have the following parameters:
 ```
@@ -209,6 +223,25 @@ _model.decoder.rnn.bias_hh, Shape: torch.Size([512])
 Final output layer:
 _model.decoder.decoder.2.weight, Shape: torch.Size([1, 128, 1])
 _model.decoder.decoder.2.bias, Shape: torch.Size([1])
+```
+
+So, if we start with the raw audio input which consists a samples (floats).
+We resample this into either 16kHz or 8kHz, which can be done (at least the 16kHz)
+by using `examples/common-whisper.cpp`:
+```c++
+bool read_audio_data(const std::string & fname,
+    std::vector<float>& pcmf32,
+    std::vector<std::vector<float>>& pcmf32s,
+    bool stereo);
+```
+One thing to not that this uses `WHISPER_SAMPLE_RATE` which is set to 16000 and
+perhaps we should only be focusing on the 16kHz model for now and skip the 8kHz
+model?  
+
+So with the output from `read_audio_data` we can then pass this to the VAD.
+```c++
+std::vector<float> pcmf32;               // mono-channel F32 PCM
+std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 ```
 
 ### Whisper.cpp integration
