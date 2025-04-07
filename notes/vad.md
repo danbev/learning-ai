@@ -445,4 +445,72 @@ But that was somewhat expected as this was just an attempt to get the model
 up and running. Next step will be to go through and figure out where I might
 have gotten things wrong.
 
+So lets start by checking that the weights that we are loading are correct.
+
+Lets start with `_model.stft.forward_basis_buffer`:
+```console
+Original model:
+[
+0.0,
+0.00015059065481182188,
+0.0006022718735039234,
+0.0013547716662287712,
+0.0024076367262750864,
+0.003760232590138912,
+0.005411745049059391,
+0.007361178752034903,
+0.009607359766960144,
+0.012148935347795486]
+
+GGML model:
+```
+
+### Troubleshooting
+I started by looking at the tensor `_model.stft.forward_basis_buffer` and printed
+out the value from the original model and the whisper.cpp model. The values
+from the original model are:
+```console
+  [0]: 0.0
+    [1]: 0.00015059065481182188
+    [2]: 0.0006022718735039234
+    [3]: 0.0013547716662287712
+    [4]: 0.0024076367262750864
+    [5]: 0.003760232590138912
+    [6]: 0.005411745049059391
+    [7]: 0.007361178752034903
+    [8]: 0.009607359766960144
+    [9]: 0.012148935347795486
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[0]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[1]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[2]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[3]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[4]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[5]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[6]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[7]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[8]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[9]: 0.000000
+```
+This was because I was not using the correct tensor type. I had make this
+configurable to use either `float32` or `float16` but I this will not work with
+all operations in GGML. So I've updated the script to for f32 for convolution
+operations and after that the values are correct:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[0]: 0.000000
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[1]: 0.000151
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[2]: 0.000602
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[3]: 0.001355
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[4]: 0.002408
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[5]: 0.003760
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[6]: 0.005412
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[7]: 0.007361
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[8]: 0.009607
+10: whisper_vad_init_from_file_with_params_no_state: stft_forward_basis[9]: 0.012149
+```
+But the probabilities are still not the same but I think we can rule out this
+tensor (at least how it is read) as the problem here and looks at the others.
+
 _wip_
