@@ -112,13 +112,12 @@ _model.decoder.decoder.2.bias: torch.Size([1])
 ```
 
 #### Short-Time Fourier Transform (STFT)
-So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
-16kHz or 256 samples at 8kHz. The sample rate determines which model is to
-be used. In the case of whisper.cpp I think only 16kHz is supported so I'll
-focus on that for  now.
-```
-audio samples -> STFT -> spectral features (129 frequency bins for 16kHz)
-```
+So if we start with an raw audio input signal, this will first be sampled and
+quantized, which will give us a vector of floats.
+
+Next we divide this into frames/segments of the samples that usually overlap to
+avoid spectral leakage, and the size of a frame is usually a power of two so
+that we can use the Fast Fourier Transform. 
 
 If we inspect the models tensors (see below for details) we find that the
 model contains a precomputed STFT basis buffer:
@@ -130,6 +129,25 @@ the audio signal into its frequency components. The prepopulated STFT basis allo
 us to not have to recompute the STFT basis every time we want to process an audio
 We can simply multiply segments of the audio by this tensor to get the frequency
 spectrogram for the segment and then pass it along to the encoder blocks.
+
+My current understanding is that `256` if using a windos size of 192 samples and
+then a context buffer (overlap) of 64 samples for a total of 256.
+
+So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
+16kHz which is about 32ms.
+```
+duration = = 1 / 16000 * 512 = 0.032
+```
+And like me mentioned above we overlap the frames/segments to avoid spectral
+leakage so we add an additional 64 samples from the previous frame which give
+us 512+64=576 samples.
+
+In the case of whisper.cpp I think only 16kHz is supported so I'll focus on that
+for now.
+```
+audio samples -> STFT -> spectral features (129 frequency bins for 16kHz)
+```
+
 
 #### Encoder block
 The there is an encoder, `(encoder)` above, block which has 4 layers:
@@ -194,9 +212,18 @@ TODO: Look into this and try to figure out what is going on.
 
 The final sigmoid outputs probability (0-1) of speech presence.
 
+The tensor in the model are the following for the LSTM layer:
 ```
+_model.decoder.rnn.weight_ih, Shape: torch.Size([512, 128])
+_model.decoder.rnn.bias_ih, Shape: torch.Size([512])
 
+_model.decoder.rnn.weight_hh, Shape: torch.Size([512, 128])
+_model.decoder.rnn.bias_hh, Shape: torch.Size([512])
 ```
+The `ih` stands for `input to hidden` and is used to compute the input gate.
+Now, notice that the shape is 512, 128 which might seem odd at first but this
+actually contains all the vectors for the 4 gates stacked into a matrix.
+So we can perform on matrix multiplication to get the input gate.
 
 For the `_model` we have the following parameters:
 ```
@@ -221,6 +248,12 @@ _model.decoder.rnn.bias_ih, Shape: torch.Size([512])
 _model.decoder.rnn.bias_hh, Shape: torch.Size([512])
 
 Final output layer:
+_model.decoder.decoder.2.weight, Shape: torch.Size([1, 128, 1])
+_model.decoder.decoder.2.bias, Shape: torch.Size([1])
+```
+
+### Output layer
+```
 _model.decoder.decoder.2.weight, Shape: torch.Size([1, 128, 1])
 _model.decoder.decoder.2.bias, Shape: torch.Size([1])
 ```
@@ -281,53 +314,160 @@ This would be more effient then passing the entire audio file (like if would
 have considered a mask of some sort instead) as whisper.cpp only has to process
 the actual speech segments.
 
-We need to convert the model to a format that can be uses with whisper.cpp.
-Something along the lines of:
+#### Model conversion
+To convert silero-vad model first create a virtual environment and install
+the version of silero-vad that you want to convert. Then run the conversion:
 ```console
-(venv) $ python models/convert-solero-vad-to-ggml.py --output models/silero-vad.bin
-Converting 16kHz model
-Saving GGML Silero-VAD model to models/silero-vad-v5.1.2_16k-ggml.bin
+ $ (venv) pip install silero-vad
+ $ (venv) $ python models/convert-silero-vad-to-ggml.py --output models/silero.bin
+ Saving GGML Silero-VAD model to models/silero-v5.1.2-ggml.bin
+
+Tensors to be written:
+_model.stft.forward_basis_buffer: torch.Size([258, 1, 256])
+_model.encoder.0.reparam_conv.weight: torch.Size([128, 129, 3])
+_model.encoder.0.reparam_conv.bias: torch.Size([128])
+_model.encoder.1.reparam_conv.weight: torch.Size([64, 128, 3])
+_model.encoder.1.reparam_conv.bias: torch.Size([64])
+_model.encoder.2.reparam_conv.weight: torch.Size([64, 64, 3])
+_model.encoder.2.reparam_conv.bias: torch.Size([64])
+_model.encoder.3.reparam_conv.weight: torch.Size([128, 64, 3])
+_model.encoder.3.reparam_conv.bias: torch.Size([128])
+_model.decoder.rnn.weight_ih: torch.Size([512, 128])
+_model.decoder.rnn.weight_hh: torch.Size([512, 128])
+_model.decoder.rnn.bias_ih: torch.Size([512])
+_model.decoder.rnn.bias_hh: torch.Size([512])
+_model.decoder.decoder.2.weight: torch.Size([1, 128, 1])
+_model.decoder.decoder.2.bias: torch.Size([1])
+
 Writing model weights:
-  Writing _model.encoder.0.reparam_conv.weight with shape torch.Size([128, 129, 3])
-  Writing _model.encoder.0.reparam_conv.bias with shape torch.Size([128])
-  Writing _model.encoder.1.reparam_conv.weight with shape torch.Size([64, 128, 3])
-  Writing _model.encoder.1.reparam_conv.bias with shape torch.Size([64])
-  Writing _model.encoder.2.reparam_conv.weight with shape torch.Size([64, 64, 3])
-  Writing _model.encoder.2.reparam_conv.bias with shape torch.Size([64])
-  Writing _model.encoder.3.reparam_conv.weight with shape torch.Size([128, 64, 3])
-  Writing _model.encoder.3.reparam_conv.bias with shape torch.Size([128])
-  Writing lstm_weight_ih with shape torch.Size([512, 128])
-  Writing lstm_weight_hh with shape torch.Size([512, 128])
-  Writing lstm_bias_ih with shape torch.Size([512])
-  Writing lstm_bias_hh with shape torch.Size([512])
-  Writing final_conv_weight with shape torch.Size([1, 128, 1])
-  Writing final_conv_bias with shape torch.Size([1])
-Done! 16kHz model has been converted to GGML format: models/silero-vad-v5.1.2_16k-ggml.bin
+Processing variable: _model.encoder.0.reparam_conv.weight with shape: (128, 129, 3)
+  Keeping original convolution weight shape: (128, 129, 3)
+Processing variable: _model.encoder.0.reparam_conv.bias with shape: (128,)
+  Converting to float32
+Processing variable: _model.encoder.1.reparam_conv.weight with shape: (64, 128, 3)
+  Keeping original convolution weight shape: (64, 128, 3)
+Processing variable: _model.encoder.1.reparam_conv.bias with shape: (64,)
+  Converting to float32
+Processing variable: _model.encoder.2.reparam_conv.weight with shape: (64, 64, 3)
+  Keeping original convolution weight shape: (64, 64, 3)
+Processing variable: _model.encoder.2.reparam_conv.bias with shape: (64,)
+  Converting to float32
+Processing variable: _model.encoder.3.reparam_conv.weight with shape: (128, 64, 3)
+  Keeping original convolution weight shape: (128, 64, 3)
+Processing variable: _model.encoder.3.reparam_conv.bias with shape: (128,)
+  Converting to float32
+Processing variable: _model.decoder.rnn.weight_ih with shape: (512, 128)
+Processing variable: _model.decoder.rnn.weight_hh with shape: (512, 128)
+Processing variable: _model.decoder.rnn.bias_ih with shape: (512,)
+  Converting to float32
+Processing variable: _model.decoder.rnn.bias_hh with shape: (512,)
+  Converting to float32
+Processing variable: _model.decoder.decoder.2.weight with shape: (128,)
+  Converting to float32
+Processing variable: _model.decoder.decoder.2.bias with shape: ()
+  Converting to float32
+Processing variable: _model.stft.forward_basis_buffer with shape: (258, 256)
+Done! Model has been converted to GGML format: models/silero-v5.1.2-ggml.bin
 ```
-And the 8kHz model:
+
+### Working branch
+Branch:  https://github.com/danbev/whisper.cpp/tree/vad
+
+Run the test:
 ```console
-(venv) $ python models/convert-solero-vad-to-ggml.py --output models/silero-vad.bin --sample-rate 8000
-Converting 8kHz model
-Saving GGML Silero-VAD model to models/silero-vad-v5.1.2_8k-ggml.bin
-Writing model weights:
-  Writing _model_8k.encoder.0.reparam_conv.weight with shape torch.Size([128, 65, 3])
-  Writing _model_8k.encoder.0.reparam_conv.bias with shape torch.Size([128])
-  Writing _model_8k.encoder.1.reparam_conv.weight with shape torch.Size([64, 128, 3])
-  Writing _model_8k.encoder.1.reparam_conv.bias with shape torch.Size([64])
-  Writing _model_8k.encoder.2.reparam_conv.weight with shape torch.Size([64, 64, 3])
-  Writing _model_8k.encoder.2.reparam_conv.bias with shape torch.Size([64])
-  Writing _model_8k.encoder.3.reparam_conv.weight with shape torch.Size([128, 64, 3])
-  Writing _model_8k.encoder.3.reparam_conv.bias with shape torch.Size([128])
-  Writing lstm_weight_ih with shape torch.Size([512, 128])
-  Writing lstm_weight_hh with shape torch.Size([512, 128])
-  Writing lstm_bias_ih with shape torch.Size([512])
-  Writing lstm_bias_hh with shape torch.Size([512])
-  Writing final_conv_weight with shape torch.Size([1, 128, 1])
-  Writing final_conv_bias with shape torch.Size([1])
-Done! 8kHz model has been converted to GGML format: models/silero-vad-v5.1.2_8k-ggml.bin
+$ cmake --build build --target test-vad && \
+    ctest -R test-vad --test-dir build --output-on-failure -VV
+    ...
+10: whisper_vad_init_from_file_with_params_no_state: loading VAD model from '../../models/silero-v5.1.2-ggml.bin'
+10: whisper_vad_init_from_file_with_params_no_state: threshold    = 0.500000
+10: whisper_vad_init_from_file_with_params_no_state: min_speech_duration_ms = 100
+10: whisper_vad_init_from_file_with_params_no_state: min_silence_duration_ms = 100
+10: whisper_vad_init_from_file_with_params_no_state: window_size_samples = 512
+10: whisper_vad_init_from_file_with_params_no_state: sample_rate = 16000
+10: whisper_vad_init_from_file_with_params_no_state: use_f16 = 1
+10: whisper_vad_init_from_file_with_params_no_state: n_encoder_layers = 4
+10: whisper_vad_init_from_file_with_params_no_state: encoder_in_channels[0] = 129
+10: whisper_vad_init_from_file_with_params_no_state: encoder_in_channels[1] = 128
+10: whisper_vad_init_from_file_with_params_no_state: encoder_in_channels[2] = 64
+10: whisper_vad_init_from_file_with_params_no_state: encoder_in_channels[3] = 64
+10: whisper_vad_init_from_file_with_params_no_state: encoder_out_channels[0] = 128
+10: whisper_vad_init_from_file_with_params_no_state: encoder_out_channels[1] = 64
+10: whisper_vad_init_from_file_with_params_no_state: encoder_out_channels[2] = 64
+10: whisper_vad_init_from_file_with_params_no_state: encoder_out_channels[3] = 128
+10: whisper_vad_init_from_file_with_params_no_state: kernel_sizes[0] = 3
+10: whisper_vad_init_from_file_with_params_no_state: kernel_sizes[1] = 3
+10: whisper_vad_init_from_file_with_params_no_state: kernel_sizes[2] = 3
+10: whisper_vad_init_from_file_with_params_no_state: kernel_sizes[3] = 3
+10: whisper_vad_init_from_file_with_params_no_state: lstm_input_size = 128
+10: whisper_vad_init_from_file_with_params_no_state: lstm_hidden_size = 128
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_in = 128
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_out = 1
+10: register_backend: registered backend CPU (1 devices)
+10: register_device: registered device CPU (12th Gen Intel(R) Core(TM) i7-1260P)
+10: whisper_vad_init_from_file_with_params_no_state:          CPU total size =     0.62 MB
+10: whisper_vad_init_from_file_with_params_no_state: model size    =    0.62 MB
+10: whisper_backend_init_gpu: no GPU found
+10: whisper_vad_build_graph: Building VAD graph
+10: whisper_vad_build_encoder_layer: building encoder layer
+10: whisper_vad_build_lstm_layer: building LSTM layer
+10: whisper_vad_init_state: compute buffer (VAD)   =    1.58 MB
+10: whisper_vad_detect_speech: detecting speech in 176000 samples
+10: whisper_vad_build_graph: Building VAD graph
+10: whisper_vad_build_encoder_layer: building encoder layer
+10: whisper_vad_build_lstm_layer: building LSTM layer
+10: whisper_vad_detect_speech: window_with_context.size() = 256
+10: whisper_vad_detect_speech: window_sample_size: 192
+10: whisper_vad_detect_speech: context_sample_size: 64
+10: whisper_vad_detect_speech: effective_window_size: 256
+10: whisper_vad_detect_speech: frame tensor size: 256
+10: whisper_vad_detect_speech: finished processing 176000 samples
+10: whisper_vad_detect_speech: prob[0]: 0.030489
+10: whisper_vad_detect_speech: prob[1]: 0.020316
+10: whisper_vad_detect_speech: prob[2]: 0.016475
+10: whisper_vad_detect_speech: prob[3]: 0.011185
+10: whisper_vad_detect_speech: prob[4]: 0.010197
+10: whisper_vad_detect_speech: prob[5]: 0.007823
+10: whisper_vad_detect_speech: prob[6]: 0.008767
+10: whisper_vad_detect_speech: prob[7]: 0.006645
+10: whisper_vad_detect_speech: prob[8]: 0.005273
+10: whisper_vad_detect_speech: prob[9]: 0.010585
+10: whisper_vad_detect_speech: prob[10]: 0.007144
+10: whisper_vad_detect_speech: prob[11]: 0.003635
+10: whisper_vad_detect_speech: prob[12]: 0.004149
+10: whisper_vad_detect_speech: prob[13]: 0.005139
+10: whisper_vad_detect_speech: prob[14]: 0.003650
+10: whisper_vad_detect_speech: prob[15]: 0.007306
+10: whisper_vad_detect_speech: prob[16]: 0.004238
+10: whisper_vad_detect_speech: prob[17]: 0.004754
+10: whisper_vad_detect_speech: prob[18]: 0.003174
+10: whisper_vad_detect_speech: prob[19]: 0.001825
+10: whisper_vad_detect_speech: prob[20]: 0.005317
+10: whisper_vad_detect_speech: prob[21]: 0.004083
+10: whisper_vad_detect_speech: prob[22]: 0.002842
+10: whisper_vad_detect_speech: prob[23]: 0.004745
 ```
-So it should then be possible to specify a VAD model when using whisper.cpp
-in some way. This would then load the this VAD model and process the audio, get
-the speech timestamps for each segment. 
+When I compare this output to the silaro-vad example the values are
+very different:
+```console
+0.0120120458
+0.0106779542
+0.1321811974
+0.0654894710
+0.0445981026
+0.0223348271
+0.0260702968
+0.0116709163
+0.0081158215
+0.0067158826
+0.8111256361
+0.9633629322
+0.9310814142
+0.7854600549
+0.8146636486
+0.9672259092
+```
+But that was somewhat expected as this was just an attempt to get the model
+up and running. Next step will be to go through and figure out where I might
+have gotten things wrong.
 
 _wip_
