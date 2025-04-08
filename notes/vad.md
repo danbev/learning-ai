@@ -576,5 +576,323 @@ And the bias in whisper.cpp:
 ```
 So these tensors also look correct
 
+Next we have `_model.encoder.1.reparam_conv.weight` and bias:
+```console
+Processing variable: _model.encoder.1.reparam_conv.weight with shape: (64, 128, 3)
+  First 10 values for _model.encoder.1.reparam_conv.weight:
+    [0]: -0.01762554980814457
+    [1]: -0.007143480237573385
+    [2]: 0.022292815148830414
+    [3]: -0.0391620509326458
+    [4]: -0.11304397881031036
+    [5]: -0.03947301208972931
+    [6]: -0.007277275435626507
+    [7]: 0.03176437318325043
+    [8]: 0.03668201342225075
+    [9]: 0.04778497666120529
+  Keeping original convolution weight shape: (64, 128, 3)
+  Original tensor dtype: torch.float32
+  This tensor will be forced to F16 for GGML im2col compatibility
+Processing variable: _model.encoder.1.reparam_conv.bias with shape: (64,)
+  First 10 values for _model.encoder.1.reparam_conv.bias:
+    [0]: 3.2966432571411133
+    [1]: 1.6271023750305176
+    [2]: -7.954858779907227
+    [3]: 2.7928881645202637
+    [4]: 0.10639765858650208
+    [5]: 1.5769203901290894
+    [6]: 1.2196542024612427
+    [7]: 1.5114142894744873
+    [8]: 0.9804346561431885
+    [9]: -7.94569206237793
+  Original tensor dtype: torch.float32
+
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [0]: -0.017624 (raw: 0xa483)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [1]: -0.007145 (raw: 0x9f51)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [2]: 0.022293 (raw: 0x25b5)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [3]: -0.039154 (raw: 0xa903)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [4]: -0.113037 (raw: 0xaf3c)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [5]: -0.039459 (raw: 0xa90d)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [6]: -0.007278 (raw: 0x9f74)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [7]: 0.031769 (raw: 0x2811)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [8]: 0.036682 (raw: 0x28b2)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.1.reparam_conv: [9]: 0.047791 (raw: 0x2a1e)
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [0]: 3.296643
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [1]: 1.627102
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [2]: -7.954859
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [3]: 2.792888
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [4]: 0.106398
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [5]: 1.576920
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [6]: 1.219654
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [7]: 1.511414
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [8]: 0.980435
+10: whisper_vad_init_from_file_with_params_no_state: encoder_1_bias: [9]: -7.945692
+```
+The look correct as well.
+
+Then we have `_model.encoder.2.reparam_conv.weight` and bias:
+```console
+Processing variable: _model.encoder.2.reparam_conv.weight with shape: (64, 64, 3)
+  First 10 values for _model.encoder.2.reparam_conv.weight:
+    [0]: -0.0072915456257760525
+    [1]: -0.10136377811431885
+    [2]: -0.19760535657405853
+    [3]: -0.0005110583733767271
+    [4]: -0.01200706698000431
+    [5]: -0.0048386408016085625
+    [6]: -0.006183745805174112
+    [7]: 0.07137007266283035
+    [8]: 0.05046859756112099
+    [9]: -0.003160792402923107
+  Keeping original convolution weight shape: (64, 64, 3)
+  Original tensor dtype: torch.float32
+  This tensor will be forced to F16 for GGML im2col compatibility
+Processing variable: _model.encoder.2.reparam_conv.bias with shape: (64,)
+  First 10 values for _model.encoder.2.reparam_conv.bias:
+    [0]: 4.060866832733154
+    [1]: 3.816256523132324
+    [2]: 0.053663045167922974
+    [3]: 0.9439471960067749
+    [4]: 2.875575065612793
+    [5]: 0.27411338686943054
+    [6]: 0.8237091302871704
+    [7]: -1.587329626083374
+    [8]: -0.9315840005874634
+    [9]: 1.7247822284698486
+  Original tensor dtype: torch.float32
+
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [0]: -0.007290 (raw: 0x9f77)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [1]: -0.101379 (raw: 0xae7d)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [2]: -0.197632 (raw: 0xb253)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [3]: -0.000511 (raw: 0x9030)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [4]: -0.012009 (raw: 0xa226)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [5]: -0.004837 (raw: 0x9cf4)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [6]: -0.006184 (raw: 0x9e55)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [7]: 0.071350 (raw: 0x2c91)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [8]: 0.050476 (raw: 0x2a76)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [9]: -0.003160 (raw: 0x9a79)
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [0]: 4.060867
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [1]: 3.816257
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [2]: 0.053663
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [3]: 0.943947
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [4]: 2.875575
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [5]: 0.274113
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [6]: 0.823709
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [7]: -1.587330
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [8]: -0.931584
+10: whisper_vad_init_from_file_with_params_no_state: encoder_2_bias: [9]: 1.724782
+```
+And these look correct as well.
+
+The we have `_model.encoder.3.reparam_conv.weight` and bias:
+```console
+Processing variable: _model.encoder.3.reparam_conv.weight with shape: (128, 64, 3)
+  First 10 values for _model.encoder.3.reparam_conv.weight:
+    [0]: 0.00868716835975647
+    [1]: -0.08090031892061234
+    [2]: 0.01122092455625534
+    [3]: 0.0034291022457182407
+    [4]: 0.023257968947291374
+    [5]: 0.008206821046769619
+    [6]: 0.006397297605872154
+    [7]: 0.18601815402507782
+    [8]: 0.007254657801240683
+    [9]: -0.0012539586750790477
+  Keeping original convolution weight shape: (128, 64, 3)
+  Original tensor dtype: torch.float32
+  This tensor will be forced to F16 for GGML im2col compatibility
+Processing variable: _model.encoder.3.reparam_conv.bias with shape: (128,)
+  First 10 values for _model.encoder.3.reparam_conv.bias:
+    [0]: 0.9335513114929199
+    [1]: 0.11157345771789551
+    [2]: 0.09006297588348389
+    [3]: 0.6109893918037415
+    [4]: -0.6373689770698547
+    [5]: 0.00609125941991806
+    [6]: 1.0473954677581787
+    [7]: -0.6057872176170349
+    [8]: 1.885377049446106
+    [9]: -3.769871711730957
+  Original tensor dtype: torch.float32
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [0]: 0.008690 (raw: 0x2073)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [1]: -0.080872 (raw: 0xad2d)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [2]: 0.011223 (raw: 0x21bf)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [3]: 0.003429 (raw: 0x1b06)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [4]: 0.023254 (raw: 0x25f4)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [5]: 0.008209 (raw: 0x2034)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [6]: 0.006397 (raw: 0x1e8d)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [7]: 0.186035 (raw: 0x31f4)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [8]: 0.007256 (raw: 0x1f6e)
+10: whisper_vad_init_from_file_with_params_no_state: model.encoder.2.reparam_conv: [9]: -0.001254 (raw: 0x9523)
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [0]: 0.933551
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [1]: 0.111573
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [2]: 0.090063
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [3]: 0.610989
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [4]: -0.637369
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [5]: 0.006091
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [6]: 1.047395
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [7]: -0.605787
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [8]: 1.885377
+10: whisper_vad_init_from_file_with_params_no_state: encoder_3_bias: [9]: -3.769872
+```
+And these also look correct. 
+
+Next lets check the LSTM/RNN tensors:
+```console
+Processing variable: _model.decoder.rnn.weight_ih with shape: (512, 128)
+  First 10 values for _model.decoder.rnn.weight_ih:
+    [0]: -0.1975371241569519
+    [1]: -0.13793830573558807
+    [2]: 0.16510847210884094
+    [3]: 0.007955566048622131
+    [4]: 0.029819002375006676
+    [5]: -0.3347293436527252
+    [6]: 0.019417593255639076
+    [7]: 0.00517271226271987
+    [8]: -0.08036171644926071
+    [9]: 0.14333027601242065
+  Original tensor dtype: torch.float32
+Processing variable: _model.decoder.rnn.bias_ih with shape: (512,)
+  First 10 values for _model.decoder.rnn.bias_ih:
+    [0]: -0.1524425894021988
+    [1]: -0.12193526327610016
+    [2]: -0.08168794959783554
+    [3]: -0.29849109053611755
+    [4]: -0.2474878579378128
+    [5]: 0.03450224548578262
+    [6]: -0.08904067426919937
+    [7]: -0.06718937307596207
+    [8]: -0.12373599410057068
+    [9]: -0.392291396856308
+  Original tensor dtype: torch.float32
+
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [0]: -0.197537
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [1]: -0.137938
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [2]: 0.165108
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [3]: 0.007956
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [4]: 0.029819
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [5]: -0.334729
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [6]: 0.019418
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [7]: 0.005173
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [8]: -0.080362
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_ih: [9]: 0.143330
+
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [0]: -0.152443
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [1]: -0.121935
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [2]: -0.081688
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [3]: -0.298491
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [4]: -0.247488
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [5]: 0.034502
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [6]: -0.089041
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [7]: -0.067189
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [8]: -0.123736
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_ih: [9]: -0.392291
+```
+These look correct as well (apart for an inconsistency in the nameing of the
+tensor in whisper.cpp, I'll fix that).
+
+Next we have `_model.decoder.rnn.weight_hh`:
+```console
+Processing variable: _model.decoder.rnn.weight_hh with shape: (512, 128)
+  First 10 values for _model.decoder.rnn.weight_hh:
+    [0]: -0.3621460497379303
+    [1]: 0.14502376317977905
+    [2]: -0.29783394932746887
+    [3]: 0.034422460943460464
+    [4]: 0.17480415105819702
+    [5]: -0.1250990778207779
+    [6]: -0.24738839268684387
+    [7]: -0.06837962567806244
+    [8]: 0.32639244198799133
+    [9]: -0.18058985471725464
+  Original tensor dtype: torch.float32
+Processing variable: _model.decoder.rnn.bias_hh with shape: (512,)
+  First 10 values for _model.decoder.rnn.bias_hh:
+    [0]: -0.023373831063508987
+    [1]: -0.13415886461734772
+    [2]: -0.04436622932553291
+    [3]: -0.4029233157634735
+    [4]: -0.23194685578346252
+    [5]: -0.01958276331424713
+    [6]: -0.03060426004230976
+    [7]: -0.03582705929875374
+    [8]: -0.17606812715530396
+    [9]: -0.2881392538547516
+  Original tensor dtype: torch.float32
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [0]: -0.362146
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [1]: 0.145024
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [2]: -0.297834
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [3]: 0.034422
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [4]: 0.174804
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [5]: -0.125099
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [6]: -0.247388
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [7]: -0.068380
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [8]: 0.326392
+10: whisper_vad_init_from_file_with_params_no_state: lstm_weight_hh: [9]: -0.180590
+
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [0]: -0.023374
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [1]: -0.134159
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [2]: -0.044366
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [3]: -0.402923
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [4]: -0.231947
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [5]: -0.019583
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [6]: -0.030604
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [7]: -0.035827
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [8]: -0.176068
+10: whisper_vad_init_from_file_with_params_no_state: lstm_bias_hh: [9]: -0.288139
+````
+And these look correct as well.
+
+And finally we have `_model.decoder.decoder.2.weight` and bias:
+```console
+Processing variable: _model.decoder.decoder.2.weight with shape: (128,)
+  First 10 values for _model.decoder.decoder.2.weight:
+    [0]: 0.10062672197818756
+    [1]: 0.17330233752727509
+    [2]: -0.251087486743927
+    [3]: -1.1117055416107178
+    [4]: 0.30843374133110046
+    [5]: -0.44464311003685
+    [6]: -0.45811617374420166
+    [7]: -0.027409639209508896
+    [8]: 0.3915608525276184
+    [9]: 1.2692075967788696
+  Original tensor dtype: torch.float32
+Processing variable: _model.decoder.decoder.2.bias with shape: ()
+  First 10 values for _model.decoder.decoder.2.bias:
+    [0]: -0.19063705205917358
+  Original tensor dtype: torch.float32
+```
+And from whisper.cpp:
+```console
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [0]: 0.100627
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [1]: 0.173302
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [2]: -0.251087
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [3]: -1.111706
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [4]: 0.308434
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [5]: -0.444643
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [6]: -0.458116
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [7]: -0.027410
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [8]: 0.391561
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_weight: [9]: 1.269208
+
+10: whisper_vad_init_from_file_with_params_no_state: final_conv_bias: [0]: -0.190637
+```
+So the weight seem to be correct for this as well but the bias is not
 
 _wip_
