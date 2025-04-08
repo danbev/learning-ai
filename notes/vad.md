@@ -1,5 +1,5 @@
 ## Voice Activity Detection (VAD)
-Also knowas as speech activity detection (SAD) or speech detection.
+Also know as as speech activity detection (SAD) or speech detection.
 
 Now, keep in mind that this is different than Automatic Speech Recognition (ASR)
 which is the process of converting speech into text. VAD is used to determine
@@ -895,4 +895,7 @@ And from whisper.cpp:
 ```
 So the weight seem to be correct for this as well but the bias is not
 
+But the probability are not correct.
+
 _wip_
+
