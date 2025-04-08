@@ -893,9 +893,201 @@ And from whisper.cpp:
 
 10: whisper_vad_init_from_file_with_params_no_state: final_conv_bias: [0]: -0.190637
 ```
-So the weight seem to be correct for this as well but the bias is not
+So the weight seem to be correct for this as well.
 
-But the probability are not correct.
+Looking little more carefully at the origal model above I noticed a mistake
+I've made.
+```
+    (decoder): RecursiveScriptModule(
+      original_name=VADDecoderRNNJIT
+      (rnn): RecursiveScriptModule(original_name=LSTMCell)
+      (decoder): RecursiveScriptModule(
+        original_name=Sequential
+        (0): RecursiveScriptModule(original_name=Dropout)
+        (1): RecursiveScriptModule(original_name=ReLU)
+        (2): RecursiveScriptModule(original_name=Conv1d)
+        (3): RecursiveScriptModule(original_name=Sigmoid)
+      )
+    )
+```
+This shows a the LSTM layer, followed by a dropout, a relu, and conv1d and then
+a sigmoid. I did not include a drop out or a ReLU, and also instead of a conv1d I
+has a simple linear layer (mul_mat plus add bias). This is a mistake, and I've
+now updated with these layers.
+
+With those changes in place I get the following probabilities:
+```console
+10: whisper_vad_detect_speech: prob[0]: 0.433458
+10: whisper_vad_detect_speech: prob[1]: 0.231823
+10: whisper_vad_detect_speech: prob[2]: 0.180998
+10: whisper_vad_detect_speech: prob[3]: 0.151418
+10: whisper_vad_detect_speech: prob[4]: 0.129234
+10: whisper_vad_detect_speech: prob[5]: 0.118154
+10: whisper_vad_detect_speech: prob[6]: 0.117612
+10: whisper_vad_detect_speech: prob[7]: 0.103644
+10: whisper_vad_detect_speech: prob[8]: 0.100053
+10: whisper_vad_detect_speech: prob[9]: 0.095149
+10: whisper_vad_detect_speech: prob[10]: 0.081977
+10: whisper_vad_detect_speech: prob[11]: 0.080713
+10: whisper_vad_detect_speech: prob[12]: 0.083069
+10: whisper_vad_detect_speech: prob[13]: 0.081101
+10: whisper_vad_detect_speech: prob[14]: 0.081165
+10: whisper_vad_detect_speech: prob[15]: 0.069563
+10: whisper_vad_detect_speech: prob[16]: 0.059652
+10: whisper_vad_detect_speech: prob[17]: 0.060627
+10: whisper_vad_detect_speech: prob[18]: 0.060169
+```
+Which are better but still not the same as the original model.
+```console
+0.0120120458
+0.0106779542
+0.1321811974
+0.0654894710
+0.0445981026
+0.0223348271
+0.0260702968
+0.0116709163
+0.0081158215
+0.0067158826
+0.8111256361
+0.9633629322
+0.9310814142
+0.7854600549
+0.8146636486
+```
+
+Now, I noticed another thing that in the original model and the python example
+and also the C++ example they use a window size of 512 where I've been using
+192, which was basically just to allow the matrix multiplication to work with
+the stft matrix. Stepping back a little this is how I understand the process
+up until this point:
+We have samples, in this specific case around 17000 samples. These are split
+into chunks for 512 (which if I recall correctly is about 32ms and close to the
+threshold of human perception of sound). We add an extra 64 samples which we
+take from the previous window to avoid spectral leakage. Now we want to multiple
+these sample by the matrix provided by the silero-vad model which contains
+precomputed sine and cosine values. But doing this we get the values in the
+frequency domain (as complex numbers but we only care about the real part here).
+Now, this matrix has the shape {256, 258}, and the frame tensor is {576} and
+these cannot be multiplied with each other.
+
+I took a look at the ONNX runtime and it seems to be implementing this as a
+convolution operation and not a matrix multiplication which was what I did.
+
+Here is an excert from the onnxruntime log:
+```console
+   20 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59304,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/padding/Pad_fence_before","args" : {"op_name" : "Pad"}},
+   21 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :6,"ts" :59304,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/padding/Pad_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2560","parameter_size" : "32","activation_size" : "2304","output_t      ype_shape" : [{"float":[1,640]}],"exec_plan_index" : "7","graph_index" : "7","input_type_shape" : [{"float":[1,576]},{"int64":[4]}],"provider" : "CPUExecutionProvider","op_name" : "Pad"}},
+   22 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59312,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/padding/Pad_fence_after","args" : {"op_name" : "Pad"}},
+   23 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59312,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Unsqueeze_fence_before","args" : {"op_name" : "Unsqueeze"}},
+   24 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :2,"ts" :59313,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Unsqueeze_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2560","parameter_size" : "8","activation_size" : "2560","output_type      _shape" : [{"float":[1,1,640]}],"exec_plan_index" : "8","graph_index" : "8","input_type_shape" : [{"float":[1,640]},{"int64":[1]}],"provider" : "CPUExecutionProvider","op_name" : "Unsqueeze"}},
+   25 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59317,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Unsqueeze_fence_after","args" : {"op_name" : "Unsqueeze"}},
+   26 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59318,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Conv_fence_before","args" : {"op_name" : "Conv"}},
+   27 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :54,"ts" :59318,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Conv_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "4128","parameter_size" : "264192","activation_size" : "2560","output_typ      e_shape" : [{"float":[1,258,4]}],"exec_plan_index" : "9","graph_index" : "9","input_type_shape" : [{"float":[1,1,640]},{"float":[258,1,256]}],"provider" : "CPUExecutionProvider","op_name" : "Conv"}},
+   28 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59375,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Conv_fence_after","args" : {"op_name" : "Conv"}},
+   29 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59376,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_3_fence_before","args" : {"op_name" : "Slice"}},
+   30 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :6,"ts" :59377,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_3_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "32","activation_size" : "4128","output_type_      shape" : [{"float":[1,129,4]}],"exec_plan_index" : "14","graph_index" : "14","input_type_shape" : [{"float":[1,258,4]},{"int64":[1]},{"int64":[1]},{"int64":[1]},{"int64":[1]}],"provider" : "CPUExecutionProvider","op_name" : "Slice"}},
+   31 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59385,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_3_fence_after","args" : {"op_name" : "Slice"}},
+   32 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59386,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_1_fence_before","args" : {"op_name" : "Pow"}},
+   33 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :3,"ts" :59386,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_1_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "4","activation_size" : "2064","output_type_sha      pe" : [{"float":[1,129,4]}],"exec_plan_index" : "18","graph_index" : "18","input_type_shape" : [{"float":[1,129,4]},{"float":[]}],"provider" : "CPUExecutionProvider","op_name" : "Pow"}},
+   34 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59391,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_1_fence_after","args" : {"op_name" : "Pow"}},
+   35 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59393,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_1_fence_before","args" : {"op_name" : "Slice"}},
+   36 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :3,"ts" :59393,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_1_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "32","activation_size" : "4128","output_type_      shape" : [{"float":[1,129,4]}],"exec_plan_index" : "11","graph_index" : "11","input_type_shape" : [{"float":[1,258,4]},{"int64":[1]},{"int64":[1]},{"int64":[1]},{"int64":[1]}],"provider" : "CPUExecutionProvider","op_name" : "Slice"}},
+   37 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59398,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_1_fence_after","args" : {"op_name" : "Slice"}},
+   38 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59399,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_fence_before","args" : {"op_name" : "Pow"}},
+   39 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :2,"ts" :59399,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "4","activation_size" : "2064","output_type_shape      " : [{"float":[1,129,4]}],"exec_plan_index" : "17","graph_index" : "17","input_type_shape" : [{"float":[1,129,4]},{"float":[]}],"provider" : "CPUExecutionProvider","op_name" : "Pow"}},
+   40 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59403,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_fence_after","args" : {"op_name" : "Pow"}},
+   41 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59404,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Add_fence_before","args" : {"op_name" : "Add"}},
+   42 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :3,"ts" :59404,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Add_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "0","activation_size" : "4128","output_type_shape      " : [{"float":[1,129,4]}],"exec_plan_index" : "19","graph_index" : "19","input_type_shape" : [{"float":[1,129,4]},{"float":[1,129,4]}],"provider" : "CPUExecutionProvider","op_name" : "Add"}},
+   43 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59409,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Add_fence_after","args" : {"op_name" : "Add"}},
+   44 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59410,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Sqrt_fence_before","args" : {"op_name" : "Sqrt"}},
+   45 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :6,"ts" :59411,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Sqrt_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "0","activation_size" : "2064","output_type_shap      e" : [{"float":[1,129,4]}],"exec_plan_index" : "20","graph_index" : "20","input_type_shape" : [{"float":[1,129,4]}],"provider" : "CPUExecutionProvider","op_name" : "Sqrt"}},
+   46 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59418,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Sqrt_fence_after","args" : {"op_name" : "Sqrt"}},
+```
+So after consulting Claude.ai about this is looks like ONNX is performing a
+convolution operation. So I tried this and the results were the exact same I
+think:
+```console
+10: whisper_vad_detect_speech: prob[0]: 0.433458
+10: whisper_vad_detect_speech: prob[1]: 0.231823
+10: whisper_vad_detect_speech: prob[2]: 0.180998
+10: whisper_vad_detect_speech: prob[3]: 0.151459
+10: whisper_vad_detect_speech: prob[4]: 0.129263
+10: whisper_vad_detect_speech: prob[5]: 0.115693
+10: whisper_vad_detect_speech: prob[6]: 0.106706
+10: whisper_vad_detect_speech: prob[7]: 0.101227
+10: whisper_vad_detect_speech: prob[8]: 0.097039
+10: whisper_vad_detect_speech: prob[9]: 0.093106
+10: whisper_vad_detect_speech: prob[10]: 0.088892
+10: whisper_vad_detect_speech: prob[11]: 0.084535
+10: whisper_vad_detect_speech: prob[12]: 0.079914
+10: whisper_vad_detect_speech: prob[13]: 0.075425
+```
+
+
+But the probability are not correct. Lets take a look at the
+[C++ example](https://github.com/snakers4/silero-vad/tree/master/examples/cpp)
+in the silero-vad repository to see if we can extract some information from the
+model via the ONNX runtime.
+
+```console
+$ git diff
+diff --git a/examples/cpp/silero-vad-onnx.cpp b/examples/cpp/silero-vad-onnx.cpp
+index 380d76d..99fb289 100644
+--- a/examples/cpp/silero-vad-onnx.cpp
++++ b/examples/cpp/silero-vad-onnx.cpp
+@@ -131,7 +131,7 @@ private:
+     timestamp_t current_speech;
+
+     // Loads the ONNX model.
+-    void init_onnx_model(const std::wstring& model_path) {
++    void init_onnx_model(const std::string& model_path) {
+         init_engine_threads(1, 1);
+         session = std::make_shared<Ort::Session>(env, model_path.c_str(), session_options);
+     }
+@@ -303,7 +303,7 @@ public:
+ public:
+     // Constructor: sets model path, sample rate, window size (ms), and other parameters.
+     // The parameters are set to match the Python version.
+-    VadIterator(const std::wstring ModelPath,
++    VadIterator(const std::string ModelPath,
+         int Sample_rate = 16000, int windows_frame_size = 32,
+         float Threshold = 0.5, int min_silence_duration_ms = 100,
+         int speech_pad_ms = 30, int min_speech_duration_ms = 250,
+@@ -329,7 +329,7 @@ public:
+
+ int main() {
+     // Read the WAV file (expects 16000 Hz, mono, PCM).
+-    wav::WavReader wav_reader("audio/recorder.wav"); // File located in the "audio" folder.
++    wav::WavReader wav_reader("jfk.wav"); // File located in the "audio" folder.
+     int numSamples = wav_reader.num_samples();
+     std::vector<float> input_wav(static_cast<size_t>(numSamples));
+     for (size_t i = 0; i < static_cast<size_t>(numSamples); i++) {
+@@ -337,7 +337,7 @@ int main() {
+     }
+
+     // Set the ONNX model path (file located in the "model" folder).
+-    std::wstring model_path = L"model/silero_vad.onnx";
++    std::string model_path = "../../src/silero_vad/data/silero_vad.onnx";
+
+     // Initialize the VadIterator.
+     VadIterator vad(model_path);
+```
+And a make file to build and run.
+```console
+ONNX_PATH=./onnxruntime-linux-x64-1.12.1
+
+build:
+	g++ silero-vad-onnx.cpp -I ${ONNX_PATH}/include/ \
+		-L ${ONNX_PATH}/lib/ \
+		-lonnxruntime \
+		-Wl,-rpath,${ONNX_PATH}/lib/ \
+		-o test
+
+run: build
+	./test
+```
+
 
 _wip_
 
