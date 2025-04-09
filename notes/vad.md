@@ -124,21 +124,34 @@ model contains a precomputed STFT basis buffer:
 ```console
 _model.stft.forward_basis_buffer: torch.Size([258, 1, 256])
 ```
-This is a tensor that contains the sines and cosine waves used to break down
-the audio signal into its frequency components. The prepopulated STFT basis allows
-us to not have to recompute the STFT basis every time we want to process an audio
-We can simply multiply segments of the audio by this tensor to get the frequency
-spectrogram for the segment and then pass it along to the encoder blocks.
+The first dimension is the filter length, which in this case is 258 and probably
+129 complex number (real and imaginary) values for a total of 256 values. These
+are the STFT kernel cooefficients (window function * complex exponential terms).
+This prepopulated STFT tensor allows us to not have to recompute the STFT basis
+every time we want to process an audio. We can use a convolution using this tensor
+to get the frequency spectrogram for the segment and then pass it along to the
+encoder blocks.
 
-My current understanding is that `256` if using a windos size of 192 samples and
-then a context buffer (overlap) of 64 samples for a total of 256.
+The second dimension is the number of channels, which for audio is a single
+channel assuming mono and not stereo.
+
+The third dimension  256 is the number of frequency output bins that we get from the
+STFT. These are the frequencies that are of interest for human speach. For a typical
+sampling rate of 16000 Hz, 256 bins gives about 31.25.
+
+Now, for whisper/ggml we need to have the convolution tensor in the format:
+```
+{258, 1, 256},
+```
+That is a kernel size of 258, 1 channel, and 256 frequency bins (output).
+
 
 So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
 16kHz which is about 32ms.
 ```
 duration = = 1 / 16000 * 512 = 0.032
 ```
-And like me mentioned above we overlap the frames/segments to avoid spectral
+And like we mentioned above we overlap the frames/segments to avoid spectral
 leakage so we add an additional 64 samples from the previous frame which give
 us 512+64=576 samples.
 
@@ -1089,5 +1102,68 @@ run: build
 ```
 
 
-_wip_
+So I'm getting the following output at the moment:
+```console
+10: whisper_vad_detect_speech: prob[0]: 0.017022
+10: whisper_vad_detect_speech: prob[1]: 0.018527
+10: whisper_vad_detect_speech: prob[2]: 0.011746
+10: whisper_vad_detect_speech: prob[3]: 0.008625
+10: whisper_vad_detect_speech: prob[4]: 0.004357
+10: whisper_vad_detect_speech: prob[5]: 0.003329
+10: whisper_vad_detect_speech: prob[6]: 0.002859
+10: whisper_vad_detect_speech: prob[7]: 0.005444
+10: whisper_vad_detect_speech: prob[8]: 0.007293
+10: whisper_vad_detect_speech: prob[9]: 0.004256
+```
+Compared to the output from the silero-vad pythons example:
+```console
+0.012012
+0.010678
+0.132181
+0.065489
+0.044598
+0.022335
+0.026070
+0.011671
+0.008116
+0.006716
+```
+One thing I noticed is that if I comment out the actual setting of the pcm32
+data, I get the same result.
+```c++
+        // Copy the current samples from pcmf32 into the window_with_context,
+        // starting after the context buffer copied above.
+        //std::copy(&pcmf32[i], &pcmf32[i + vctx->window_size_samples], window_with_context.begin() + vctx->context_samples);
+```
 
+So it is like the probabilities I'm seeing are
+just noise.
+
+```console
+10: whisper_vad_detect_speech: prob[0]: 0.017022
+10: whisper_vad_detect_speech: prob[1]: 0.018406
+10: whisper_vad_detect_speech: prob[2]: 0.051465
+10: whisper_vad_detect_speech: prob[3]: 0.028821
+10: whisper_vad_detect_speech: prob[4]: 0.012965
+10: whisper_vad_detect_speech: prob[5]: 0.022604
+10: whisper_vad_detect_speech: prob[6]: 0.056287
+10: whisper_vad_detect_speech: prob[7]: 0.020504
+10: whisper_vad_detect_speech: prob[8]: 0.015851
+10: whisper_vad_detect_speech: prob[9]: 0.018630
+10: whisper_vad_detect_speech: prob[10]: 0.037504
+10: whisper_vad_detect_speech: prob[11]: 0.141271
+10: whisper_vad_detect_speech: prob[12]: 0.051602
+10: whisper_vad_detect_speech: prob[13]: 0.029109
+10: whisper_vad_detect_speech: prob[14]: 0.110565
+10: whisper_vad_detect_speech: prob[15]: 0.047791
+10: whisper_vad_detect_speech: prob[16]: 0.031876
+10: whisper_vad_detect_speech: prob[17]: 0.086297
+10: whisper_vad_detect_speech: prob[18]: 0.041629
+10: whisper_vad_detect_speech: prob[19]: 0.097479
+10: whisper_vad_detect_speech: prob[20]: 0.073999
+10: whisper_vad_detect_speech: prob[21]: 0.063608
+10: whisper_vad_detect_speech: prob[22]: 0.078973
+10: whisper_vad_detect_speech: prob[23]: 0.486158
+10: whisper_vad_detect_speech: prob[24]: 0.609635
+10: whisper_vad_detect_speech: prob[25]: 0.028430
+```
