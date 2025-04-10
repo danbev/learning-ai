@@ -1437,3 +1437,28 @@ $ ./test-vad.sh
 Hopefully by doing this and comparing step by step I can try to figure out where
 I'm going wrong. So the idea is to get the these two implementation to produce
 the same output as the original model.
+Notice the difference in the output here for the intermediate values of the
+stft operation. In the python version it is all zeros while in whisper.cpp the
+have very different values. This is becuase whisper.cpp is using a schduler and
+this means that tensors can be reused for different operations as an
+optimization. If we instead create a copy of the tensor:
+```c++
+    struct ggml_tensor * stft_copy = ggml_conv_1d(ctx0, stft_reshaped, padded, 128, 0, 1);
+    ggml_set_name(stft_copy, "stft_copy");
+    ggml_set_output(stft_copy);
+    ggml_build_forward_expand(gf, stft_copy);
+```
+And print out that tensor instead we get:
+```console
+10: whisper_vad_detect_speech: sftf: [0]: 0.000000
+10: whisper_vad_detect_speech: sftf: [1]: 0.000000
+10: whisper_vad_detect_speech: sftf: [2]: 0.000000
+10: whisper_vad_detect_speech: sftf: [3]: 0.000000
+10: whisper_vad_detect_speech: sftf: [4]: 0.000000
+10: whisper_vad_detect_speech: sftf: [5]: 0.000000
+10: whisper_vad_detect_speech: sftf: [6]: 0.000000
+10: whisper_vad_detect_speech: sftf: [7]: 0.000000
+10: whisper_vad_detect_speech: sftf: [8]: 0.000000
+10: whisper_vad_detect_speech: sftf: [9]: 0.000000
+```
+I need to keep this in mind when debugging!
