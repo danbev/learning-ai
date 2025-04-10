@@ -26,9 +26,9 @@ class ConvSTFT(nn.Module):
         return x
 
 class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super().__init__()
-        self.reparam_conv = nn.Conv1d(in_channels, out_channels, kernel_size, padding=1)
+        self.reparam_conv = nn.Conv1d(in_channels, out_channels, kernel_size, padding=1, stride=stride)
         self.activation = nn.ReLU()
 
     def forward(self, x):
@@ -76,8 +76,8 @@ class SileroVAD(nn.Module):
 
         # Encoder with 4 convolutional layers
         self.encoder = nn.Sequential(
-            EncoderBlock(129, 128),  # Matches expected 129 input channels
-            EncoderBlock(128, 64),
+            EncoderBlock(129, 128, stride=2),  # Matches expected 129 input channels
+            EncoderBlock(128, 64, stride=2),
             EncoderBlock(64, 64),
             EncoderBlock(64, 128)
         )
