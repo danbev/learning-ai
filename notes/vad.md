@@ -1351,6 +1351,9 @@ the probabilities are now:
 0.9672259092
 ```
 
+
+### Mimic the silero-vad model
+
 I've not been able find an good way of being able to print intermediate values
 in the silero-vad model so I resorted creating a PyTorch implementation, and
 then converting the model, similar to how we convert the model to ggml format.
