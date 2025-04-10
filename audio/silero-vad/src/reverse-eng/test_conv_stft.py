@@ -6,6 +6,7 @@ from conv_stft_model import SileroVAD
 def test_conv_stft():
     # Create model
     model = SileroVAD()
+    model.eval()
 
     # Create sample input
     input_tensor = torch.randn(1, 512, dtype=torch.float32)

@@ -9,6 +9,7 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
     """Test loaded model with weights"""
     # Load PyTorch model
     pytorch_model = SileroVAD()
+    pytorch_model.eval()
 
     if pytorch_model_path and os.path.exists(pytorch_model_path):
         print(f"Loading PyTorch model from {pytorch_model_path}")
