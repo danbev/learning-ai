@@ -25,6 +25,102 @@ https://github.com/snakers4/silero-vad/discussions/371
 But they do provide their model in two formats, one which I think is in a
 PyTorch JIT (Just In Time) format and one in ONNX format.
 
+One thing that I've done for figure out more information about the operations
+in the model is use the cpp example and enable profiling:
+```c++
+    session_options.EnableProfiling("onnxruntime_profile.json");
+```
+This produces a file that contains information about the operations in the model.
+Now since the examples processes a sample audio file in chunks, I'm using jfk.wav
+as the audio sample, the actual file is huge. But there patterns are repeating
+so we only need to focus on a subsection. 
+
+The inputs to the model are the following, which I collected from https://netron.app/
+using the ONNX model:
+```
+Name   
+input: tensor: float32[?,?]
+
+state: tensor: float32[2,?,128]
+
+sr   : tensor: int64    (sampling rate)
+```
+This is what the model looks like:
+
+![image](./images/silero_vad.onnx.png)
+
+The first node is checking that the sample rate is 16000. The model also
+supports 8000Hz so this is probably what this check is about.
+
+In the actual processing there first node is the STFT (Short-Time Fourier
+Transform):
+```
+Padding operation:
+Input:  [1, 576]        // 512 sample plus 64 samples from previous frame
+Output: [1, 640]        // 567 + 64 = 640
+
+Reshape/squeeze operation:
+Reshapes [1,640] to [1,1,640] (adds dimension for batch)
+
+conv1d operation:
+Input shape: [1,1,640] (batch, channels, time)
+Filter shape: [258,1,256] (num_filters, in_channels, kernel_size)
+Output shape: [1,258,4]
+Parameters: 264,192 (258 filters × 1 channel × 256 kernel + biases)
+
+slice operation:
+Slicing to [1,129,4] suggests extracting real components from complex numbers
+```
+This is then followed by a 4 encoder layers:
+```
+First encoder layer:
+conv1d operation:
+Input shape: [1,129,4] (batch, channels, time)
+Filter shape: [128,129,3] (num_filters, in_channels, kernel_size)
+Output shape: [1,128,4]
+Parameters: 198,656 (128 filters × 129 channels × 3 kernel + biases)
+
+Second encoder layer:
+conv1d operation:
+Input shape: [1,128,4] (batch, channels, time)
+Filter shape: [64,128,3] (num_filters, in_channels, kernel_size)
+Output shape: [1,64,2]
+Parameters: 98,560 (64 filters × 128 channels × 3 kernel + biases)
+
+Third encoder layer:
+conv1d operation:
+Input shape: [1,64,2] (batch, channels, time)
+Filter shape: [64,64,3] (num_filters, in_channels, kernel_size)
+Output shape: [1,64,1] 
+Parameters: 49,408 (64 filters × 64 channels × 3 kernel + biases)
+
+Fourth encoder layer:
+conv1d operation:
+Input shape: [1,64,1] (batch, channels, time)
+Filter shape: [128,64,3] (num_filters, in_channels, kernel_size)
+Output shape: [1,128,1]
+Parameters: 98,816 (128 filters × 64 channels × 3 kernel + biases)
+```
+
+Decoder with LSTM:
+```
+sequeeze operation:
+Removing dimension: [1,128,1] → [1,128]
+
+LSTM operation:
+- Input: [1,1,128] (sequence of 1 with 128 features)
+- Parameters: 1024 weights
+- Outputs: [1,1,1,128], [1,1,128], [1,1,128] (output, hidden, cell states)
+
+ReLU operation:
+
+Conv1d operation:
+Input shape: [1,128,1] (batch, channels, time)
+Filter shape: [1,128,1] (num_filters, in_channels, kernel_size)
+Output shape: [1,1,1]
+Parameters: 516 (1 filter × 128 channels × 1 kernel + biases)
+```
+
 We can get information from the jit model using the following script:
 ```console
 $ cd audio/silero-vad
@@ -118,6 +214,16 @@ quantized, which will give us a vector of floats.
 Next we divide this into frames/segments of the samples that usually overlap to
 avoid spectral leakage, and the size of a frame is usually a power of two so
 that we can use the Fast Fourier Transform. 
+If we look closely that the node above we find this:
+```
+    (stft): RecursiveScriptModule(
+      original_name=STFT
+      (padding): RecursiveScriptModule(original_name=ReflectionPad1d)
+    )
+```
+I missed this initially but this is an `ReflectionPad1d` which is not a simple
+zero padding operation. This will add padding to the left and right of the
+samples, and will use values from the respective sides.
 
 If we inspect the models tensors (see below for details) we find that the
 model contains a precomputed STFT basis buffer:
@@ -1166,4 +1272,81 @@ just noise.
 10: whisper_vad_detect_speech: prob[23]: 0.486158
 10: whisper_vad_detect_speech: prob[24]: 0.609635
 10: whisper_vad_detect_speech: prob[25]: 0.028430
+```
+
+Inpsecting the silero-vad model a little closer I found:
+```console
+5030         node {
+5031           input: "If_0_then_branch__Inline_0__/stft/Unsqueeze_output_0"
+5032           input: "If_0_then_branch__Inline_0__stft.forward_basis_buffer"
+5033           output: "If_0_then_branch__Inline_0__/stft/Conv_output_0"
+5034           name: "If_0_then_branch__Inline_0__/stft/Conv"
+5035           op_type: "Conv"
+5036           attribute {
+5037             name: "dilations"
+5038             ints: 1
+5039             type: INTS
+5040           }
+5041           attribute {
+5042             name: "group"
+5043             i: 1
+5044             type: INT
+5045           }
+5046           attribute {
+5047             name: "kernel_shape"
+5048             ints: 256
+5049             type: INTS
+5050           }
+5051           attribute {
+5052             name: "pads"
+5053             ints: 0
+5054             ints: 0
+5055             type: INTS
+5056           }
+5057           attribute {
+5058             name: "strides"
+5059             ints: 128
+5060             type: INTS
+5061           }
+5062         }
+```
+So it looks like I was using incorrect padding and stride values. I've updated
+this now and the results are much the same. But I'm still only able to inspect
+the final probabilities and I don't know for sure if the sftf values are correct
+or not. I need to be able to print the intermediate values from the onnx runtime
+and compare them. 
+
+After doing throught model once more and looking that the shapes for the
+dimensions and stride for some of the convolution operations that I was missing
+the probabilities are now:
+```console
+10: whisper_vad_detect_speech: prob[0]: 0.001881
+10: whisper_vad_detect_speech: prob[1]: 0.001317
+10: whisper_vad_detect_speech: prob[2]: 0.008114
+10: whisper_vad_detect_speech: prob[3]: 0.002658
+10: whisper_vad_detect_speech: prob[4]: 0.000671
+10: whisper_vad_detect_speech: prob[5]: 0.000244
+10: whisper_vad_detect_speech: prob[6]: 0.000759
+10: whisper_vad_detect_speech: prob[7]: 0.005907
+10: whisper_vad_detect_speech: prob[8]: 0.005715
+10: whisper_vad_detect_speech: prob[9]: 0.005150
+```
+
+```console
+0.0120120458
+0.0106779542
+0.1321811974
+0.0654894710
+0.0445981026
+0.0223348271
+0.0260702968
+0.0116709163
+0.0081158215
+0.0067158826
+0.8111256361
+0.9633629322
+0.9310814142
+0.7854600549
+0.8146636486
+0.9672259092
 ```
