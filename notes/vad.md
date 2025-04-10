@@ -1350,3 +1350,90 @@ the probabilities are now:
 0.8146636486
 0.9672259092
 ```
+
+I've not been able find an good way of being able to print intermediate values
+in the silero-vad model so I resorted creating a PyTorch implementation, and
+then converting the model, similar to how we convert the model to ggml format.
+```console
+$ cd audio/silero-vad
+(venv) $ python src/reverse-eng/extract_conv_weights.py
+Loading JIT model from /home/danbev/work/ai/audio/silero-vad/src/silero_vad/data/silero_vad.jit
+Found 30 parameters in JIT model
+Transferred: _model.stft.forward_basis_buffer -> stft.forward_basis_buffer, Shape: torch.Size([258, 1, 256])
+Transferred: _model.encoder.0.reparam_conv.weight -> encoder.0.reparam_conv.weight, Shape: torch.Size([128, 129, 3])
+Transferred: _model.encoder.0.reparam_conv.bias -> encoder.0.reparam_conv.bias, Shape: torch.Size([128])
+Transferred: _model.encoder.1.reparam_conv.weight -> encoder.1.reparam_conv.weight, Shape: torch.Size([64, 128, 3])
+Transferred: _model.encoder.1.reparam_conv.bias -> encoder.1.reparam_conv.bias, Shape: torch.Size([64])
+Transferred: _model.encoder.2.reparam_conv.weight -> encoder.2.reparam_conv.weight, Shape: torch.Size([64, 64, 3])
+Transferred: _model.encoder.2.reparam_conv.bias -> encoder.2.reparam_conv.bias, Shape: torch.Size([64])
+Transferred: _model.encoder.3.reparam_conv.weight -> encoder.3.reparam_conv.weight, Shape: torch.Size([128, 64, 3])
+Transferred: _model.encoder.3.reparam_conv.bias -> encoder.3.reparam_conv.bias, Shape: torch.Size([128])
+Transferred: _model.decoder.rnn.weight_ih -> decoder.rnn.weight_ih, Shape: torch.Size([512, 128])
+Transferred: _model.decoder.rnn.weight_hh -> decoder.rnn.weight_hh, Shape: torch.Size([512, 128])
+Transferred: _model.decoder.rnn.bias_ih -> decoder.rnn.bias_ih, Shape: torch.Size([512])
+Transferred: _model.decoder.rnn.bias_hh -> decoder.rnn.bias_hh, Shape: torch.Size([512])
+Transferred: _model.decoder.decoder.2.weight -> decoder.decoder.2.weight, Shape: torch.Size([1, 128, 1])
+Transferred: _model.decoder.decoder.2.bias -> decoder.decoder.2.bias, Shape: torch.Size([1])
+Saved PyTorch model to silero_vad_conv_pytorch.pth
+Weight extraction complete!
+```
+With the model extracted we can now run an single inference and compare it to
+values that we produce and to what the original model produces:
+```console
+(venv) $ python src/reverse-eng/test_conv_model_with_weights.py
+Loading PyTorch model from silero_vad_conv_pytorch.pth
+STFT basis buffer samples: tensor([[0.0000, 0.0002, 0.0006, 0.0014, 0.0024],
+        [0.0000, 0.0002, 0.0006, 0.0014, 0.0024],
+        [0.0000, 0.0002, 0.0006, 0.0013, 0.0024],
+        [0.0000, 0.0002, 0.0006, 0.0013, 0.0023],
+        [0.0000, 0.0001, 0.0006, 0.0013, 0.0022]])
+Input tensor shape: torch.Size([1, 512])
+STFT basis buffer samples: tensor([[0.0000, 0.0002, 0.0006, 0.0014, 0.0024],
+        [0.0000, 0.0002, 0.0006, 0.0014, 0.0024],
+        [0.0000, 0.0002, 0.0006, 0.0013, 0.0024],
+        [0.0000, 0.0002, 0.0006, 0.0013, 0.0023],
+        [0.0000, 0.0001, 0.0006, 0.0013, 0.0022]])
+shape of STFT output: torch.Size([1, 258, 4])
+Full STFT (before slicing): tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+
+Intermediate shapes from PyTorch model:
+  input: torch.Size([1, 512])
+    Sample values: tensor([0., 0., 0., 0., 0.])
+  stft_out: torch.Size([1, 129, 4])
+    Sample values: tensor([0., 0., 0., 0., 0.])
+  encoder_out: torch.Size([1, 128, 1])
+    Sample values: tensor([0.0000, 0.2486, 1.7993, 0.0000, 0.3163])
+  features: torch.Size([1, 128])
+    Sample values: tensor([0.0000, 0.2486, 1.7993, 0.0000, 0.3163])
+  lstm_h: torch.Size([1, 128])
+    Sample values: tensor([0.0037, 0.2473, 0.0583, 0.2980, 0.0026])
+  lstm_c: torch.Size([1, 128])
+    Sample values: tensor([0.0041, 0.2626, 0.0706, 0.3206, 0.0569])
+
+PyTorch output: 0.001875
+Saved activation visualization to conv_model_activations.png
+```
+And then compare this to the values that whisper.cpp produces (also just one
+sample):
+```console
+$ ./test-vad.sh
+10: whisper_vad_detect_speech: sftf shape: {4, 258, 1}
+10: whisper_vad_detect_speech: sftf: [0]: -2.878450
+10: whisper_vad_detect_speech: sftf: [1]: 0.008860
+10: whisper_vad_detect_speech: sftf: [2]: -2.506309
+10: whisper_vad_detect_speech: sftf: [3]: -0.403049
+10: whisper_vad_detect_speech: sftf: [4]: -2.481766
+10: whisper_vad_detect_speech: sftf: [5]: -2.231346
+10: whisper_vad_detect_speech: sftf: [6]: 1.069640
+10: whisper_vad_detect_speech: sftf: [7]: -0.406165
+10: whisper_vad_detect_speech: sftf: [8]: -1.768491
+10: whisper_vad_detect_speech: sftf: [9]: -5.376316
+10: whisper_vad_detect_speech: final_conv: [0]: -6.274172
+10: whisper_vad_detect_speech: h_state first 3 values: 0.003820, 0.247065, 0.058351
+10: whisper_vad_detect_speech: c_state first 3 values: 0.004212, 0.262400, 0.070621
+10: whisper_vad_detect_speech: finished processing 176000 samples
+10: whisper_vad_detect_speech: prob[0]: 0.001881
+```
+Hopefully by doing this and comparing step by step I can try to figure out where
+I'm going wrong. So the idea is to get the these two implementation to produce
+the same output as the original model.

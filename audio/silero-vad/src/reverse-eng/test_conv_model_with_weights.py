@@ -14,8 +14,10 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
     if pytorch_model_path and os.path.exists(pytorch_model_path):
         print(f"Loading PyTorch model from {pytorch_model_path}")
         pytorch_model.load_state_dict(torch.load(pytorch_model_path))
+        print("STFT basis buffer samples:", pytorch_model.stft.forward_basis_buffer[0:5, 0, 0:5])
     else:
         print(f"Warning: Model file not found at {pytorch_model_path}")
+
 
     # Load JIT model if available
     jit_model = None
