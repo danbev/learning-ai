@@ -3,6 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from conv_stft_model import SileroVAD
+from silero_vad import read_audio
 
 def test_model_with_weights(pytorch_model_path, jit_model_path=None):
     """Test loaded model with weights"""
@@ -23,7 +24,23 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
 
     # Create test input
     sample_rate = 16000
-    input_tensor = torch.randn(1, 512, dtype=torch.float32)
+
+    # For ramdon input (just one sample frame)
+    #input_tensor = torch.randn(1, 512, dtype=torch.float32)
+
+    # One audio sample frame
+    wav = read_audio('jfk.wav')
+    # Extract just the first 512 samples (for 16kHz sample rate)
+    # Make sure to handle tensor dimensions properly
+    if wav.dim() == 1:
+        # If wav is a 1D tensor, add batch dimension
+        input_tensor = wav[:512].unsqueeze(0)
+    elif wav.dim() == 2:
+        # If wav is already 2D (batch, samples), just take first 512 samples
+        input_tensor = wav[:, :512]
+
+    # Ensure we have exactly 512 samples
+    assert input_tensor.shape[-1] == 512, f"Expected 512 samples, but got {input_tensor.shape[-1]}"
     print(f"Input tensor shape: {input_tensor.shape}")
 
     # Run inference with PyTorch model
