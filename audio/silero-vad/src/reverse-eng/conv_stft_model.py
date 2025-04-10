@@ -18,7 +18,7 @@ class ConvSTFT(nn.Module):
         x = x.unsqueeze(1)  # [B, 1, 640]
 
         # Apply convolution for STFT
-        x = F.conv1d(x, self.forward_basis_buffer)  # [B, 258, 4]
+        x = F.conv1d(x, self.forward_basis_buffer, stride=128)  # [B, 258, 4]
 
         # Slice to get the first 129 channels (real components)
         x = x[:, :129, :]  # [B, 129, 4]
