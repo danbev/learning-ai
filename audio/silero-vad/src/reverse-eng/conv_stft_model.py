@@ -5,10 +5,8 @@ import torch.nn.functional as F
 class ConvSTFT(nn.Module):
     def __init__(self):
         super().__init__()
-        # Registration of the basis buffer
         self.register_buffer('forward_basis_buffer', torch.zeros(258, 1, 256))
-        # Padding as described in your documentation
-        self.padding = nn.ReflectionPad1d(64)  # Adds 64 samples of padding
+        self.padding = nn.ReflectionPad1d(64)  # Adds 64 samples of reflection padding
 
     def forward(self, x):
         # Apply padding (512 samples -> 512+64*2 = 640 samples)
@@ -18,15 +16,17 @@ class ConvSTFT(nn.Module):
         x = x.unsqueeze(1)  # [B, 1, 640]
 
         # Apply convolution for STFT
-        print("STFT input shape:", x.shape)
-        print("STFT forward_basis_buffer shape:", self.forward_basis_buffer.shape)
         # Shape will be [258, 1, 256]
         # 258 kernels
         # 256 kernel size
         x = F.conv1d(x, self.forward_basis_buffer, stride=128)  # [B, 258, 4]
-        print("STFT output shape:", x.shape)
 
-        print("STFT at different positions:")
+        #print("STFT output:")
+        #first_10 = x[0, :10, 0]
+        # Print with fixed-point notation instead of scientific
+        #for i, val in enumerate(first_10):
+            #print(f"  [{i}]: {val.item():.8f}")
+
         # Slice to get the first 129 channels (real components)
         x = x[:, :129, :]  # [B, 129, 4]
 
@@ -59,8 +59,10 @@ class Decoder(nn.Module):
 
         # Initialize hidden states if needed
         if h is None:
+            print(f"Initializing hidden state with batch size: {batch_size}")
             h = torch.zeros(batch_size, 128, device=x.device)
         if c is None:
+            print(f"Initializing cell state with batch size: {batch_size}")
             c = torch.zeros(batch_size, 128, device=x.device)
 
         # Process with LSTM
@@ -95,7 +97,7 @@ class SileroVAD(nn.Module):
         # For storing intermediate values
         self.debug_outputs = {}
 
-    def forward(self, x, sr=16000):
+    def forward(self, x, sr=16000, h=None, c=None):
         # Check input shape
         if sr == 16000 and x.shape[-1] != 512:
             raise ValueError(f"For 16kHz, input should have 512 samples but got {x.shape[-1]}")
@@ -118,10 +120,10 @@ class SileroVAD(nn.Module):
         self.debug_outputs['features'] = features
 
         # Decoder
-        output, (h, c) = self.decoder(features)
+        output, (h_out, c_out) = self.decoder(features, h, c)
         self.debug_outputs['lstm_h'] = h
         self.debug_outputs['lstm_c'] = c
-        print("shape of decoder output:", output.shape)
+        #print("shape of decoder output:", output.shape)
 
         # Output is [B, 1, 1], reshape to [B, 1]
-        return output.squeeze(2)
+        return output.squeeze(2), (h_out, c_out)
