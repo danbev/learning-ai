@@ -35,12 +35,15 @@ class ConvSTFT(nn.Module):
 class EncoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super().__init__()
-        self.reparam_conv = nn.Conv1d(in_channels, out_channels, kernel_size, padding=1, stride=stride)
+        print(f"EncoderBlock: in_channels={in_channels}, out_channels={out_channels}, kernel_size={kernel_size}, stride={stride}")
+        self.se = nn.Identity()
         self.activation = nn.ReLU()
+        self.reparam_conv = nn.Conv1d(in_channels, out_channels, kernel_size, padding=1, stride=stride)
 
     def forward(self, x):
-        x = self.reparam_conv(x)
+        x = self.se(x)
         x = self.activation(x)
+        x = self.reparam_conv(x)
         return x
 
 class Decoder(nn.Module):
