@@ -97,9 +97,6 @@ class SileroVAD(nn.Module):
         # Decoder
         self.decoder = Decoder(128, 128)
 
-        # For storing intermediate values
-        self.debug_outputs = {}
-
     def forward(self, x, sr=16000, h=None, c=None):
         # Check input shape
         if sr == 16000 and x.shape[-1] != 512:
@@ -107,26 +104,17 @@ class SileroVAD(nn.Module):
         elif sr == 8000 and x.shape[-1] != 256:
             raise ValueError(f"For 8kHz, input should have 256 samples but got {x.shape[-1]}")
 
-        # Store input for debugging
-        self.debug_outputs['input'] = x
-
         # STFT - output shape will be [B, 129, 4]
-        stft_out = self.stft(x)
-        self.debug_outputs['stft_out'] = stft_out
+        out = self.stft(x)
 
         # Encoder processes [B, 129, 4] -> [B, C, 4]
-        encoder_out = self.encoder(stft_out)
-        self.debug_outputs['encoder_out'] = encoder_out
+        out = self.encoder(out)
 
         # Get features from last time step for LSTM: [B, C, 4] -> [B, C]
-        features = encoder_out[:, :, -1]
-        self.debug_outputs['features'] = features
+        out = out[:, :, -1]
 
         # Decoder
-        output, (h_out, c_out) = self.decoder(features, h, c)
-        self.debug_outputs['lstm_h'] = h
-        self.debug_outputs['lstm_c'] = c
-        #print("shape of decoder output:", output.shape)
+        out, (h_out, c_out) = self.decoder(out, h, c)
 
         # Output is [B, 1, 1], reshape to [B, 1]
-        return output.squeeze(2), (h_out, c_out)
+        return out.squeeze(2), (h_out, c_out)
