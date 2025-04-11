@@ -1752,7 +1752,7 @@ These pointer will then be used to create a `ggml_cgraph` struct:
 Just to clarify that all tensors in the graph are nodes. In ggml any node that
 is an operation or any node that participates in gradient computation.
 Notice that we create a `.hash_table` which is a struct with a size, a pointer to
-a bitset and a pointer to the hash keys.
+a bitset and a pointer to the hash keys (pointers to tensors).
 ```c
     typedef uint32_t ggml_bitset_t;
 
@@ -4769,6 +4769,148 @@ $7 = (void *) 0x7fffffffd5e0
 $8 = (char (*)[1024]) 0x7fffffffd5e0
 ```
 
+### ggml_conv_1d
+This is a convolution operation of a over 1d tensor (the input). So the input
+can be a vector/list of numbers like audio samples for example.
+```console
+input = [0, 1, 2, 3, 4, 5, 6, 7]
+```
+And we have a kernel of some size which we slide over the input tensor:
+```console
+
+input  = [0, 1, 2, 3, 4, 5, 6, 7]
+kernal = [1, 2] 
+
+Stride: 1
+         [0, 1, 2, 3, 4, 5, 6, 7]
+         [1, 2] 
+         (0*1+1*2) = 2                    [2] 
+
+         [0, 1, 2, 3, 4, 5, 6, 7]
+            [1, 2] 
+            (1*1+2*2) = 5                 [2, 5]
+
+         [0, 1, 2, 3, 4, 5, 6, 7]
+               [1, 2] 
+               (2*1+3*2) = 8              [2, 5, 8]
+
+         [0, 1, 2, 3, 4, 5, 6, 7]
+                  [1, 2] 
+                  (3*1+4*2) = 11          [2, 5, 8, 11]
+
+         [0, 1, 2, 3, 4, 5, 6, 7]
+                     [1, 2] 
+                     (4*1+5*2) = 14       [2, 5, 8, 11, 14]
+
+         [0, 1, 2, 3, 4, 5, 6, 7]
+                        [1, 2] 
+                        (5*1+6*2) = 17    [2, 5, 8, 11, 14, 17]
+
+         [0, 1, 2, 3, 4, 5, 6, 7]
+                           [1, 2] 
+                           (6*1+7*2) = 20 [2, 5, 8, 11, 14, 17, 20]
+
+
+output: [2, 5, 8, 11, 14, 17, 20]
+```
+
+Dilation is the spacing between the kernel elements. So if we have a kernel
+of size 2 and a dilation of 1 then the kernel:
+```
+kernel         = [1, 2]
+dilation       = 1
+diluted kernel = [1, _, 2]
+input = [0, 1, 2, 3, 4, 5, 6, 7]
+        [0, _, 2]
+        (0*0+2*2) = 4                      [4]
+        
+        [0, 1, 2, 3, 4, 5, 6, 7]
+           [0, _, 2]
+           (1*1+3*2) = 7                   [4, 7]
+```
+
+So lets take a look at another example where the kernel matrix has more than
+one dimension:
+```
+input shape:   {8, 1, 1}
+kernel shape:  {4, 1, 6}
+output shape:  {5, 6, 1}
+```
+So the input is the same as before but the kernel matrix and the output shape
+might not be obvious at first.
+```
+input: [1, 2, 3, 4, 5, 6, 7, 8]
+
+kernel shape:  {4, 1, 6} :
+                |  |  |
++---------------|--|--+
+| +-------------|--+
+↓ |      +------+
+0 ↓      ↓
+  0 [1  2  3   4]
+1
+  0 [5  6  7   8]
+2 
+  0 [9  10 11 12]
+3
+  0 [13 14 15 16]
+4
+  0 [17 18 19 20]
+5
+  0 [21 22 23 24]
+```
+So this is saying that we have kernels of size 4, and we have 6 of them:
+```
+  [1 2 3 4 5 6 7 8]
+0 [1 2 3 4]               = out0_0
+    [1 2 3 4]             = out0_1
+      [1 2 3 4]           = out0_2
+        [1 2 3 4]         = out0_3
+          [1 2 3 4]       = out0_4    [out0_0 out0_1 out0_2 out0_3 out0_4]
+  [1 2 3 4 5 6 7 8]
+1 [5 6 7 8]               = out1_0
+    [5 6 7 8]             = out1_1
+      [5 6 7 8]           = out1_2
+        [5 6 7 8]         = out1_3
+          [5 6 7 8]       = out1_4    [out1_0 out1_1 out1_2 out1_3 out1_4]
+  [1 2 3 4 5 6 7 8]
+2 [9 10 11 12]            = out2_0
+    [9 10 11 12]          = out2_1
+      [9 10 11 12]        = out2_2
+        [9 10 11 12]      = out2_3
+          [9 10 11 12]    = out2_4    [out2_0 out2_1 out2_2 out2_3 out2_4]
+  [1 2 3 4 5 6 7 8]
+3 [13 14 15 16]           = out3_0
+    [13 14 15 16]         = out3_1
+      [13 14 15 16]       = out3_2
+        [13 14 15 16]     = out3_3
+          [13 14 15 16]   = out3_4    [out3_0 out3_1 out3_2 out3_3 out3_4]
+  [1 2 3 4 5 6 7 8]
+4 [17 18 19 20]           = out4_0
+    [17 18 19 20]         = out4_1
+      [17 18 19 20]       = out4_2
+        [17 18 19 20]     = out4_3
+          [17 18 19 20]   = out4_4    [out4_0 out4_1 out4_2 out4_3 out4_4]
+  [1 2 3 4 5 6 7 8]
+5 [21 22 23 24]           = out5_0
+    [21 22 23 24]         = out5_1
+      [21 22 23 24]       = out5_2
+        [21 22 23 24]     = out5_3
+          [21 22 23 24]   = out5_4    [out5_0 out5_1 out5_2 out5_3 out5_4]
+
+ <-------    5 (x-axis     --------->
+ [out0_0 out0_1 out0_2 out0_3 out0_4]  ^
+ [out1_0 out1_1 out1_2 out1_3 out1_4]  |
+ [out2_0 out2_1 out2_2 out2_3 out2_4]  6 (y-axis)
+ [out3_0 out3_1 out3_2 out3_3 out3_4]
+ [out4_0 out4_1 out4_2 out4_3 out4_4]  |
+ [out5_0 out5_1 out5_2 out5_3 out5_4]  v
+```
+So this hopefully clarifies what the kernel matrix represents, which in this
+case is a kernel of size 4 and we have 6 of them which will all convolve over
+the input and produc and output or size five each. And because we have 6
+kernels we will have 6 outputs, and each output will have 5 elements giving
+and output size of {5, 6}.
 
 
 ### `ggml_conv_2d`
@@ -4842,9 +4984,18 @@ $ gdb --args bin/conv2d
 ```
 We can step into `ggml_conv_2d` and see what is happening:
 ```c
-// a: [OC，IC, KH, KW]
+// a: [OC，IC, KH, KW]   
 // b: [N, IC, IH, IW]
 // result: [N, OC, OH, OW]
+//
+// OC: output channels
+// IC: input channels
+// KH: kernel height
+// KW: kernel width
+// N: batch size
+// IC: input channels
+// IH: input height
+// IW: input width
 struct ggml_tensor * ggml_conv_2d(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,  // kernel
