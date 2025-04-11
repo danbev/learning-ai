@@ -30,44 +30,61 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
     # For ramdon input (just one sample frame)
     #input_tensor = torch.randn(1, 512, dtype=torch.float32)
 
-    # One audio sample frame
+    # Process entire .wav file in 512-sample chunks
     wav = read_audio('jfk.wav')
-    # Extract just the first 512 samples (for 16kHz sample rate)
-    # Make sure to handle tensor dimensions properly
-    if wav.dim() == 1:
-        # If wav is a 1D tensor, add batch dimension
-        input_tensor = wav[:512].unsqueeze(0)
-    elif wav.dim() == 2:
-        # If wav is already 2D (batch, samples), just take first 512 samples
-        input_tensor = wav[:, :512]
+    print(f"Original wav shape: {wav.shape}, duration: {len(wav)/16000:.2f} seconds")
 
-    # Ensure we have exactly 512 samples
-    assert input_tensor.shape[-1] == 512, f"Expected 512 samples, but got {input_tensor.shape[-1]}"
-    print(f"Input tensor shape: {input_tensor.shape}")
+    # Calculate how many 512-sample chunks we need
+    chunk_size = 512
+    n_chunks = len(wav) // chunk_size
+    if len(wav) % chunk_size != 0:
+        n_chunks += 1  # Add one more chunk for remaining samples
 
-    # Run inference with PyTorch model
+    print(f"Processing {n_chunks} chunks of {chunk_size} samples each")
+
+    # Initialize variables to track results
+    all_probabilities = []
+
+    h_state = None
+    c_state = None
+
+    pytorch_model.eval()
+    # Process each chunk
     with torch.no_grad():
-        # Run the model
-        pytorch_output = pytorch_model(input_tensor, sample_rate)
+        for i in range(n_chunks):
+            # Get current chunk
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, len(wav))
 
-        # Print shapes of all intermediate tensors
-        print("\nIntermediate shapes from PyTorch model:")
-        for name, tensor in pytorch_model.debug_outputs.items():
-            print(f"  {name}: {tensor.shape}")
-            # Print sample values
-            flat_tensor = tensor.flatten()
-            if len(flat_tensor) > 0:
-                print(f"    Sample values: {flat_tensor[:5]}")
+            # Handle partial chunks at the end
+            current_chunk = wav[start_idx:end_idx]
+            if len(current_chunk) < chunk_size:
+                # Pad with zeros if needed
+                padded_chunk = torch.zeros(chunk_size)
+                padded_chunk[:len(current_chunk)] = current_chunk
+                current_chunk = padded_chunk
 
-        # Run JIT model if available
-        if jit_model:
-            jit_output = jit_model(input_tensor, sample_rate)
-            print(f"\nJIT output: {jit_output.item():.6f}")
-            print(f"PyTorch output: {pytorch_output.item():.6f}")
-            print(f"Difference: {abs(jit_output.item() - pytorch_output.item()):.6f}")
-        else:
-            print(f"shape of PyTorch output: {pytorch_output.shape}")
-            print(f"\nPyTorch output: {pytorch_output.item():.6f}")
+            # Add batch dimension
+            input_tensor = current_chunk.unsqueeze(0)
+
+            # Run the model
+            pytorch_output, (new_h_state, new_c_state) = pytorch_model(input_tensor, h=h_state, c=c_state)
+
+            h_state = new_h_state
+            c_state = new_c_state
+
+            # Store the probability
+            all_probabilities.append(pytorch_output.item())
+
+            # Print progress every 10 chunks
+            print(f"Processed chunk {i+1}/{n_chunks}, probability: {pytorch_output.item():.6f}")
+
+    # Print summary statistics
+    print("\nProcessing complete!")
+    print(f"Processed {n_chunks} chunks of audio")
+    print(f"Average probability: {sum(all_probabilities)/len(all_probabilities):.6f}")
+    print(f"Max probability: {max(all_probabilities):.6f}")
+    print(f"Min probability: {min(all_probabilities):.6f}")
 
 if __name__ == "__main__":
     pytorch_model_path = "silero_vad_conv_pytorch.pth"
