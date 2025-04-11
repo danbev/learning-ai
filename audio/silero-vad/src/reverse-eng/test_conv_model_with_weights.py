@@ -1,7 +1,6 @@
 import torch
 import os
 import numpy as np
-import matplotlib.pyplot as plt
 from conv_stft_model import SileroVAD
 from silero_vad import read_audio
 
@@ -67,52 +66,8 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
             print(f"PyTorch output: {pytorch_output.item():.6f}")
             print(f"Difference: {abs(jit_output.item() - pytorch_output.item()):.6f}")
         else:
+            print(f"shape of PyTorch output: {pytorch_output.shape}")
             print(f"\nPyTorch output: {pytorch_output.item():.6f}")
-
-    # Visualize activations
-    plt.figure(figsize=(15, 10))
-
-    # Plot STFT output
-    if 'stft_out' in pytorch_model.debug_outputs:
-        plt.subplot(2, 2, 1)
-        stft_out = pytorch_model.debug_outputs['stft_out'][0].cpu().numpy()
-        plt.imshow(stft_out, aspect='auto', origin='lower')
-        plt.colorbar()
-        plt.title('STFT Output')
-        plt.xlabel('Time')
-        plt.ylabel('Frequency')
-
-    # Plot encoder output
-    if 'encoder_out' in pytorch_model.debug_outputs:
-        plt.subplot(2, 2, 2)
-        encoder_out = pytorch_model.debug_outputs['encoder_out'][0].cpu().numpy()
-        plt.imshow(encoder_out, aspect='auto', origin='lower')
-        plt.colorbar()
-        plt.title('Encoder Output')
-        plt.xlabel('Time')
-        plt.ylabel('Channel')
-
-    # Plot LSTM hidden state
-    if 'lstm_h' in pytorch_model.debug_outputs:
-        plt.subplot(2, 2, 3)
-        lstm_h = pytorch_model.debug_outputs['lstm_h'][0].cpu().numpy()
-        plt.bar(range(len(lstm_h)), lstm_h)
-        plt.title('LSTM Hidden State')
-        plt.xlabel('Dimension')
-        plt.ylabel('Value')
-
-    # Plot features
-    if 'features' in pytorch_model.debug_outputs:
-        plt.subplot(2, 2, 4)
-        features = pytorch_model.debug_outputs['features'][0].cpu().numpy()
-        plt.bar(range(len(features)), features)
-        plt.title('Features Before LSTM')
-        plt.xlabel('Dimension')
-        plt.ylabel('Value')
-
-    plt.tight_layout()
-    plt.savefig('conv_model_activations.png')
-    print("Saved activation visualization to conv_model_activations.png")
 
 if __name__ == "__main__":
     pytorch_model_path = "silero_vad_conv_pytorch.pth"

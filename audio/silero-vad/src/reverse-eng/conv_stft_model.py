@@ -18,8 +18,15 @@ class ConvSTFT(nn.Module):
         x = x.unsqueeze(1)  # [B, 1, 640]
 
         # Apply convolution for STFT
+        print("STFT input shape:", x.shape)
+        print("STFT forward_basis_buffer shape:", self.forward_basis_buffer.shape)
+        # Shape will be [258, 1, 256]
+        # 258 kernels
+        # 256 kernel size
         x = F.conv1d(x, self.forward_basis_buffer, stride=128)  # [B, 258, 4]
+        print("STFT output shape:", x.shape)
 
+        print("STFT at different positions:")
         # Slice to get the first 129 channels (real components)
         x = x[:, :129, :]  # [B, 129, 4]
 
@@ -43,7 +50,7 @@ class Decoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Conv1d(hidden_size, 1, kernel_size=1),
+            nn.Conv1d(hidden_size, 1, kernel_size=1, padding=0),
             nn.Sigmoid()
         )
 
@@ -114,6 +121,7 @@ class SileroVAD(nn.Module):
         output, (h, c) = self.decoder(features)
         self.debug_outputs['lstm_h'] = h
         self.debug_outputs['lstm_c'] = c
+        print("shape of decoder output:", output.shape)
 
         # Output is [B, 1, 1], reshape to [B, 1]
         return output.squeeze(2)
