@@ -4,11 +4,16 @@ import numpy as np
 from conv_stft_model import SileroVAD
 from silero_vad import read_audio
 
-def test_model_with_weights(pytorch_model_path, jit_model_path=None):
+def test_model_with_weights(pytorch_model_path):
     """Test loaded model with weights"""
     # Load PyTorch model
     pytorch_model = SileroVAD()
     pytorch_model.eval()
+
+    state_dict = torch.load(pytorch_model_path)
+    for key in state_dict.keys():
+        if 'decoder' in key:
+            print(key)
 
     if pytorch_model_path and os.path.exists(pytorch_model_path):
         print(f"Loading PyTorch model from {pytorch_model_path}")
@@ -16,13 +21,6 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
         print("STFT basis buffer samples:", pytorch_model.stft.forward_basis_buffer[0:5, 0, 0:5])
     else:
         print(f"Warning: Model file not found at {pytorch_model_path}")
-
-
-    # Load JIT model if available
-    jit_model = None
-    if jit_model_path and os.path.exists(jit_model_path):
-        print(f"Loading JIT model from {jit_model_path}")
-        jit_model = torch.jit.load(jit_model_path)
 
     # Create test input
     sample_rate = 16000
@@ -88,6 +86,5 @@ def test_model_with_weights(pytorch_model_path, jit_model_path=None):
 
 if __name__ == "__main__":
     pytorch_model_path = "silero_vad_conv_pytorch.pth"
-    jit_model_path = "silero_vad.jit"
 
-    test_model_with_weights(pytorch_model_path, jit_model_path)
+    test_model_with_weights(pytorch_model_path)
