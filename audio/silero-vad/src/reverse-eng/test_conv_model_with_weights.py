@@ -9,6 +9,7 @@ def test_model_with_weights(pytorch_model_path):
     # Load PyTorch model
     pytorch_model = SileroVAD()
     pytorch_model.eval()
+    #print(pytorch_model)
 
     state_dict = torch.load(pytorch_model_path)
     for key in state_dict.keys():
@@ -18,9 +19,11 @@ def test_model_with_weights(pytorch_model_path):
     if pytorch_model_path and os.path.exists(pytorch_model_path):
         print(f"Loading PyTorch model from {pytorch_model_path}")
         pytorch_model.load_state_dict(torch.load(pytorch_model_path))
-        print("STFT basis buffer samples:", pytorch_model.stft.forward_basis_buffer[0:5, 0, 0:5])
     else:
         print(f"Warning: Model file not found at {pytorch_model_path}")
+
+    print(pytorch_model.state_dict())
+    #print("STFT basis buffer samples:", pytorch_model.stft.forward_basis_buffer)
 
     # Create test input
     sample_rate = 16000
