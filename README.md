@@ -3,8 +3,8 @@ This repository contains notes and code examples related to AI.
 
 ### In-progress
 
+* [Voice Activity Detection (VAD)](./notes/vad.md) VAD for whisper.cpp
 * [whisper.cpp](./notes/whisper.md) Whisper.cpp
-* [Llama 3.2 Vision Instruct support](./notes/llama.cpp/llama-3-2-vision.md#user-content-wip) Support for Llama 3.2 Vision Instruct in llama.cpp
 
 ### Topics
 
