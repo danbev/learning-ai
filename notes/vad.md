@@ -22,18 +22,939 @@ The model that Silero-VAD has is not publicly available yet. I found this
 discussion:
 https://github.com/snakers4/silero-vad/discussions/371
 
-But they do provide their model in two formats, one which I think is in a
-PyTorch JIT (Just In Time) format and one in ONNX format.
+But they do provide their model in two formats, one PyTorch JIT (Just In Time)
+format and one in ONNX format. So we have access to the models, but the actual
+PyTorch code for the model does not seem to be available which made it a little
+difficult for me to figure out if the whisper.cpp version was correct or not.
 
-One thing that I've done for figure out more information about the operations
-in the model is use the cpp example and enable profiling:
-```c++
-    session_options.EnableProfiling("onnxruntime_profile.json");
+To find out more about the model I used the following script:
+```console
+(venv) $ python src/inspect-jit.py
+RecursiveScriptModule(
+  original_name=VADRNNJIT
+  (stft): RecursiveScriptModule(
+    original_name=STFT
+    (padding): RecursiveScriptModule(original_name=ReflectionPad1d)
+  )
+  (encoder): RecursiveScriptModule(
+    original_name=Sequential
+    (0): RecursiveScriptModule(
+      original_name=SileroVadBlock
+      (se): RecursiveScriptModule(original_name=Identity)
+      (activation): RecursiveScriptModule(original_name=ReLU)
+      (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+    )
+    (1): RecursiveScriptModule(
+      original_name=SileroVadBlock
+      (se): RecursiveScriptModule(original_name=Identity)
+      (activation): RecursiveScriptModule(original_name=ReLU)
+      (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+    )
+    (2): RecursiveScriptModule(
+      original_name=SileroVadBlock
+      (se): RecursiveScriptModule(original_name=Identity)
+      (activation): RecursiveScriptModule(original_name=ReLU)
+      (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+    )
+    (3): RecursiveScriptModule(
+      original_name=SileroVadBlock
+      (se): RecursiveScriptModule(original_name=Identity)
+      (activation): RecursiveScriptModule(original_name=ReLU)
+      (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
+    )
+  )
+  (decoder): RecursiveScriptModule(
+    original_name=VADDecoderRNNJIT
+    (rnn): RecursiveScriptModule(original_name=LSTMCell)
+    (decoder): RecursiveScriptModule(
+      original_name=Sequential
+      (0): RecursiveScriptModule(original_name=Dropout)
+      (1): RecursiveScriptModule(original_name=ReLU)
+      (2): RecursiveScriptModule(original_name=Conv1d)
+      (3): RecursiveScriptModule(original_name=Sigmoid)
+    )
+  )
+)
+Module: RecursiveScriptModule
+Parameter: _model.encoder.0.reparam_conv.weight, Shape: torch.Size([128, 129, 3])
+Parameter: _model.encoder.0.reparam_conv.bias, Shape: torch.Size([128])
+Parameter: _model.encoder.1.reparam_conv.weight, Shape: torch.Size([64, 128, 3])
+Parameter: _model.encoder.1.reparam_conv.bias, Shape: torch.Size([64])
+Parameter: _model.encoder.2.reparam_conv.weight, Shape: torch.Size([64, 64, 3])
+Parameter: _model.encoder.2.reparam_conv.bias, Shape: torch.Size([64])
+Parameter: _model.encoder.3.reparam_conv.weight, Shape: torch.Size([128, 64, 3])
+Parameter: _model.encoder.3.reparam_conv.bias, Shape: torch.Size([128])
+Parameter: _model.decoder.rnn.weight_ih, Shape: torch.Size([512, 128])
+Parameter: _model.decoder.rnn.weight_hh, Shape: torch.Size([512, 128])
+Parameter: _model.decoder.rnn.bias_ih, Shape: torch.Size([512])
+Parameter: _model.decoder.rnn.bias_hh, Shape: torch.Size([512])
+Parameter: _model.decoder.decoder.2.weight, Shape: torch.Size([1, 128, 1])
+Parameter: _model.decoder.decoder.2.bias, Shape: torch.Size([1])
+Buffer: _model.stft.forward_basis_buffer, Shape: torch.Size([258, 1, 256])
 ```
-This produces a file that contains information about the operations in the model.
-Now since the examples processes a sample audio file in chunks, I'm using jfk.wav
-as the audio sample, the actual file is huge. But there patterns are repeating
-so we only need to focus on a subsection. 
+(I've removed the 8kHz model for now as we are not using it).
+
+Now, the problem I had was that I could not find a way to print out intermediate
+tensor values, like printing the output of the STFT layer or any of the others
+to verify that out whisper.cpp implementation was correct or not. I spent a good
+chunk of time trying to do so before basically giving up. But I need something
+to compare with so by inspecting the model more closely using the same script
+as above I was able to get information about each part of the model.
+For example in the `_model.stft` we can find:
+```console
+Transform method code:
+def transform_(self,
+    input_data: Tensor) -> Tuple[Tensor, Tensor]:
+  padding = self.padding
+  input_data0 = torch.unsqueeze((padding).forward(input_data, ), 1)
+  forward_basis_buffer = self.forward_basis_buffer
+  hop_length = self.hop_length
+  forward_transform = torch.conv1d(input_data0, forward_basis_buffer, None, [hop_length], [0])
+  filter_length = self.filter_length
+  _0 = torch.add(torch.div(filter_length, 2), 1)
+  cutoff = int(_0)
+  _1 = torch.slice(torch.slice(forward_transform), 1, None, cutoff)
+  real_part = torch.to(torch.slice(_1, 2), 6)
+  _2 = torch.slice(torch.slice(forward_transform), 1, cutoff)
+  imag_part = torch.to(torch.slice(_2, 2), 6)
+  _3 = torch.add(torch.pow(real_part, 2), torch.pow(imag_part, 2))
+  magnitude = torch.sqrt(_3)
+  phase = torch.atan2(ops.prim.data(imag_part), ops.prim.data(real_part))
+  return (magnitude, phase)
+
+Module: RecursiveScriptModule
+Buffer: forward_basis_buffer, Shape: torch.Size([258, 1, 256])
+Available methods: ['T_destination', '__call__', 'add_module', 'apply', 'bfloat16', 'buffers', 'call_super_init', 'children', 'code', 'code_with_constants', 'compile', 'cpu', 'cuda', 'define', 'double', 'dump_patches', 'eval', 'extra_repr', 'float', 'forward', 'forward_basis_buffer', 'forward_magic_method', 'get_buffer', 'get_debug_state', 'get_extra_state', 'get_parameter', 'get_submodule', 'graph', 'graph_for', 'half', 'inlined_graph', 'ipu', 'load_state_dict', 'modules', 'mtia', 'named_buffers', 'named_children', 'named_modules', 'named_parameters', 'original_name', 'padding', 'parameters', 'register_backward_hook', 'register_buffer', 'register_forward_hook', 'register_forward_pre_hook', 'register_full_backward_hook', 'register_full_backward_pre_hook', 'register_load_state_dict_post_hook', 'register_load_state_dict_pre_hook', 'register_module', 'register_parameter', 'register_state_dict_post_hook', 'register_state_dict_pre_hook', 'requires_grad_', 'save', 'save_to_buffer', 'set_extra_state', 'set_submodule', 'share_memory', 'state_dict', 'to', 'to_empty', 'train', 'transform_', 'type', 'xpu', 'zero_grad']
+Transform method code:
+def transform_(self,
+    input_data: Tensor) -> Tuple[Tensor, Tensor]:
+  padding = self.padding
+  input_data0 = torch.unsqueeze((padding).forward(input_data, ), 1)
+  forward_basis_buffer = self.forward_basis_buffer
+  hop_length = self.hop_length
+  forward_transform = torch.conv1d(input_data0, forward_basis_buffer, None, [hop_length], [0])
+  filter_length = self.filter_length
+  _0 = torch.add(torch.div(filter_length, 2), 1)
+  cutoff = int(_0)
+  _1 = torch.slice(torch.slice(forward_transform), 1, None, cutoff)
+  real_part = torch.to(torch.slice(_1, 2), 6)
+  _2 = torch.slice(torch.slice(forward_transform), 1, cutoff)
+  imag_part = torch.to(torch.slice(_2, 2), 6)
+  _3 = torch.add(torch.pow(real_part, 2), torch.pow(imag_part, 2))
+  magnitude = torch.sqrt(_3)
+  phase = torch.atan2(ops.prim.data(imag_part), ops.prim.data(real_part))
+  return (magnitude, phase)
+```
+And the gives us enough information to start writing a python model mimicking
+the original model.
+
+I also used a profile logger while running the [C++ example](https://github.com/snakers4/silero-vad/tree/master/examples/cpp)
+in the silero-vad repository to get more information while running it using
+onnx profiler.
+
+I made the following changes to get it to compile and add the profiling:
+```console
+$ git diff
+diff --git a/examples/cpp/silero-vad-onnx.cpp b/examples/cpp/silero-vad-onnx.cpp
+index 380d76d..99fb289 100644
+--- a/examples/cpp/silero-vad-onnx.cpp
++++ b/examples/cpp/silero-vad-onnx.cpp
+@@ -131,7 +131,7 @@ private:
+     timestamp_t current_speech;
+
+     // Loads the ONNX model.
+-    void init_onnx_model(const std::wstring& model_path) {
++    void init_onnx_model(const std::string& model_path) {
+         init_engine_threads(1, 1);
+         session = std::make_shared<Ort::Session>(env, model_path.c_str(), session_options);
+     }
+@@ -303,7 +303,7 @@ public:
+ public:
+     // Constructor: sets model path, sample rate, window size (ms), and other parameters.
+     // The parameters are set to match the Python version.
+-    VadIterator(const std::wstring ModelPath,
++    VadIterator(const std::string ModelPath,
+         int Sample_rate = 16000, int windows_frame_size = 32,
+         float Threshold = 0.5, int min_silence_duration_ms = 100,
+         int speech_pad_ms = 30, int min_speech_duration_ms = 250,
+@@ -329,7 +329,7 @@ public:
+
+ int main() {
+     // Read the WAV file (expects 16000 Hz, mono, PCM).
+-    wav::WavReader wav_reader("audio/recorder.wav"); // File located in the "audio" folder.
++    wav::WavReader wav_reader("jfk.wav"); // File located in the "audio" folder.
+     int numSamples = wav_reader.num_samples();
+     std::vector<float> input_wav(static_cast<size_t>(numSamples));
+     for (size_t i = 0; i < static_cast<size_t>(numSamples); i++) {
+@@ -337,7 +337,7 @@ int main() {
+     }
+
+     // Set the ONNX model path (file located in the "model" folder).
+-    std::wstring model_path = L"model/silero_vad.onnx";
++    std::string model_path = "../../src/silero_vad/data/silero_vad.onnx";
+
+     // Initialize the VadIterator.
+     VadIterator vad(model_path);
+```
+And a make file to build and run.
+```console
+ONNX_PATH=./onnxruntime-linux-x64-1.12.1
+
+build:
+	g++ silero-vad-onnx.cpp -I ${ONNX_PATH}/include/ \
+		-L ${ONNX_PATH}/lib/ \
+		-lonnxruntime \
+		-Wl,-rpath,${ONNX_PATH}/lib/ \
+		-o test
+
+run: build
+	./test
+```
+Now, this will create files in the current directory and if we inspect it we
+can find some information about the shapes and operations, again for example
+looking at the STFT layer:
+```
+20 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59304,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/padding/Pad_fence_before","args" : {"op_name" : "Pad"}},
+   21 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :6,"ts" :59304,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/padding/Pad_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2560","parameter_size" : "32","activation_size" : "2304","output_t      ype_shape" : [{"float":[1,640]}],"exec_plan_index" : "7","graph_index" : "7","input_type_shape" : [{"float":[1,576]},{"int64":[4]}],"provider" : "CPUExecutionProvider","op_name" : "Pad"}},
+   22 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59312,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/padding/Pad_fence_after","args" : {"op_name" : "Pad"}},
+   23 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59312,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Unsqueeze_fence_before","args" : {"op_name" : "Unsqueeze"}},
+   24 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :2,"ts" :59313,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Unsqueeze_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2560","parameter_size" : "8","activation_size" : "2560","output_type      _shape" : [{"float":[1,1,640]}],"exec_plan_index" : "8","graph_index" : "8","input_type_shape" : [{"float":[1,640]},{"int64":[1]}],"provider" : "CPUExecutionProvider","op_name" : "Unsqueeze"}},
+   25 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59317,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Unsqueeze_fence_after","args" : {"op_name" : "Unsqueeze"}},
+   26 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59318,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Conv_fence_before","args" : {"op_name" : "Conv"}},
+   27 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :54,"ts" :59318,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Conv_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "4128","parameter_size" : "264192","activation_size" : "2560","output_typ      e_shape" : [{"float":[1,258,4]}],"exec_plan_index" : "9","graph_index" : "9","input_type_shape" : [{"float":[1,1,640]},{"float":[258,1,256]}],"provider" : "CPUExecutionProvider","op_name" : "Conv"}},
+   28 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59375,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Conv_fence_after","args" : {"op_name" : "Conv"}},
+   29 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59376,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_3_fence_before","args" : {"op_name" : "Slice"}},
+   30 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :6,"ts" :59377,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_3_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "32","activation_size" : "4128","output_type_      shape" : [{"float":[1,129,4]}],"exec_plan_index" : "14","graph_index" : "14","input_type_shape" : [{"float":[1,258,4]},{"int64":[1]},{"int64":[1]},{"int64":[1]},{"int64":[1]}],"provider" : "CPUExecutionProvider","op_name" : "Slice"}},
+   31 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59385,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_3_fence_after","args" : {"op_name" : "Slice"}},
+   32 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59386,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_1_fence_before","args" : {"op_name" : "Pow"}},
+   33 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :3,"ts" :59386,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_1_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "4","activation_size" : "2064","output_type_sha      pe" : [{"float":[1,129,4]}],"exec_plan_index" : "18","graph_index" : "18","input_type_shape" : [{"float":[1,129,4]},{"float":[]}],"provider" : "CPUExecutionProvider","op_name" : "Pow"}},
+   34 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59391,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_1_fence_after","args" : {"op_name" : "Pow"}},
+   35 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59393,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_1_fence_before","args" : {"op_name" : "Slice"}},
+   36 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :3,"ts" :59393,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_1_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "32","activation_size" : "4128","output_type_      shape" : [{"float":[1,129,4]}],"exec_plan_index" : "11","graph_index" : "11","input_type_shape" : [{"float":[1,258,4]},{"int64":[1]},{"int64":[1]},{"int64":[1]},{"int64":[1]}],"provider" : "CPUExecutionProvider","op_name" : "Slice"}},
+   37 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59398,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Slice_1_fence_after","args" : {"op_name" : "Slice"}},
+   38 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59399,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_fence_before","args" : {"op_name" : "Pow"}},
+   39 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :2,"ts" :59399,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "4","activation_size" : "2064","output_type_shape      " : [{"float":[1,129,4]}],"exec_plan_index" : "17","graph_index" : "17","input_type_shape" : [{"float":[1,129,4]},{"float":[]}],"provider" : "CPUExecutionProvider","op_name" : "Pow"}},
+   40 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59403,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Pow_fence_after","args" : {"op_name" : "Pow"}},
+   41 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59404,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Add_fence_before","args" : {"op_name" : "Add"}},
+   42 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :3,"ts" :59404,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Add_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "0","activation_size" : "4128","output_type_shape      " : [{"float":[1,129,4]}],"exec_plan_index" : "19","graph_index" : "19","input_type_shape" : [{"float":[1,129,4]},{"float":[1,129,4]}],"provider" : "CPUExecutionProvider","op_name" : "Add"}},
+   43 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59409,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Add_fence_after","args" : {"op_name" : "Add"}},
+   44 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :0,"ts" :59410,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Sqrt_fence_before","args" : {"op_name" : "Sqrt"}},
+   45 {"cat" : "Node","pid" :34575,"tid" :34575,"dur" :6,"ts" :59411,"ph" : "X","name" :"If_0_then_branch__Inline_0__/stft/Sqrt_kernel_time","args" : {"thread_scheduling_stats" : "","output_size" : "2064","parameter_size" : "0","activation_size" : "2064","output_type_shap      e" : [{"float":[1,129,4]}],"exec_plan_index" : "20","graph_index" : "20","input_type_shape" : [{"float":[1,129,4]}],"provider" : "CPUExecutionProvider","op_name" : "Sqrt"}},
+```
+So with that I created a script to extract the tensors from the JIT model, and
+then implement the model in python using torch (this was not as straightforward
+as it might sound here). The converted model can be found in
+[audio/silero-vad](audio/silero-vad/src/reverse-eng/).
+
+Using the `jfk.wav` with the original silero-vad model these are the predictions:
+```console
+$ python src/jfk.py
+[0] probability: 0.0120120458
+[1] probability: 0.0106779542
+[2] probability: 0.1321811974
+[3] probability: 0.0654894710
+[4] probability: 0.0445981026
+[5] probability: 0.0223348271
+[6] probability: 0.0260702968
+[7] probability: 0.0116709163
+[8] probability: 0.0081158215
+[9] probability: 0.0067158826
+[10] probability: 0.8111256361
+[11] probability: 0.9633629322
+[12] probability: 0.9310814142
+[13] probability: 0.7854600549
+[14] probability: 0.8146636486
+[15] probability: 0.9672259092
+[16] probability: 0.9664794803
+[17] probability: 0.9530465603
+[18] probability: 0.9773806334
+[19] probability: 0.9515406489
+[20] probability: 0.9235361218
+[21] probability: 0.9561933875
+[22] probability: 0.9820070863
+[23] probability: 0.9649533629
+[24] probability: 0.9486407042
+[25] probability: 0.9199727774
+[26] probability: 0.8507736921
+[27] probability: 0.8281027675
+[28] probability: 0.7944886088
+[29] probability: 0.8232654929
+[30] probability: 0.8295858502
+[31] probability: 0.8030185699
+[32] probability: 0.9451498985
+[33] probability: 0.8949782848
+[34] probability: 0.9032012224
+[35] probability: 0.9025285244
+[36] probability: 0.9016729593
+[37] probability: 0.9391839504
+[38] probability: 0.9761081338
+[39] probability: 0.9765046835
+[40] probability: 0.9614208937
+[41] probability: 0.8868988156
+[42] probability: 0.9054323435
+[43] probability: 0.9729118943
+[44] probability: 0.9419037700
+[45] probability: 0.9301297665
+[46] probability: 0.9049455523
+[47] probability: 0.9192379713
+[48] probability: 0.9463497400
+[49] probability: 0.8815279603
+[50] probability: 0.8565585017
+[51] probability: 0.8562414050
+[52] probability: 0.9654588103
+[53] probability: 0.9728733301
+[54] probability: 0.9644294381
+[55] probability: 0.9485635757
+[56] probability: 0.9216982722
+[57] probability: 0.9331229329
+[58] probability: 0.9122018218
+[59] probability: 0.8967185020
+[60] probability: 0.8226366639
+[61] probability: 0.9199765325
+[62] probability: 0.9400870204
+[63] probability: 0.9173651338
+[64] probability: 0.7509807944
+[65] probability: 0.9055827856
+[66] probability: 0.7457287908
+[67] probability: 0.5512428880
+[68] probability: 0.3979139328
+[69] probability: 0.1968278140
+[70] probability: 0.1336449385
+[71] probability: 0.0854208618
+[72] probability: 0.0512541421
+[73] probability: 0.0213614609
+[74] probability: 0.0087905023
+[75] probability: 0.0050795670
+[76] probability: 0.0036360626
+[77] probability: 0.0029130245
+[78] probability: 0.0062774355
+[79] probability: 0.0060164286
+[80] probability: 0.0036439903
+[81] probability: 0.0020915263
+[82] probability: 0.0016147600
+[83] probability: 0.0014228907
+[84] probability: 0.0012152086
+[85] probability: 0.0016399137
+[86] probability: 0.0007782626
+[87] probability: 0.0012633284
+[88] probability: 0.0011245427
+[89] probability: 0.0012091363
+[90] probability: 0.0024176650
+[91] probability: 0.0012052481
+[92] probability: 0.0006706595
+[93] probability: 0.0004096399
+[94] probability: 0.0005879427
+[95] probability: 0.0003524663
+[96] probability: 0.0006112840
+[97] probability: 0.0004331781
+[98] probability: 0.0012036999
+[99] probability: 0.0004305345
+[100] probability: 0.0003728746
+[101] probability: 0.0005225370
+[102] probability: 0.0181077644
+[103] probability: 0.2840053737
+[104] probability: 0.4943751991
+[105] probability: 0.6032722592
+[106] probability: 0.5436841846
+[107] probability: 0.5589256883
+[108] probability: 0.5062690377
+[109] probability: 0.3489521742
+[110] probability: 0.2822247148
+[111] probability: 0.2502350807
+[112] probability: 0.4467811286
+[113] probability: 0.8259999156
+[114] probability: 0.7331997752
+[115] probability: 0.6296291947
+[116] probability: 0.3672357500
+[117] probability: 0.2370462567
+[118] probability: 0.1266799271
+[119] probability: 0.0863809213
+[120] probability: 0.0577458292
+[121] probability: 0.0126561048
+[122] probability: 0.0058960663
+[123] probability: 0.0066269282
+[124] probability: 0.1001239195
+[125] probability: 0.2267967612
+[126] probability: 0.7768144608
+[127] probability: 0.8881686330
+[128] probability: 0.8496580720
+[129] probability: 0.8128281832
+[130] probability: 0.7959909439
+[131] probability: 0.7936805487
+[132] probability: 0.6849995852
+[133] probability: 0.6143192053
+[134] probability: 0.6148759723
+[135] probability: 0.3155294359
+[136] probability: 0.1442092806
+[137] probability: 0.0466341823
+[138] probability: 0.0278023500
+[139] probability: 0.0182217564
+[140] probability: 0.0088233612
+[141] probability: 0.0095065329
+[142] probability: 0.0044769812
+[143] probability: 0.0031184589
+[144] probability: 0.0016689267
+[145] probability: 0.0023460335
+[146] probability: 0.0007922960
+[147] probability: 0.0028725227
+[148] probability: 0.0011672110
+[149] probability: 0.0020256110
+[150] probability: 0.0020782938
+[151] probability: 0.0009769580
+[152] probability: 0.0009220199
+[153] probability: 0.0024484431
+[154] probability: 0.0046779355
+[155] probability: 0.0024497141
+[156] probability: 0.0018141053
+[157] probability: 0.0012290307
+[158] probability: 0.0009697533
+[159] probability: 0.0011016321
+[160] probability: 0.0010593801
+[161] probability: 0.0018238472
+[162] probability: 0.0009759203
+[163] probability: 0.0007066324
+[164] probability: 0.0006456191
+[165] probability: 0.0013584567
+[166] probability: 0.0006583764
+[167] probability: 0.0014947796
+[168] probability: 0.0012043880
+[169] probability: 0.7265451550
+[170] probability: 0.8275423646
+[171] probability: 0.7977938652
+[172] probability: 0.8630424142
+[173] probability: 0.8654760718
+[174] probability: 0.8103245497
+[175] probability: 0.8888602853
+[176] probability: 0.8212413788
+[177] probability: 0.8759981394
+[178] probability: 0.8938365579
+[179] probability: 0.9498395920
+[180] probability: 0.9528379440
+[181] probability: 0.9281737804
+[182] probability: 0.9655471444
+[183] probability: 0.9308375120
+[184] probability: 0.7055628300
+[185] probability: 0.7111269236
+[186] probability: 0.7741216421
+[187] probability: 0.9365538359
+[188] probability: 0.9579713345
+[189] probability: 0.9543846846
+[190] probability: 0.9655930400
+[191] probability: 0.9719272852
+[192] probability: 0.9262279868
+[193] probability: 0.9058678150
+[194] probability: 0.9641671181
+[195] probability: 0.9669665694
+[196] probability: 0.9642478228
+[197] probability: 0.9578868747
+[198] probability: 0.9696291685
+[199] probability: 0.9675853848
+[200] probability: 0.9736673832
+[201] probability: 0.9782630801
+[202] probability: 0.9718350172
+[203] probability: 0.9790894389
+[204] probability: 0.9796285033
+[205] probability: 0.9683827758
+[206] probability: 0.9775854349
+[207] probability: 0.9806787968
+[208] probability: 0.9728345275
+[209] probability: 0.9756219387
+[210] probability: 0.9809038043
+[211] probability: 0.9838793874
+[212] probability: 0.9794865847
+[213] probability: 0.9755236506
+[214] probability: 0.9861546159
+[215] probability: 0.9860898256
+[216] probability: 0.9652890563
+[217] probability: 0.9375467896
+[218] probability: 0.8729331493
+[219] probability: 0.9602597356
+[220] probability: 0.9770282507
+[221] probability: 0.9740325809
+[222] probability: 0.9711015224
+[223] probability: 0.9773187041
+[224] probability: 0.9826788902
+[225] probability: 0.9807331562
+[226] probability: 0.9793297648
+[227] probability: 0.9699174166
+[228] probability: 0.9644414783
+[229] probability: 0.9687068462
+[230] probability: 0.9681332111
+[231] probability: 0.9577034712
+[232] probability: 0.9728902578
+[233] probability: 0.9768581390
+[234] probability: 0.9660829902
+[235] probability: 0.9392179251
+[236] probability: 0.8526392579
+[237] probability: 0.5641263723
+[238] probability: 0.2013247162
+[239] probability: 0.1066527665
+[240] probability: 0.0310583655
+[241] probability: 0.0157215856
+[242] probability: 0.0130914506
+[243] probability: 0.0044830763
+[244] probability: 0.0069351792
+[245] probability: 0.0024922192
+[246] probability: 0.0027061312
+[247] probability: 0.0020019219
+[248] probability: 0.0011804849
+[249] probability: 0.0020268953
+[250] probability: 0.0007212795
+[251] probability: 0.0010822940
+[252] probability: 0.0006232891
+[253] probability: 0.0007668757
+[254] probability: 0.0010701693
+[255] probability: 0.0008318963
+[256] probability: 0.6040052772
+[257] probability: 0.8263453245
+[258] probability: 0.7968529463
+[259] probability: 0.7766568065
+[260] probability: 0.7201390862
+[261] probability: 0.6486166120
+[262] probability: 0.6912519336
+[263] probability: 0.8114249706
+[264] probability: 0.9494416118
+[265] probability: 0.9156619310
+[266] probability: 0.8544524908
+[267] probability: 0.5401257277
+[268] probability: 0.2489332706
+[269] probability: 0.2530018091
+[270] probability: 0.9610205293
+[271] probability: 0.9751768708
+[272] probability: 0.9762893319
+[273] probability: 0.9723498225
+[274] probability: 0.9672072530
+[275] probability: 0.9852018952
+[276] probability: 0.9831889272
+[277] probability: 0.9588776827
+[278] probability: 0.9845831394
+[279] probability: 0.9928609729
+[280] probability: 0.9928285480
+[281] probability: 0.9938415289
+[282] probability: 0.9930645823
+[283] probability: 0.9940449595
+[284] probability: 0.9893879890
+[285] probability: 0.9955287576
+[286] probability: 0.9922802448
+[287] probability: 0.9916920662
+[288] probability: 0.9911763668
+[289] probability: 0.9976255298
+[290] probability: 0.9954389930
+[291] probability: 0.9819942117
+[292] probability: 0.9935252666
+[293] probability: 0.9948412776
+[294] probability: 0.9961053729
+[295] probability: 0.9935407043
+[296] probability: 0.9927965999
+[297] probability: 0.9935270548
+[298] probability: 0.9914484620
+[299] probability: 0.9969546795
+[300] probability: 0.9937365055
+[301] probability: 0.9903761744
+[302] probability: 0.9891674519
+[303] probability: 0.9745979309
+[304] probability: 0.9902220964
+[305] probability: 0.9918566942
+[306] probability: 0.9890555143
+[307] probability: 0.9960351586
+[308] probability: 0.9963703156
+[309] probability: 0.9965223074
+[310] probability: 0.9939389229
+[311] probability: 0.9927075505
+[312] probability: 0.9939052463
+[313] probability: 0.9901870489
+[314] probability: 0.9839034081
+[315] probability: 0.9867933393
+[316] probability: 0.9954883456
+[317] probability: 0.9951952100
+[318] probability: 0.9929647446
+[319] probability: 0.9927020073
+[320] probability: 0.9865319133
+[321] probability: 0.9708641768
+[322] probability: 0.9639129043
+[323] probability: 0.9845443368
+[324] probability: 0.9337452650
+[325] probability: 0.9636278749
+[326] probability: 0.9665008783
+[327] probability: 0.9497909546
+[328] probability: 0.7639142275
+[329] probability: 0.4962018728
+[330] probability: 0.4612325430
+[331] probability: 0.0821653679
+[332] probability: 0.0405023694
+[333] probability: 0.0188933071
+[334] probability: 0.0258657020
+[335] probability: 0.0101035936
+[336] probability: 0.0146565679
+[337] probability: 0.0091484794
+[338] probability: 0.0068754503
+[339] probability: 0.0583271906
+[340] probability: 0.0139130643
+[341] probability: 0.0289103184
+[342] probability: 0.0327798538
+[343] probability: 0.0748589560
+```
+And these are the predictions using the converted model:
+```console
+$ python src/reverse-eng/test_conv_model.py
+Loading PyTorch model from silero_vad_conv_pytorch.pth
+Original wav shape: torch.Size([176000]), duration: 11.00 seconds
+Processing 344 chunks of 512 samples each
+Initializing state
+Processed chunk 1/344, probability: 0.012253
+Processed chunk 2/344, probability: 0.007223
+Processed chunk 3/344, probability: 0.366389
+Processed chunk 4/344, probability: 0.089219
+Processed chunk 5/344, probability: 0.029518
+Processed chunk 6/344, probability: 0.014793
+Processed chunk 7/344, probability: 0.013684
+Processed chunk 8/344, probability: 0.013345
+Processed chunk 9/344, probability: 0.010185
+Processed chunk 10/344, probability: 0.014257
+Processed chunk 11/344, probability: 0.245753
+Processed chunk 12/344, probability: 0.057528
+Processed chunk 13/344, probability: 0.179109
+Processed chunk 14/344, probability: 0.338114
+Processed chunk 15/344, probability: 0.147751
+Processed chunk 16/344, probability: 0.932849
+Processed chunk 17/344, probability: 0.964219
+Processed chunk 18/344, probability: 0.954369
+Processed chunk 19/344, probability: 0.960660
+Processed chunk 20/344, probability: 0.927135
+Processed chunk 21/344, probability: 0.842062
+Processed chunk 22/344, probability: 0.100232
+Processed chunk 23/344, probability: 0.564500
+Processed chunk 24/344, probability: 0.741666
+Processed chunk 25/344, probability: 0.661513
+Processed chunk 26/344, probability: 0.571926
+Processed chunk 27/344, probability: 0.381262
+Processed chunk 28/344, probability: 0.468206
+Processed chunk 29/344, probability: 0.566361
+Processed chunk 30/344, probability: 0.468684
+Processed chunk 31/344, probability: 0.891847
+Processed chunk 32/344, probability: 0.871961
+Processed chunk 33/344, probability: 0.415601
+Processed chunk 34/344, probability: 0.402962
+Processed chunk 35/344, probability: 0.479159
+Processed chunk 36/344, probability: 0.679892
+Processed chunk 37/344, probability: 0.141078
+Processed chunk 38/344, probability: 0.817669
+Processed chunk 39/344, probability: 0.436826
+Processed chunk 40/344, probability: 0.960370
+Processed chunk 41/344, probability: 0.974859
+Processed chunk 42/344, probability: 0.961204
+Processed chunk 43/344, probability: 0.954828
+Processed chunk 44/344, probability: 0.309893
+Processed chunk 45/344, probability: 0.539230
+Processed chunk 46/344, probability: 0.757563
+Processed chunk 47/344, probability: 0.673551
+Processed chunk 48/344, probability: 0.656830
+Processed chunk 49/344, probability: 0.562993
+Processed chunk 50/344, probability: 0.621347
+Processed chunk 51/344, probability: 0.851591
+Processed chunk 52/344, probability: 0.623764
+Processed chunk 53/344, probability: 0.761936
+Processed chunk 54/344, probability: 0.954612
+Processed chunk 55/344, probability: 0.166623
+Processed chunk 56/344, probability: 0.868001
+Processed chunk 57/344, probability: 0.793257
+Processed chunk 58/344, probability: 0.777915
+Processed chunk 59/344, probability: 0.770807
+Processed chunk 60/344, probability: 0.677196
+Processed chunk 61/344, probability: 0.875169
+Processed chunk 62/344, probability: 0.668913
+Processed chunk 63/344, probability: 0.923832
+Processed chunk 64/344, probability: 0.952841
+Processed chunk 65/344, probability: 0.869377
+Processed chunk 66/344, probability: 0.950902
+Processed chunk 67/344, probability: 0.898180
+Processed chunk 68/344, probability: 0.896478
+Processed chunk 69/344, probability: 0.831571
+Processed chunk 70/344, probability: 0.759298
+Processed chunk 71/344, probability: 0.739200
+Processed chunk 72/344, probability: 0.683064
+Processed chunk 73/344, probability: 0.501261
+Processed chunk 74/344, probability: 0.322918
+Processed chunk 75/344, probability: 0.196016
+Processed chunk 76/344, probability: 0.093478
+Processed chunk 77/344, probability: 0.248194
+Processed chunk 78/344, probability: 0.123136
+Processed chunk 79/344, probability: 0.129942
+Processed chunk 80/344, probability: 0.107908
+Processed chunk 81/344, probability: 0.072728
+Processed chunk 82/344, probability: 0.059153
+Processed chunk 83/344, probability: 0.048282
+Processed chunk 84/344, probability: 0.027020
+Processed chunk 85/344, probability: 0.019829
+Processed chunk 86/344, probability: 0.017090
+Processed chunk 87/344, probability: 0.011653
+Processed chunk 88/344, probability: 0.012197
+Processed chunk 89/344, probability: 0.012900
+Processed chunk 90/344, probability: 0.018752
+Processed chunk 91/344, probability: 0.010503
+Processed chunk 92/344, probability: 0.008380
+Processed chunk 93/344, probability: 0.008858
+Processed chunk 94/344, probability: 0.031318
+Processed chunk 95/344, probability: 0.012537
+Processed chunk 96/344, probability: 0.011189
+Processed chunk 97/344, probability: 0.008230
+Processed chunk 98/344, probability: 0.008199
+Processed chunk 99/344, probability: 0.007536
+Processed chunk 100/344, probability: 0.006285
+Processed chunk 101/344, probability: 0.005267
+Processed chunk 102/344, probability: 0.007974
+Processed chunk 103/344, probability: 0.026743
+Processed chunk 104/344, probability: 0.334263
+Processed chunk 105/344, probability: 0.705672
+Processed chunk 106/344, probability: 0.707406
+Processed chunk 107/344, probability: 0.740729
+Processed chunk 108/344, probability: 0.504565
+Processed chunk 109/344, probability: 0.520441
+Processed chunk 110/344, probability: 0.787809
+Processed chunk 111/344, probability: 0.794517
+Processed chunk 112/344, probability: 0.411491
+Processed chunk 113/344, probability: 0.634105
+Processed chunk 114/344, probability: 0.824849
+Processed chunk 115/344, probability: 0.967505
+Processed chunk 116/344, probability: 0.979102
+Processed chunk 117/344, probability: 0.880362
+Processed chunk 118/344, probability: 0.613459
+Processed chunk 119/344, probability: 0.519005
+Processed chunk 120/344, probability: 0.355173
+Processed chunk 121/344, probability: 0.227172
+Processed chunk 122/344, probability: 0.093588
+Processed chunk 123/344, probability: 0.051443
+Processed chunk 124/344, probability: 0.036004
+Processed chunk 125/344, probability: 0.138002
+Processed chunk 126/344, probability: 0.121147
+Processed chunk 127/344, probability: 0.280491
+Processed chunk 128/344, probability: 0.820747
+Processed chunk 129/344, probability: 0.636644
+Processed chunk 130/344, probability: 0.806154
+Processed chunk 131/344, probability: 0.912038
+Processed chunk 132/344, probability: 0.804077
+Processed chunk 133/344, probability: 0.678623
+Processed chunk 134/344, probability: 0.414706
+Processed chunk 135/344, probability: 0.822079
+Processed chunk 136/344, probability: 0.712333
+Processed chunk 137/344, probability: 0.504102
+Processed chunk 138/344, probability: 0.307678
+Processed chunk 139/344, probability: 0.131040
+Processed chunk 140/344, probability: 0.054814
+Processed chunk 141/344, probability: 0.031848
+Processed chunk 142/344, probability: 0.027266
+Processed chunk 143/344, probability: 0.043220
+Processed chunk 144/344, probability: 0.033395
+Processed chunk 145/344, probability: 0.040276
+Processed chunk 146/344, probability: 0.038370
+Processed chunk 147/344, probability: 0.017125
+Processed chunk 148/344, probability: 0.020428
+Processed chunk 149/344, probability: 0.008985
+Processed chunk 150/344, probability: 0.022063
+Processed chunk 151/344, probability: 0.005423
+Processed chunk 152/344, probability: 0.005655
+Processed chunk 153/344, probability: 0.006187
+Processed chunk 154/344, probability: 0.012502
+Processed chunk 155/344, probability: 0.006069
+Processed chunk 156/344, probability: 0.022263
+Processed chunk 157/344, probability: 0.010274
+Processed chunk 158/344, probability: 0.012517
+Processed chunk 159/344, probability: 0.004559
+Processed chunk 160/344, probability: 0.008382
+Processed chunk 161/344, probability: 0.004786
+Processed chunk 162/344, probability: 0.003169
+Processed chunk 163/344, probability: 0.006468
+Processed chunk 164/344, probability: 0.004081
+Processed chunk 165/344, probability: 0.003139
+Processed chunk 166/344, probability: 0.004829
+Processed chunk 167/344, probability: 0.006377
+Processed chunk 168/344, probability: 0.002778
+Processed chunk 169/344, probability: 0.004988
+Processed chunk 170/344, probability: 0.070760
+Processed chunk 171/344, probability: 0.011600
+Processed chunk 172/344, probability: 0.073784
+Processed chunk 173/344, probability: 0.058416
+Processed chunk 174/344, probability: 0.298270
+Processed chunk 175/344, probability: 0.692843
+Processed chunk 176/344, probability: 0.865757
+Processed chunk 177/344, probability: 0.764916
+Processed chunk 178/344, probability: 0.952728
+Processed chunk 179/344, probability: 0.970718
+Processed chunk 180/344, probability: 0.847768
+Processed chunk 181/344, probability: 0.924314
+Processed chunk 182/344, probability: 0.763485
+Processed chunk 183/344, probability: 0.795622
+Processed chunk 184/344, probability: 0.959421
+Processed chunk 185/344, probability: 0.753841
+Processed chunk 186/344, probability: 0.650826
+Processed chunk 187/344, probability: 0.787271
+Processed chunk 188/344, probability: 0.904657
+Processed chunk 189/344, probability: 0.438222
+Processed chunk 190/344, probability: 0.447936
+Processed chunk 191/344, probability: 0.920199
+Processed chunk 192/344, probability: 0.922720
+Processed chunk 193/344, probability: 0.798727
+Processed chunk 194/344, probability: 0.684547
+Processed chunk 195/344, probability: 0.442535
+Processed chunk 196/344, probability: 0.948953
+Processed chunk 197/344, probability: 0.955180
+Processed chunk 198/344, probability: 0.977817
+Processed chunk 199/344, probability: 0.989137
+Processed chunk 200/344, probability: 0.991587
+Processed chunk 201/344, probability: 0.992916
+Processed chunk 202/344, probability: 0.991625
+Processed chunk 203/344, probability: 0.988809
+Processed chunk 204/344, probability: 0.465130
+Processed chunk 205/344, probability: 0.959194
+Processed chunk 206/344, probability: 0.952062
+Processed chunk 207/344, probability: 0.957344
+Processed chunk 208/344, probability: 0.975708
+Processed chunk 209/344, probability: 0.949765
+Processed chunk 210/344, probability: 0.975393
+Processed chunk 211/344, probability: 0.980040
+Processed chunk 212/344, probability: 0.989174
+Processed chunk 213/344, probability: 0.994864
+Processed chunk 214/344, probability: 0.994398
+Processed chunk 215/344, probability: 0.995075
+Processed chunk 216/344, probability: 0.995268
+Processed chunk 217/344, probability: 0.995031
+Processed chunk 218/344, probability: 0.992572
+Processed chunk 219/344, probability: 0.969323
+Processed chunk 220/344, probability: 0.841870
+Processed chunk 221/344, probability: 0.990073
+Processed chunk 222/344, probability: 0.992081
+Processed chunk 223/344, probability: 0.992284
+Processed chunk 224/344, probability: 0.996371
+Processed chunk 225/344, probability: 0.983920
+Processed chunk 226/344, probability: 0.979731
+Processed chunk 227/344, probability: 0.994697
+Processed chunk 228/344, probability: 0.995321
+Processed chunk 229/344, probability: 0.996780
+Processed chunk 230/344, probability: 0.996463
+Processed chunk 231/344, probability: 0.996155
+Processed chunk 232/344, probability: 0.953821
+Processed chunk 233/344, probability: 0.977058
+Processed chunk 234/344, probability: 0.956587
+Processed chunk 235/344, probability: 0.979999
+Processed chunk 236/344, probability: 0.966082
+Processed chunk 237/344, probability: 0.946846
+Processed chunk 238/344, probability: 0.914940
+Processed chunk 239/344, probability: 0.873253
+Processed chunk 240/344, probability: 0.677977
+Processed chunk 241/344, probability: 0.535046
+Processed chunk 242/344, probability: 0.427438
+Processed chunk 243/344, probability: 0.337373
+Processed chunk 244/344, probability: 0.287535
+Processed chunk 245/344, probability: 0.299001
+Processed chunk 246/344, probability: 0.292553
+Processed chunk 247/344, probability: 0.211759
+Processed chunk 248/344, probability: 0.099344
+Processed chunk 249/344, probability: 0.057190
+Processed chunk 250/344, probability: 0.059714
+Processed chunk 251/344, probability: 0.022881
+Processed chunk 252/344, probability: 0.018783
+Processed chunk 253/344, probability: 0.020064
+Processed chunk 254/344, probability: 0.015387
+Processed chunk 255/344, probability: 0.006533
+Processed chunk 256/344, probability: 0.005338
+Processed chunk 257/344, probability: 0.880338
+Processed chunk 258/344, probability: 0.025980
+Processed chunk 259/344, probability: 0.533862
+Processed chunk 260/344, probability: 0.705605
+Processed chunk 261/344, probability: 0.542060
+Processed chunk 262/344, probability: 0.608190
+Processed chunk 263/344, probability: 0.683656
+Processed chunk 264/344, probability: 0.564003
+Processed chunk 265/344, probability: 0.827814
+Processed chunk 266/344, probability: 0.935665
+Processed chunk 267/344, probability: 0.937294
+Processed chunk 268/344, probability: 0.787430
+Processed chunk 269/344, probability: 0.562007
+Processed chunk 270/344, probability: 0.430153
+Processed chunk 271/344, probability: 0.163181
+Processed chunk 272/344, probability: 0.615059
+Processed chunk 273/344, probability: 0.684973
+Processed chunk 274/344, probability: 0.904332
+Processed chunk 275/344, probability: 0.971613
+Processed chunk 276/344, probability: 0.970967
+Processed chunk 277/344, probability: 0.975359
+Processed chunk 278/344, probability: 0.966694
+Processed chunk 279/344, probability: 0.945710
+Processed chunk 280/344, probability: 0.969530
+Processed chunk 281/344, probability: 0.976718
+Processed chunk 282/344, probability: 0.985269
+Processed chunk 283/344, probability: 0.989273
+Processed chunk 284/344, probability: 0.986473
+Processed chunk 285/344, probability: 0.988614
+Processed chunk 286/344, probability: 0.986563
+Processed chunk 287/344, probability: 0.989617
+Processed chunk 288/344, probability: 0.990141
+Processed chunk 289/344, probability: 0.978997
+Processed chunk 290/344, probability: 0.982440
+Processed chunk 291/344, probability: 0.986247
+Processed chunk 292/344, probability: 0.962913
+Processed chunk 293/344, probability: 0.994208
+Processed chunk 294/344, probability: 0.993430
+Processed chunk 295/344, probability: 0.990184
+Processed chunk 296/344, probability: 0.979956
+Processed chunk 297/344, probability: 0.996237
+Processed chunk 298/344, probability: 0.992983
+Processed chunk 299/344, probability: 0.985990
+Processed chunk 300/344, probability: 0.991898
+Processed chunk 301/344, probability: 0.995755
+Processed chunk 302/344, probability: 0.995893
+Processed chunk 303/344, probability: 0.995428
+Processed chunk 304/344, probability: 0.995688
+Processed chunk 305/344, probability: 0.998187
+Processed chunk 306/344, probability: 0.996501
+Processed chunk 307/344, probability: 0.998080
+Processed chunk 308/344, probability: 0.998410
+Processed chunk 309/344, probability: 0.997358
+Processed chunk 310/344, probability: 0.996707
+Processed chunk 311/344, probability: 0.998803
+Processed chunk 312/344, probability: 0.996651
+Processed chunk 313/344, probability: 0.996675
+Processed chunk 314/344, probability: 0.996512
+Processed chunk 315/344, probability: 0.996138
+Processed chunk 316/344, probability: 0.731368
+Processed chunk 317/344, probability: 0.969654
+Processed chunk 318/344, probability: 0.983222
+Processed chunk 319/344, probability: 0.990783
+Processed chunk 320/344, probability: 0.985080
+Processed chunk 321/344, probability: 0.985515
+Processed chunk 322/344, probability: 0.977458
+Processed chunk 323/344, probability: 0.929311
+Processed chunk 324/344, probability: 0.993227
+Processed chunk 325/344, probability: 0.968551
+Processed chunk 326/344, probability: 0.979412
+Processed chunk 327/344, probability: 0.981892
+Processed chunk 328/344, probability: 0.977588
+Processed chunk 329/344, probability: 0.934229
+Processed chunk 330/344, probability: 0.894397
+Processed chunk 331/344, probability: 0.047900
+Processed chunk 332/344, probability: 0.294567
+Processed chunk 333/344, probability: 0.364360
+Processed chunk 334/344, probability: 0.335913
+Processed chunk 335/344, probability: 0.512133
+Processed chunk 336/344, probability: 0.839461
+Processed chunk 337/344, probability: 0.711789
+Processed chunk 338/344, probability: 0.469788
+Processed chunk 339/344, probability: 0.396873
+Processed chunk 340/344, probability: 0.449585
+Processed chunk 341/344, probability: 0.387324
+Processed chunk 342/344, probability: 0.621481
+Processed chunk 343/344, probability: 0.541268
+Processed chunk 344/344, probability: 0.792273
+
+Processing complete!
+Processed 344 chunks of audio
+Average probability: 0.581019
+Max probability: 0.998803
+Min probability: 0.002778
+```
+My hope if that these are close enough to be of use for the whiper.cpp
+implementation.
+
 
 The inputs to the model are the following, which I collected from https://netron.app/
 using the ONNX model:
@@ -121,63 +1042,6 @@ Output shape: [1,1,1]
 Parameters: 516 (1 filter × 128 channels × 1 kernel + biases)
 ```
 
-We can get information from the jit model using the following script:
-```console
-$ cd audio/silero-vad
-$ source venv/bin/activate
-(venv) $ python src/jit-info.py
-```
-The output looks like this (taking it in pieces):
-```
-RecursiveScriptModule(
-  original_name=VADRNNJITMerge
-  (_model): RecursiveScriptModule(
-    original_name=VADRNNJIT
-    (stft): RecursiveScriptModule(
-      original_name=STFT
-      (padding): RecursiveScriptModule(original_name=ReflectionPad1d)
-    )
-    (encoder): RecursiveScriptModule(
-      original_name=Sequential
-      (0): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-      (1): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-      (2): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-      (3): RecursiveScriptModule(
-        original_name=SileroVadBlock
-        (se): RecursiveScriptModule(original_name=Identity)
-        (activation): RecursiveScriptModule(original_name=ReLU)
-        (reparam_conv): RecursiveScriptModule(original_name=Conv1d)
-      )
-    )
-    (decoder): RecursiveScriptModule(
-      original_name=VADDecoderRNNJIT
-      (rnn): RecursiveScriptModule(original_name=LSTMCell)
-      (decoder): RecursiveScriptModule(
-        original_name=Sequential
-        (0): RecursiveScriptModule(original_name=Dropout)
-        (1): RecursiveScriptModule(original_name=ReLU)
-        (2): RecursiveScriptModule(original_name=Conv1d)
-        (3): RecursiveScriptModule(original_name=Sigmoid)
-      )
-    )
-  )
-)
-```
 There are two main components in the model, one named `_model` which takes care
 of the 16kHz audio signal and the other one is named `_model_8k` which takes
 care of the 8kHz audio signal. 
@@ -247,26 +1111,75 @@ sampling rate of 16000 Hz, 256 bins gives about 31.25.
 
 Now, for whisper/ggml we need to have the convolution tensor in the format:
 ```
-{258, 1, 256},
+{256, 1, 258},
 ```
-That is a kernel size of 258, 1 channel, and 256 frequency bins (output).
+That is a kernel size of 256, 1 channel, and 258 actual kernels/filters.
+```
+input [0            639]      // 512 reflection padded with 64 samples
 
+kernel matrix: {256, 1, 258}
+0 
+  0  [0         255]      [out0_0, out0_1, ...,       out0_255]
+1 
+  0  [0         255]      [out1_0, out1_1, ...,       out1_255]
+2 
+  0  [0         255]      [out2_0, out2_1, ...,       out2_255]
+  .
+  .
+  .
+
+257 
+  0  [0         255]      [out257_0, out257_1, ..., out255_255]
+
+Output: 
+  <----      256 (x-axis)        ---->
+  [out0_0, out0_1, ...,       out0_255]   ^
+  [out1_0, out1_1, ...,       out1_255]   |
+  [out2_0, out2_1, ...,       out2_255]
+  .                                       258 (y-axis)
+  .                                       
+  .                                       |
+  [out257_0, out255_1, ..., out255_255]   V
+
+shape: {256, 258, 1}
+```
+That would be the ouput if we had a stride of 1, but in this case there stride
+is 128:
+```
+input [0..............................................639]
+      [0   257] (starts at 0)
+               [0   257] (starts at 128)
+                        [0   257]  (starts at 256) 
+                                 [0   257]  (start at 384)
+
+Output: 
+  <----      4 (x-axis)   ---->
+  [out0_0, out0_1, out0_2, out0_3]           ^
+  [out1_0, out1_1, out1_2, out1_3]           |
+  [out2_0, out2_1, out2_3, out2_3]
+  .                                          258 (y-axis)
+  .                                   
+  .                                          |
+  [out257_0, out257_1, out257_3, out257_4]   V
+
+shape: {4, 258, 1}
+```
+Now, the output shape of this operation is:
+```console
+(gdb) p cur->ne
+$13 = {4, 258, 1, 1}
+```
+So we have a kernel size of 256 and there are 258 actual kernels which contain
+the values used in the dot product when we convolve over the input. There are
+258 as there are 129 for the cosine/real parts (how much or a specific cosine
+frequency exists) and 129 for the sine/imaginary (how much of a specific sine
+frequency exists).
 
 So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
 16kHz which is about 32ms.
 ```
 duration = = 1 / 16000 * 512 = 0.032
 ```
-And like we mentioned above we overlap the frames/segments to avoid spectral
-leakage so we add an additional 64 samples from the previous frame which give
-us 512+64=576 samples.
-
-In the case of whisper.cpp I think only 16kHz is supported so I'll focus on that
-for now.
-```
-audio samples -> STFT -> spectral features (129 frequency bins for 16kHz)
-```
-
 
 #### Encoder block
 The there is an encoder, `(encoder)` above, block which has 4 layers:
@@ -1143,71 +2056,6 @@ think:
 10: whisper_vad_detect_speech: prob[13]: 0.075425
 ```
 
-
-But the probability are not correct. Lets take a look at the
-[C++ example](https://github.com/snakers4/silero-vad/tree/master/examples/cpp)
-in the silero-vad repository to see if we can extract some information from the
-model via the ONNX runtime.
-
-```console
-$ git diff
-diff --git a/examples/cpp/silero-vad-onnx.cpp b/examples/cpp/silero-vad-onnx.cpp
-index 380d76d..99fb289 100644
---- a/examples/cpp/silero-vad-onnx.cpp
-+++ b/examples/cpp/silero-vad-onnx.cpp
-@@ -131,7 +131,7 @@ private:
-     timestamp_t current_speech;
-
-     // Loads the ONNX model.
--    void init_onnx_model(const std::wstring& model_path) {
-+    void init_onnx_model(const std::string& model_path) {
-         init_engine_threads(1, 1);
-         session = std::make_shared<Ort::Session>(env, model_path.c_str(), session_options);
-     }
-@@ -303,7 +303,7 @@ public:
- public:
-     // Constructor: sets model path, sample rate, window size (ms), and other parameters.
-     // The parameters are set to match the Python version.
--    VadIterator(const std::wstring ModelPath,
-+    VadIterator(const std::string ModelPath,
-         int Sample_rate = 16000, int windows_frame_size = 32,
-         float Threshold = 0.5, int min_silence_duration_ms = 100,
-         int speech_pad_ms = 30, int min_speech_duration_ms = 250,
-@@ -329,7 +329,7 @@ public:
-
- int main() {
-     // Read the WAV file (expects 16000 Hz, mono, PCM).
--    wav::WavReader wav_reader("audio/recorder.wav"); // File located in the "audio" folder.
-+    wav::WavReader wav_reader("jfk.wav"); // File located in the "audio" folder.
-     int numSamples = wav_reader.num_samples();
-     std::vector<float> input_wav(static_cast<size_t>(numSamples));
-     for (size_t i = 0; i < static_cast<size_t>(numSamples); i++) {
-@@ -337,7 +337,7 @@ int main() {
-     }
-
-     // Set the ONNX model path (file located in the "model" folder).
--    std::wstring model_path = L"model/silero_vad.onnx";
-+    std::string model_path = "../../src/silero_vad/data/silero_vad.onnx";
-
-     // Initialize the VadIterator.
-     VadIterator vad(model_path);
-```
-And a make file to build and run.
-```console
-ONNX_PATH=./onnxruntime-linux-x64-1.12.1
-
-build:
-	g++ silero-vad-onnx.cpp -I ${ONNX_PATH}/include/ \
-		-L ${ONNX_PATH}/lib/ \
-		-lonnxruntime \
-		-Wl,-rpath,${ONNX_PATH}/lib/ \
-		-o test
-
-run: build
-	./test
-```
-
-
 So I'm getting the following output at the moment:
 ```console
 10: whisper_vad_detect_speech: prob[0]: 0.017022
@@ -1350,7 +2198,6 @@ the probabilities are now:
 0.8146636486
 0.9672259092
 ```
-
 
 ### Mimic the silero-vad model
 
