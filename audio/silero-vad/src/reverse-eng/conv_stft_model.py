@@ -3,53 +3,67 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ConvSTFT(nn.Module):
-    def __init__(self):
+    def __init__(self, filter_length=256, hop_length=128):
         super().__init__()
         self.register_buffer('forward_basis_buffer', torch.zeros(258, 1, 256))
-        self.padding = nn.ReflectionPad1d(64)  # Adds 64 samples of reflection padding
+        self.padding = nn.ReflectionPad1d(64)
+        self.filter_length = filter_length
+        self.hop_length = hop_length
 
-    def forward(self, x):
-        # Apply padding (512 samples -> 512+64*2 = 640 samples)
-        x = self.padding(x)  # [B, 640]
+    def transform_(self, input_data):
+        # Apply padding
+        input_data = self.padding(input_data)
 
-        # Add channel dimension for convolution
-        x = x.unsqueeze(1)  # [B, 1, 640]
+        # Add channel dimension
+        input_data = torch.unsqueeze(input_data, 1)
 
-        # Apply convolution for STFT
-        # Shape will be [258, 1, 256]
-        # 258 kernels
-        # 256 kernel size
-        x = F.conv1d(x, self.forward_basis_buffer, stride=128)  # [B, 258, 4]
+        # Apply convolution
+        forward_transform = torch.conv1d(
+            input_data,
+            self.forward_basis_buffer,
+            None,
+            [self.hop_length],  # Stride
+            [0]  # No additional padding
+        )
 
-        #print("STFT output:")
-        #first_10 = x[0, :10, 0]
-        # Print with fixed-point notation instead of scientific
-        #for i, val in enumerate(first_10):
-            #print(f"  [{i}]: {val.item():.8f}")
+        # Calculate cutoff for real/imaginary parts
+        cutoff = int(self.filter_length // 2 + 1)
 
-        # Slice to get the first 129 channels (real components)
-        x = x[:, :129, :]  # [B, 129, 4]
+        # Extract real and imaginary parts
+        real_part = forward_transform[:, :cutoff, :].float()
+        imag_part = forward_transform[:, cutoff:, :].float()
 
-        return x
+        # Calculate magnitude and phase
+        magnitude = torch.sqrt(real_part**2 + imag_part**2)
+        phase = torch.atan2(imag_part.data, real_part.data)
+
+        return magnitude, phase
+
+    def forward(self, input_data):
+        # Get magnitude and phase
+        magnitude, _ = self.transform_(input_data)
+
+        # Only return magnitude for the encoder
+        return magnitude
 
 class EncoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super().__init__()
-        print(f"EncoderBlock: in_channels={in_channels}, out_channels={out_channels}, kernel_size={kernel_size}, stride={stride}")
         self.se = nn.Identity()
         self.activation = nn.ReLU()
         self.reparam_conv = nn.Conv1d(in_channels, out_channels, kernel_size, padding=1, stride=stride)
 
     def forward(self, x):
-        x = self.se(x)
-        x = self.activation(x)
-        x = self.reparam_conv(x)
+        # Follow the exact order from the original code
+        x = self.se(x)            # Then apply se (Identity in this case)
+        x = self.reparam_conv(x)  # First apply conv
+        x = self.activation(x)    # Finally apply activation
         return x
 
 class Decoder(nn.Module):
     def __init__(self, input_size, hidden_size):
         super().__init__()
-        self.rnn = nn.LSTMCell(input_size, hidden_size)
+        self.rnn = nn.LSTMCell(input_size, hidden_size, bias=True)
         self.decoder = nn.Sequential(
             nn.Dropout(0.1),
             nn.ReLU(),
@@ -57,16 +71,10 @@ class Decoder(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, x, h=None, c=None):
+    def forward(self, x, state):
         batch_size = x.shape[0]
 
-        # Initialize hidden states if needed
-        if h is None:
-            print(f"Initializing hidden state with batch size: {batch_size}")
-            h = torch.zeros(batch_size, 128, device=x.device)
-        if c is None:
-            print(f"Initializing cell state with batch size: {batch_size}")
-            c = torch.zeros(batch_size, 128, device=x.device)
+        h, c = state
 
         # Process with LSTM
         h, c = self.rnn(x, (h, c))
@@ -83,38 +91,82 @@ class SileroVAD(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # STFT using convolution
-        self.stft = ConvSTFT()
-
-        # Encoder with 4 convolutional layers
+        # STFT and encoder components for 16kHz processing
+        self.stft = ConvSTFT(filter_length=256, hop_length=128)
         self.encoder = nn.Sequential(
-            EncoderBlock(129, 128, stride=2),  # Matches expected 129 input channels
-            EncoderBlock(128, 64, stride=2),
+            EncoderBlock(129, 128),
+            EncoderBlock(128, 64),
             EncoderBlock(64, 64),
             EncoderBlock(64, 128)
         )
-
-        # Decoder
         self.decoder = Decoder(128, 128)
 
-    def forward(self, x, sr=16000, h=None, c=None):
-        # Check input shape
-        if sr == 16000 and x.shape[-1] != 512:
-            raise ValueError(f"For 16kHz, input should have 512 samples but got {x.shape[-1]}")
-        elif sr == 8000 and x.shape[-1] != 256:
-            raise ValueError(f"For 8kHz, input should have 256 samples but got {x.shape[-1]}")
+        # Context handling - key component from original model
+        self._context = torch.zeros(1, 0)  # Will be resized properly on first call
+        self._state = None  # LSTM state
+        self._last_sr = None  # Track sample rate changes
+        self._last_batch_size = None  # Track batch size changes
 
-        # STFT - output shape will be [B, 129, 4]
-        out = self.stft(x)
+        # Store context size
+        self.context_size_samples = 64  # Adjust this value based on original model
 
-        # Encoder processes [B, 129, 4] -> [B, C, 4]
-        out = self.encoder(out)
+    def reset_states(self):
+        self._context = torch.zeros(1, 0)
+        self._state = None
+        return None
 
-        # Get features from last time step for LSTM: [B, C, 4] -> [B, C]
-        out = out[:, :, -1]
+    def forward(self, x, state=None, sr=16000):
+        num_samples = 512
+        if x.shape[-1] != num_samples:
+            raise ValueError(f"Provided number of samples is {x.shape[-1]} (Supported values: 512 for 16000)")
 
-        # Decoder
-        out, (h_out, c_out) = self.decoder(out, h, c)
+        batch_size = x.shape[0]
 
-        # Output is [B, 1, 1], reshape to [B, 1]
-        return out.squeeze(2), (h_out, c_out)
+        context_size = self.context_size_samples
+
+        if self._last_sr and self._last_sr != sr:
+            self.reset_states()
+
+        # Reset states if batch size changed
+        if self._last_batch_size and self._last_batch_size != batch_size:
+            self.reset_states()
+
+        # Initialize context if needed
+        if len(self._context) == 0:
+            self._context = torch.zeros(batch_size, context_size, device=x.device)
+
+        # Ensure context is on same device as input
+        #self._context = self._context.to(x.device)
+
+        # Concatenate context and current input
+        x_with_context = torch.cat([self._context, x], dim=1)
+
+        # Process through model (this is where we need the actual processing)
+        # Use STFT, encoder and decoder
+        features = self.stft(x_with_context)
+        encoded = self.encoder(features)
+
+        # Select the last time step features for the LSTM
+        #decoder_input = encoded[:, :, 0]  # Shape becomes [1, 128]
+        decoder_input = encoded[:, :, 0]  # Shape becomes [1, 128]
+
+        # Initialize state if not provided
+        if self._state is None:
+            print("Initializing state")
+            h = torch.zeros(batch_size, 128, device=x.device)
+            c = torch.zeros(batch_size, 128, device=x.device)
+            self._state = (h, c)
+
+        # Run decoder
+        output, new_state = self.decoder(decoder_input, self._state)
+        self._state = new_state
+
+        # Update context for next call - save last context_size samples
+        self._context = x_with_context[:, -context_size:]
+
+        # Update tracking variables
+        self._last_sr = sr
+        self._last_batch_size = batch_size
+
+        # Return the output and squeeze dimensions if needed
+        return output.squeeze(), new_state

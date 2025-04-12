@@ -9,12 +9,11 @@ def test_model_with_weights(pytorch_model_path):
     # Load PyTorch model
     pytorch_model = SileroVAD()
     pytorch_model.eval()
-    #print(pytorch_model)
 
     state_dict = torch.load(pytorch_model_path)
-    for key in state_dict.keys():
-        if 'decoder' in key:
-            print(key)
+    #for key in state_dict.keys():
+    #    if 'decoder' in key:
+    #        print(key)
 
     if pytorch_model_path and os.path.exists(pytorch_model_path):
         print(f"Loading PyTorch model from {pytorch_model_path}")
@@ -22,7 +21,8 @@ def test_model_with_weights(pytorch_model_path):
     else:
         print(f"Warning: Model file not found at {pytorch_model_path}")
 
-    print(pytorch_model.state_dict())
+    #print(pytorch_model)
+    #print(pytorch_model.state_dict())
     #print("STFT basis buffer samples:", pytorch_model.stft.forward_basis_buffer)
 
     # Create test input
@@ -46,8 +46,7 @@ def test_model_with_weights(pytorch_model_path):
     # Initialize variables to track results
     all_probabilities = []
 
-    h_state = None
-    c_state = None
+    state = None
 
     pytorch_model.eval()
     # Process each chunk
@@ -69,15 +68,13 @@ def test_model_with_weights(pytorch_model_path):
             input_tensor = current_chunk.unsqueeze(0)
 
             # Run the model
-            pytorch_output, (new_h_state, new_c_state) = pytorch_model(input_tensor, h=h_state, c=c_state)
+            pytorch_output, new_state = pytorch_model(input_tensor, state)
 
-            h_state = new_h_state
-            c_state = new_c_state
+            state = new_state
 
             # Store the probability
             all_probabilities.append(pytorch_output.item())
 
-            # Print progress every 10 chunks
             print(f"Processed chunk {i+1}/{n_chunks}, probability: {pytorch_output.item():.6f}")
 
     # Print summary statistics
