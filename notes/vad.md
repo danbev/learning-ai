@@ -244,7 +244,7 @@ looking at the STFT layer:
 So with that I created a script to extract the tensors from the JIT model, and
 then implement the model in python using torch (this was not as straightforward
 as it might sound here). The converted model can be found in
-[audio/silero-vad](audio/silero-vad/src/reverse-eng/).
+[audio/silero-vad](../audio/silero-vad/src/reverse-eng/).
 
 Using the `jfk.wav` with the original silero-vad model these are the predictions:
 ```console
