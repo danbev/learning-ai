@@ -1075,9 +1075,16 @@ _model.decoder.decoder.2.bias: torch.Size([1])
 So if we start with an raw audio input signal, this will first be sampled and
 quantized, which will give us a vector of floats.
 
-Next we divide this into frames/segments of the samples that usually overlap to
-avoid spectral leakage, and the size of a frame is usually a power of two so
-that we can use the Fast Fourier Transform. 
+Next we divide this into frames/segments/chunks of the 512 samples. To this
+we prepend the previous 64 samples to give a size of 576 samples. The a padding
+of 64 applied to the left and right of the samples which is reflective. This produces
+a size of 640 samples which is what the STFT will operate on.
+```
+samples: [0      511]                512
+context: [0 63][0      511]          576
+paddded: [0 63][0      576][0 63]    640
+```
+
 If we look closely that the node above we find this:
 ```
     (stft): RecursiveScriptModule(
@@ -1180,6 +1187,10 @@ So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
 ```
 duration = = 1 / 16000 * 512 = 0.032
 ```
+The actual values in the tensor `_model.stft.forward_basis_buffer` are the
+precomputed STFT coefficients and also include the HANN window compution. This
+is possible as the number of frequencies is set to 256 which so all the information
+required is availble beforehand.
 
 #### Encoder block
 The there is an encoder, `(encoder)` above, block which has 4 layers:
