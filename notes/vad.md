@@ -977,8 +977,8 @@ Speech segment 2: start=4.00s, end=4.30s
 Speech segment 3: start=5.40s, end=7.60s
 Speech segment 4: start=8.20s, end=10.60s
 ```
-And there is a python program which creates a wrapper around the custom pytorch
-model and then uses that with the same silero-vad `get_speech_timestamps` to
+And there is a python script which creates a wrapper around our custom PyTorch
+model, and then it to the same silero-vad `get_speech_timestamps` function to
 get the timestamps:
 ```console
 (venv) $ python src/reverse-eng/speech-timestamps.py 
