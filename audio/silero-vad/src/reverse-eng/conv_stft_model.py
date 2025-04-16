@@ -17,9 +17,16 @@ class ConvSTFT(nn.Module):
         self.padding = nn.ReflectionPad1d(64)
 
     def transform_(self, input_data):
+        print("stft_in shape: ", input_data.shape)
+        print("stft_in", input_data)
         padded_data = self.padding(input_data)
+        print("stft_in padding shape: ", padded_data.shape)
+        print("stft_in padding", padded_data)
 
         padded_data = padded_data.unsqueeze(1)
+        print("stft_in padding_data", padded_data.shape)
+        print("stft forward_basis_buffer shape: ", self.forward_basis_buffer.shape)
+        print("stft forward_basis_buffer", self.forward_basis_buffer)
 
         forward_transform = F.conv1d(
             padded_data,
@@ -29,6 +36,7 @@ class ConvSTFT(nn.Module):
         )
 
         # Split real and imaginary parts exactly as in ONNX
+        print("stft forward_transform shape: ", forward_transform.shape)
         cutoff = self.filter_length // 2 + 1
         real_part = forward_transform[:, :cutoff, :].float()
         imag_part = forward_transform[:, cutoff:, :].float()
@@ -36,6 +44,8 @@ class ConvSTFT(nn.Module):
         # Calculate magnitude as in ONNX
         magnitude = torch.sqrt(real_part**2 + imag_part**2)
 
+        print("stft_out shape: ", magnitude.shape)
+        print("stft_out", magnitude)
         return magnitude
 
     def forward(self, input_data):
@@ -56,6 +66,7 @@ class EncoderBlock(nn.Module):
         self.activation = nn.ReLU()
 
     def forward(self, x):
+        #print("encoder_in", x)
         x = self.reparam_conv(x)
         x = self.activation(x)
         return x
@@ -66,6 +77,7 @@ class LSTMCell(nn.Module):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
+        #print(f"Initializing LSTMCell with input_size={input_size}, hidden_size={hidden_size}")
 
         # Use parameter names matching the state dict
         self.weight_ih = nn.Parameter(torch.Tensor(4 * hidden_size, input_size))
@@ -73,15 +85,19 @@ class LSTMCell(nn.Module):
         self.bias_ih = nn.Parameter(torch.Tensor(4 * hidden_size))
         self.bias_hh = nn.Parameter(torch.Tensor(4 * hidden_size))
 
-        self.reset_parameters()
+        #self.reset_parameters()
 
     def reset_parameters(self):
         stdv = 1.0 / math.sqrt(self.hidden_size)
         for weight in self.parameters():
+            #print(f"Initializing {weight.shape}")
             nn.init.uniform_(weight, -stdv, stdv)
 
     def forward(self, x, hidden):
         h_prev, c_prev = hidden
+
+        #print("h_in", h_prev)
+        #print("c_in", c_prev)
         batch_size = x.size(0)
 
         # Important: ONNX slices weight matrices in specific ways
@@ -129,6 +145,8 @@ class LSTMCell(nn.Module):
         # Compute next cell and hidden state
         c_next = f_gate * c_prev + i_gate * c_gate
         h_next = o_gate * torch.tanh(c_next)
+        #print("h_out", h_next)
+        #print("c_out", c_next)
 
         return h_next, c_next
 
@@ -183,6 +201,7 @@ class SileroVAD(nn.Module):
         self.context_size_samples = 64
 
     def forward(self, x, state=None, sr=16000):
+        print("input shape: ", x.shape)
         batch_size = x.shape[0]
 
         # Verify input
@@ -195,15 +214,19 @@ class SileroVAD(nn.Module):
 
         # Concatenate context with input
         x_with_context = torch.cat([self._context, x], dim=1)
+        #print("x_with_context shape--------->: ", x_with_context.shape)
 
         # STFT
         features = self.stft(x_with_context)
 
         # Encoder
         encoded = self.encoder(features)
+        #print("encoder_out shape: ", encoded.shape)
+        #print("encoder_out", encoded)
 
         # Get first time step for decoder input
         decoder_input = encoded[:, :, 0]
+        #print("encoder_selected", decoder_input)
 
         # Initialize state if needed
         if self._state is None or state is not None:
