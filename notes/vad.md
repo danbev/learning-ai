@@ -3820,3 +3820,21 @@ which are very close to the python implementation:
 10: whisper_vad_timestamps_from_probs: prob[343]: 0.079717
 ```
 
+Adding support for timestamps this is the output from the original python version:
+```console
+(venv) $ python src/silero-speech-timestamps.py
+Speech segment 0: start=0.30s, end=2.20s
+Speech segment 1: start=3.30s, end=3.80s
+Speech segment 2: start=4.00s, end=4.30s
+Speech segment 3: start=5.40s, end=7.60s
+Speech segment 4: start=8.20s, end=10.60s
+```
+And this is the output from whisper.cpp:
+```console
+10: Speech segments: 5
+10: Segment 0: start = 0.29, end = 2.17
+10: Segment 1: start = 3.30, end = 3.71
+10: Segment 2: start = 4.00, end = 4.35
+10: Segment 3: start = 5.38, end = 7.65
+10: Segment 4: start = 8.16, end = 10.56
+```
