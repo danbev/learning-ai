@@ -2358,3 +2358,1465 @@ And print out that tensor instead we get:
 10: whisper_vad_detect_speech: sftf: [9]: 0.000000
 ```
 I need to keep this in mind when debugging!
+
+
+With the lastest changes to the whisper.cpp side I'm looking at the following
+probabilities:
+```console
+whisper.cpp        python
+0.012001           0.012012
+0.007428           0.010678
+0.331066           0.134902
+0.144101           0.067619
+0.080282           0.044206
+```
+Now the first values are almost identical. The first chunk that is processed
+in the audio is all zeros which is quite nice in this case. And for the first
+chunk there will be no previous LSTM state either which make is a little easier
+to reason about.
+
+So, the second chunk contains actual audio data and not just zeros. If we think
+about model the first think that happens is that the STFT is calculated.
+Lets first make sure the input to the second iteration is actually the same in
+both version:
+```
+Python:
+stft_in shape shape:  torch.Size([1, 512])
+stft_in shape: [0]: 0.000000
+stft_in shape: [1]: 0.000000
+stft_in shape: [2]: 0.000000
+stft_in shape: [3]: 0.000000
+stft_in shape: [4]: 0.000000
+stft_in shape: [5]: 0.000000
+stft_in shape: [6]: 0.000000
+stft_in shape: [7]: 0.000000
+stft_in shape: [8]: 0.000000
+stft_in shape: [9]: 0.000000
+stft_in shape: [10]: 0.000000
+stft_in shape: [11]: 0.000000
+stft_in shape: [12]: 0.000000
+stft_in shape: [13]: 0.000000
+stft_in shape: [14]: 0.000000
+stft_in shape: [15]: 0.000000
+stft_in shape: [16]: 0.000000
+stft_in shape: [17]: 0.000000
+stft_in shape: [18]: 0.000000
+stft_in shape: [19]: 0.000000
+stft_in shape: [20]: 0.000000
+stft_in shape: [21]: 0.000000
+stft_in shape: [22]: 0.000000
+stft_in shape: [23]: 0.000000
+stft_in shape: [24]: 0.000000
+stft_in shape: [25]: 0.000000
+stft_in shape: [26]: 0.000000
+stft_in shape: [27]: 0.000000
+stft_in shape: [28]: 0.000000
+stft_in shape: [29]: 0.000000
+stft_in shape: [30]: 0.000000
+stft_in shape: [31]: 0.000000
+stft_in shape: [32]: 0.000000
+stft_in shape: [33]: 0.000000
+stft_in shape: [34]: 0.000000
+stft_in shape: [35]: 0.000000
+stft_in shape: [36]: 0.000000
+stft_in shape: [37]: 0.000000
+stft_in shape: [38]: 0.000000
+stft_in shape: [39]: 0.000000
+stft_in shape: [40]: 0.000000
+stft_in shape: [41]: 0.000000
+stft_in shape: [42]: 0.000000
+stft_in shape: [43]: 0.000000
+stft_in shape: [44]: 0.000000
+stft_in shape: [45]: 0.000000
+stft_in shape: [46]: 0.000000
+stft_in shape: [47]: 0.000000
+stft_in shape: [48]: 0.000000
+stft_in shape: [49]: 0.000000
+stft_in shape: [50]: 0.000000
+stft_in shape: [51]: 0.000000
+stft_in shape: [52]: 0.000000
+stft_in shape: [53]: 0.000000
+stft_in shape: [54]: 0.000000
+stft_in shape: [55]: 0.000000
+stft_in shape: [56]: 0.000000
+stft_in shape: [57]: 0.000000
+stft_in shape: [58]: 0.000000
+stft_in shape: [59]: 0.000000
+stft_in shape: [60]: 0.000000
+stft_in shape: [61]: 0.000000
+stft_in shape: [62]: 0.000000
+stft_in shape: [63]: 0.000000
+stft_in shape: [64]: 0.000000
+stft_in shape: [65]: 0.000000
+stft_in shape: [66]: 0.000000
+stft_in shape: [67]: 0.000000
+stft_in shape: [68]: 0.000000
+stft_in shape: [69]: 0.000000
+stft_in shape: [70]: 0.000000
+stft_in shape: [71]: 0.000000
+stft_in shape: [72]: 0.000000
+stft_in shape: [73]: 0.000000
+stft_in shape: [74]: 0.000000
+stft_in shape: [75]: 0.000000
+stft_in shape: [76]: 0.000000
+stft_in shape: [77]: 0.000000
+stft_in shape: [78]: 0.000000
+stft_in shape: [79]: 0.000000
+stft_in shape: [80]: 0.000000
+stft_in shape: [81]: 0.000000
+stft_in shape: [82]: 0.000000
+stft_in shape: [83]: 0.000000
+stft_in shape: [84]: 0.000000
+stft_in shape: [85]: 0.000000
+stft_in shape: [86]: 0.000000
+stft_in shape: [87]: 0.000000
+stft_in shape: [88]: 0.000000
+stft_in shape: [89]: 0.000000
+stft_in shape: [90]: 0.000000
+stft_in shape: [91]: 0.000000
+stft_in shape: [92]: 0.000000
+stft_in shape: [93]: 0.000000
+stft_in shape: [94]: 0.000000
+stft_in shape: [95]: 0.000000
+stft_in shape: [96]: 0.000000
+stft_in shape: [97]: 0.000000
+stft_in shape: [98]: 0.000000
+stft_in shape: [99]: 0.000000
+stft_in shape: [100]: 0.000000
+stft_in shape: [101]: 0.000000
+stft_in shape: [102]: 0.000000
+stft_in shape: [103]: 0.000000
+stft_in shape: [104]: 0.000000
+stft_in shape: [105]: 0.000000
+stft_in shape: [106]: 0.000000
+stft_in shape: [107]: 0.000000
+stft_in shape: [108]: 0.000000
+stft_in shape: [109]: 0.000000
+stft_in shape: [110]: 0.000000
+stft_in shape: [111]: 0.000000
+stft_in shape: [112]: 0.000000
+stft_in shape: [113]: 0.000000
+stft_in shape: [114]: 0.000000
+stft_in shape: [115]: 0.000000
+stft_in shape: [116]: 0.000000
+stft_in shape: [117]: 0.000000
+stft_in shape: [118]: 0.000000
+stft_in shape: [119]: 0.000000
+stft_in shape: [120]: 0.000000
+stft_in shape: [121]: 0.000000
+stft_in shape: [122]: 0.000000
+stft_in shape: [123]: 0.000000
+stft_in shape: [124]: 0.000000
+stft_in shape: [125]: 0.000000
+stft_in shape: [126]: 0.000000
+stft_in shape: [127]: 0.000000
+stft_in shape: [128]: 0.000000
+stft_in shape: [129]: 0.000000
+stft_in shape: [130]: 0.000000
+stft_in shape: [131]: 0.000000
+stft_in shape: [132]: 0.000000
+stft_in shape: [133]: 0.000000
+stft_in shape: [134]: 0.000000
+stft_in shape: [135]: 0.000000
+stft_in shape: [136]: 0.000000
+stft_in shape: [137]: 0.000000
+stft_in shape: [138]: 0.000000
+stft_in shape: [139]: 0.000000
+stft_in shape: [140]: 0.000000
+stft_in shape: [141]: 0.000000
+stft_in shape: [142]: 0.000000
+stft_in shape: [143]: 0.000000
+stft_in shape: [144]: 0.000000
+stft_in shape: [145]: 0.000000
+stft_in shape: [146]: 0.000000
+stft_in shape: [147]: 0.000000
+stft_in shape: [148]: 0.000000
+stft_in shape: [149]: 0.000000
+stft_in shape: [150]: 0.000000
+stft_in shape: [151]: 0.000000
+stft_in shape: [152]: 0.000000
+stft_in shape: [153]: 0.000000
+stft_in shape: [154]: 0.000000
+stft_in shape: [155]: 0.000000
+stft_in shape: [156]: 0.000000
+stft_in shape: [157]: 0.000000
+stft_in shape: [158]: 0.000000
+stft_in shape: [159]: 0.000000
+stft_in shape: [160]: 0.000000
+stft_in shape: [161]: 0.000000
+stft_in shape: [162]: 0.000000
+stft_in shape: [163]: 0.000000
+stft_in shape: [164]: 0.000000
+stft_in shape: [165]: 0.000000
+stft_in shape: [166]: 0.000000
+stft_in shape: [167]: 0.000000
+stft_in shape: [168]: 0.000000
+stft_in shape: [169]: 0.000000
+stft_in shape: [170]: 0.000000
+stft_in shape: [171]: 0.000000
+stft_in shape: [172]: 0.000000
+stft_in shape: [173]: 0.000000
+stft_in shape: [174]: 0.000000
+stft_in shape: [175]: 0.000000
+stft_in shape: [176]: 0.000000
+stft_in shape: [177]: 0.000000
+stft_in shape: [178]: 0.000000
+stft_in shape: [179]: 0.000000
+stft_in shape: [180]: 0.000000
+stft_in shape: [181]: 0.000000
+stft_in shape: [182]: 0.000000
+stft_in shape: [183]: 0.000000
+stft_in shape: [184]: 0.000000
+stft_in shape: [185]: 0.000000
+stft_in shape: [186]: 0.000000
+stft_in shape: [187]: -0.000031   <-------- First non-zero value
+stft_in shape: [188]: 0.000000
+stft_in shape: [189]: 0.000000
+stft_in shape: [190]: 0.000000
+stft_in shape: [191]: 0.000000
+stft_in shape: [192]: 0.000000
+stft_in shape: [193]: 0.000000
+stft_in shape: [194]: 0.000000
+stft_in shape: [195]: 0.000000
+stft_in shape: [196]: 0.000000
+stft_in shape: [197]: 0.000000
+stft_in shape: [198]: 0.000000
+stft_in shape: [199]: 0.000000
+stft_in shape: [200]: 0.000000
+stft_in shape: [201]: -0.000031
+stft_in shape: [202]: -0.000031
+stft_in shape: [203]: 0.000000
+stft_in shape: [204]: 0.000000
+stft_in shape: [205]: 0.000000
+stft_in shape: [206]: 0.000000
+stft_in shape: [207]: 0.000000
+stft_in shape: [208]: 0.000031
+stft_in shape: [209]: 0.000000
+stft_in shape: [210]: 0.000000
+stft_in shape: [211]: -0.000031
+stft_in shape: [212]: 0.000000
+stft_in shape: [213]: -0.000031
+stft_in shape: [214]: 0.000000
+stft_in shape: [215]: 0.000000
+stft_in shape: [216]: -0.000031
+stft_in shape: [217]: 0.000000
+stft_in shape: [218]: -0.000031
+stft_in shape: [219]: -0.000031
+stft_in shape: [220]: 0.000000
+stft_in shape: [221]: 0.000000
+stft_in shape: [222]: 0.000000
+stft_in shape: [223]: 0.000031
+stft_in shape: [224]: 0.000031
+stft_in shape: [225]: 0.000031
+stft_in shape: [226]: 0.000031
+stft_in shape: [227]: 0.000031
+stft_in shape: [228]: 0.000000
+stft_in shape: [229]: 0.000000
+stft_in shape: [230]: 0.000000
+stft_in shape: [231]: 0.000000
+stft_in shape: [232]: 0.000031
+stft_in shape: [233]: 0.000000
+stft_in shape: [234]: 0.000031
+stft_in shape: [235]: 0.000031
+stft_in shape: [236]: 0.000031
+stft_in shape: [237]: 0.000031
+stft_in shape: [238]: 0.000000
+stft_in shape: [239]: 0.000000
+stft_in shape: [240]: -0.000031
+stft_in shape: [241]: -0.000031
+stft_in shape: [242]: -0.000031
+stft_in shape: [243]: 0.000000
+stft_in shape: [244]: 0.000000
+stft_in shape: [245]: 0.000000
+stft_in shape: [246]: -0.000031
+stft_in shape: [247]: -0.000031
+stft_in shape: [248]: -0.000031
+stft_in shape: [249]: -0.000031
+stft_in shape: [250]: 0.000000
+stft_in shape: [251]: 0.000000
+stft_in shape: [252]: 0.000000
+stft_in shape: [253]: 0.000031
+stft_in shape: [254]: 0.000000
+stft_in shape: [255]: 0.000000
+stft_in shape: [256]: 0.000000
+stft_in shape: [257]: 0.000000
+stft_in shape: [258]: 0.000000
+stft_in shape: [259]: 0.000000
+stft_in shape: [260]: 0.000000
+stft_in shape: [261]: 0.000000
+stft_in shape: [262]: 0.000000
+stft_in shape: [263]: 0.000000
+stft_in shape: [264]: 0.000000
+stft_in shape: [265]: 0.000000
+stft_in shape: [266]: 0.000000
+stft_in shape: [267]: 0.000031
+stft_in shape: [268]: 0.000031
+stft_in shape: [269]: 0.000031
+stft_in shape: [270]: 0.000031
+stft_in shape: [271]: 0.000000
+stft_in shape: [272]: 0.000000
+stft_in shape: [273]: 0.000000
+stft_in shape: [274]: 0.000000
+stft_in shape: [275]: 0.000000
+stft_in shape: [276]: 0.000000
+stft_in shape: [277]: 0.000000
+stft_in shape: [278]: 0.000000
+stft_in shape: [279]: 0.000000
+stft_in shape: [280]: -0.000061
+stft_in shape: [281]: -0.000061
+stft_in shape: [282]: -0.000031
+stft_in shape: [283]: -0.000061
+stft_in shape: [284]: -0.000061
+stft_in shape: [285]: 0.000000
+stft_in shape: [286]: 0.000000
+stft_in shape: [287]: 0.000031
+stft_in shape: [288]: 0.000000
+stft_in shape: [289]: 0.000031
+stft_in shape: [290]: 0.000000
+stft_in shape: [291]: -0.000031
+stft_in shape: [292]: 0.000000
+stft_in shape: [293]: 0.000000
+stft_in shape: [294]: 0.000000
+stft_in shape: [295]: 0.000000
+stft_in shape: [296]: 0.000031
+stft_in shape: [297]: 0.000061
+stft_in shape: [298]: 0.000061
+stft_in shape: [299]: 0.000092
+stft_in shape: [300]: 0.000092
+stft_in shape: [301]: 0.000061
+stft_in shape: [302]: 0.000000
+stft_in shape: [303]: 0.000000
+stft_in shape: [304]: 0.000000
+stft_in shape: [305]: -0.000061
+stft_in shape: [306]: 0.000000
+stft_in shape: [307]: 0.000000
+stft_in shape: [308]: 0.000000
+stft_in shape: [309]: 0.000031
+stft_in shape: [310]: 0.000000
+stft_in shape: [311]: 0.000000
+stft_in shape: [312]: 0.000000
+stft_in shape: [313]: 0.000031
+stft_in shape: [314]: 0.000031
+stft_in shape: [315]: 0.000031
+stft_in shape: [316]: -0.000031
+stft_in shape: [317]: 0.000031
+stft_in shape: [318]: 0.000031
+stft_in shape: [319]: -0.000031
+stft_in shape: [320]: -0.000031
+stft_in shape: [321]: -0.000061
+stft_in shape: [322]: 0.000000
+stft_in shape: [323]: 0.000000
+stft_in shape: [324]: -0.000031
+stft_in shape: [325]: -0.000031
+stft_in shape: [326]: 0.000000
+stft_in shape: [327]: -0.000031
+stft_in shape: [328]: 0.000000
+stft_in shape: [329]: -0.000031
+stft_in shape: [330]: 0.000000
+stft_in shape: [331]: 0.000000
+stft_in shape: [332]: 0.000031
+stft_in shape: [333]: 0.000000
+stft_in shape: [334]: -0.000061
+stft_in shape: [335]: -0.000031
+stft_in shape: [336]: -0.000031
+stft_in shape: [337]: 0.000000
+stft_in shape: [338]: 0.000000
+stft_in shape: [339]: 0.000000
+stft_in shape: [340]: 0.000031
+stft_in shape: [341]: -0.000031
+stft_in shape: [342]: -0.000031
+stft_in shape: [343]: -0.000031
+stft_in shape: [344]: -0.000031
+stft_in shape: [345]: 0.000000
+stft_in shape: [346]: 0.000000
+stft_in shape: [347]: 0.000000
+stft_in shape: [348]: -0.000061
+stft_in shape: [349]: -0.000031
+stft_in shape: [350]: -0.000031
+stft_in shape: [351]: -0.000031
+stft_in shape: [352]: -0.000031
+stft_in shape: [353]: -0.000031
+stft_in shape: [354]: -0.000061
+stft_in shape: [355]: -0.000061
+stft_in shape: [356]: 0.000000
+stft_in shape: [357]: 0.000000
+stft_in shape: [358]: 0.000061
+stft_in shape: [359]: 0.000061
+stft_in shape: [360]: 0.000031
+stft_in shape: [361]: 0.000031
+stft_in shape: [362]: -0.000031
+stft_in shape: [363]: -0.000061
+stft_in shape: [364]: 0.000000
+stft_in shape: [365]: 0.000031
+stft_in shape: [366]: 0.000031
+stft_in shape: [367]: 0.000031
+stft_in shape: [368]: 0.000000
+stft_in shape: [369]: 0.000000
+stft_in shape: [370]: 0.000000
+stft_in shape: [371]: -0.000031
+stft_in shape: [372]: -0.000031
+stft_in shape: [373]: 0.000000
+stft_in shape: [374]: 0.000031
+stft_in shape: [375]: 0.000000
+stft_in shape: [376]: -0.000061
+stft_in shape: [377]: -0.000031
+stft_in shape: [378]: -0.000061
+stft_in shape: [379]: -0.000031
+stft_in shape: [380]: -0.000031
+stft_in shape: [381]: 0.000031
+stft_in shape: [382]: 0.000031
+stft_in shape: [383]: 0.000031
+stft_in shape: [384]: 0.000061
+stft_in shape: [385]: 0.000031
+stft_in shape: [386]: 0.000031
+stft_in shape: [387]: 0.000000
+stft_in shape: [388]: 0.000000
+stft_in shape: [389]: -0.000061
+stft_in shape: [390]: 0.000031
+stft_in shape: [391]: -0.000031
+stft_in shape: [392]: -0.000092
+stft_in shape: [393]: 0.000000
+stft_in shape: [394]: 0.000031
+stft_in shape: [395]: 0.000000
+stft_in shape: [396]: -0.000031
+stft_in shape: [397]: -0.000061
+stft_in shape: [398]: -0.000122
+stft_in shape: [399]: -0.000092
+stft_in shape: [400]: -0.000092
+stft_in shape: [401]: -0.000092
+stft_in shape: [402]: 0.000000
+stft_in shape: [403]: 0.000031
+stft_in shape: [404]: 0.000061
+stft_in shape: [405]: 0.000031
+stft_in shape: [406]: -0.000061
+stft_in shape: [407]: -0.000122
+stft_in shape: [408]: -0.000031
+stft_in shape: [409]: -0.000061
+stft_in shape: [410]: -0.000061
+stft_in shape: [411]: 0.000031
+stft_in shape: [412]: 0.000122
+stft_in shape: [413]: 0.000092
+stft_in shape: [414]: 0.000031
+stft_in shape: [415]: 0.000061
+stft_in shape: [416]: 0.000031
+stft_in shape: [417]: -0.000061
+stft_in shape: [418]: -0.000061
+stft_in shape: [419]: -0.000031
+stft_in shape: [420]: 0.000061
+stft_in shape: [421]: 0.000000
+stft_in shape: [422]: -0.000122
+stft_in shape: [423]: -0.000153
+stft_in shape: [424]: -0.000183
+stft_in shape: [425]: -0.000214
+stft_in shape: [426]: -0.000061
+stft_in shape: [427]: -0.000061
+stft_in shape: [428]: -0.000092
+stft_in shape: [429]: 0.000061
+stft_in shape: [430]: 0.000061
+stft_in shape: [431]: 0.000061
+stft_in shape: [432]: -0.000031
+stft_in shape: [433]: 0.000000
+stft_in shape: [434]: 0.000031
+stft_in shape: [435]: 0.000000
+stft_in shape: [436]: -0.000061
+stft_in shape: [437]: 0.000061
+stft_in shape: [438]: 0.000000
+stft_in shape: [439]: 0.000031
+stft_in shape: [440]: 0.000122
+stft_in shape: [441]: 0.000092
+stft_in shape: [442]: 0.000122
+stft_in shape: [443]: 0.000092
+stft_in shape: [444]: -0.000153
+stft_in shape: [445]: -0.000122
+stft_in shape: [446]: -0.000061
+stft_in shape: [447]: 0.000061
+stft_in shape: [448]: 0.000061
+stft_in shape: [449]: 0.000092
+stft_in shape: [450]: 0.000122
+stft_in shape: [451]: 0.000061
+stft_in shape: [452]: 0.000183
+stft_in shape: [453]: 0.000092
+stft_in shape: [454]: 0.000153
+stft_in shape: [455]: 0.000214
+stft_in shape: [456]: 0.000183
+stft_in shape: [457]: 0.000153
+stft_in shape: [458]: -0.000092
+stft_in shape: [459]: -0.000031
+stft_in shape: [460]: -0.000061
+stft_in shape: [461]: 0.000000
+stft_in shape: [462]: -0.000092
+stft_in shape: [463]: -0.000092
+stft_in shape: [464]: 0.000031
+stft_in shape: [465]: -0.000122
+stft_in shape: [466]: -0.000031
+stft_in shape: [467]: -0.000214
+stft_in shape: [468]: 0.000000
+stft_in shape: [469]: 0.000092
+stft_in shape: [470]: 0.000122
+stft_in shape: [471]: -0.000061
+stft_in shape: [472]: -0.000092
+stft_in shape: [473]: -0.000122
+stft_in shape: [474]: -0.000122
+stft_in shape: [475]: 0.000031
+stft_in shape: [476]: -0.000214
+stft_in shape: [477]: -0.000061
+stft_in shape: [478]: -0.000214
+stft_in shape: [479]: -0.000183
+stft_in shape: [480]: -0.000183
+stft_in shape: [481]: -0.000305
+stft_in shape: [482]: -0.000122
+stft_in shape: [483]: -0.000061
+stft_in shape: [484]: -0.000031
+stft_in shape: [485]: -0.000031
+stft_in shape: [486]: -0.000061
+stft_in shape: [487]: 0.000061
+stft_in shape: [488]: 0.000031
+stft_in shape: [489]: 0.000122
+stft_in shape: [490]: 0.000031
+stft_in shape: [491]: 0.000153
+stft_in shape: [492]: 0.000275
+stft_in shape: [493]: 0.000244
+stft_in shape: [494]: 0.000000
+stft_in shape: [495]: -0.000092
+stft_in shape: [496]: 0.000031
+stft_in shape: [497]: 0.000000
+stft_in shape: [498]: 0.000214
+stft_in shape: [499]: 0.000061
+stft_in shape: [500]: 0.000122
+stft_in shape: [501]: -0.000183
+stft_in shape: [502]: 0.000122
+stft_in shape: [503]: -0.000519
+stft_in shape: [504]: 0.001892
+stft_in shape: [505]: 0.004211
+stft_in shape: [506]: 0.001038
+stft_in shape: [507]: 0.000610
+stft_in shape: [508]: -0.000061
+stft_in shape: [509]: 0.000031
+stft_in shape: [510]: 0.000671
+stft_in shape: [511]: -0.000305
+```
+So the first non-zero value was at index 187 in the python output.
+```console
+stft_in shape: [187]: -0.000031   <-------- First non-zero value
+stft_in shape: [188]: 0.000000
+stft_in shape: [189]: 0.000000
+stft_in shape: [190]: 0.000000
+stft_in shape: [191]: 0.000000
+stft_in shape: [192]: 0.000000
+stft_in shape: [193]: 0.000000
+stft_in shape: [194]: 0.000000
+stft_in shape: [195]: 0.000000
+stft_in shape: [196]: 0.000000
+stft_in shape: [197]: 0.000000
+stft_in shape: [198]: 0.000000
+stft_in shape: [199]: 0.000000
+stft_in shape: [200]: 0.000000
+stft_in shape: [201]: -0.000031
+stft_in shape: [202]: -0.000031
+```
+
+C++:
+```console
+10: whisper_vad_detect_speech: frame shape [512, 1, 1, 1]
+10: whisper_vad_detect_speech: input: [0]: 0.000000
+10: whisper_vad_detect_speech: input: [1]: 0.000000
+10: whisper_vad_detect_speech: input: [2]: 0.000000
+10: whisper_vad_detect_speech: input: [3]: 0.000000
+10: whisper_vad_detect_speech: input: [4]: 0.000000
+10: whisper_vad_detect_speech: input: [5]: 0.000000
+10: whisper_vad_detect_speech: input: [6]: 0.000000
+10: whisper_vad_detect_speech: input: [7]: 0.000000
+10: whisper_vad_detect_speech: input: [8]: 0.000000
+10: whisper_vad_detect_speech: input: [9]: 0.000000
+10: whisper_vad_detect_speech: input: [10]: 0.000000
+10: whisper_vad_detect_speech: input: [11]: 0.000000
+10: whisper_vad_detect_speech: input: [12]: 0.000000
+10: whisper_vad_detect_speech: input: [13]: 0.000000
+10: whisper_vad_detect_speech: input: [14]: 0.000000
+10: whisper_vad_detect_speech: input: [15]: 0.000000
+10: whisper_vad_detect_speech: input: [16]: 0.000000
+10: whisper_vad_detect_speech: input: [17]: 0.000000
+10: whisper_vad_detect_speech: input: [18]: 0.000000
+10: whisper_vad_detect_speech: input: [19]: 0.000000
+10: whisper_vad_detect_speech: input: [20]: 0.000000
+10: whisper_vad_detect_speech: input: [21]: 0.000000
+10: whisper_vad_detect_speech: input: [22]: 0.000000
+10: whisper_vad_detect_speech: input: [23]: 0.000000
+10: whisper_vad_detect_speech: input: [24]: 0.000000
+10: whisper_vad_detect_speech: input: [25]: 0.000000
+10: whisper_vad_detect_speech: input: [26]: 0.000000
+10: whisper_vad_detect_speech: input: [27]: 0.000000
+10: whisper_vad_detect_speech: input: [28]: 0.000000
+10: whisper_vad_detect_speech: input: [29]: 0.000000
+10: whisper_vad_detect_speech: input: [30]: 0.000000
+10: whisper_vad_detect_speech: input: [31]: 0.000000
+10: whisper_vad_detect_speech: input: [32]: 0.000000
+10: whisper_vad_detect_speech: input: [33]: 0.000000
+10: whisper_vad_detect_speech: input: [34]: 0.000000
+10: whisper_vad_detect_speech: input: [35]: 0.000000
+10: whisper_vad_detect_speech: input: [36]: 0.000000
+10: whisper_vad_detect_speech: input: [37]: 0.000000
+10: whisper_vad_detect_speech: input: [38]: 0.000000
+10: whisper_vad_detect_speech: input: [39]: 0.000000
+10: whisper_vad_detect_speech: input: [40]: 0.000000
+10: whisper_vad_detect_speech: input: [41]: 0.000000
+10: whisper_vad_detect_speech: input: [42]: 0.000000
+10: whisper_vad_detect_speech: input: [43]: 0.000000
+10: whisper_vad_detect_speech: input: [44]: 0.000000
+10: whisper_vad_detect_speech: input: [45]: 0.000000
+10: whisper_vad_detect_speech: input: [46]: 0.000000
+10: whisper_vad_detect_speech: input: [47]: 0.000000
+10: whisper_vad_detect_speech: input: [48]: 0.000000
+10: whisper_vad_detect_speech: input: [49]: 0.000000
+10: whisper_vad_detect_speech: input: [50]: 0.000000
+10: whisper_vad_detect_speech: input: [51]: 0.000000
+10: whisper_vad_detect_speech: input: [52]: 0.000000
+10: whisper_vad_detect_speech: input: [53]: 0.000000
+10: whisper_vad_detect_speech: input: [54]: 0.000000
+10: whisper_vad_detect_speech: input: [55]: 0.000000
+10: whisper_vad_detect_speech: input: [56]: 0.000000
+10: whisper_vad_detect_speech: input: [57]: 0.000000
+10: whisper_vad_detect_speech: input: [58]: 0.000000
+10: whisper_vad_detect_speech: input: [59]: 0.000000
+10: whisper_vad_detect_speech: input: [60]: 0.000000
+10: whisper_vad_detect_speech: input: [61]: 0.000000
+10: whisper_vad_detect_speech: input: [62]: 0.000000
+10: whisper_vad_detect_speech: input: [63]: 0.000000
+10: whisper_vad_detect_speech: input: [64]: 0.000000
+10: whisper_vad_detect_speech: input: [65]: 0.000000
+10: whisper_vad_detect_speech: input: [66]: 0.000000
+10: whisper_vad_detect_speech: input: [67]: 0.000000
+10: whisper_vad_detect_speech: input: [68]: 0.000000
+10: whisper_vad_detect_speech: input: [69]: 0.000000
+10: whisper_vad_detect_speech: input: [70]: 0.000000
+10: whisper_vad_detect_speech: input: [71]: 0.000000
+10: whisper_vad_detect_speech: input: [72]: 0.000000
+10: whisper_vad_detect_speech: input: [73]: 0.000000
+10: whisper_vad_detect_speech: input: [74]: 0.000000
+10: whisper_vad_detect_speech: input: [75]: 0.000000
+10: whisper_vad_detect_speech: input: [76]: 0.000000
+10: whisper_vad_detect_speech: input: [77]: 0.000000
+10: whisper_vad_detect_speech: input: [78]: 0.000000
+10: whisper_vad_detect_speech: input: [79]: 0.000000
+10: whisper_vad_detect_speech: input: [80]: 0.000000
+10: whisper_vad_detect_speech: input: [81]: 0.000000
+10: whisper_vad_detect_speech: input: [82]: 0.000000
+10: whisper_vad_detect_speech: input: [83]: 0.000000
+10: whisper_vad_detect_speech: input: [84]: 0.000000
+10: whisper_vad_detect_speech: input: [85]: 0.000000
+10: whisper_vad_detect_speech: input: [86]: 0.000000
+10: whisper_vad_detect_speech: input: [87]: 0.000000
+10: whisper_vad_detect_speech: input: [88]: 0.000000
+10: whisper_vad_detect_speech: input: [89]: 0.000000
+10: whisper_vad_detect_speech: input: [90]: 0.000000
+10: whisper_vad_detect_speech: input: [91]: 0.000000
+10: whisper_vad_detect_speech: input: [92]: 0.000000
+10: whisper_vad_detect_speech: input: [93]: 0.000000
+10: whisper_vad_detect_speech: input: [94]: 0.000000
+10: whisper_vad_detect_speech: input: [95]: 0.000000
+10: whisper_vad_detect_speech: input: [96]: 0.000000
+10: whisper_vad_detect_speech: input: [97]: 0.000000
+10: whisper_vad_detect_speech: input: [98]: 0.000000
+10: whisper_vad_detect_speech: input: [99]: 0.000000
+10: whisper_vad_detect_speech: input: [100]: 0.000000
+10: whisper_vad_detect_speech: input: [101]: 0.000000
+10: whisper_vad_detect_speech: input: [102]: 0.000000
+10: whisper_vad_detect_speech: input: [103]: 0.000000
+10: whisper_vad_detect_speech: input: [104]: 0.000000
+10: whisper_vad_detect_speech: input: [105]: 0.000000
+10: whisper_vad_detect_speech: input: [106]: 0.000000
+10: whisper_vad_detect_speech: input: [107]: 0.000000
+10: whisper_vad_detect_speech: input: [108]: 0.000000
+10: whisper_vad_detect_speech: input: [109]: 0.000000
+10: whisper_vad_detect_speech: input: [110]: 0.000000
+10: whisper_vad_detect_speech: input: [111]: 0.000000
+10: whisper_vad_detect_speech: input: [112]: 0.000000
+10: whisper_vad_detect_speech: input: [113]: 0.000000
+10: whisper_vad_detect_speech: input: [114]: 0.000000
+10: whisper_vad_detect_speech: input: [115]: 0.000000
+10: whisper_vad_detect_speech: input: [116]: 0.000000
+10: whisper_vad_detect_speech: input: [117]: 0.000000
+10: whisper_vad_detect_speech: input: [118]: 0.000000
+10: whisper_vad_detect_speech: input: [119]: 0.000000
+10: whisper_vad_detect_speech: input: [120]: 0.000000
+10: whisper_vad_detect_speech: input: [121]: 0.000000
+10: whisper_vad_detect_speech: input: [122]: 0.000000
+10: whisper_vad_detect_speech: input: [123]: 0.000000
+10: whisper_vad_detect_speech: input: [124]: 0.000000
+10: whisper_vad_detect_speech: input: [125]: 0.000000
+10: whisper_vad_detect_speech: input: [126]: 0.000000
+10: whisper_vad_detect_speech: input: [127]: 0.000000
+10: whisper_vad_detect_speech: input: [128]: 0.000000
+10: whisper_vad_detect_speech: input: [129]: 0.000000
+10: whisper_vad_detect_speech: input: [130]: 0.000000
+10: whisper_vad_detect_speech: input: [131]: 0.000000
+10: whisper_vad_detect_speech: input: [132]: 0.000000
+10: whisper_vad_detect_speech: input: [133]: 0.000000
+10: whisper_vad_detect_speech: input: [134]: 0.000000
+10: whisper_vad_detect_speech: input: [135]: 0.000000
+10: whisper_vad_detect_speech: input: [136]: 0.000000
+10: whisper_vad_detect_speech: input: [137]: 0.000000
+10: whisper_vad_detect_speech: input: [138]: 0.000000
+10: whisper_vad_detect_speech: input: [139]: 0.000000
+10: whisper_vad_detect_speech: input: [140]: 0.000000
+10: whisper_vad_detect_speech: input: [141]: 0.000000
+10: whisper_vad_detect_speech: input: [142]: 0.000000
+10: whisper_vad_detect_speech: input: [143]: 0.000000
+10: whisper_vad_detect_speech: input: [144]: 0.000000
+10: whisper_vad_detect_speech: input: [145]: 0.000000
+10: whisper_vad_detect_speech: input: [146]: 0.000000
+10: whisper_vad_detect_speech: input: [147]: 0.000000
+10: whisper_vad_detect_speech: input: [148]: 0.000000
+10: whisper_vad_detect_speech: input: [149]: 0.000000
+10: whisper_vad_detect_speech: input: [150]: 0.000000
+10: whisper_vad_detect_speech: input: [151]: 0.000000
+10: whisper_vad_detect_speech: input: [152]: 0.000000
+10: whisper_vad_detect_speech: input: [153]: 0.000000
+10: whisper_vad_detect_speech: input: [154]: 0.000000
+10: whisper_vad_detect_speech: input: [155]: 0.000000
+10: whisper_vad_detect_speech: input: [156]: 0.000000
+10: whisper_vad_detect_speech: input: [157]: 0.000000
+10: whisper_vad_detect_speech: input: [158]: 0.000000
+10: whisper_vad_detect_speech: input: [159]: 0.000000
+10: whisper_vad_detect_speech: input: [160]: 0.000000
+10: whisper_vad_detect_speech: input: [161]: 0.000000
+10: whisper_vad_detect_speech: input: [162]: 0.000000
+10: whisper_vad_detect_speech: input: [163]: 0.000000
+10: whisper_vad_detect_speech: input: [164]: 0.000000
+10: whisper_vad_detect_speech: input: [165]: 0.000000
+10: whisper_vad_detect_speech: input: [166]: 0.000000
+10: whisper_vad_detect_speech: input: [167]: 0.000000
+10: whisper_vad_detect_speech: input: [168]: 0.000000
+10: whisper_vad_detect_speech: input: [169]: 0.000000
+10: whisper_vad_detect_speech: input: [170]: 0.000000
+10: whisper_vad_detect_speech: input: [171]: 0.000000
+10: whisper_vad_detect_speech: input: [172]: 0.000000
+10: whisper_vad_detect_speech: input: [173]: 0.000000
+10: whisper_vad_detect_speech: input: [174]: 0.000000
+10: whisper_vad_detect_speech: input: [175]: 0.000000
+10: whisper_vad_detect_speech: input: [176]: 0.000000
+10: whisper_vad_detect_speech: input: [177]: 0.000000
+10: whisper_vad_detect_speech: input: [178]: 0.000000
+10: whisper_vad_detect_speech: input: [179]: 0.000000
+10: whisper_vad_detect_speech: input: [180]: 0.000000
+10: whisper_vad_detect_speech: input: [181]: 0.000000
+10: whisper_vad_detect_speech: input: [182]: 0.000000
+10: whisper_vad_detect_speech: input: [183]: 0.000000
+10: whisper_vad_detect_speech: input: [184]: 0.000000
+10: whisper_vad_detect_speech: input: [185]: 0.000000
+10: whisper_vad_detect_speech: input: [186]: 0.000000
+10: whisper_vad_detect_speech: input: [187]: 0.000000
+10: whisper_vad_detect_speech: input: [188]: 0.000000
+10: whisper_vad_detect_speech: input: [189]: 0.000000
+10: whisper_vad_detect_speech: input: [190]: 0.000000
+10: whisper_vad_detect_speech: input: [191]: 0.000000
+10: whisper_vad_detect_speech: input: [192]: 0.000000
+10: whisper_vad_detect_speech: input: [193]: 0.000000
+10: whisper_vad_detect_speech: input: [194]: 0.000000
+10: whisper_vad_detect_speech: input: [195]: 0.000000
+10: whisper_vad_detect_speech: input: [196]: 0.000000
+10: whisper_vad_detect_speech: input: [197]: 0.000000
+10: whisper_vad_detect_speech: input: [198]: 0.000000
+10: whisper_vad_detect_speech: input: [199]: 0.000000
+10: whisper_vad_detect_speech: input: [200]: 0.000000
+10: whisper_vad_detect_speech: input: [201]: 0.000000
+10: whisper_vad_detect_speech: input: [202]: 0.000000
+10: whisper_vad_detect_speech: input: [203]: 0.000000
+10: whisper_vad_detect_speech: input: [204]: 0.000000
+10: whisper_vad_detect_speech: input: [205]: 0.000000
+10: whisper_vad_detect_speech: input: [206]: 0.000000
+10: whisper_vad_detect_speech: input: [207]: 0.000000
+10: whisper_vad_detect_speech: input: [208]: 0.000000
+10: whisper_vad_detect_speech: input: [209]: 0.000000
+10: whisper_vad_detect_speech: input: [210]: 0.000000
+10: whisper_vad_detect_speech: input: [211]: 0.000000
+10: whisper_vad_detect_speech: input: [212]: 0.000000
+10: whisper_vad_detect_speech: input: [213]: 0.000000
+10: whisper_vad_detect_speech: input: [214]: 0.000000
+10: whisper_vad_detect_speech: input: [215]: 0.000000
+10: whisper_vad_detect_speech: input: [216]: 0.000000
+10: whisper_vad_detect_speech: input: [217]: 0.000000
+10: whisper_vad_detect_speech: input: [218]: 0.000000
+10: whisper_vad_detect_speech: input: [219]: 0.000000
+10: whisper_vad_detect_speech: input: [220]: 0.000000
+10: whisper_vad_detect_speech: input: [221]: 0.000000
+10: whisper_vad_detect_speech: input: [222]: 0.000000
+10: whisper_vad_detect_speech: input: [223]: 0.000000
+10: whisper_vad_detect_speech: input: [224]: 0.000000
+10: whisper_vad_detect_speech: input: [225]: 0.000000
+10: whisper_vad_detect_speech: input: [226]: 0.000000
+10: whisper_vad_detect_speech: input: [227]: 0.000000
+10: whisper_vad_detect_speech: input: [228]: 0.000000
+10: whisper_vad_detect_speech: input: [229]: 0.000000
+10: whisper_vad_detect_speech: input: [230]: 0.000000
+10: whisper_vad_detect_speech: input: [231]: 0.000000
+10: whisper_vad_detect_speech: input: [232]: 0.000000
+10: whisper_vad_detect_speech: input: [233]: 0.000000
+10: whisper_vad_detect_speech: input: [234]: 0.000000
+10: whisper_vad_detect_speech: input: [235]: 0.000000
+10: whisper_vad_detect_speech: input: [236]: 0.000000
+10: whisper_vad_detect_speech: input: [237]: 0.000000
+10: whisper_vad_detect_speech: input: [238]: 0.000000
+10: whisper_vad_detect_speech: input: [239]: 0.000000
+10: whisper_vad_detect_speech: input: [240]: 0.000000
+10: whisper_vad_detect_speech: input: [241]: 0.000000
+10: whisper_vad_detect_speech: input: [242]: 0.000000
+10: whisper_vad_detect_speech: input: [243]: 0.000000
+10: whisper_vad_detect_speech: input: [244]: 0.000000
+10: whisper_vad_detect_speech: input: [245]: 0.000000
+10: whisper_vad_detect_speech: input: [246]: 0.000000
+10: whisper_vad_detect_speech: input: [247]: 0.000000
+10: whisper_vad_detect_speech: input: [248]: 0.000000
+10: whisper_vad_detect_speech: input: [249]: 0.000000
+10: whisper_vad_detect_speech: input: [250]: 0.000000
+10: whisper_vad_detect_speech: input: [251]: -0.000031  <-- first non-zero value
+10: whisper_vad_detect_speech: input: [252]: 0.000000
+10: whisper_vad_detect_speech: input: [253]: 0.000000
+10: whisper_vad_detect_speech: input: [254]: 0.000000
+10: whisper_vad_detect_speech: input: [255]: 0.000000
+10: whisper_vad_detect_speech: input: [256]: 0.000000
+10: whisper_vad_detect_speech: input: [257]: 0.000000
+10: whisper_vad_detect_speech: input: [258]: 0.000000
+10: whisper_vad_detect_speech: input: [259]: 0.000000
+10: whisper_vad_detect_speech: input: [260]: 0.000000
+10: whisper_vad_detect_speech: input: [261]: 0.000000
+10: whisper_vad_detect_speech: input: [262]: 0.000000
+10: whisper_vad_detect_speech: input: [263]: 0.000000
+10: whisper_vad_detect_speech: input: [264]: 0.000000
+10: whisper_vad_detect_speech: input: [265]: -0.000031
+10: whisper_vad_detect_speech: input: [266]: -0.000031
+10: whisper_vad_detect_speech: input: [267]: 0.000000
+10: whisper_vad_detect_speech: input: [268]: 0.000000
+10: whisper_vad_detect_speech: input: [269]: 0.000000
+10: whisper_vad_detect_speech: input: [270]: 0.000000
+10: whisper_vad_detect_speech: input: [271]: 0.000000
+10: whisper_vad_detect_speech: input: [272]: 0.000031
+10: whisper_vad_detect_speech: input: [273]: 0.000000
+10: whisper_vad_detect_speech: input: [274]: 0.000000
+10: whisper_vad_detect_speech: input: [275]: -0.000031
+10: whisper_vad_detect_speech: input: [276]: 0.000000
+10: whisper_vad_detect_speech: input: [277]: -0.000031
+10: whisper_vad_detect_speech: input: [278]: 0.000000
+10: whisper_vad_detect_speech: input: [279]: 0.000000
+10: whisper_vad_detect_speech: input: [280]: -0.000031
+10: whisper_vad_detect_speech: input: [281]: 0.000000
+10: whisper_vad_detect_speech: input: [282]: -0.000031
+10: whisper_vad_detect_speech: input: [283]: -0.000031
+10: whisper_vad_detect_speech: input: [284]: 0.000000
+10: whisper_vad_detect_speech: input: [285]: 0.000000
+10: whisper_vad_detect_speech: input: [286]: 0.000000
+10: whisper_vad_detect_speech: input: [287]: 0.000031
+10: whisper_vad_detect_speech: input: [288]: 0.000031
+10: whisper_vad_detect_speech: input: [289]: 0.000031
+10: whisper_vad_detect_speech: input: [290]: 0.000031
+10: whisper_vad_detect_speech: input: [291]: 0.000031
+10: whisper_vad_detect_speech: input: [292]: 0.000000
+10: whisper_vad_detect_speech: input: [293]: 0.000000
+10: whisper_vad_detect_speech: input: [294]: 0.000000
+10: whisper_vad_detect_speech: input: [295]: 0.000000
+10: whisper_vad_detect_speech: input: [296]: 0.000031
+10: whisper_vad_detect_speech: input: [297]: 0.000000
+10: whisper_vad_detect_speech: input: [298]: 0.000031
+10: whisper_vad_detect_speech: input: [299]: 0.000031
+10: whisper_vad_detect_speech: input: [300]: 0.000031
+10: whisper_vad_detect_speech: input: [301]: 0.000031
+10: whisper_vad_detect_speech: input: [302]: 0.000000
+10: whisper_vad_detect_speech: input: [303]: 0.000000
+10: whisper_vad_detect_speech: input: [304]: -0.000031
+10: whisper_vad_detect_speech: input: [305]: -0.000031
+10: whisper_vad_detect_speech: input: [306]: -0.000031
+10: whisper_vad_detect_speech: input: [307]: 0.000000
+10: whisper_vad_detect_speech: input: [308]: 0.000000
+10: whisper_vad_detect_speech: input: [309]: 0.000000
+10: whisper_vad_detect_speech: input: [310]: -0.000031
+10: whisper_vad_detect_speech: input: [311]: -0.000031
+10: whisper_vad_detect_speech: input: [312]: -0.000031
+10: whisper_vad_detect_speech: input: [313]: -0.000031
+10: whisper_vad_detect_speech: input: [314]: 0.000000
+10: whisper_vad_detect_speech: input: [315]: 0.000000
+10: whisper_vad_detect_speech: input: [316]: 0.000000
+10: whisper_vad_detect_speech: input: [317]: 0.000031
+10: whisper_vad_detect_speech: input: [318]: 0.000000
+10: whisper_vad_detect_speech: input: [319]: 0.000000
+10: whisper_vad_detect_speech: input: [320]: 0.000000
+10: whisper_vad_detect_speech: input: [321]: 0.000000
+10: whisper_vad_detect_speech: input: [322]: 0.000000
+10: whisper_vad_detect_speech: input: [323]: 0.000000
+10: whisper_vad_detect_speech: input: [324]: 0.000000
+10: whisper_vad_detect_speech: input: [325]: 0.000000
+10: whisper_vad_detect_speech: input: [326]: 0.000000
+10: whisper_vad_detect_speech: input: [327]: 0.000000
+10: whisper_vad_detect_speech: input: [328]: 0.000000
+10: whisper_vad_detect_speech: input: [329]: 0.000000
+10: whisper_vad_detect_speech: input: [330]: 0.000000
+10: whisper_vad_detect_speech: input: [331]: 0.000031
+10: whisper_vad_detect_speech: input: [332]: 0.000031
+10: whisper_vad_detect_speech: input: [333]: 0.000031
+10: whisper_vad_detect_speech: input: [334]: 0.000031
+10: whisper_vad_detect_speech: input: [335]: 0.000000
+10: whisper_vad_detect_speech: input: [336]: 0.000000
+10: whisper_vad_detect_speech: input: [337]: 0.000000
+10: whisper_vad_detect_speech: input: [338]: 0.000000
+10: whisper_vad_detect_speech: input: [339]: 0.000000
+10: whisper_vad_detect_speech: input: [340]: 0.000000
+10: whisper_vad_detect_speech: input: [341]: 0.000000
+10: whisper_vad_detect_speech: input: [342]: 0.000000
+10: whisper_vad_detect_speech: input: [343]: 0.000000
+10: whisper_vad_detect_speech: input: [344]: -0.000061
+10: whisper_vad_detect_speech: input: [345]: -0.000061
+10: whisper_vad_detect_speech: input: [346]: -0.000031
+10: whisper_vad_detect_speech: input: [347]: -0.000061
+10: whisper_vad_detect_speech: input: [348]: -0.000061
+10: whisper_vad_detect_speech: input: [349]: 0.000000
+10: whisper_vad_detect_speech: input: [350]: 0.000000
+10: whisper_vad_detect_speech: input: [351]: 0.000031
+10: whisper_vad_detect_speech: input: [352]: 0.000000
+10: whisper_vad_detect_speech: input: [353]: 0.000031
+10: whisper_vad_detect_speech: input: [354]: 0.000000
+10: whisper_vad_detect_speech: input: [355]: -0.000031
+10: whisper_vad_detect_speech: input: [356]: 0.000000
+10: whisper_vad_detect_speech: input: [357]: 0.000000
+10: whisper_vad_detect_speech: input: [358]: 0.000000
+10: whisper_vad_detect_speech: input: [359]: 0.000000
+10: whisper_vad_detect_speech: input: [360]: 0.000031
+10: whisper_vad_detect_speech: input: [361]: 0.000061
+10: whisper_vad_detect_speech: input: [362]: 0.000061
+10: whisper_vad_detect_speech: input: [363]: 0.000092
+10: whisper_vad_detect_speech: input: [364]: 0.000092
+10: whisper_vad_detect_speech: input: [365]: 0.000061
+10: whisper_vad_detect_speech: input: [366]: 0.000000
+10: whisper_vad_detect_speech: input: [367]: 0.000000
+10: whisper_vad_detect_speech: input: [368]: 0.000000
+10: whisper_vad_detect_speech: input: [369]: -0.000061
+10: whisper_vad_detect_speech: input: [370]: 0.000000
+10: whisper_vad_detect_speech: input: [371]: 0.000000
+10: whisper_vad_detect_speech: input: [372]: 0.000000
+10: whisper_vad_detect_speech: input: [373]: 0.000031
+10: whisper_vad_detect_speech: input: [374]: 0.000000
+10: whisper_vad_detect_speech: input: [375]: 0.000000
+10: whisper_vad_detect_speech: input: [376]: 0.000000
+10: whisper_vad_detect_speech: input: [377]: 0.000031
+10: whisper_vad_detect_speech: input: [378]: 0.000031
+10: whisper_vad_detect_speech: input: [379]: 0.000031
+10: whisper_vad_detect_speech: input: [380]: -0.000031
+10: whisper_vad_detect_speech: input: [381]: 0.000031
+10: whisper_vad_detect_speech: input: [382]: 0.000031
+10: whisper_vad_detect_speech: input: [383]: -0.000031
+10: whisper_vad_detect_speech: input: [384]: -0.000031
+10: whisper_vad_detect_speech: input: [385]: -0.000061
+10: whisper_vad_detect_speech: input: [386]: 0.000000
+10: whisper_vad_detect_speech: input: [387]: 0.000000
+10: whisper_vad_detect_speech: input: [388]: -0.000031
+10: whisper_vad_detect_speech: input: [389]: -0.000031
+10: whisper_vad_detect_speech: input: [390]: 0.000000
+10: whisper_vad_detect_speech: input: [391]: -0.000031
+10: whisper_vad_detect_speech: input: [392]: 0.000000
+10: whisper_vad_detect_speech: input: [393]: -0.000031
+10: whisper_vad_detect_speech: input: [394]: 0.000000
+10: whisper_vad_detect_speech: input: [395]: 0.000000
+10: whisper_vad_detect_speech: input: [396]: 0.000031
+10: whisper_vad_detect_speech: input: [397]: 0.000000
+10: whisper_vad_detect_speech: input: [398]: -0.000061
+10: whisper_vad_detect_speech: input: [399]: -0.000031
+10: whisper_vad_detect_speech: input: [400]: -0.000031
+10: whisper_vad_detect_speech: input: [401]: 0.000000
+10: whisper_vad_detect_speech: input: [402]: 0.000000
+10: whisper_vad_detect_speech: input: [403]: 0.000000
+10: whisper_vad_detect_speech: input: [404]: 0.000031
+10: whisper_vad_detect_speech: input: [405]: -0.000031
+10: whisper_vad_detect_speech: input: [406]: -0.000031
+10: whisper_vad_detect_speech: input: [407]: -0.000031
+10: whisper_vad_detect_speech: input: [408]: -0.000031
+10: whisper_vad_detect_speech: input: [409]: 0.000000
+10: whisper_vad_detect_speech: input: [410]: 0.000000
+10: whisper_vad_detect_speech: input: [411]: 0.000000
+10: whisper_vad_detect_speech: input: [412]: -0.000061
+10: whisper_vad_detect_speech: input: [413]: -0.000031
+10: whisper_vad_detect_speech: input: [414]: -0.000031
+10: whisper_vad_detect_speech: input: [415]: -0.000031
+10: whisper_vad_detect_speech: input: [416]: -0.000031
+10: whisper_vad_detect_speech: input: [417]: -0.000031
+10: whisper_vad_detect_speech: input: [418]: -0.000061
+10: whisper_vad_detect_speech: input: [419]: -0.000061
+10: whisper_vad_detect_speech: input: [420]: 0.000000
+10: whisper_vad_detect_speech: input: [421]: 0.000000
+10: whisper_vad_detect_speech: input: [422]: 0.000061
+10: whisper_vad_detect_speech: input: [423]: 0.000061
+10: whisper_vad_detect_speech: input: [424]: 0.000031
+10: whisper_vad_detect_speech: input: [425]: 0.000031
+10: whisper_vad_detect_speech: input: [426]: -0.000031
+10: whisper_vad_detect_speech: input: [427]: -0.000061
+10: whisper_vad_detect_speech: input: [428]: 0.000000
+10: whisper_vad_detect_speech: input: [429]: 0.000031
+10: whisper_vad_detect_speech: input: [430]: 0.000031
+10: whisper_vad_detect_speech: input: [431]: 0.000031
+10: whisper_vad_detect_speech: input: [432]: 0.000000
+10: whisper_vad_detect_speech: input: [433]: 0.000000
+10: whisper_vad_detect_speech: input: [434]: 0.000000
+10: whisper_vad_detect_speech: input: [435]: -0.000031
+10: whisper_vad_detect_speech: input: [436]: -0.000031
+10: whisper_vad_detect_speech: input: [437]: 0.000000
+10: whisper_vad_detect_speech: input: [438]: 0.000031
+10: whisper_vad_detect_speech: input: [439]: 0.000000
+10: whisper_vad_detect_speech: input: [440]: -0.000061
+10: whisper_vad_detect_speech: input: [441]: -0.000031
+10: whisper_vad_detect_speech: input: [442]: -0.000061
+10: whisper_vad_detect_speech: input: [443]: -0.000031
+10: whisper_vad_detect_speech: input: [444]: -0.000031
+10: whisper_vad_detect_speech: input: [445]: 0.000031
+10: whisper_vad_detect_speech: input: [446]: 0.000031
+10: whisper_vad_detect_speech: input: [447]: 0.000031
+10: whisper_vad_detect_speech: input: [448]: 0.000061
+10: whisper_vad_detect_speech: input: [449]: 0.000031
+10: whisper_vad_detect_speech: input: [450]: 0.000031
+10: whisper_vad_detect_speech: input: [451]: 0.000000
+10: whisper_vad_detect_speech: input: [452]: 0.000000
+10: whisper_vad_detect_speech: input: [453]: -0.000061
+10: whisper_vad_detect_speech: input: [454]: 0.000031
+10: whisper_vad_detect_speech: input: [455]: -0.000031
+10: whisper_vad_detect_speech: input: [456]: -0.000092
+10: whisper_vad_detect_speech: input: [457]: 0.000000
+10: whisper_vad_detect_speech: input: [458]: 0.000031
+10: whisper_vad_detect_speech: input: [459]: 0.000000
+10: whisper_vad_detect_speech: input: [460]: -0.000031
+10: whisper_vad_detect_speech: input: [461]: -0.000061
+10: whisper_vad_detect_speech: input: [462]: -0.000122
+10: whisper_vad_detect_speech: input: [463]: -0.000092
+10: whisper_vad_detect_speech: input: [464]: -0.000092
+10: whisper_vad_detect_speech: input: [465]: -0.000092
+10: whisper_vad_detect_speech: input: [466]: 0.000000
+10: whisper_vad_detect_speech: input: [467]: 0.000031
+10: whisper_vad_detect_speech: input: [468]: 0.000061
+10: whisper_vad_detect_speech: input: [469]: 0.000031
+10: whisper_vad_detect_speech: input: [470]: -0.000061
+10: whisper_vad_detect_speech: input: [471]: -0.000122
+10: whisper_vad_detect_speech: input: [472]: -0.000031
+10: whisper_vad_detect_speech: input: [473]: -0.000061
+10: whisper_vad_detect_speech: input: [474]: -0.000061
+10: whisper_vad_detect_speech: input: [475]: 0.000031
+10: whisper_vad_detect_speech: input: [476]: 0.000122
+10: whisper_vad_detect_speech: input: [477]: 0.000092
+10: whisper_vad_detect_speech: input: [478]: 0.000031
+10: whisper_vad_detect_speech: input: [479]: 0.000061
+10: whisper_vad_detect_speech: input: [480]: 0.000031
+10: whisper_vad_detect_speech: input: [481]: -0.000061
+10: whisper_vad_detect_speech: input: [482]: -0.000061
+10: whisper_vad_detect_speech: input: [483]: -0.000031
+10: whisper_vad_detect_speech: input: [484]: 0.000061
+10: whisper_vad_detect_speech: input: [485]: 0.000000
+10: whisper_vad_detect_speech: input: [486]: -0.000122
+10: whisper_vad_detect_speech: input: [487]: -0.000153
+10: whisper_vad_detect_speech: input: [488]: -0.000183
+10: whisper_vad_detect_speech: input: [489]: -0.000214
+10: whisper_vad_detect_speech: input: [490]: -0.000061
+10: whisper_vad_detect_speech: input: [491]: -0.000061
+10: whisper_vad_detect_speech: input: [492]: -0.000092
+10: whisper_vad_detect_speech: input: [493]: 0.000061
+10: whisper_vad_detect_speech: input: [494]: 0.000061
+10: whisper_vad_detect_speech: input: [495]: 0.000061
+10: whisper_vad_detect_speech: input: [496]: -0.000031
+10: whisper_vad_detect_speech: input: [497]: 0.000000
+10: whisper_vad_detect_speech: input: [498]: 0.000031
+10: whisper_vad_detect_speech: input: [499]: 0.000000
+10: whisper_vad_detect_speech: input: [500]: -0.000061
+10: whisper_vad_detect_speech: input: [501]: 0.000061
+10: whisper_vad_detect_speech: input: [502]: 0.000000
+10: whisper_vad_detect_speech: input: [503]: 0.000031
+10: whisper_vad_detect_speech: input: [504]: 0.000122
+10: whisper_vad_detect_speech: input: [505]: 0.000092
+10: whisper_vad_detect_speech: input: [506]: 0.000122
+10: whisper_vad_detect_speech: input: [507]: 0.000092
+10: whisper_vad_detect_speech: input: [508]: -0.000153
+10: whisper_vad_detect_speech: input: [509]: -0.000122
+10: whisper_vad_detect_speech: input: [510]: -0.000061
+10: whisper_vad_detect_speech: input: [511]: 0.000061
+```
+And notice that the first non-zero value appears at index 251:
+```console
+10: whisper_vad_detect_speech: input: [251]: -0.000031  <-- first non-zero value
+10: whisper_vad_detect_speech: input: [252]: 0.000000
+10: whisper_vad_detect_speech: input: [253]: 0.000000
+10: whisper_vad_detect_speech: input: [254]: 0.000000
+10: whisper_vad_detect_speech: input: [255]: 0.000000
+10: whisper_vad_detect_speech: input: [256]: 0.000000
+10: whisper_vad_detect_speech: input: [257]: 0.000000
+10: whisper_vad_detect_speech: input: [258]: 0.000000
+10: whisper_vad_detect_speech: input: [259]: 0.000000
+10: whisper_vad_detect_speech: input: [260]: 0.000000
+10: whisper_vad_detect_speech: input: [261]: 0.000000
+10: whisper_vad_detect_speech: input: [262]: 0.000000
+10: whisper_vad_detect_speech: input: [263]: 0.000000
+10: whisper_vad_detect_speech: input: [264]: 0.000000
+10: whisper_vad_detect_speech: input: [265]: -0.000031
+10: whisper_vad_detect_speech: input: [266]: -0.000031
+```
+But these chunks actually seem to be the same. So the c++ input is shifted
+by 64, the same size of the context window! Right, the python implementation
+is not using the context window but the c++ version still is.
+```console
+stft_in shape: [187]: -0.000031   <-------- First non-zero value
+stft_in shape: [188]: 0.000000
+stft_in shape: [189]: 0.000000
+stft_in shape: [190]: 0.000000
+stft_in shape: [191]: 0.000000
+stft_in shape: [192]: 0.000000
+stft_in shape: [193]: 0.000000
+stft_in shape: [194]: 0.000000
+stft_in shape: [195]: 0.000000
+stft_in shape: [196]: 0.000000
+stft_in shape: [197]: 0.000000
+stft_in shape: [198]: 0.000000
+stft_in shape: [199]: 0.000000
+stft_in shape: [200]: 0.000000
+stft_in shape: [201]: -0.000031
+stft_in shape: [202]: -0.000031
+```
+Disabling the window context in whisper.cpp produces the following probabilities:
+which are very close to the python implementation:
+```console
+10: whisper_vad_timestamps_from_probs: prob[0]: 0.012001
+10: whisper_vad_timestamps_from_probs: prob[1]: 0.010672
+10: whisper_vad_timestamps_from_probs: prob[2]: 0.134665
+10: whisper_vad_timestamps_from_probs: prob[3]: 0.067471
+10: whisper_vad_timestamps_from_probs: prob[4]: 0.044168
+10: whisper_vad_timestamps_from_probs: prob[5]: 0.022385
+10: whisper_vad_timestamps_from_probs: prob[6]: 0.026545
+10: whisper_vad_timestamps_from_probs: prob[7]: 0.015443
+10: whisper_vad_timestamps_from_probs: prob[8]: 0.010377
+10: whisper_vad_timestamps_from_probs: prob[9]: 0.009025
+10: whisper_vad_timestamps_from_probs: prob[10]: 0.801591
+10: whisper_vad_timestamps_from_probs: prob[11]: 0.967808
+10: whisper_vad_timestamps_from_probs: prob[12]: 0.948503
+10: whisper_vad_timestamps_from_probs: prob[13]: 0.847411
+10: whisper_vad_timestamps_from_probs: prob[14]: 0.881345
+10: whisper_vad_timestamps_from_probs: prob[15]: 0.988558
+10: whisper_vad_timestamps_from_probs: prob[16]: 0.987633
+10: whisper_vad_timestamps_from_probs: prob[17]: 0.987017
+10: whisper_vad_timestamps_from_probs: prob[18]: 0.991334
+10: whisper_vad_timestamps_from_probs: prob[19]: 0.967957
+10: whisper_vad_timestamps_from_probs: prob[20]: 0.941380
+10: whisper_vad_timestamps_from_probs: prob[21]: 0.976850
+10: whisper_vad_timestamps_from_probs: prob[22]: 0.992508
+10: whisper_vad_timestamps_from_probs: prob[23]: 0.984572
+10: whisper_vad_timestamps_from_probs: prob[24]: 0.981803
+10: whisper_vad_timestamps_from_probs: prob[25]: 0.972612
+10: whisper_vad_timestamps_from_probs: prob[26]: 0.966895
+10: whisper_vad_timestamps_from_probs: prob[27]: 0.946038
+10: whisper_vad_timestamps_from_probs: prob[28]: 0.946078
+10: whisper_vad_timestamps_from_probs: prob[29]: 0.934741
+10: whisper_vad_timestamps_from_probs: prob[30]: 0.954642
+10: whisper_vad_timestamps_from_probs: prob[31]: 0.956298
+10: whisper_vad_timestamps_from_probs: prob[32]: 0.987144
+10: whisper_vad_timestamps_from_probs: prob[33]: 0.977998
+10: whisper_vad_timestamps_from_probs: prob[34]: 0.989672
+10: whisper_vad_timestamps_from_probs: prob[35]: 0.980521
+10: whisper_vad_timestamps_from_probs: prob[36]: 0.989348
+10: whisper_vad_timestamps_from_probs: prob[37]: 0.990335
+10: whisper_vad_timestamps_from_probs: prob[38]: 0.994238
+10: whisper_vad_timestamps_from_probs: prob[39]: 0.992114
+10: whisper_vad_timestamps_from_probs: prob[40]: 0.987423
+10: whisper_vad_timestamps_from_probs: prob[41]: 0.947715
+10: whisper_vad_timestamps_from_probs: prob[42]: 0.949750
+10: whisper_vad_timestamps_from_probs: prob[43]: 0.992069
+10: whisper_vad_timestamps_from_probs: prob[44]: 0.987111
+10: whisper_vad_timestamps_from_probs: prob[45]: 0.986469
+10: whisper_vad_timestamps_from_probs: prob[46]: 0.994245
+10: whisper_vad_timestamps_from_probs: prob[47]: 0.987243
+10: whisper_vad_timestamps_from_probs: prob[48]: 0.991113
+10: whisper_vad_timestamps_from_probs: prob[49]: 0.985052
+10: whisper_vad_timestamps_from_probs: prob[50]: 0.983485
+10: whisper_vad_timestamps_from_probs: prob[51]: 0.987608
+10: whisper_vad_timestamps_from_probs: prob[52]: 0.995153
+10: whisper_vad_timestamps_from_probs: prob[53]: 0.994778
+10: whisper_vad_timestamps_from_probs: prob[54]: 0.994212
+10: whisper_vad_timestamps_from_probs: prob[55]: 0.990779
+10: whisper_vad_timestamps_from_probs: prob[56]: 0.989729
+10: whisper_vad_timestamps_from_probs: prob[57]: 0.991242
+10: whisper_vad_timestamps_from_probs: prob[58]: 0.990943
+10: whisper_vad_timestamps_from_probs: prob[59]: 0.991212
+10: whisper_vad_timestamps_from_probs: prob[60]: 0.977480
+10: whisper_vad_timestamps_from_probs: prob[61]: 0.989098
+10: whisper_vad_timestamps_from_probs: prob[62]: 0.981907
+10: whisper_vad_timestamps_from_probs: prob[63]: 0.974352
+10: whisper_vad_timestamps_from_probs: prob[64]: 0.917224
+10: whisper_vad_timestamps_from_probs: prob[65]: 0.954175
+10: whisper_vad_timestamps_from_probs: prob[66]: 0.736242
+10: whisper_vad_timestamps_from_probs: prob[67]: 0.498162
+10: whisper_vad_timestamps_from_probs: prob[68]: 0.272698
+10: whisper_vad_timestamps_from_probs: prob[69]: 0.108057
+10: whisper_vad_timestamps_from_probs: prob[70]: 0.064830
+10: whisper_vad_timestamps_from_probs: prob[71]: 0.039887
+10: whisper_vad_timestamps_from_probs: prob[72]: 0.022179
+10: whisper_vad_timestamps_from_probs: prob[73]: 0.007536
+10: whisper_vad_timestamps_from_probs: prob[74]: 0.002180
+10: whisper_vad_timestamps_from_probs: prob[75]: 0.001076
+10: whisper_vad_timestamps_from_probs: prob[76]: 0.001029
+10: whisper_vad_timestamps_from_probs: prob[77]: 0.000839
+10: whisper_vad_timestamps_from_probs: prob[78]: 0.002893
+10: whisper_vad_timestamps_from_probs: prob[79]: 0.003783
+10: whisper_vad_timestamps_from_probs: prob[80]: 0.001830
+10: whisper_vad_timestamps_from_probs: prob[81]: 0.000750
+10: whisper_vad_timestamps_from_probs: prob[82]: 0.000620
+10: whisper_vad_timestamps_from_probs: prob[83]: 0.000448
+10: whisper_vad_timestamps_from_probs: prob[84]: 0.000376
+10: whisper_vad_timestamps_from_probs: prob[85]: 0.000601
+10: whisper_vad_timestamps_from_probs: prob[86]: 0.000281
+10: whisper_vad_timestamps_from_probs: prob[87]: 0.000585
+10: whisper_vad_timestamps_from_probs: prob[88]: 0.000510
+10: whisper_vad_timestamps_from_probs: prob[89]: 0.000568
+10: whisper_vad_timestamps_from_probs: prob[90]: 0.001478
+10: whisper_vad_timestamps_from_probs: prob[91]: 0.000698
+10: whisper_vad_timestamps_from_probs: prob[92]: 0.000340
+10: whisper_vad_timestamps_from_probs: prob[93]: 0.000185
+10: whisper_vad_timestamps_from_probs: prob[94]: 0.000280
+10: whisper_vad_timestamps_from_probs: prob[95]: 0.000183
+10: whisper_vad_timestamps_from_probs: prob[96]: 0.000500
+10: whisper_vad_timestamps_from_probs: prob[97]: 0.000376
+10: whisper_vad_timestamps_from_probs: prob[98]: 0.001037
+10: whisper_vad_timestamps_from_probs: prob[99]: 0.000302
+10: whisper_vad_timestamps_from_probs: prob[100]: 0.000308
+10: whisper_vad_timestamps_from_probs: prob[101]: 0.000419
+10: whisper_vad_timestamps_from_probs: prob[102]: 0.019259
+10: whisper_vad_timestamps_from_probs: prob[103]: 0.484366
+10: whisper_vad_timestamps_from_probs: prob[104]: 0.725902
+10: whisper_vad_timestamps_from_probs: prob[105]: 0.843806
+10: whisper_vad_timestamps_from_probs: prob[106]: 0.777166
+10: whisper_vad_timestamps_from_probs: prob[107]: 0.764819
+10: whisper_vad_timestamps_from_probs: prob[108]: 0.715374
+10: whisper_vad_timestamps_from_probs: prob[109]: 0.540123
+10: whisper_vad_timestamps_from_probs: prob[110]: 0.441695
+10: whisper_vad_timestamps_from_probs: prob[111]: 0.388434
+10: whisper_vad_timestamps_from_probs: prob[112]: 0.651316
+10: whisper_vad_timestamps_from_probs: prob[113]: 0.822298
+10: whisper_vad_timestamps_from_probs: prob[114]: 0.788787
+10: whisper_vad_timestamps_from_probs: prob[115]: 0.695826
+10: whisper_vad_timestamps_from_probs: prob[116]: 0.358252
+10: whisper_vad_timestamps_from_probs: prob[117]: 0.265080
+10: whisper_vad_timestamps_from_probs: prob[118]: 0.126515
+10: whisper_vad_timestamps_from_probs: prob[119]: 0.086191
+10: whisper_vad_timestamps_from_probs: prob[120]: 0.048898
+10: whisper_vad_timestamps_from_probs: prob[121]: 0.011295
+10: whisper_vad_timestamps_from_probs: prob[122]: 0.004327
+10: whisper_vad_timestamps_from_probs: prob[123]: 0.004031
+10: whisper_vad_timestamps_from_probs: prob[124]: 0.076619
+10: whisper_vad_timestamps_from_probs: prob[125]: 0.345781
+10: whisper_vad_timestamps_from_probs: prob[126]: 0.886212
+10: whisper_vad_timestamps_from_probs: prob[127]: 0.947769
+10: whisper_vad_timestamps_from_probs: prob[128]: 0.924743
+10: whisper_vad_timestamps_from_probs: prob[129]: 0.919568
+10: whisper_vad_timestamps_from_probs: prob[130]: 0.911623
+10: whisper_vad_timestamps_from_probs: prob[131]: 0.909414
+10: whisper_vad_timestamps_from_probs: prob[132]: 0.855655
+10: whisper_vad_timestamps_from_probs: prob[133]: 0.623644
+10: whisper_vad_timestamps_from_probs: prob[134]: 0.649287
+10: whisper_vad_timestamps_from_probs: prob[135]: 0.338862
+10: whisper_vad_timestamps_from_probs: prob[136]: 0.137700
+10: whisper_vad_timestamps_from_probs: prob[137]: 0.043002
+10: whisper_vad_timestamps_from_probs: prob[138]: 0.020867
+10: whisper_vad_timestamps_from_probs: prob[139]: 0.012764
+10: whisper_vad_timestamps_from_probs: prob[140]: 0.004675
+10: whisper_vad_timestamps_from_probs: prob[141]: 0.005471
+10: whisper_vad_timestamps_from_probs: prob[142]: 0.002298
+10: whisper_vad_timestamps_from_probs: prob[143]: 0.001259
+10: whisper_vad_timestamps_from_probs: prob[144]: 0.000631
+10: whisper_vad_timestamps_from_probs: prob[145]: 0.001145
+10: whisper_vad_timestamps_from_probs: prob[146]: 0.000372
+10: whisper_vad_timestamps_from_probs: prob[147]: 0.001558
+10: whisper_vad_timestamps_from_probs: prob[148]: 0.000809
+10: whisper_vad_timestamps_from_probs: prob[149]: 0.001375
+10: whisper_vad_timestamps_from_probs: prob[150]: 0.001418
+10: whisper_vad_timestamps_from_probs: prob[151]: 0.000652
+10: whisper_vad_timestamps_from_probs: prob[152]: 0.000586
+10: whisper_vad_timestamps_from_probs: prob[153]: 0.001567
+10: whisper_vad_timestamps_from_probs: prob[154]: 0.004522
+10: whisper_vad_timestamps_from_probs: prob[155]: 0.001698
+10: whisper_vad_timestamps_from_probs: prob[156]: 0.001487
+10: whisper_vad_timestamps_from_probs: prob[157]: 0.001045
+10: whisper_vad_timestamps_from_probs: prob[158]: 0.000758
+10: whisper_vad_timestamps_from_probs: prob[159]: 0.001005
+10: whisper_vad_timestamps_from_probs: prob[160]: 0.001004
+10: whisper_vad_timestamps_from_probs: prob[161]: 0.001809
+10: whisper_vad_timestamps_from_probs: prob[162]: 0.000726
+10: whisper_vad_timestamps_from_probs: prob[163]: 0.000421
+10: whisper_vad_timestamps_from_probs: prob[164]: 0.000545
+10: whisper_vad_timestamps_from_probs: prob[165]: 0.001243
+10: whisper_vad_timestamps_from_probs: prob[166]: 0.000686
+10: whisper_vad_timestamps_from_probs: prob[167]: 0.000949
+10: whisper_vad_timestamps_from_probs: prob[168]: 0.000663
+10: whisper_vad_timestamps_from_probs: prob[169]: 0.887771
+10: whisper_vad_timestamps_from_probs: prob[170]: 0.951664
+10: whisper_vad_timestamps_from_probs: prob[171]: 0.959969
+10: whisper_vad_timestamps_from_probs: prob[172]: 0.960810
+10: whisper_vad_timestamps_from_probs: prob[173]: 0.956397
+10: whisper_vad_timestamps_from_probs: prob[174]: 0.938920
+10: whisper_vad_timestamps_from_probs: prob[175]: 0.955906
+10: whisper_vad_timestamps_from_probs: prob[176]: 0.947698
+10: whisper_vad_timestamps_from_probs: prob[177]: 0.968947
+10: whisper_vad_timestamps_from_probs: prob[178]: 0.974285
+10: whisper_vad_timestamps_from_probs: prob[179]: 0.990768
+10: whisper_vad_timestamps_from_probs: prob[180]: 0.992916
+10: whisper_vad_timestamps_from_probs: prob[181]: 0.990326
+10: whisper_vad_timestamps_from_probs: prob[182]: 0.991061
+10: whisper_vad_timestamps_from_probs: prob[183]: 0.968197
+10: whisper_vad_timestamps_from_probs: prob[184]: 0.836102
+10: whisper_vad_timestamps_from_probs: prob[185]: 0.919978
+10: whisper_vad_timestamps_from_probs: prob[186]: 0.942662
+10: whisper_vad_timestamps_from_probs: prob[187]: 0.983781
+10: whisper_vad_timestamps_from_probs: prob[188]: 0.989736
+10: whisper_vad_timestamps_from_probs: prob[189]: 0.986300
+10: whisper_vad_timestamps_from_probs: prob[190]: 0.989399
+10: whisper_vad_timestamps_from_probs: prob[191]: 0.989054
+10: whisper_vad_timestamps_from_probs: prob[192]: 0.957289
+10: whisper_vad_timestamps_from_probs: prob[193]: 0.954293
+10: whisper_vad_timestamps_from_probs: prob[194]: 0.992889
+10: whisper_vad_timestamps_from_probs: prob[195]: 0.992716
+10: whisper_vad_timestamps_from_probs: prob[196]: 0.993765
+10: whisper_vad_timestamps_from_probs: prob[197]: 0.995097
+10: whisper_vad_timestamps_from_probs: prob[198]: 0.994451
+10: whisper_vad_timestamps_from_probs: prob[199]: 0.994260
+10: whisper_vad_timestamps_from_probs: prob[200]: 0.994491
+10: whisper_vad_timestamps_from_probs: prob[201]: 0.994847
+10: whisper_vad_timestamps_from_probs: prob[202]: 0.993133
+10: whisper_vad_timestamps_from_probs: prob[203]: 0.995968
+10: whisper_vad_timestamps_from_probs: prob[204]: 0.996056
+10: whisper_vad_timestamps_from_probs: prob[205]: 0.994954
+10: whisper_vad_timestamps_from_probs: prob[206]: 0.993989
+10: whisper_vad_timestamps_from_probs: prob[207]: 0.994613
+10: whisper_vad_timestamps_from_probs: prob[208]: 0.991711
+10: whisper_vad_timestamps_from_probs: prob[209]: 0.995456
+10: whisper_vad_timestamps_from_probs: prob[210]: 0.996475
+10: whisper_vad_timestamps_from_probs: prob[211]: 0.996619
+10: whisper_vad_timestamps_from_probs: prob[212]: 0.996630
+10: whisper_vad_timestamps_from_probs: prob[213]: 0.995905
+10: whisper_vad_timestamps_from_probs: prob[214]: 0.997586
+10: whisper_vad_timestamps_from_probs: prob[215]: 0.996595
+10: whisper_vad_timestamps_from_probs: prob[216]: 0.985095
+10: whisper_vad_timestamps_from_probs: prob[217]: 0.961088
+10: whisper_vad_timestamps_from_probs: prob[218]: 0.926073
+10: whisper_vad_timestamps_from_probs: prob[219]: 0.989660
+10: whisper_vad_timestamps_from_probs: prob[220]: 0.994074
+10: whisper_vad_timestamps_from_probs: prob[221]: 0.995448
+10: whisper_vad_timestamps_from_probs: prob[222]: 0.993948
+10: whisper_vad_timestamps_from_probs: prob[223]: 0.996247
+10: whisper_vad_timestamps_from_probs: prob[224]: 0.997172
+10: whisper_vad_timestamps_from_probs: prob[225]: 0.996675
+10: whisper_vad_timestamps_from_probs: prob[226]: 0.997916
+10: whisper_vad_timestamps_from_probs: prob[227]: 0.996795
+10: whisper_vad_timestamps_from_probs: prob[228]: 0.997338
+10: whisper_vad_timestamps_from_probs: prob[229]: 0.996770
+10: whisper_vad_timestamps_from_probs: prob[230]: 0.995667
+10: whisper_vad_timestamps_from_probs: prob[231]: 0.994341
+10: whisper_vad_timestamps_from_probs: prob[232]: 0.995714
+10: whisper_vad_timestamps_from_probs: prob[233]: 0.994832
+10: whisper_vad_timestamps_from_probs: prob[234]: 0.991222
+10: whisper_vad_timestamps_from_probs: prob[235]: 0.973394
+10: whisper_vad_timestamps_from_probs: prob[236]: 0.888041
+10: whisper_vad_timestamps_from_probs: prob[237]: 0.554909
+10: whisper_vad_timestamps_from_probs: prob[238]: 0.242485
+10: whisper_vad_timestamps_from_probs: prob[239]: 0.104074
+10: whisper_vad_timestamps_from_probs: prob[240]: 0.030848
+10: whisper_vad_timestamps_from_probs: prob[241]: 0.020115
+10: whisper_vad_timestamps_from_probs: prob[242]: 0.017060
+10: whisper_vad_timestamps_from_probs: prob[243]: 0.005652
+10: whisper_vad_timestamps_from_probs: prob[244]: 0.007963
+10: whisper_vad_timestamps_from_probs: prob[245]: 0.003245
+10: whisper_vad_timestamps_from_probs: prob[246]: 0.005664
+10: whisper_vad_timestamps_from_probs: prob[247]: 0.004915
+10: whisper_vad_timestamps_from_probs: prob[248]: 0.002842
+10: whisper_vad_timestamps_from_probs: prob[249]: 0.004533
+10: whisper_vad_timestamps_from_probs: prob[250]: 0.001294
+10: whisper_vad_timestamps_from_probs: prob[251]: 0.001281
+10: whisper_vad_timestamps_from_probs: prob[252]: 0.000685
+10: whisper_vad_timestamps_from_probs: prob[253]: 0.001055
+10: whisper_vad_timestamps_from_probs: prob[254]: 0.000709
+10: whisper_vad_timestamps_from_probs: prob[255]: 0.000759
+10: whisper_vad_timestamps_from_probs: prob[256]: 0.790933
+10: whisper_vad_timestamps_from_probs: prob[257]: 0.951910
+10: whisper_vad_timestamps_from_probs: prob[258]: 0.953082
+10: whisper_vad_timestamps_from_probs: prob[259]: 0.950200
+10: whisper_vad_timestamps_from_probs: prob[260]: 0.920607
+10: whisper_vad_timestamps_from_probs: prob[261]: 0.898687
+10: whisper_vad_timestamps_from_probs: prob[262]: 0.933610
+10: whisper_vad_timestamps_from_probs: prob[263]: 0.938679
+10: whisper_vad_timestamps_from_probs: prob[264]: 0.979345
+10: whisper_vad_timestamps_from_probs: prob[265]: 0.964899
+10: whisper_vad_timestamps_from_probs: prob[266]: 0.933279
+10: whisper_vad_timestamps_from_probs: prob[267]: 0.590659
+10: whisper_vad_timestamps_from_probs: prob[268]: 0.292076
+10: whisper_vad_timestamps_from_probs: prob[269]: 0.269315
+10: whisper_vad_timestamps_from_probs: prob[270]: 0.988798
+10: whisper_vad_timestamps_from_probs: prob[271]: 0.993873
+10: whisper_vad_timestamps_from_probs: prob[272]: 0.992220
+10: whisper_vad_timestamps_from_probs: prob[273]: 0.990311
+10: whisper_vad_timestamps_from_probs: prob[274]: 0.986879
+10: whisper_vad_timestamps_from_probs: prob[275]: 0.992512
+10: whisper_vad_timestamps_from_probs: prob[276]: 0.993714
+10: whisper_vad_timestamps_from_probs: prob[277]: 0.986938
+10: whisper_vad_timestamps_from_probs: prob[278]: 0.995619
+10: whisper_vad_timestamps_from_probs: prob[279]: 0.997964
+10: whisper_vad_timestamps_from_probs: prob[280]: 0.998243
+10: whisper_vad_timestamps_from_probs: prob[281]: 0.998271
+10: whisper_vad_timestamps_from_probs: prob[282]: 0.998228
+10: whisper_vad_timestamps_from_probs: prob[283]: 0.997698
+10: whisper_vad_timestamps_from_probs: prob[284]: 0.995847
+10: whisper_vad_timestamps_from_probs: prob[285]: 0.996162
+10: whisper_vad_timestamps_from_probs: prob[286]: 0.995008
+10: whisper_vad_timestamps_from_probs: prob[287]: 0.993541
+10: whisper_vad_timestamps_from_probs: prob[288]: 0.994158
+10: whisper_vad_timestamps_from_probs: prob[289]: 0.998978
+10: whisper_vad_timestamps_from_probs: prob[290]: 0.998720
+10: whisper_vad_timestamps_from_probs: prob[291]: 0.984313
+10: whisper_vad_timestamps_from_probs: prob[292]: 0.995194
+10: whisper_vad_timestamps_from_probs: prob[293]: 0.995836
+10: whisper_vad_timestamps_from_probs: prob[294]: 0.997457
+10: whisper_vad_timestamps_from_probs: prob[295]: 0.997506
+10: whisper_vad_timestamps_from_probs: prob[296]: 0.998204
+10: whisper_vad_timestamps_from_probs: prob[297]: 0.997606
+10: whisper_vad_timestamps_from_probs: prob[298]: 0.997223
+10: whisper_vad_timestamps_from_probs: prob[299]: 0.998902
+10: whisper_vad_timestamps_from_probs: prob[300]: 0.997760
+10: whisper_vad_timestamps_from_probs: prob[301]: 0.995635
+10: whisper_vad_timestamps_from_probs: prob[302]: 0.994244
+10: whisper_vad_timestamps_from_probs: prob[303]: 0.981558
+10: whisper_vad_timestamps_from_probs: prob[304]: 0.993781
+10: whisper_vad_timestamps_from_probs: prob[305]: 0.996102
+10: whisper_vad_timestamps_from_probs: prob[306]: 0.994828
+10: whisper_vad_timestamps_from_probs: prob[307]: 0.998538
+10: whisper_vad_timestamps_from_probs: prob[308]: 0.998623
+10: whisper_vad_timestamps_from_probs: prob[309]: 0.999335
+10: whisper_vad_timestamps_from_probs: prob[310]: 0.998050
+10: whisper_vad_timestamps_from_probs: prob[311]: 0.996130
+10: whisper_vad_timestamps_from_probs: prob[312]: 0.995917
+10: whisper_vad_timestamps_from_probs: prob[313]: 0.989493
+10: whisper_vad_timestamps_from_probs: prob[314]: 0.980640
+10: whisper_vad_timestamps_from_probs: prob[315]: 0.992617
+10: whisper_vad_timestamps_from_probs: prob[316]: 0.997989
+10: whisper_vad_timestamps_from_probs: prob[317]: 0.997855
+10: whisper_vad_timestamps_from_probs: prob[318]: 0.994898
+10: whisper_vad_timestamps_from_probs: prob[319]: 0.993932
+10: whisper_vad_timestamps_from_probs: prob[320]: 0.991402
+10: whisper_vad_timestamps_from_probs: prob[321]: 0.983676
+10: whisper_vad_timestamps_from_probs: prob[322]: 0.976405
+10: whisper_vad_timestamps_from_probs: prob[323]: 0.987372
+10: whisper_vad_timestamps_from_probs: prob[324]: 0.947383
+10: whisper_vad_timestamps_from_probs: prob[325]: 0.981776
+10: whisper_vad_timestamps_from_probs: prob[326]: 0.974242
+10: whisper_vad_timestamps_from_probs: prob[327]: 0.922282
+10: whisper_vad_timestamps_from_probs: prob[328]: 0.619073
+10: whisper_vad_timestamps_from_probs: prob[329]: 0.367380
+10: whisper_vad_timestamps_from_probs: prob[330]: 0.349272
+10: whisper_vad_timestamps_from_probs: prob[331]: 0.055215
+10: whisper_vad_timestamps_from_probs: prob[332]: 0.026074
+10: whisper_vad_timestamps_from_probs: prob[333]: 0.014925
+10: whisper_vad_timestamps_from_probs: prob[334]: 0.031369
+10: whisper_vad_timestamps_from_probs: prob[335]: 0.012756
+10: whisper_vad_timestamps_from_probs: prob[336]: 0.015248
+10: whisper_vad_timestamps_from_probs: prob[337]: 0.010971
+10: whisper_vad_timestamps_from_probs: prob[338]: 0.009744
+10: whisper_vad_timestamps_from_probs: prob[339]: 0.060828
+10: whisper_vad_timestamps_from_probs: prob[340]: 0.014786
+10: whisper_vad_timestamps_from_probs: prob[341]: 0.032224
+10: whisper_vad_timestamps_from_probs: prob[342]: 0.059045
+10: whisper_vad_timestamps_from_probs: prob[343]: 0.079717
+```
+
