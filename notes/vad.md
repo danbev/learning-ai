@@ -967,6 +967,30 @@ in the jit model that I simply missed. But the values seem to follow the same
 general pattern and hopefully this is enough to get the whisper.cpp version
 working.
 
+To try this out further we can run the silero-vad example that produces
+speech timestamps:
+```console
+(venv) $ python src/silero-speech-timestamps.py 
+Speech segment 0: start=0.30s, end=2.20s
+Speech segment 1: start=3.30s, end=3.80s
+Speech segment 2: start=4.00s, end=4.30s
+Speech segment 3: start=5.40s, end=7.60s
+Speech segment 4: start=8.20s, end=10.60s
+```
+And there is a python program which creates a wrapper around the custom pytorch
+model and then uses that with the same silero-vad `get_speech_timestamps` to
+get the timestamps:
+```console
+(venv) $ python src/reverse-eng/speech-timestamps.py 
+Detected speech segments:
+Segment 1: 0.29s - 2.21s (duration: 1.92s)
+Segment 2: 3.30s - 3.77s (duration: 0.48s)
+Segment 3: 4.00s - 4.35s (duration: 0.35s)
+Segment 4: 5.38s - 7.65s (duration: 2.27s)
+Segment 5: 8.16s - 10.59s (duration: 2.43s)
+```
+
+
 The inputs to the model are the following, which I collected from https://netron.app/
 using the ONNX model:
 ```
