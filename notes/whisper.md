@@ -720,6 +720,9 @@ Next, the decoders are initalized:
         decoder.rng = std::mt19937(0);
     }
 ```
+Notice that all decoders are initialized with rng seed 0. I opened an issue
+about this and it has since been updated.
+
 Then the prompt is prepared:
 ```c++
     // prepare prompt
@@ -922,7 +925,7 @@ So here we have the inference loop. First the encoder is called which is taking 
 spectrogram and passing it to the encoder part of th model. A nice diagram of this can be
 found on page 4 of the paper. First there is a Cov1D layer followed by a GELU activation,
 and then another Conv1D layer followed by another GELU activation. The output of this then
-as position encodings added to it.
+has position encodings added to it.
 This function is also what delegates to the Core ML or OpenVINO external encoders if one
 of them are enabled.
 
