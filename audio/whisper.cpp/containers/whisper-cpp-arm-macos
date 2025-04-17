@@ -1,0 +1,19 @@
+FROM ubuntu:22.04
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone whisper.cpp
+WORKDIR /app
+RUN git clone https://github.com/ggerganov/whisper.cpp.git
+WORKDIR /app/whisper.cpp
+
+# Build commands will be run manually to debug issues
+CMD ["/bin/bash"]
