@@ -60,8 +60,8 @@ type = struct common_sampler {
         cur_p = { cur.data(), cur.size(), -1, false };
     }
 ```
-This is setting the current probabilities to the logits of the last prediction
-performed.
+This is setting the current probabilities (cur_p) to the logits of the last
+prediction performed.
 ```console
 (gdb) ptype cur_p
 type = struct llama_token_data_array {
@@ -148,11 +148,11 @@ static void llama_sampler_logit_bias_apply(struct llama_sampler * smpl, llama_to
     }
 }
 ```
-What this sampler does enables a way to modify how likely certain tokens are to
-be selected during sampling. We can see above that the biases are stored in
-`ctx` which I found somewhat confusing (the naming as I thougth this was a
-ggml_context or a llama_context) but if we look closer it is actual of type it
-is of type `llama_sampler_logit_bias`: 
+What this sampler does is it enables a way to modify how likely certain tokens
+are to be selected during sampling. We can see above that the biases are stored
+in `ctx` which I found somewhat confusing (the naming as I thougth this was a
+ggml_context or a llama_context) but if we look closer it is actually of type
+`llama_sampler_logit_bias`: 
 ```console
 (gdb) ptype llama_sampler_logit_bias
 type = struct llama_sampler_logit_bias {
@@ -162,9 +162,9 @@ type = struct llama_sampler_logit_bias {
 }
 ```
 So bascially what this is doing is that it is iterating over all the logit biases
-and if there is a match in the current probabilities data for this token id the
-bias will be applied. So where is these logit biases coming from?   For this we
-need to look back in main.cpp:
+and if there is a match in the current probabilities data for this token id, the
+bias will be applied (added). So where is these logit biases coming from?   For
+this we need to look back in main.cpp:
 ```c++
     smpl = common_sampler_init(model, sparams);
 ```
@@ -607,7 +607,7 @@ void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, boo
     gsmpl->prev.push_back(token);
 }
 ```
-Some samplers need to keep track of previous tokens, for example the repitition
+Some samplers need to keep track of previous tokens, for example the repetition
 penalty sample would need to know which tokens it has seen before:
 ```c++
 static void llama_sampler_penalties_accept(struct llama_sampler * smpl, llama_token token) {
@@ -646,7 +646,7 @@ sampler may need this but some do.
 [llguidance.md](./llguidance.md)
 
 ### Lazy Grammar Initialization
-Going through the server code I came accross this paramater/option. But before
+Going through the server code I came accross this parameter/option. But before
 we look at the lazy part lets just go over an example of using a grammar.
 ```console
 curl -fsS \
@@ -1575,6 +1575,177 @@ static const char * parse_name(const char * src) {
 ```
 This is done by iterating over the characters until we reach a character that
 is not a word character. And notice the pos will point to the first character
-after the name.
+after the name. A
+Then we have the `parse_space` call which we've already seen. Then the length
+of the rule name will be calculated.
+Following that we have the `get_symbol_id` call which is passing in the name
+length, and the original source string:
 ```c++
+(gdb) p src
+$8 = 0x55555610e930 "root   ::= object\nvalue  ::= object | array | string | number | (\"true\" | \"false\" | \"null\") ws\n\nobject ::=\n  \"{\" ws (\n", ' ' <repeats 12 times>, "string \":\" ws value\n    (\",\" ws string \":\" ws value)*\n  )? \"}\" ws\n\narr"...
+(gdb) p name_len
+$7 = 4
 ```
+This will use the `symbol_ids` std::map (not std::unordered_map which I wonder
+what the reason was for chosing std::map instead of std::unordered) to get the
+a unique id for the symbol. 
+```c++
+uint32_t llama_grammar_parser::get_symbol_id(const char * src, size_t len) {
+    uint32_t next_id = static_cast<uint32_t>(symbol_ids.size());
+    auto result = symbol_ids.emplace(std::string(src, len), next_id);
+    return result.first->second;
+}
+```
+This is using the size of the map as the next id, and then it is inserting the
+into the map. The `emplace` function will return a pair where the first is the
+entry inserted (if it was) which is also a pair. And the second value of the pair
+is a  bool indicating if the element was inserted or not:
+```console
+(gdb) p result
+$10 = {first = {first = "root", second = 0}, second = true}
+```
+Following that we have:
+```c++
+    const std::string name(src, name_len);
+
+    if (!(pos[0] == ':' && pos[1] == ':' && pos[2] == '=')) {
+        throw std::runtime_error(std::string("expecting ::= at ") + pos);
+    }
+    pos = parse_space(pos + 3, true);
+
+    pos = parse_alternates(pos, name, rule_id, false);
+```
+This is just checking for the existence of the `::=` and then skipping any
+additional whitespaces or comments.
+Lets now look at `parse_alternates`:
+```console
+(gdb) p rule_id
+$13 = 0
+(gdb) p name
+$14 = "root"
+(gdb) p pos
+$15 = 0x55555610e93b "object\nvalue  ::= object | array | string | number | (\"true\" | \"false\" | \"null\") ws\n\nobject ::=\n  \"{\" ws (\n", ' ' <repeats 12 times>, "string \":\" ws value\n    (\",\" ws string \":\" ws value)*\n  )? \"}\" ws\n\narray  ::=\n  \""...
+```
+
+```c++
+const char * llama_grammar_parser::parse_alternates(
+        const char        * src,
+        const std::string & rule_name,
+        uint32_t            rule_id,
+        bool                is_nested) {
+    llama_grammar_rule rule;
+    const char * pos = parse_sequence(src, rule_name, rule, is_nested);
+    while (*pos == '|') {
+        rule.push_back({LLAMA_GRETYPE_ALT, 0});
+        pos = parse_space(pos + 1, true);
+        pos = parse_sequence(pos, rule_name, rule, is_nested);
+    }
+    rule.push_back({LLAMA_GRETYPE_END, 0});
+    add_rule(rule_id, rule);
+    return pos;
+}
+```
+So this is creating a `llama_grammar_rule` which is a vector of
+`llama_grammar_element`:
+```console
+(gdb) ptype rule
+type = std::vector<llama_grammar_element>
+```
+And passing this to `parse_sequence`:
+```c++
+const char * llama_grammar_parser::parse_sequence(
+        const char         * src,
+        const std::string  & rule_name,
+        llama_grammar_rule & rule,
+        bool               is_nested) {
+    size_t last_sym_start = rule.size();
+    const char * pos = src;
+
+    auto handle_repetitions = [&](int min_times, int max_times) {
+        ...
+    };
+```
+Repitions are things like `*`, `+`, `?` and {m,n}.
+
+```c++
+    while (*pos) {
+        if (*pos == '"') { // literal string
+            ...
+        } else if (is_word_char(*pos)) { // rule reference
+            const char * name_end    = parse_name(pos);
+            uint32_t ref_rule_id = get_symbol_id(pos, name_end - pos);
+            pos = parse_space(name_end, is_nested);
+            last_sym_start = rule.size();
+            rule.push_back({LLAMA_GRETYPE_RULE_REF, ref_rule_id});
+        } else if (*pos == '(') { // grouping
+        ... 
+```
+So we are seeing `parse_name` again which so this is parsing the name next
+part of the rule which is `object` which is a non-terminal.
+And then we are calling `get_symbol_id` which will return the id for the rule:
+```console
+(gdb) p result
+$25 = {first = {first = "object", second = 1}, second = true}
+```
+Following that a rule is pushed onto the stack and notice that this is of type
+LLAMA_GRETYPE_RULE_REF. This is the type for non-terminals.
+```console
+(gdb) p rule
+$31 = std::vector of length 1, capacity 1 = {{type = LLAMA_GRETYPE_RULE_REF, value = 1}}
+```
+After the whole rules file has been parse we will return back in
+`llama_grammar_init_impl`:
+
+```c++
+    // if there is a grammar, parse it
+    if (!parser.parse(grammar_str)) {
+        return nullptr;
+    }
+
+    // will be empty (default) if there are parse errors
+    if (parser.rules.empty()) {
+        fprintf(stderr, "%s: failed to parse grammar\n", __func__);
+        return nullptr;
+    }
+
+    // Ensure that there is a "root" node.
+    if (parser.symbol_ids.find("root") == parser.symbol_ids.end()) {
+        fprintf(stderr, "%s: grammar does not contain a 'root' symbol\n", __func__);
+        return nullptr;
+    }
+
+    std::vector<const llama_grammar_element *> grammar_rules(parser.c_rules());
+```
+What is `c_rules()`?
+This is creating a vector of pointers to the rules:
+```c++
+llama_grammar_stack llama_grammar_parser::c_rules() const {
+    llama_grammar_stack ret;
+    ret.reserve(rules.size());
+    for (const auto & rule : rules) {
+        ret.push_back(rule.data());
+    }
+    return ret;
+}
+```
+Next the is a check for left recursion which is when we have a situation like
+the following:
+```c
+expr ::= expr "+" number  | number
+```
+In this case to expand `expr` it will need to expand `expr "+" number` and that
+means it has to expand `expr` again. This will lead to an infinite loop.
+```c++
+    // Check for left recursion
+    std::vector<bool> rules_visited(n_rules);
+    std::vector<bool> rules_in_progress(n_rules);
+    std::vector<bool> rules_may_be_empty(n_rules);
+    for (size_t i = 0; i < n_rules; i++) {
+        if (rules_visited[i]) {
+            continue;
+        }
+        if (llama_grammar_detect_left_recursion(vec_rules, i, &rules_visited, &rules_in_progress, &rules_may_be_empty)) {
+            LLAMA_LOG_ERROR("unsupported grammar, left recursion detected for nonterminal at index %zu", i);
+            return nullptr;
+        }
+    }
