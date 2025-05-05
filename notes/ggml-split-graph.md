@@ -158,8 +158,8 @@ This would be the same as the following command:
 $8 = -1
 ```
 This is iterating over all the leafs in the graph and if the leaf does not have
-a backend assigned to it yet it will call assign a backend to it using
-the function `ggml_backend_sched_backend_id_from_cur`.
+a backend assigned to it yet it will assign a backend to it using the function
+`ggml_backend_sched_backend_id_from_cur`.
 
 So, -1 means that this tensor does not have a backend assigned to it yet.
 ```console
@@ -267,7 +267,7 @@ So we are again getting the node_backend_id for the current node:
 $24 = -1
 ```
 So actually nothing will be done in the above for loop.
-The next block we have is the following which notice will iterate over the
+The next block we have is the following, which notice will iterate over the
 nodes in reverse order (staring from the last node):
 ```c++
     {
@@ -291,7 +291,7 @@ nodes in reverse order (staring from the last node):
     }
 ```
 Notice that this code is actually identical to the previous blocks. The
-reason for first doing an iteration from the first to the last node is it
+reason for first doing an iteration from the first to the last node is to
 identify a node that has a backend assigned it will assign that backend to
 subsequent nodes. The backward iteration will do something simlar but from the
 other end, and assign backends to the previous nodes (if they don't have one

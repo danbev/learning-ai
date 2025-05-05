@@ -159,7 +159,6 @@ struct ggml_gallocr {
     int n_leafs;
 };
 ```
-Above we can see that that hash_set if freedgT
 
 ```c++
 static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
@@ -175,7 +174,7 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
     }
     ...
 ```
-So in out case the first leaf is:
+So in our case the first leaf is:
 ```console
 (gdb) p *leaf
 $11 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE, 
@@ -296,9 +295,9 @@ block (variable name in code above):
    offset                                                               size
 ```
 And we retrieved the backend buffer type for the buffer id, and also calculate
-the size in bytes that the node needs which is 4 in this case. With this we will
-call `ggml_dyn_tallocr_alloc`. The offset returned will be 32 for this node and
-the next free block will be:
+the size in bytes that the node needs, which is 4 in this case. With this we
+will call `ggml_dyn_tallocr_alloc`. The offset returned will be 32 for this node
+and the next free block will be:
 ```console
 (gdb) p galloc.buf_tallocs[0].free_blocks[0]
 $44 = {offset = 32, size = 9223372036854775775}
@@ -411,6 +410,14 @@ Now, in this case the operation can be made inplace:
 $42 = true
 ```
 ```c++
+static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node, int buffer_id) {
+    GGML_ASSERT(buffer_id >= 0);
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+
+    if (!ggml_gallocr_is_allocated(galloc, node) && !ggml_is_view(node)) {
+        hn->allocated = true;
+        assert(hn->offset == 0);
+
         if (ggml_op_can_inplace(node->op)) {
             for (int i = 0; i < GGML_MAX_SRC; i++) {
                 struct ggml_tensor * parent = node->src[i];
@@ -462,7 +469,7 @@ $42 = true
 ```
 In our case `a` has one child, `n_children` is 1 and no views, `n_views` is 0,
 and it is not a view. And note that output tensors cannot be resued, and the
-tensor need to have the same type and dimensions (layout).
+tensor needs to have the same type and dimensions (layout).
 
 Now, this is interesting what happnes next:
 ```c++
@@ -483,10 +490,10 @@ $45 = {n_children = 1, n_views = 0, buffer_id = 1, offset = 0, allocated = true}
 So the hash node entry for the multiplication operation will now have the same
 buffer id and offset as the `l_a` tensor.
 
-An instance of the `hash_node` struct is created for each tensor and hold
+An instance of the `hash_node` struct is created for each tensor and holds the
 allocation releated metadata and is used for graph execution planning. It
 provides information about where the tensor is allocated (which buffer and
-offset), if it has children and if it is allocated or not. But this is still
+offset), if it has children, and if it is allocated or not. But this is still
 about planning I think and the other structs (node_alloc etc) we will see later
 hold similar information but for a different stage so it might be good to think
 of it this way. Like even during planning if all the leafs and nodes are
@@ -544,7 +551,7 @@ which is mul, and again it's parents will be iterated over:
 ```
 This time, the parents `hash_node` will have its `n_children` decremented which
 will bring the count down to zero. It is not a view so that is skipped and since
-we set `p_hn->allocated=false` ealier this will not be freed which is good as
+we set `p_hn->allocated=false` earlier this will not be freed which is good as
 it is reused by the mul tensor.
 But for the `b` tensor it will be freed as it has not been reused. It would not
 have been freed though if it was marked as an output tensor:
@@ -578,7 +585,7 @@ use the information from that was created/set in `ggml_gallocr_alloc_graph_impl`
     }
 ```
 So `node_allocs` is another member of the `galloc` struct and is an array of
-`node_alloc` structs and the size if `galloc->n_nodes`:
+`node_alloc` structs and the size is `galloc->n_nodes`:
 ```console
 (gdb) ptype *galloc->node_allocs
 type = struct node_alloc {
@@ -625,8 +632,9 @@ be executed.
         ...
 ```
 Notice that the `hash_node` for this node is retrieved (from the "planning phase")
-and it will set the `buffer_id` and `offset` from the hash node and set them
-on the `node_alloc` instance. And the size will be by calling the backend
+and it will set the `buffer_id` and `offset` from the hash node and set then
+on the `node_alloc` instance. And the size will be by calling 
+`ggml_backend_buft_get_alloc_size` for the backend buffer type and the node.
 
 ```console
 (gdb) p *hn

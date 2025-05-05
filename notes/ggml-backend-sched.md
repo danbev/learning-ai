@@ -303,7 +303,8 @@ the startup and not a inference time.
 
 So this is why there is another reserve for the prefill prompt graph so that the
 sizes are correct for the first prompt as before this the sizes are those for
-the token generation.
+the token generation. And this is done here instead of in the `llama_decode_impl`
+which happens at inference time.
 ```c++
             // reserve again with pp graph to avoid ggml-alloc reallocations during inference
             gf_pp = llama_build_graph(*ctx, ubatch_pp, true);
@@ -381,13 +382,12 @@ static void llama_kv_cache_update_impl(struct llama_context & lctx) {
 ```
 Now, if a k-shift is needed then the scheduler is reset and a new graph is built
 and the scheduler is allocated with the new graph which is then computed. But
-this would remove the previous graph and the buffers that were allocated for it.
-This is also the case for `llama_kv_cache_defrag_impl`.
-
-And I think this might be the reason why there is another worst case graph
+this would remove the allocations as there will be a difference in the nodes
+and the allocations. This is also the case for `llama_kv_cache_defrag_impl`.
+I think this might be the reason why there is another worst case graph
 reservation done to "reset" this back to the ealier reservation state. And this
 is using the max prompt size as in this case the sequence length would be at
-the max because the kv cache needed shifting or defragmenting.
+the max because the kv cache needed shifting or defragmenting (again I think).
 
 ### hash sets
 What confused me initially has that when stepping through the code I found
