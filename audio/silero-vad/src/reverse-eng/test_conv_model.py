@@ -1,6 +1,7 @@
 import torch
 import os
 import numpy as np
+import torch.nn as nn
 from conv_stft_model import SileroVAD
 from silero_vad import read_audio
 
@@ -15,18 +16,18 @@ def test_model_with_weights(pytorch_model_path):
     #    if 'decoder' in key:
     #        print(key)
     new_state_dict = {}
-    for key, value in state_dict.items():
-        if key == "decoder.decoder.2.weight":
-            new_state_dict["decoder.conv.weight"] = value
-        elif key == "decoder.decoder.2.bias":
-            new_state_dict["decoder.conv.bias"] = value
-        else:
-            new_state_dict[key] = value
+    #for key, value in state_dict.items():
+    #    if key == "decoder.decoder.2.weight":
+    #        new_state_dict["decoder.conv.weight"] = value
+    #    elif key == "decoder.decoder.2.bias":
+    #        new_state_dict["decoder.conv.bias"] = value
+    #    else:
+    #        new_state_dict[key] = value
 
     if pytorch_model_path and os.path.exists(pytorch_model_path):
         print(f"Loading PyTorch model from {pytorch_model_path}")
         #pytorch_model.load_state_dict(torch.load(pytorch_model_path))
-        pytorch_model.load_state_dict(new_state_dict)
+        pytorch_model.load_state_dict(state_dict)
     else:
         print(f"Warning: Model file not found at {pytorch_model_path}")
 
@@ -35,12 +36,28 @@ def test_model_with_weights(pytorch_model_path):
     #print(new_state_dict['decoder.conv.weight'].shape)
 
     def print_tensor(name, n):
-        tensor = new_state_dict[name]
-        print(f"${name} shape: {tensor.shape}")
+        tensor = state_dict[name]
+        print(f"{name} shape: {tensor.shape}")
         flat_view = tensor.reshape(-1)
-        print(f"First {n} elements: {flat_view[:n].numpy()}")
+        print(f"First {n} elements:")
+        for i, element in enumerate(flat_view[:n].numpy()):
+            print(f"  {i}: {element}")
 
-    print_tensor('encoder.0.reparam_conv.weight', 200)
+    print_tensor('stft.forward_basis_buffer', 10)
+    print_tensor('encoder.0.reparam_conv.weight', 10)
+    print_tensor('encoder.0.reparam_conv.bias', 10)
+    print_tensor('encoder.1.reparam_conv.weight', 10)
+    print_tensor('encoder.1.reparam_conv.bias', 10)
+    print_tensor('encoder.2.reparam_conv.weight', 10)
+    print_tensor('encoder.2.reparam_conv.bias', 10)
+    print_tensor('encoder.3.reparam_conv.weight', 10)
+    print_tensor('encoder.3.reparam_conv.bias', 10)
+    print_tensor('decoder.rnn.weight_ih', 10)
+    print_tensor('decoder.rnn.weight_hh', 10)
+    print_tensor('decoder.rnn.bias_ih', 10)
+    print_tensor('decoder.rnn.bias_hh', 10)
+    print_tensor('decoder.decoder.2.weight', 10)
+    print_tensor('decoder.decoder.2.bias', 1)
     #flat_view = tensor.reshape(-1)
     #print(f"First 100 elements: {flat_view[:100].numpy()}")
     #print(new_state_dict['decoder.rnn.weight_ih'].shape)
@@ -49,7 +66,6 @@ def test_model_with_weights(pytorch_model_path):
     #flat_view = tensor.reshape(-1)
     #print(f"First 100 elements: {flat_view[:100].numpy()}")
 
-    #print("STFT basis buffer samples:", pytorch_model.stft.forward_basis_buffer)
 
     # Create test input
     sample_rate = 16000
@@ -80,7 +96,7 @@ def test_model_with_weights(pytorch_model_path):
     # Process each chunk
     with torch.no_grad():
         for i in range(n_chunks):
-            print("---------------------------------------------------")
+            #print("---------------------------------------------------")
             # Get current chunk
             start_idx = i * chunk_size
             end_idx = min((i + 1) * chunk_size, len(wav))
@@ -105,8 +121,8 @@ def test_model_with_weights(pytorch_model_path):
             all_probabilities.append(pytorch_output.item())
 
             print(f"Processed chunk {i+1}/{n_chunks}, probability: {pytorch_output.item():.6f}")
-            if i == 1:
-                break
+            #if i == 4:
+                #break
 
     # Print summary statistics
     print("\nProcessing complete!")
