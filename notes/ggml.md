@@ -4493,8 +4493,8 @@ Is part of the [Zig build system)(https://ziglang.org/learn/build-system/).
 
 
 ### `ggml_context`
-When we call `ggml_init` the first time there will a a few things that will
-be done only for the first call. One of these is setting up a global
+When we call `ggml_init` the first time there will a few things that will be
+done only for the first call. One of these is setting up a global
 `g_state` struct.
 ```c
 struct ggml_state {
@@ -4521,8 +4521,9 @@ Now, `contexts` is being initialized using `{ { 0 } }`. The outer braces are
 creating an array and the inner braces are creating one `ggml_context_container`
 which is initalizes to 0 (`{ 0 }`). In C when we provide fewer initializers than
 the number of elements in an array, the remaining elements are initialized to 0.
-So by providing just `{ { 0 } }`, we explicitly zeroing out the first element,
+So by providing just `{ { 0 } }`, we are explicitly zeroing out the first element,
 and implicitly zeroing out all the rest.
+
 Now, there is also an additional for loop that is initializing the `used` member
 of each `ggml_context_container` to false:
 ```c
@@ -7391,3 +7392,75 @@ Compared to a GEMM function this uses single precision floats which makes it
 faster but less percise. This is later used in `ggml_compute_forward_mul_mat`.
 
 ### ggml_backend_schede
+
+### tensor memory
+I've added a note about this somewhere before but I can't find it so this is
+probably a duplicate. But to clarify the relationship between the mem_buffer
+and a tensor pointer.
+
+Take the following code
+```c++
+struct ggml_init_params params = {
+    .mem_size   = ggml_tensor_overhead() + sizeof(float),
+    .mem_buffer = NULL,
+    .no_alloc   = false,
+};
+
+struct ggml_context * ctx = ggml_init(params);
+
+a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+ggml_set_name(a, "a");
+```
+So initially the context's `mem_buffer` is will be large enough to store
+one tensor.
+```
+    mem_buffer
+       ↓
+       +---------------------------------------------------------
+       |                                                      ... 
+       +---------------------------------------------------------
+```
+When the tensor is created a new object of type `GGML_OBJECT_TYPE_TENSOR` is
+created in the above memory buffer:
+```console
+(gdb) p *obj_new
+$4 = {offs = 32, size = 352, next = 0x0, type = GGML_OBJECT_TYPE_TENSOR, padding = "\000\000\000"}
+```
+A pointer to this memory is returned by:
+```console
+struct ggml_tensor * const result = (struct ggml_tensor *)((char *)ctx->mem_buffer + obj_new->offs);
+```
+Recall that the (char *) cast is only there to enable pointer arithmetic, and this
+is bacically just taking the address of the memory buffer and adding the offset.
+```console
+(gdb) p *a
+$14 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE,
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0,
+  view_offs = 0, data = 0x5555557018f0, name = "a", '\000' <repeats 62 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+
+
+(gdb) p ctx->mem_buffer+32
+$7 =        (void *) 0x5555557017a0
+(gdb) p a
+$8 = (ggml_tensor *) 0x5555557017a0
+
+(gdb) p *((struct ggml_tensor*) (ctx->mem_buffer+32))
+$13 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x0, ne = {1, 1, 1, 1}, nb = {4, 4, 4, 4}, op = GGML_OP_NONE,
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0,
+  view_offs = 0, data = 0x5555557018f0, name = "a", '\000' <repeats 62 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+In this case the data for the tensor is also created in the memory buffer:
+```console
+(gdb) p a->data
+$15 = (void *) 0x5555557018f0
+
+(gdb) p *(int*) a->data
+$20 = 18
+```
+So in this case we are letting ggml create the memory buffer that is used, and
+it will be freed when the context is freed. This is useful when we have
+sort-lived operations, like we want to run some operations and get the result and
+then free the context. But other times we want to keep the tensors around and for
+that, since the tensor is a pointer into the memory buffer we need to keep the
+memory buffer around, and that means we have to create it ourselves and it will
+not be freed by ggml_free.
