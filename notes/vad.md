@@ -1137,7 +1137,7 @@ model contains a precomputed STFT basis buffer:
 _model.stft.forward_basis_buffer: torch.Size([258, 1, 256])
 ```
 The first dimension is the filter length, which in this case is 258 and probably
-129 complex number (real and imaginary) values for a total of 256 values. These
+129 complex number (real and imaginary) values for a total of 258 values. These
 are the STFT kernel cooefficients (window function * complex exponential terms).
 This prepopulated STFT tensor allows us to not have to recompute the STFT basis
 every time we want to process an audio. We can use a convolution using this tensor
@@ -1147,7 +1147,7 @@ encoder blocks.
 The second dimension is the number of channels, which for audio is a single
 channel assuming mono and not stereo.
 
-The third dimension  256 is the number of frequency output bins that we get from the
+The third dimension 256 is the number of frequency output bins that we get from the
 STFT. These are the frequencies that are of interest for human speach. For a typical
 sampling rate of 16000 Hz, 256 bins gives about 31.25.
 
@@ -1157,7 +1157,7 @@ Now, for whisper/ggml we need to have the convolution tensor in the format:
 ```
 That is a kernel size of 256, 1 channel, and 258 actual kernels/filters.
 ```
-input [0            639]      // 512 reflection padded with 64 samples
+input [0            639]      // 512 reflection padded with 64 samples (640)
 
 kernel matrix: {256, 1, 258}
 0 
@@ -1217,6 +1217,10 @@ the values used in the dot product when we convolve over the input. There are
 frequency exists) and 129 for the sine/imaginary (how much of a specific sine
 frequency exists).
 
+This represents 4 time steps (the 4 segments).
+```
+```
+
 So the first layer, `(sftf)` above, will take raw audio samples, 512 samples at
 16kHz which is about 32ms.
 ```
@@ -1226,6 +1230,15 @@ The actual values in the tensor `_model.stft.forward_basis_buffer` are the
 precomputed STFT coefficients and also include the HANN window compution. This
 is possible as the number of frequencies is set to 256 which so all the information
 required is availble beforehand.
+
+And the actual output from the STFT layer is only the magnitues so the shape will
+be:
+```console
+(gdb) p cur->ne
+$1 = {4, 129, 1, 1}
+```
+That is 258/2 = 129 complex numbers (real and imaginary) which is the output
+which will become the input to the encoder block.
 
 #### Encoder block
 The there is an encoder, `(encoder)` above, block which has 4 layers:
@@ -1252,15 +1265,47 @@ So this would looks something like this:
 0
    0  [0  2]
       ...
- 129  [0  2]
+ 128  [0  2]
 
 ...
 127
    0  [0  2]
       ...
- 129  [0  2]
+ 128  [0  2]
 
+
+And the input will have a shape of:
+[4, 129, 1, 1]
 ```
+This might look something like this in c++:
+```c++
+static ggml_tensor * whisper_vad_build_encoder_layer(ggml_context* ctx0,
+        const whisper_vad_model & model, ggml_tensor * cur) {
+    // First Conv1D: expands to 128 channels.
+    cur = ggml_conv_1d(ctx0, model.encoder_0_weight, cur, 1, 1, 1);
+    cur = ggml_add(ctx0, cur, ggml_reshape_3d(ctx0, model.encoder_0_bias, 1, 128, 1));
+    cur = ggml_relu(ctx0, cur);
+
+    // Second Conv1D: reduces to 64 channels.
+    cur = ggml_conv_1d(ctx0, model.encoder_1_weight, cur, 2, 1, 1);
+    cur = ggml_add(ctx0, cur, ggml_reshape_3d(ctx0, model.encoder_1_bias, 1, 64, 1));
+    cur = ggml_relu(ctx0, cur);
+
+    // Third Conv1D: maintains 64 channels
+    cur = ggml_conv_1d(ctx0, model.encoder_2_weight, cur, 2, 1, 1);
+    cur = ggml_add(ctx0, cur, ggml_reshape_3d(ctx0, model.encoder_2_bias, 1, 64, 1));
+    cur = ggml_relu(ctx0, cur);
+
+    // Fourth Conv1D: expands to 128 channels
+    cur = ggml_conv_1d(ctx0, model.encoder_3_weight, cur, 1, 1, 1);
+    cur = ggml_add(ctx0, cur, ggml_reshape_3d(ctx0, model.encoder_3_bias, 1, 128, 1));
+    cur = ggml_relu(ctx0, cur);
+
+    return cur;
+}
+```
+So the input, `cur` above is the output from the STFT layer and this will be
+the magnitudes of the STFT. We can think of the first 1d convolution asg
 
 #### Decoder block
 Then we have a decoder, `(decoder)` above, block which has 4 layers:
@@ -3837,4 +3882,559 @@ And this is the output from whisper.cpp:
 10: Segment 2: start = 4.00, end = 4.35
 10: Segment 3: start = 5.38, end = 7.65
 10: Segment 4: start = 8.16, end = 10.56
+```
+
+Now, in whisper.cpp what we are really interested in is to reduce the amount of
+processing for transcribing or translating audio. For example we might have a
+long audio file but not all of it is speech but we still have to process the
+complete file. If we instead could use the information here, the probabilities
+and/or the timestamps to reduce the input audio file before actually passing
+this along to whipser.
+
+
+### whisper_vad_timestamps_from_probs
+Just for some background...we have the probabilities for each sample window, 512
+window size in in this case which produced 344 probabilities, that were already
+generated using our VAD implementation, and here we are trying to extract
+the segments (start, end) for the ones that contains speech.
+344 windows × 512 samples per window = 176,128 samples at 16,000 Hz sample rate,
+is approximately 11 seconds of audio.
+
+
+We do this for example by using the threshold, anything over this is considered
+the start of a speech segment (a number of samples), and neg_threshold is used
+to detect the end of a segment. We don't want the exact same value as we might
+"dip" down below the threshold temporarily so this is like an extra check to not
+create close the segment.
+
+The sample rate in whisper is 16000.
+```console
+(gdb) p params
+$16 = {
+threshold = 0.5,
+min_speech_duration_ms = 250,
+min_silence_duration_ms = 100,
+max_speech_duration_s = 3.40282347e+38,
+speech_pad_ms = 30,
+window_size_samples = 512}
+```
+So for a speech segment to be considered valid we define a minimum duration
+that a speech segment must be in order to be considered valid:
+```c++
+    int min_speech_samples      = sample_rate * min_speech_duration_ms / 1000;
+```
+So sample rate is 16000 in whisper.cpp, and min_speech_duration is by default
+250:
+```console
+$9 = 16000
+(gdb) p min_speech_duration_ms 
+$10 = 250
+(gdb) p sample_rate * min_speech_duration_ms
+$11 = 4000000
+(gdb) p sample_rate * min_speech_duration_ms / 1000
+$12 = 4000
+```
+The calculation gives 4000 samples as the minimum length for a segment to be
+considered valid speech (converted to seconds from milliseconds).
+So we have 160000 samples per second, and we have set the min speeach duration
+to 250 ms
+
+We also have padding:
+```c++
+    int speech_pad_samples      = sample_rate * speech_pad_ms / 1000;
+```
+This is the number of samples to add as padding to the start and end of detected
+speech segments. This ensures that the beginning and end of the speech segment
+are not cut off to abruptly. The default value is 30 ms, which is 480 samples at
+```console
+(gdb) p speech_pad_samples
+$1 = 480
+```
+
+```c++
+    int max_speech_samples;
+    if (max_speech_duration_s > 100000.0f) {
+        max_speech_samples = INT_MAX / 2;
+    } else {
+        int64_t temp = (int64_t)sample_rate * (int64_t)(max_speech_duration_s) - window_size_samples - 2 * speech_pad_samples;
+        max_speech_samples = (temp > INT_MAX) ? INT_MAX / 2 : (int)temp;
+        if (max_speech_samples < 0) {
+            max_speech_samples = INT_MAX / 2;
+        }
+    }
+```
+max_speech_samples is the maximum number of samples to consider for a speech
+segment before it is split into multiple segments.
+
+```c++
+    typedef struct {
+        int start;
+        int end;
+    } speech_segment_t;
+
+    // Allocate initial memory for segments
+    speech_segment_t* speeches = (speech_segment_t*)malloc(16 * sizeof(speech_segment_t));
+    if (!speeches) {
+        WHISPER_LOG_ERROR("%s: failed to allocate memory for temporary segments\n", __func__);
+        return { 0, nullptr };
+    }
+
+    // Initialize all segments to avoid undefined behavior
+    for (int i = 0; i < 16; i++) {
+        speeches[i].start = 0;
+        speeches[i].end = 0;
+    }
+```
+This struct is what will be used to store the speech segments and we initially
+have capacity for 16 segments which can grow later if needed.
+
+```c++
+    // Detect silence period that exceeds this value, then that location (sample)
+    // is marked a potention place where the segment could be split if the
+    // max_speech_samples is reached. The value 98 was taken from the original
+    // silaro-vad python implementation:
+    //https://github.com/snakers4/silero-vad/blob/0dd45f0bcd7271463c234f3bae5ad25181f9df8b/src/silero_vad/utils_vad.py#L291
+    int     min_silence_samples_at_max_speech = sample_rate * 98 / 1000;
+```
+This appears to be part of a special mechanism for handling very long speech
+segments. When a speech segment reaches the maximum allowed duration
+(max_speech_samples), the algorithm needs to find a good place to split it.
+The value min_silence_samples_at_max_speech (98ms worth of samples) is used to
+identify potential "good" places to split a long speech segment. When the
+algorithm detects a silence period that exceeds this threshold (98ms), it marks
+that location (stored in prev_end) as a potential place where the segment could
+be split if it reaches the maximum duration.
+This is a more intelligent approach than simply cutting off a segment at an
+arbitrary point when it reaches the maximum length. Instead, the algorithm tries
+to find a natural pause in speech that's at least 98ms long, which would be a
+more natural place to split the audio.
+The specific value of 98ms seems to be a carefully chosen threshold that's long
+enough to identify a meaningful pause but short enough to be likely to occur in
+normal speech patterns.
+
+```c++
+    // Calculate lower threshold for silence detection.
+    float neg_threshold = threshold - 0.15f;
+    if (neg_threshold < 0.01f) {
+        neg_threshold = 0.01f;
+    }
+```
+While there already is a threshold for detecting the start of speech, this one
+if for detecting the end of a speech segment.
+
+A bit further down we have the main iteration where we are going to iterate
+over all the generated probabilites for each sample that was generated by 
+VAD:
+```c++
+    for (int i = 0; i < n_probs; i++) {
+        float curr_prob = probs[i];
+        int current_sample = window_size_samples * i;
+```
+So this will iterate over all the probs which are 344.
+```console
+(gdb) p curr_prob
+$2 = 0.0120014185
+(gdb) p window_size_samples
+$3 = 512
+(gdb) p current_sample
+$5 = 0
+(gdb) p threshold
+$6 = 0.5
+```
+The current speech_prob.
+```c++
+        if ((curr_prob >= threshold) && !is_speech_segment) {
+            is_speech_segment = true;
+            current_speech_start = current_sample;
+            has_current_speech = true;
+            continue;
+        }
+```
+This is not the case for this prob.
+
+Next we have:
+```c++
+        if (is_speech_segment && (curr_sample - curr_speech_start) > max_speech_samples) {
+        }
+```
+And we know we are not in a speech segment so this block will not be entred
+this time through.
+```c++
+        if ((curr_prob < neg_threshold) && is_speech_segment) {
+```
+Now, the current probabilty is less that then negative threshold but we are not
+in a speech segment. 
+
+And this will then continue the iteration again:
+```c++
+(gdb) p curr_prob
+$5 = 0.0106722685
+(gdb) p i
+$6 = 1
+(gdb) p curr_sample 
+$7 = 512
+```
+So we are now processing the second probability which is for the second window
+of size 512. This prob is also less than the threshold to detect speech so the
+first if block will not be entered, just like last time.
+So this will actually continue until we hit a probability that is greater than
+the 0.5 threshold. Looking at the probs we can see that element 10 is greater
+than the threshold:
+```console
+(gdb) p probs[10]
+$20 = 0.801590681
+```
+So lets set a break point:
+```console
+(gdb) br whisper.cpp:5617 if i == 10
+(gdb) c
+
+(gdb) p i
+$25 = 10
+
+(gdb) p curr_sample
+$23 = 5120
+(gdb) p curr_prob
+$24 = 0.801590681
+```
+This time we will enter this if block:
+```console
+        if ((curr_prob >= threshold) && !is_speech_segment) {
+            is_speech_segment = true;
+            curr_speech_start = curr_sample;
+            has_curr_speech = true;
+            continue;
+        }
+```
+And notice that we are now setting the curr_speech_start to the current sample.
+And `is_speech_segment` is set to true as well as `has_curr_speech`. These are
+actually used in different ways which we will see later.
+And then we will continue iteration with the next probability.
+This time through `is_speech_segment` will be true to the above if block will
+not be executed for this probability.
+```c++
+        if (is_speech_segment && (curr_sample - curr_speech_start) > max_speech_samples) {
+```
+Recall that we stored the start of the sample when we detected a probability
+over our speech threshold. We only have one at the moment but we would have many
+of them. This is checking that we don't exceed the maximum speech samples.
+```c++
+        if ((curr_prob < neg_threshold) && is_speech_segment) {
+```
+And we are not below the threshold to end a speech segment so this will not be
+entered either and weill will continue the iteration.
+
+So the above will continue until we hit a probability that is less than the
+threshold:
+```
+(gdb) p probs[70]
+$53 = 0.0648296997
+(gdb) p probs[71]
+$54 = 0.0398868658
+(gdb) br whisper.cpp:5617 if i == 71
+
+```
+
+### Alignment of Timestamp
+When processing an audio file the output are timestamps like the following:
+```console
+[00:00:00.000 --> 00:00:11.000]   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
+And is we use VAD the output will be:
+```console
+[00:00:00.000 --> 00:00:08.140]   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
+Notice that the timestamps in the output do not match. This is because I perhaps
+naively just passed the filtered samples to `whisper_pcm_to_mel_with_state` so
+what whisper_full then sees is only these samples.
+
+So what is happing is that a new float array is created to hold the filtered/
+reduced audio samples, only the ones detected as speach:
+```c++
+            filtered_samples = (float*)malloc(total_samples_needed*sizeof(float));
+            ...
+            int offset = 0;
+            for (int i = 0; i < timestamps.n_segments; i++) {
+                int segment_start_samples = timestamps.segments[i].start * WHISPER_SAMPLE_RATE;
+                int segment_end_samples = timestamps.segments[i].end * WHISPER_SAMPLE_RATE;
+
+                if (i < timestamps.n_segments - 1) {
+                    segment_end_samples += overlap_samples;
+                }
+
+                segment_start_samples = std::min(segment_start_samples, n_samples - 1);
+                segment_end_samples = std::min(segment_end_samples, n_samples);
+                int segment_length = segment_end_samples - segment_start_samples;
+
+                if (segment_length > 0) {
+                    // Copy this speech segment
+                    memcpy(filtered_samples + offset, samples + segment_start_samples, segment_length * sizeof(float));
+                    offset += segment_length;
+
+                    // Add silence after this segment (except after the last segment)
+                    if (i < timestamps.n_segments - 1) {
+                        // Fill with zeros (silence)
+                        memset(filtered_samples + offset, 0, silence_samples * sizeof(float));
+                        offset += silence_samples;
+                    }
+                }
+```
+In the first `memcpy` we are copying into the destination `filtered_samples`,
+and the source is the `samples` which is the original audio.
+And this is then passed to `whisper_pcm_to_mel_with_state`:
+```c++
+            if (whisper_pcm_to_mel_with_state(ctx, state, filtered_samples, filtered_n_samples, params.n_threads) != 0) {
+                WHISPER_LOG_ERROR("%s: failed to compute log mel spectrogram\n", __func__);
+                return -2;
+            }
+```
+```c++
+int whisper_pcm_to_mel_with_state(struct whisper_context * ctx, struct whisper_state * state, const float * samples, int n_samples, int n_threads) {
+    if (!log_mel_spectrogram(*state, samples, n_samples, WHISPER_SAMPLE_RATE, WHISPER_N_FFT, WHISPER_HOP_LENGTH, ctx->model.filters.n_mel, n_threads, ctx->model.filters, false, state->mel)) {
+        WHISPER_LOG_ERROR("%s: failed to compute mel spectrogram\n", __func__);
+        return -1;
+    }
+
+    return 0;
+}
+```
+Notice that `state->mel` is passed as the last argument.
+```c++
+static bool log_mel_spectrogram(
+              whisper_state & wstate,
+              const float * samples,
+              const int   n_samples,
+              const int   /*sample_rate*/,
+              const int   frame_size,
+              const int   frame_step,
+              const int   n_mel,
+              const int   n_threads,
+              const whisper_filters & filters,
+              const bool   debug,
+              whisper_mel & mel) {
+```
+Now, after this the mel spectrogram is in the whisper state and used for the
+encoding of the audio data. The decoder will then use the output of the
+encoder in the cross attention.
+
+I'm trying to figure out the best way to handling this correlation of timestamps
+in a good way. When I copy the samples to filtered samples perhaps I can store
+some information about where offset is and convert this in some way to like the
+original audio samples with the new filtered samples.
+
+So we should probably store some vad information in whisper state so that this
+can then be used to calculate the timestamps. When we copy the samples to the
+filtered samples we know the start and end of the signal/segment in the original
+signal. We should base the output timestamps on the original signal, for example
+lets say that the first speech segment starts after 0.29 seconds, the filtered
+signal will not contain the silence before it. So if we store the start and
+end of both the original and the detected speech segment we can then use this to
+calculate the timestamps.
+
+```c++
+struct whisper_state {
+    ...
+    struct vad_segment_info {
+        float orig_start;
+        float orig_end;
+        float vad_start;
+        float vad_end;
+    };
+    std::vector<vad_segment_info> vad_segments;
+    bool has_vad_segments = false;
+};
+```
+So we can create the `vad_segments` vector like this is vad is enabled:
+```c++
+        if (timestamps.n_segments > 0) {
+            state->has_vad_segments = true;
+            ctx->state->vad_segments.clear();
+            ctx->state->vad_segments.reserve(timestamps.n_segments);
+```
+And then create a vad_segment_info for each segment:
+```c++
+                    whisper_state::vad_segment_info segment;
+                    segment.orig_start = offset / (float)WHISPER_SAMPLE_RATE;
+                    segment.orig_end = (offset + segment_length) / (float)WHISPER_SAMPLE_RATE;
+                    segment.vad_start = timestamps.segments[i].start;
+                    segment.vad_end = timestamps.segments[i].end;
+                    ctx->state->vad_segments.push_back(segment);
+```
+
+After whisper has processed the VAD filtered samples, the callback, in the case
+of whisper-cli will call:
+```c++
+    for (int i = s0; i < n_segments; i++) {
+        if (!params.no_timestamps || params.diarize) {
+            t0 = whisper_full_get_segment_t0(ctx, i);
+            t1 = whisper_full_get_segment_t1(ctx, i);
+        }
+```
+In this case we only have one segment:
+```console
+(gdb) p n_segments
+$1 = 1
+```
+So this is calling into whisper to get the starting timestamp for this segment:
+```c++
+int64_t whisper_full_get_segment_t0(struct whisper_context * ctx, int i_segment) {
+    ...
+}
+```
+Now, if we inspect the VAD segments we see that we have 5 segments:
+```console
+whisper_full_with_state: vad_segment_info: orig_start: 0.00, orig_end: 2.02, vad_start: 0.29, vad_end: 2.21
+whisper_full_with_state: vad_segment_info: orig_start: 2.12, orig_end: 2.69, vad_start: 3.30, vad_end: 3.77
+whisper_full_with_state: vad_segment_info: orig_start: 2.79, orig_end: 3.24, vad_start: 4.00, vad_end: 4.35
+whisper_full_with_state: vad_segment_info: orig_start: 3.34, orig_end: 5.71, vad_start: 5.38, vad_end: 7.65
+whisper_full_with_state: vad_segment_info: orig_start: 5.81, orig_end: 8.24, vad_start: 8.16, vad_end: 10.59
+```
+Without VAD the output is:
+```console
+[00:00:00.000 --> 00:00:08.140]   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
+
+After some trail and error I think I have a solution that works:
+```
+whisper_full_with_state: detected 5 speech segments
+whisper_full_with_state: Including segment 0: 0.29 - 2.31 (duration: 2.02)
+whisper_full_with_state: Including segment 1: 3.30 - 3.87 (duration: 0.58)
+whisper_full_with_state: Including segment 2: 4.00 - 4.45 (duration: 0.45)
+whisper_full_with_state: Including segment 3: 5.38 - 7.75 (duration: 2.37)
+whisper_full_with_state: Including segment 4: 8.16 - 10.59 (duration: 2.43)
+whisper_full_with_state: total duration of speech segments: 7.84 seconds
+whisper_full_with_state: vad_segment_info: orig_start: 0.00, orig_end: 2.02, vad_start: 0.29, vad_end: 2.31
+whisper_full_with_state: vad_segment_info: orig_start: 2.12, orig_end: 2.69, vad_start: 3.30, vad_end: 3.87
+whisper_full_with_state: vad_segment_info: orig_start: 2.79, orig_end: 3.24, vad_start: 4.00, vad_end: 4.45
+whisper_full_with_state: vad_segment_info: orig_start: 3.34, orig_end: 5.71, vad_start: 5.38, vad_end: 7.75
+whisper_full_with_state: vad_segment_info: orig_start: 5.81, orig_end: 8.24, vad_start: 8.16, vad_end: 10.59
+whisper_full_with_state: Reduced audio from 176000 to 131778 samples (25.1% reduction)
+
+[00:00:00.000 --> 00:00:08.230]   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
+
+So when `whisper_full_get_segment_t1` is called with a segment index and VAD is
+enabled we need to get the timestamp first. 
+```console
+whisper_full_with_state: vad_segment_info: orig_start: 0.00, orig_end: 2.02, vad_start: 0.29, vad_end: 2.31
+whisper_full_with_state: vad_segment_info: orig_start: 2.12, orig_end: 2.69, vad_start: 3.30, vad_end: 3.87
+whisper_full_with_state: vad_segment_info: orig_start: 2.79, orig_end: 3.24, vad_start: 4.00, vad_end: 4.45
+whisper_full_with_state: vad_segment_info: orig_start: 3.34, orig_end: 5.71, vad_start: 5.38, vad_end: 7.75
+whisper_full_with_state: vad_segment_info: orig_start: 5.81, orig_end: 8.24, vad_start: 8.16, vad_end: 10.59
+
+(gdb) p vad_t1
+$6 = 8.14000034
+```
+So we need to go through all the vad segments to find in which segment in the
+original audio the current segment came from. So we start from the beginning
+and check if `vad_t1` is greater that or equals to `vad_start` and less than
+or equals to `vad_end`:
+```c++
+        if (vad_t1 >= segment.vad_start && vad_t1 <= segment.vad_end) {
+```
+
+Let's say we have a VAD segment with these properties:
+In the original audio: from 10.0s to 15.0s (5 seconds long)
+In the filtered audio: from 7.0s to 10.0s (3 seconds long)
+
+Now, Whisper processes the filtered audio and generates a timestamp at 8.5s in
+the filtered timeline (which is halfway between 7.0s and 10.0s).
+Question: Where should this timestamp appear in the original audio timeline?
+Approach 1 (Without Proportion): Just use the original start or end time.
+
+Result: Either 10.0s or 15.0s, but neither is correct.
+
+Approach 2 (With Proportion): Map it proportionally.
+
+The timestamp is 1.5s into a 3.0s segment, which is 50% of the way through.
+In the original timeline, 50% through the 5.0s segment (10.0s to 15.0s) would be
+at 12.5s.
+Result: 12.5s, which correctly preserves the relative position.
+
+Why Proportion Matters
+The proportion matters because:
+
+VAD processing may compress or expand the timeline
+Speech segments might be spoken at different rates
+We want to maintain the relative position of timestamps within a segment
+
+Without the proportion, timestamps would get clustered at the start or end of
+segments, losing their relative positioning.
+
+### Alignment of Timestamp take 2
+So with the previous implementation I had misunderstood the goal. 
+
+What we want is something like the following
+```console
+. = silence
+x = speech
+
+.............................................................xxxxx
+                                                             hello
+```
+With the above and current implementation this output would be:
+```
+[00:00:00.000 --> 00:00:30.000]   hello
+```
+But what we actually want is something like this:
+```
+[00:00:25.000 --> 00:00:30.000]   hello
+```
+I had added a check for the first segments and handled it differently, it always
+started from 00:00:00.000 and then added the vad_start to the end time. I've
+removed this now and the output is:
+```console
+$ ./build/bin/whisper-cli -f ./samples/hello.wav \
+    -m ./models/ggml-base.en.bin \
+    --vad --vad-model ./models/for-tests-silero-v5.1.2-ggml.bin
+...
+
+[00:00:25.180 --> 00:00:26.020]   - Hello.
+```
+
+### Parameters
+```console
+Voice Activity Detection (VAD) options:
+  -v,        --vad                           [false  ] enable Voice Activity Detection (VAD)
+  -vm FNAME, --vad-model FNAME               [       ] VAD model path
+  -vt N,     --vad-threshold N               [0.50   ] VAD threshold for speech recognition
+  -vspd N,   --vad-min-speech-duration-ms  N [250    ] VAD min speech duration
+  -vsd N,    --vad-min-silence-duration-ms N [100    ] VAD min silence duration
+  -vmsd N,   --vad-max-speech-duration-s   N [FLT_MAX] VAD max speech duration
+  -vp N,     --vad_speech_pad_ms           N [30     ] VAD speech padding
+  -vo N,     --vad_samples_overlap         N [0.10   ] VAD samples overlap size
+```
+
+* --vad-threshold: Threshold probability for speech detection. A probability
+for a speech segment/frame above this threshold will be considered as speech.
+
+* --vad-min-speech-duration-ms: Minimum speech duration in milliseconds. Speech
+segments shorter than this value will be discarded to filter out brief noise or
+false positives.
+
+* --vad-min-silence-duration-ms: Minimum silence duration in milliseconds. Silence
+periods must be at least this long to end a speech segment. Shorter silence
+periods will be ignored and included as part of the speech.
+
+* --vad-max-speech-duration-s: Maximum speech duration in seconds. Speech segments
+longer than this will be automatically split into multiple segments at silence
+points exceeding 98ms to prevent excessively long segments.
+
+* --vad_speech_pad_ms: Speech padding in milliseconds. Adds this amount of padding
+before and after each detected speech segment to avoid cutting off speech edges.
+
+* --vad_samples_overlap: Amount of audio to extend from each speech segment into
+the next one, in seconds (e.g., 0.10 = 100ms overlap). This ensures speech isn't
+cut off abruptly between segments when they're concatenated together.
+
+```console
+Voice Activity Detection (VAD) options:
+  -v,        --vad                           [false  ] enable Voice Activity Detection (VAD)
+  -vm FNAME, --vad-model FNAME               [       ] VAD model path
+  -vt N,     --vad-threshold N               [0.50   ] VAD threshold for speech detection (0.0-1.0)
+  -vspd N,   --vad-min-speech-duration-ms  N [250    ] VAD min speech duration (discard shorter segments)
+  -vsd N,    --vad-min-silence-duration-ms N [100    ] VAD min silence duration (to split segments)
+  -vmsd N,   --vad-max-speech-duration-s   N [FLT_MAX] VAD max speech duration (auto-split longer)
+  -vp N,     --vad_speech_pad_ms           N [30     ] VAD speech padding (extend segments)
+  -vo N,     --vad_samples_overlap         N [0.10   ] VAD samples overlap (seconds between segments)
 ```
