@@ -10,7 +10,7 @@ total sum of all frequencies at that point in time.
 
 The wave form is a continuous signal in time and in in amplitude. To represent
 this information in a digital form we need to sample it, that is read specific
-points (or rather intervals) and store them. These intervalls are ofter denoted
+points (at regular intervals) and store them. The interval are often denoted
 by T, the time between each sample. The number of samples per second is called
 the sample rate. The sample rate is often 44.1 kHz or 44,100 samples per second.
 Now, if we sample with a low rate we run the risk of losing information so I
@@ -42,7 +42,10 @@ and this is what the ASR system use. But the ARS systems are trained on a lot
 of millions of examples and use statistical models to predict what is being
 said.
 
-The Fourier Transform decomposes this signal into its constituent frequencies.
+The Fourier Transform decomposes this signal into its constituent frequencies
+and shows the frequencies on the x-axis and the amplitude on the y-axis. But we
+don't have any time information here. This is where the spectrogram comes in
+which give use both time and frequency information.
 The x-axis is time just like in the wave form, but the y-axis is frequency (not
 amplitude). So the spectrogram is showing the whole spectrum of frequencies
 possible for each point in time. Now, the color of each point, the point at
@@ -87,9 +90,9 @@ So to recap a little and get an overview of the process:
    called mel filterbanks. These filters combine multiple frequency bins into
    a single mel bin.
 
-   For example, to create mel bin #10, we might take a weighted average of linear
-   frequency bins 50-70, giving us a single value that represents that entire
-   frequency range.
+   For example, to create the 10th mel bin, we might take a weighted average of
+   linear frequency bins 50-70, giving us a single value that represents that
+   entire frequency range.
    After this process, each time frame now has only 80 amplitude values instead
    of 800.
 
@@ -139,6 +142,496 @@ Bin 61-80: 5000-8000Hz (about 150Hz per bin)
 
 Converting to mel spectrograms reduces the input data dimensionality while
 preserving perceptually important information.
+
+In whisper.cpp the mel filters are part of the model and are loaded when the
+model is loaded:
+```c++
+    // load mel filters
+    {
+        auto & filters = wctx.model.filters;
+
+        read_safe(loader, filters.n_mel);
+        read_safe(loader, filters.n_fft);
+
+        filters.data.resize(filters.n_mel * filters.n_fft);
+        loader->read(loader->context, filters.data.data(), filters.data.size() * sizeof(float));
+        BYTESWAP_FILTERS(filters);
+    }
+
+```
+```console
+(gdb) ptype  filters
+type = struct whisper_filters {
+    int32_t n_mel;
+    int32_t n_fft;
+    std::vector<float> data;
+} &
+(gdb) p filters.n_mel
+$1 = 80
+(gdb) p filters.n_fft
+$3 = 201
+```
+
+The function that will create the mel spectrogram is the following function:
+```c++
+static bool log_mel_spectrogram(
+              whisper_state & wstate,
+              const float * samples,
+              const int   n_samples,
+              const int   /*sample_rate*/,
+              const int   frame_size,
+              const int   frame_step,
+              const int   n_mel,
+              const int   n_threads,
+              const whisper_filters & filters,
+              const bool   debug,
+              whisper_mel & mel) {
+```
+Notice that this takes in not only mel parameters but also STFT parameters so
+it performs the windowing, FFT.
+
+```c++
+#define WHISPER_SAMPLE_RATE 16000
+#define WHISPER_SAMPLE_RATE 16000
+#define WHISPER_N_FFT       400
+#define WHISPER_HOP_LENGTH  160
+#define WHISPER_CHUNK_SIZE  30
+```
+
+Lets take a closer look at the padding:
+```c++
+    // Calculate the length of padding
+    int64_t stage_1_pad = WHISPER_SAMPLE_RATE * 30;
+    int64_t stage_2_pad = frame_size / 2;
+```
+```console
+(gdb) p 16000  * 30
+$8 = 480000
+(gdb) p frame_size
+$9 = 400
+(gdb) p frame_size / 2
+$10 = 200
+```
+Now, whisper.cpp always expects 30 seconds of audio but if there is not enough
+samples then we will pad with zeros.
+
+For example, lets say we have 5 seconds of audio samples only, that will give
+us 5*16000=80000 samples. But for 30 seconds we need 480000 samples. So we need
+to 25 seconds more of padding, 25*16000=400000 samples.
+```c++
+    // Initialize a vector and copy data from C array to it.
+    std::vector<float> samples_padded;
+    samples_padded.resize(n_samples + stage_1_pad + stage_2_pad * 2);
+```
+In my case I have an audio clip that is close to 30 seconds long:
+```console
+(gdb) p n_samples
+$43 = 472373
+(gdb) p n_samples / 16000
+$24 = 29
+```
+```
+n_samples = 472373
+samples:
+    [0                           472373] (~29 seconds)
+```
+
+And notice that the above is doing:
+```console
+(gdb) p n_samples + stage_1_pad + stage_2_pad * 2
+$15 = 952773
+```
+So samples_padded will be:
+```console
+(gdb) p samples_padded.size()
+$21 = 952773
+(gdb) p samples_padded.size() / 16000
+$25 = 59
+
+samples_padded:
+    [0                                                             952773] (~59 seconds)
+```
+So the number of samples will actually be 59 second worth of samples (952773/16000).
+I was not expecting this large number of samples but lets continue and see how
+this is used.
+
+Next, the code will copy samples from the original input audio samples passed
+to this function. And this will copy the number of samples in the original audio
+and the destination is the padded samples we resized above, and starting at
+position 200 in this case:
+```c++
+    std::copy(samples, samples + n_samples, samples_padded.begin() + stage_2_pad);
+```
+```
+samples:
+    [0                           472373] (~29 seconds)
+
+samples_padded:
+    [0  [0                            472373]                      952773] (~59 seconds)
+        200
+```
+```console
+(gdb) p samples_padded[200]
+$31 = 0
+(gdb) p samples_padded[201]
+$32 = -5.04691343e-06
+(gdb) p samples[0]
+$34 = 0
+(gdb) p samples[1]
+$35 = -5.04691343e-06
+```
+So at this point the first 200 values are 0:
+```console
+(gdb) p samples_padded
+$30 = std::vector of length 952773, capacity 952773 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0...}
+```
+Following that we have:
+```c++
+    // pad 30 seconds of zeros at the end of audio (480,000 samples) + reflective pad 200 samples at the end of audio
+    std::fill(samples_padded.begin() + n_samples + stage_2_pad, samples_padded.begin() + n_samples + stage_1_pad + 2 * stage_2_pad, 0);
+```
+```console
+(gdb) p n_samples
+$38 = 472373
+(gdb) p n_samples + stage_2_pad
+$36 = 472573
+```
+So the above will fill starting at index 472573, and until
+```console
+(gdb) p n_samples + stage_1_pad + 2 * stage_2_pad
+$42 = 952773
+
+samples_padded:
+                                             [ fill                      ]
+    [0  [0                            472373]                      952773] (~59 seconds)
+        200
+```
+Then there is a reverse_copy:
+```c++
+    // reflective pad 200 samples at the beginning of audio
+    std::reverse_copy(samples + 1, samples + 1 + stage_2_pad, samples_padded.begin());
+```
+So this is copying from samples[1], and until samples[1 + 200] and then reversing
+those values (the reflective part) and copying them to the start of the samples_padded
+which currently have 200 zero values at the start:
+```console
+(gdb) p samples_padded
+$51 = std::vector of length 952773, capacity 952773 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0...}
+(gdb) n
+(gdb) p samples_padded
+$52 = std::vector of length 952773, capacity 952773 = {1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 1.40129846e-45, 
+  -5.60519386e-45, 1.54142831e-44, -4.06376555e-44, 1.0930128e-43, -3.16693453e-43, 7.97338826e-43, 
+  -1.98984382e-42, 5.09091732e-42, -1.39541301e-41, 3.53365434e-41, -8.5369905e-41, 2.01459075e-40, 
+  -4.87157207e-40, 1.24158407e-39, -2.84790091e-39, 5.67522935e-39, -9.22885079e-39, 2.14333224e-38, 
+  -3.76835389e-38, -1.22132242e-38, 4.68280674e-37, -1.54753555e-36, 4.68867058e-36, -1.80823145e-35, 
+  7.42930682e-35, -2.25365387e-34, 5.9967477e-34, -1.82701283e-33, 6.2060114e-33, -1.86423853e-32, 4.79754274e-32, 
+  -1.34586286e-31, 4.1677613e-31, -1.24611532e-30, 3.15825352e-30, -8.44022473e-30, 2.44651438e-29, 
+  -7.24007682e-29, 1.82109508e-28, -4.69445905e-28, 1.28343105e-27, -3.71012531e-27, 9.30824899e-27, 
+  -2.32418206e-26, 5.971539e-26, -1.6410385e-25, 4.12798808e-25, -9.95140538e-25, 2.35140069e-24, -5.72890195e-24, 
+  1.45563249e-23, -3.31214674e-23, 6.5481501e-23, -1.05963028e-22, 2.56231968e-22, -4.3344042e-22, -2.13231652e-22, 
+  5.75005879e-21, -1.76207339e-20, 5.49501639e-20, -2.15708438e-19, 8.89835718e-19, -2.60325692e-18, 
+  7.00126167e-18, -2.15786491e-17, 7.38602208e-17, -2.16164767e-16, 5.59511954e-16, -1.58274946e-15, 
+  4.94099221e-15, -1.44833367e-14, 3.68185368e-14, -9.89803535e-14, 2.89107524e-13, -8.43319988e-13, 
+  2.12309293e-12, -5.4933124e-12, 1.5118462e-11, -4.3325378e-11, 1.08572776e-10, -2.71449141e-10, 7.00887681e-10, 
+  -1.92357241e-09, 4.82093743e-09, -1.1599897e-08, 2.7456398e-08, -6.75029384e-08, 1.70501039e-07, -3.85577721e-07, 
+  8.01938313e-07, -1.41239252e-06, -2.8569304e-05, -2.9722667e-05, -3.32603413e-05, -6.55875101e-06, 
+  1.29710577e-06, -3.1035408e-05, -1.39691601e-05, 1.90523792e-07, -5.40069323e-07, 1.62006461e-06, 
+  -2.70863638e-05, -2.83323207e-05, -9.20175012e-07, -3.10223877e-05, -1.44252172e-05, 3.81352902e-06, 
+  -2.30503829e-05, -2.98544546e-05, -3.27684393e-05, -5.75928107e-06, 1.04856463e-06, -3.23147142e-05, 
+  -1.13924916e-05, -3.28964416e-06, -2.97789829e-05, 1.4207933e-06, -1.8122395e-05, -3.04698606e-05, 
+  -2.96604467e-05, -6.34061507e-05, -1.51871718e-05, 1.31870274e-05, -2.36607502e-05, -6.22213265e-05, 
+  -4.41496413e-05, -5.04691343e-06...}
+
+samples:
+    [[0  200]                 472373] (~29 seconds)
+           |
+           +----+
+samples_padded: |
+     +----------+
+     ↓                            
+    [0  [0                            472373]                      952773] (~59 seconds)
+        200
+```
+So that is the padding done, and next thing to happen is the actual log mel
+computation:
+```c++
+    mel.n_mel     = n_mel;
+    // https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/SpectralOps.cpp#L936
+    // Calculate number of frames + remove the last frame
+    mel.n_len     = (samples_padded.size() - frame_size) / frame_step;
+    // Calculate semi-padded sample length to ensure compatibility
+    mel.n_len_org = 1 + (n_samples + stage_2_pad - frame_size) / frame_step;
+    mel.data.resize(mel.n_mel * mel.n_len);
+```
+```console
+$61 = (whisper_mel &) @0x555556328a88: {n_len = 5952, n_len_org = 2952, n_mel = 80,
+  data = std::vector of length 476160, capacity 476160 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+```
+
+```c++
+    {
+        std::vector<std::thread> workers(n_threads - 1);
+        for (int iw = 0; iw < n_threads - 1; ++iw) {
+            workers[iw] = std::thread(
+                    log_mel_spectrogram_worker_thread, iw + 1, hann, std::cref(samples_padded),
+                    n_samples + stage_2_pad, frame_size, frame_step, n_threads,
+                    std::cref(filters), std::ref(mel));
+        }
+
+        // main thread
+        log_mel_spectrogram_worker_thread(0, hann, samples_padded, n_samples + stage_2_pad, frame_size, frame_step, n_threads, filters, mel);
+
+        for (int iw = 0; iw < n_threads - 1; ++iw) {
+            workers[iw].join();
+        }
+    }
+```
+Notice that `std::cref` is used for both the padded samples and the mel filters
+as these are quite large and we don't want to copy them and we instead pass them
+as const references. In a similar way the mel object is passed by ref but it
+is mutable. And the created threads will start directly and then the main
+thread will also run the same function. And the worker threads will all join
+when they are done. Notice that the main thread will pass in 0 as ith.
+
+```c++
+static void log_mel_spectrogram_worker_thread(int ith, const float * hann, const std::vector<float> & samples,
+                                              int n_samples, int frame_size, int frame_step, int n_threads,
+                                              const whisper_filters & filters, whisper_mel & mel) {
+    std::vector<float> fft_in(frame_size * 2, 0.0);
+    std::vector<float> fft_out(frame_size * 2 * 2 * 2);
+```
+
+```console
+(gdb) p fft_in.size()
+$4 = 800
+(gdb) p fft_out.size()
+$5 = 3200
+```
+```c++
+    int n_fft = filters.n_fft;
+    int i = ith;
+```
+Notice that `i` is set to the thread number so each thread will process parts
+of the padded samples using the frame_step to get the offset into the samples
+that the thread is operating on:
+```c++
+    // calculate FFT only when fft_in are not all zero
+    for (; i < std::min(n_samples / frame_step + 1, mel.n_len); i += n_threads) {
+        const int offset = i * frame_step;
+```
+In my case I've set `--threads 1` to simlify debugging so this will always be
+zero.
+
+First the Hann window is applied:
+```c++
+        // apply Hann window (~10% faster)
+        for (int j = 0; j < std::min(frame_size, n_samples - offset); j++) {
+            fft_in[j] = hann[j] * samples[offset + j];
+        }
+```
+Where `hann` is passed in and is in a global precomputed cache:
+```c++
+    const float * hann = global_cache.hann_window;
+```
+And the above loop will apply the Hann window to the padded samples either one
+frame at a time or all the samples if there are less than the frame size. So
+this is doing to make our frame bell shaped starting at zero and then going up
+to 1 and then back down to zero which enables us to the stft.
+So we are first doing this for samples_padded[0] -> samples_padded[399] and then
+for samples_padded[160] -> samples_padded[559] and so on. This is part of the
+overlapping frames to avoid missing any information due to the start and end of
+the window.
+If multiple threads were used it could be possible that the last thread would
+have less samples than a frame to process which is the reason for the additional
+check.
+
+In a similar manner we also pad/fill with zeros if the number of samples is less
+that a frame size:
+```c++
+        // fill the rest with zeros
+        if (n_samples - offset < frame_size) {
+            std::fill(fft_in.begin() + (n_samples - offset), fft_in.end(), 0.0);
+        }
+```
+Then we do the Fast Fourier Transform:
+```c++
+        // FFT
+        fft(fft_in.data(), frame_size, fft_out.data());
+```
+After that the output of the fft will be complex number in pairs in `fft_out`.
+Where the first is the cosine component, that is how much does this frequency
+(this bin) align with the cosine wave for this sample.
+
+We can view these pairs like this:
+```
+Rectagular form:
+z = a + bi
+
+Polar form:
+z = r * e^(i * theta)
+
+r     = sqrt(a^2 + b^2)  (magnitude)
+theta = atan(b/a)        (phase)
+```
+The magnitude represents the amplitude of this frequency component.
+And what we are doing below is calculating the amplitude of each frequency
+component (pair).
+
+If we think of this as going round a circle (the frequency) and then viewing
+this from the side (sine) and from below (cosine) this will trace out a curve,
+and in this case we are dealing with a point on this circle which maps to a
+point in the complex plane. We can think of this as a 2d point. When we calculate
+the magnitude we are simply calculating the distance from the origin to this
+point using the pythagorean theorem.
+
+So magnitude is the strength/amplitude of the signal at this frequency. But we
+can also calulate the power:
+```
+r     = sqrt(a^2 + b^2)  (magnitude) (how loud/strong this frequency component is)
+r²    = a^2 + b^2        (power) (how much energy this frequency component contributes to the total signal)
+```
+So the magnitude tells us this frequency is present at X amplitude, and power
+tell us that this frequency contributes to X% or the total energy of the signal.
+
+Think of a signal with two components:
+```
+100Hz : magnitude = 2, power = 4
+200Hz : magnitude = 4, power = 16
+
+Total power = 20
+100Hz contributes 20% of the total power
+200Hz contributes 80% of the total power
+```
+Now, just becuase we are using power here does not mean we loose amplitude, we
+can always calculate by taking the square root of the power. For speech analysis
+and recognition we are interested in the power spectrum, not the amplitude.
+This is also convenient because simply adding the power of each frequency gives
+us the tolal energy of the signal. And taking the log of power directly gives
+us dB scale.
+
+```c++
+        // Calculate modulus^2 of complex numbers
+        // Use pow(fft_out[2 * j + 0], 2) + pow(fft_out[2 * j + 1], 2) causes inference quality problem? Interesting.
+        for (int j = 0; j < n_fft; j++) {
+            fft_out[j] = (fft_out[2 * j + 0] * fft_out[2 * j + 0] + fft_out[2 * j + 1] * fft_out[2 * j + 1]);
+        }
+```
+```
+             [           a^2                        ]   [               b^2                   ]
+fft_out[j] = (fft_out[2 * j + 0] * fft_out[2 * j + 0] + fft_out[2 * j + 1] * fft_out[2 * j + 1]);
+```
+What we get out of this is a power spectrum which shows us how much energy is
+distributed accross different frequencies.
+
+Next, we have the mel spectrogram calculation for each mel band which is our
+case is 80. So for each mel band will calculate a dot product between the power
+in fft_out with the filters. So each power will be multiplied by each filter
+and then summed up to become the mel band.
+```
+Mel band j = Σ(power[k] × filter_j[k]) for all k
+```
+And filters are triangular and constructed so that the lower powers filter are
+closer to each other and then get spread out more as higher powers.
+So if we have a low power for power[k] then this would be multiplied by the
+filter that covers that interval and this will map it to a specific mel band.
+
+```c++
+        // mel spectrogram
+        for (int j = 0; j < mel.n_mel; j++) {
+            double sum = 0.0;
+            // unroll loop (suggested by GH user @lunixbochs)
+            int k = 0;
+            for (k = 0; k < n_fft - 3; k += 4) {
+                sum +=
+                        fft_out[k + 0] * filters.data[j * n_fft + k + 0] +
+                        fft_out[k + 1] * filters.data[j * n_fft + k + 1] +
+                        fft_out[k + 2] * filters.data[j * n_fft + k + 2] +
+                        fft_out[k + 3] * filters.data[j * n_fft + k + 3];
+            }
+            // handle n_fft remainder
+            for (; k < n_fft; k++) {
+                sum += fft_out[k] * filters.data[j * n_fft + k];
+            }
+            sum = log10(std::max(sum, 1e-10));
+            mel.data[j * mel.n_len + i] = sum;
+        }
+```
+Now, the inner loop does the following:
+```
+(gdb) p n_fft
+$63 = 201
+
+(gdb) p n_fft - 3
+$64 = 198
+```
+So the loop will iterator over 198 values, and it will do so incrementing k
+by 4 each time, processing 4 values on each iteration. And since it processes
+4 values at a time we need to stop at 198 and not 201.
+And the last loop simple handles those values if there are any left over, that
+don't fit into groups of four.
+
+And the final part of this function is:
+```c++
+    // Otherwise fft_out are all zero
+    double sum = log10(1e-10);
+    for (; i < mel.n_len; i += n_threads) {
+        for (int j = 0; j < mel.n_mel; j++) {
+            mel.data[j * mel.n_len + i] = sum;
+        }
+    }
+```
+This is handling the case where the number of mel bands is larger than the number
+of processable frames. In this case the mel bands are filled with the log of
+1e-10. This is a very small value and will be ignored in the final output and
+is like silence or background noice floor.
+
+This will then return us to `log_mel_spectrogram` where we will find the 
+maximum value accross the entire mel spectrogram:
+```c++
+    // clamping and normalization
+    double mmax = -1e20;
+    for (int i = 0; i < mel.n_mel*mel.n_len; i++) {
+        if (mel.data[i] > mmax) {
+            mmax = mel.data[i];
+        }
+    }
+```
+Next we will use the max value to normalize the mel spectrogram:
+```c++
+    mmax -= 8.0;
+
+    for (int i = 0; i < mel.n_mel*mel.n_len; i++) {
+        if (mel.data[i] < mmax) {
+            mel.data[i] = mmax;
+        }
+
+        mel.data[i] = (mel.data[i] + 4.0)/4.0;
+    }
+```
+Notice that anyhing above the max value is set to the max value minus 8.0
+(clamping). And then we normalize and these particular values are probably from
+the whisper models training. This is something to keep in mind if we want to
+start supporting other models.
 
 ### Inference Processing
 The raw audio is first split into smaller segment of 30 second chunks. This 30
@@ -218,12 +711,75 @@ or diarization should be performed. This is about who spoke when. The system
 will attempt to identify the speaker and assign a label to each speaker. So
 the output will have an identifier like "Speaker 0", "Speaker 1", etc.
 
+This requires an audio signal with multiple channels I think: 
+```c++
+static std::string estimate_diarization_speaker(
+    std::vector<std::vector<float>> pcmf32s, int64_t t0, int64_t t1, bool id_only = false) {
+    std::string speaker = "";
+    const int64_t n_samples = pcmf32s[0].size();
 
-### Dynamic Time Warping (DTW)
-This is about aligning the transcribed text with precise timestamps in the
-audio. When whisper generated text from audio it needs to determine preciely
-when each word was spoken. But the encoder-decoder model does not have this
-concept of timestamps. 
+    const int64_t is0 = timestamp_to_sample(t0, n_samples, WHISPER_SAMPLE_RATE);
+    const int64_t is1 = timestamp_to_sample(t1, n_samples, WHISPER_SAMPLE_RATE);
+
+    double energy0 = 0.0f;
+    double energy1 = 0.0f;
+
+    for (int64_t j = is0; j < is1; j++) {
+        energy0 += fabs(pcmf32s[0][j]);
+        energy1 += fabs(pcmf32s[1][j]);
+    }
+
+    if (energy0 > 1.1*energy1) {
+        speaker = "0";
+    } else if (energy1 > 1.1*energy0) {
+        speaker = "1";
+    } else {
+        speaker = "?";
+    }
+
+    if (!id_only) {
+        speaker.insert(0, "(speaker ");
+        speaker.append(")");
+    }
+
+    return speaker;
+}
+```
+Notice that this is taking `pcmf32s` where the `s` indicates stereo and that this
+not a single vector but two vectors. So there are two channels here. 
+And it looks like the speakers need to be on separate channels and cannot speak
+at the exact same times.
+This is performed after the decoding is done.
+
+### Tiny Diarization
+This is performed as part of the decoding, and hence the model need to support
+this. There is a special token in the vocabulary for this:
+```c++
+id token_solm       = 50359; // [TDRZ] used by tinydiarize models to indicate speaker turn
+```
+I found this name a little confusing at first but I think it stands for
+start of llm. My understanding is that it is not used in the original whisper
+implementation and has been renamed in tinydiarize to `speaker_turn`:
+```console
+$ git show 7cfca7e
+commit 7cfca7e86b3680526b0a070536111135c49ac008
+Author: Akash Mahajan <akashmjn@stanford.edu>
+Date:   Thu Mar 30 15:18:28 2023 -0700
+
+    Add `small.en-tdrz` checkpoint and initial support for `speakerturn` in decoding results (#4)
+
+    * tmp commit hacking in spkturn decode support
+
+    * rename sot_lm -> speaker_turn
+
+    * add pretrained small.en-tdrz checkpoint
+
+    * update readme with run info
+```
+
+https://github.com/akashmjn/tinydiarize
+
+
 
 
 ### Pulse Code Modulation (PCM)
@@ -922,7 +1478,7 @@ int whisper_full_with_state(
         }
 ```
 So here we have the inference loop. First the encoder is called which is taking the log mel
-spectrogram and passing it to the encoder part of th model. A nice diagram of this can be
+spectrogram and passing it to the encoder part of the model. A nice diagram of this can be
 found on page 4 of the paper. First there is a Cov1D layer followed by a GELU activation,
 and then another Conv1D layer followed by another GELU activation. The output of this then
 has position encodings added to it.
@@ -1248,169 +1804,6 @@ number within that layer. For example
 
 So DTW is used to capture token-level timestamps, which is like figuring out
 when each word was spoken in the audio.
-
-So the DTW algorithm looks something like this:
-```
-Input: x_1:N, y_1:M
-Cost matrix D ε R^{N+1 x M+1}
-
-Initialization:
-for i=1 to N: D_i,0 = ∞
-for j=1 to M: D_0,j = ∞
-D_0,0 = 0
-
-for i = 1 to N         // For each row
-  for j = 1 to M       // For each column
-    D_ij = d(x_i, y_j) + min(D_i-1,j, D_i,j-1, D_i-1,j-1)
-
-d(x_i, y_j) = |x_i - y_j|
-
-Get alignment: Traceback from D_N,M to D_0,0
-```
-So in this case there are two inputs signals that we want to compare.
-```
-x = [0, 2, 0, 1, 0, 0]  N = 6
-
-2       *
-      /   \
-1    /     \     *
-    /       \  /   \
-0  *         *      *-----*
-   x_1 x_2  x_3 x_4 x_5  x_6
-
-
-y = [0, 0, 0, 0.5, 2, 0, 1, 0] M = 7
-
-2            *
-           /   \
-1         /     \     *
-         *       \  /   \
-0  *----*         *      *
-   x_1 x_2  x_4  x_5 x_6 x_7
-         x_3
-
-(x_3 = 0.5)
-```
-
-Initialization:
-```
-  +---+---+---+---+---+---+---+---+
-6 | ∞ |   |   |   |   |   |   |   |
-  +---+---+---+---+---+---+---+---+
-5 | ∞ |   |   |   |   |   |   |   |
-  +---+---+---+---+---+---+---+---+
-4 | ∞ |   |   |   |   |   |   |   |
-  +---+---+---+---+---+---+---+---+
-3 | ∞ |   |   |   |   |   |   |   |
-  +---+---+---+---+---+---+---+---+
-2 | ∞ |   |   |   |   |   |   |   |
-  +---+---+---+---+---+---+---+---+
-1 | ∞ |   |   |   |   |   |   |   |
-  +---+---+---+---+---+---+---+---+
-0 | 0 | ∞ | ∞ | ∞ | ∞ | ∞ | ∞ | ∞ |
-  +---+---+---+---+---+---+---+---+
-    0   1   2   3   4   5   6   7
-```
-
-```
-      D0, 0
-min { D0, 1
-      D1, 0
-
-        +---+---+
-D1,0--> |   | * |
-        +---+---+
-D0,0--> |   |   |<--D0,1
-        +---+---+
-```
-So we are taking the minium of the neighbors of the cell. Notice that we only
-consider cells that have already been calculated. This is like asking what is
-the path that minimizes the cost to get to this cell.
-
-When we calculate the cost of a cell we also record which path was the cheapest
-which can then be used to backtrack and get the alignment.
-
-Now, in the case of whisper the inputs are:
-```console
-x = the text tokens.
-y = the audio frames.
-```
-Now, we say above that the cost matrix used x an y and the values, but in the
-case of whisper what is used is instead the KQ from the attention heads, the
-ones that are specifically for the detection of features of time and audio
-relationsships, those KQ values are what form the cost matrix in whisper.
-
-So the cross attention mechanism in the transformers produces the KQ values for
-all heads. But only the alignment heads are extracted and used to form the cost
-matrix in the DTW algorithm.
-These values are normalized and applied a median filter.
-
-And the alignment path is how the text tokens and the audio signal frames line
-up, similar to the x and y inputs in the graph above. Each point along this
-path tells us, "this token corresponds to the this audio frame".
-
-So I said that the KQ values for the alignment heads are used to form the cost
-and that these are extracted from the other KQ values. This would not be efficient
-so instead a mask is used to to select just the value from the alignment heads.
-```c++
-struct whisper_aheads_masks {
-    std::vector<struct ggml_tensor *> m;    // One mask per text layer.
-    struct ggml_context * ctx = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
-};
-```
-```c++
-static const whisper_ahead g_aheads_base_en[]   = { {3, 3}, {4, 7}, {5, 1}, {5, 5}, {5, 7} };
-```
-And this model has:
-```console
-whisper_init_from_file_with_params_no_state: loading model from 'models/ggml-base.en.bin'
-whisper_model_load: loading model
-whisper_model_load: n_vocab       = 51864
-whisper_model_load: n_audio_ctx   = 1500
-whisper_model_load: n_audio_state = 512
-whisper_model_load: n_audio_head  = 8
-whisper_model_load: n_audio_layer = 6
-whisper_model_load: n_text_ctx    = 448
-whisper_model_load: n_text_state  = 512
-whisper_model_load: n_text_head   = 8
-whisper_model_load: n_text_layer  = 6
-whisper_model_load: n_mels        = 80
-```
-So this model has 6 text layers, and 8 heads. And looking at the
-`g_aheads_base_en` we can see we need masks for layer 3, 4, and 5.
-```
-Layer 3: Head 3
-Layer 4: Head 7
-Layer 5: Head 1, 5, 7
-
-0  0 0 0 0 0 0 0 0
-1  0 0 0 0 0 0 0 0
-2  0 0 0 0 0 0 0 0
-3  0 0 0 1 0 0 0 0
-4  0 0 0 0 0 0 0 1
-5  0 1 0 0 0 1 0 1
-```
-
-
-```c++
-    typedef struct whisper_ahead {
-        int n_text_layer;
-        int n_head;
-    } whisper_ahead;
-```
-This is related to DTW (Dynamic Time Warping). 
-Is there about figuring out the aligment, the path through the cost matrix in
-DTW?
-
-```c++
-    typedef struct whisper_aheads {
-        size_t n_heads;
-        const whisper_ahead * heads;
-    } whisper_aheads;
-```
-So this only contains an array of `whisper_ahead` structs and the length of
-this array.
 
 This is then included in the whisper context params:
 ```c++
