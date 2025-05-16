@@ -273,11 +273,6 @@ https://github.com/SubtitleEdit/support-files.
 
 The following is run built with `libopenblas.dll` version `0.3.29`:
 ```console
-> .\whisper-cli.exe -m ..\..\ggml\
-ALL_BUILD.vcxproj          cmake_install.cmake        ggml.sln                   ggml-version.cmake         INSTALL.vcxproj.filters    RUN_TESTS.vcxproj.filters
-ALL_BUILD.vcxproj.filters  CMakeFiles                 ggml-config.cmake          INSTALL.vcxproj            RUN_TESTS.vcxproj          src
-> .\whisper-cli.exe -m ..\..\..\models\ggml-base.en.bin -f ..\..\..\samples\
-.gitignore          duty.ogg            Euskal_Dantzak.ogg  gb0.ogg             jfk.mp3             jfk.wav             jfk.wav.vtt         README.md
 > .\whisper-cli.exe -m ..\..\..\models\ggml-base.en.bin -f ..\..\..\samples\duty.ogg
 whisper_init_from_file_with_params_no_state: loading model from '..\..\..\models\ggml-base.en.bin'
 whisper_init_with_params_no_state: use gpu    = 1
