@@ -243,6 +243,8 @@ configuration and opts.
 And `openblas.dll` is often used by package managers like vcpkg. These may be
 stripped down versions.
 
+See [Support for multiple targets in a single library](https://github.com/OpenMathLib/OpenBLAS?tab=readme-ov-file#support-for-multiple-targets-in-a-single-library) for more details about this.
+
 ### Suggested solution
 So I think this issue could be solved by building similar to something like
 this:
