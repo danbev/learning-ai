@@ -57,6 +57,7 @@ Notice how these segments
 ```
 Notice that there is a gap between 85 and 86 in the time stamps.
 
+#### Check the VAD samples generated
 So let start by saving the samples that are passed into whipser after the
 vad processing to actaully listen to what the file sounds like. I've saved
 the `vad_samples` to a file named `vad_samples.wav` and listened to it: 
@@ -97,6 +98,7 @@ the timestamp for a transcribed segment:
 But this is done after whisper has transcribed the input which is our
 case is the output of the VAD processing.
 
+#### Without VAD
 Lets try without VAD enabled by removing the `--vad` flag and see if we get
 the same/similar output. It wont be the same as this time all audio will be
 processed, even non-speech.
