@@ -202,4 +202,169 @@ processed, even non-speech.
 [00:11:31.880 --> 00:11:32.880]   Thank you.
 [00:11:32.880 --> 00:11:33.880]   Thank you.
 ```
-So we get a lot of repeats without VAD as well.
+So we get a lot of repeats without VAD as well. This is actually a known issue
+with the large-3 model. But the issue with the inconsistent timestamps is still
+present and is a VAD issue.
+
+I've been able to recreate this I think:
+```console
+[01:14:55.150 --> 01:14:55.170]   here that so I open a little this is another
+[01:14:55.170 --> 01:15:10.160]   here that so I open a little this is another here above you go up up up up up close
+[01:15:10.160 --> 01:15:10.160]   up above you go up up up up up close
+[01:15:10.160 --> 01:15:22.470]   up above you go up up up up up close come with the vacuum cleaner it will be fine ok
+```
+And at:
+```console
+[01:29:26.270 --> 01:29:26.270]   little piece here okay all right so the
+[01:29:26.270 --> 01:29:33.080]   little piece here okay all right so the nephrectomy part is over now let's see
+[01:29:33.080 --> 01:29:33.080]   nephrectomy part is over now let's see
+```
+
+### Timestamp Issue
+I've not seen this particular issue during testing and this is probably because
+I've been using relative short audio files. When files get larger the timestamp
+issue becomes more apparent. This might be caused by using floats for calculation
+of the proportion of the timestamp within the VAD segment. If this proportion
+is very small or very large it might cause the timestamp to be off.  Changing
+this to double might help.
+
+
+### Revist VAD timestamps
+Recall that the challenge we have is that after whisper has processed the VAD
+samples the timestamps are relative to those audio samples and not the original
+audio samples. For examples, if there is a silence of 5 seconds in the original
+that will not be included inte samples that whisper processes. 
+But we want to map these timestamps back to the original audio so that we can
+report correct timestamps relative to the original audio.
+
+```c++
+struct vad_time_mapping {
+    double processed_time;  // Time in processed (VAD) audio
+    double original_time;   // Corresponding time in original audio
+};
+```
+Each pair in this table tells us "this position in the processed audio maps/corresponds
+to this position in the original audio.
+So for each vad segment we would add:
+
+* start point (segment.vad_start, segment.orig_start)
+This is telling us; the beginning of this segment in the processed audio corresponds
+to this time in the original audio.
+
+* end point (segment.vad_end, segment.orig_end)
+This is telling us; the end of this segment in the processed audio corresponds
+to this time in the original audio.
+
+Original audio:
+```
+0--------5-------10--------20-------25--------30 seconds
+         |Speech1|         |Speech2|
+```
+VAD processed audio:
+```
+0--------5-------5.1------10.1 seconds
+|Speech1|  Gap  |Speech2|
+```
+```
+(0.0, 5.0)    // Start of first segment
+(5.0, 10.0)   // End of first segment
+
+(5.1, 20.0)   // Start of second segment
+(10.1, 25.0)  // End of second segment
+```
+
+For segments over one second only having the start and end mapping points might
+not provide enough precision/resolution for timestamps that are in the middle.
+For example, lets say we have a 5 second speech in an audio file that is 10
+seconds long.
+So the range is larger for larger segments and hence we are mapping with a
+larger span (less resolution) and having addition points gives as more
+resolution. We are interpolating over a wider time range, which reduces precision
+Any small error in the proportion calculation gets amplified over the larger
+span. So we can break the larger span into smaller pieces to get a higher
+resolution, and any interpolation errors are limited to these smaller spans.
+
+```
+ ( 5.0, 10.0)    // start of segment 
+ (10.0, 20.0)    // end  of segment 
+
+(processed time/original time)
+```
+
+```
+Processed Audio:             5s                    10s
+                              |---------------------|
+                              ↑                     ↑
+                              |                     |
+                              |                     |
+                              ↓                     ↓
+Original Audio:              10s                    20s
+                              |---------------------|
+
+Intermediate points added:
+Processed:  5s  5.2s  5.4s  5.6s ... 9.6s  9.8s  10s
+            |    |     |     |   ...  |     |     |
+            ↓    ↓     ↓     ↓   ...  ↓     ↓     ↓
+Original:  10s  10.4s 10.8s 11.2s ... 19.6s 19.8s 20s
+```
+
+Now, when we then pass a segment index to `whisper_full_get_segment_t0` this will
+look up that index in whisper_segments to get the start timestamp of that
+segment. If VAD is not used then this is exactly what happens as the timestamps
+are correct. But for VAD processing we need to align the timestamps to the
+original audio.
+
+A binary search is performed using the processed time, for example lets say we
+have a procesed time of 3.2 seconds. We perform the binary search to find where
+where the processed time is greater than or equal to 3.2 in the time mapping
+table:
+```
+        time_mapping_table
+        (0.0, 5.0)          // Start of first segment
+(3.2)
+  +---> (5.0, 10.0)         // End of first segment
+
+        (5.1, 20.0)         // Start of second segment
+
+        (10.1, 25.0)        // End of second segment
+```
+So the binary search gives us the upper bound (5.0, 10.0) and the lower bound
+is the previous entry in the mapping table (0.0, 5.0).
+
+The we calculate the proportion of the processed time (the VAD processed time):
+```
+(target - lower.processed) / (upper.processed - lower.processed) = %
+(   3.2 - 0.0            ) / (            5.0 - 0.0)             = 0.64
+```
+So this gives us the proportion of the processed time and we then want to apply
+this proportion to the original time range (the original audio):
+```
+lower.original + proportion * (upper.original - lower.original)
+           5.0 + 0.64       * (10.0           - 5.0           ) = 8.2
+```
+This tells us that 3.2 seconds in the processed audio corresponds to 8.2
+seconds in the original audio.
+
+```c++
+    double t0 = state->result_all[i_segment].t0 / 100.0;
+
+    // Map to original time using the mapping table
+    double orig_t0 = map_processed_to_original_time(t0, state->vad_mapping_table);
+
+    return (int64_t)(orig_t0 * 100 + 0.5); // Round to nearest
+```
+So we first convert the timestamp to seconds and then we use the mapping table
+to get the original timestamp.
+
+With this approach I get the following output:
+```console
+[01:14:55.160 --> 01:14:55.170]   here that so I open a little this is another
+[01:14:55.170 --> 01:15:10.160]   here that so I open a little this is another here above you go up up up up up close
+[01:15:10.160 --> 01:15:10.170]   up above you go up up up up up close
+[01:15:10.160 --> 01:15:22.480]   up above you go up up up up up close come with the vacuum cleaner it will be fine ok
+```
+```console
+[01:29:26.270 --> 01:29:26.280]   little piece here okay all right so the
+[01:29:26.270 --> 01:29:33.090]   little piece here okay all right so the nephrectomy part is over now let's see
+[01:29:33.090 --> 01:29:33.100]   nephrectomy part is over now let's see
+```
