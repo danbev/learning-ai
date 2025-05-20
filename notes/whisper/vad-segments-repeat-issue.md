@@ -356,13 +356,31 @@ seconds in the original audio.
 So we first convert the timestamp to seconds and then we use the mapping table
 to get the original timestamp.
 
-With this approach I get the following output:
+With this approach I get the following output for the two sections reported
+previously that were incorrect.
+
+Original VAD implementation:
+```console
+[01:14:55.150 --> 01:14:55.170]   here that so I open a little this is another
+[01:14:55.170 --> 01:15:10.160]   here that so I open a little this is another here above you go up up up up up close
+[01:15:10.160 --> 01:15:10.160]   up above you go up up up up up close
+[01:15:10.160 --> 01:15:22.470]   up above you go up up up up up close come with the vacuum cleaner it will be fine ok
+```
+Updated VAD implementation:
 ```console
 [01:14:55.160 --> 01:14:55.170]   here that so I open a little this is another
 [01:14:55.170 --> 01:15:10.160]   here that so I open a little this is another here above you go up up up up up close
 [01:15:10.160 --> 01:15:10.170]   up above you go up up up up up close
 [01:15:10.160 --> 01:15:22.480]   up above you go up up up up up close come with the vacuum cleaner it will be fine ok
 ```
+
+Original VAD implementation:
+```console
+[01:29:26.270 --> 01:29:26.270]   little piece here okay all right so the
+[01:29:26.270 --> 01:29:33.080]   little piece here okay all right so the nephrectomy part is over now let's see
+[01:29:33.080 --> 01:29:33.080]   nephrectomy part is over now let's see
+```
+Updated VAD implementation:
 ```console
 [01:29:26.270 --> 01:29:26.280]   little piece here okay all right so the
 [01:29:26.270 --> 01:29:33.090]   little piece here okay all right so the nephrectomy part is over now let's see
