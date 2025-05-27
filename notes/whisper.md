@@ -1154,9 +1154,9 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         }
     }
 ```
-TODO: take a closer look at the verify magic check in combination with using a Core ML
-model. This check forces there to be an ggml model even though there might be cases
-where only a Core ML model is used.
+This check forces there to be an ggml model even though there might be cases
+where only a Core ML model is used. This is because the Core ML/OpenVINO models
+are only encoders, the decoder is still required in these cases.
 
 The actual inference is started by `cli.cpp`:
 ```c++
