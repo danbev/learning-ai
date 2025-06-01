@@ -2,7 +2,7 @@
 
 ### Introduction
 SIMD utilizes special registers which can hold 128, 256, 512, or even 1024 bits
-of data. The register used is divided into smaller blocks of 8, 16, 32, or 64
+of data. The register used are divided into smaller blocks of 8, 16, 32, or 64
 bits and perform the same operation on all the blocks simultaneously.
 
 Now, the processor itself needs to have physical support for the instructions,
@@ -19,7 +19,7 @@ $ gcc --target-help
 
 * -mavx512vl (Vector Length Extension) enables AVX512 ops on 256/128 bit regs
 * -mavx512bw (Byte and Word) enables AVX512 ops on 512 bit regs
-* -mavx512vbmi (Vector Byte Manipulation Instructions) extens the existing AVX512
+* -mavx512vbmi (Vector Byte Manipulation Instructions) extends the existing AVX512
 instruction set byte and work operations (8/16 bit operations).
 * -mfma (Fused Multiply-Add) enables FMA instructions
 * -mf16c (Half Precision Floating Point Conversion) provides support for
@@ -28,7 +28,7 @@ floats.
 
 * -march=native (Optimize for the host processor) enables all instruction set
 extensions supported by the host processor. The compiler probes the host
-system's processor for its capabilities like using cpuid and then adds then
+system's processor for its capabilities, like using `cpuid` and then adds then
 appropriate compiler flags that are available on the current system.
 
 ### Machine specific options/support
@@ -75,7 +75,7 @@ src/add.cpp:11:35: note: called from here
       |                 ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~
 make: *** [Makefile:13: add] Error 1
 ```
-In this case we nee to add the 'm'achine specific option `avx2` flag to the
+In this case we need to add the 'm'achine specific option `avx2` flag to the
 compilation command:
 ```console
 $ g++ -g -Wall -mavx2 -Wno-unused-variable -o bin/add src/add.cpp
