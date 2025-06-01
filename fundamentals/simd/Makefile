@@ -1,5 +1,6 @@
 CXX = g++
 CXXFLAGS = -g -Wall -mavx2 -mavx512vnni -mavx512f -mavx512dq -mavx512vl -mavx512bw -Wno-unused-variable
+CXXFLAGS = -g -Wall -mavx2 -mavx512vnni -mavx512f -mavx512dq -mavx512vl -mavx512bw -Wno-unused-variable
 
 SRCDIR = src
 BINDIR = bin
@@ -16,6 +17,7 @@ bindir: bin
 bin: 
 	@mkdir -p $(BINDIR)
 
+add: CXXFLAGS = -g -Wall -mavx2
 bin/add: | bindir
 	$(CXX) -march=native -v -o $@ src/add.cpp
 
