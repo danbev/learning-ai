@@ -189,7 +189,7 @@ Next, we have calculate the token time (I think):
 ```
 So what this is doing is that is it calculating/estimating a timestamp for the
 token with token id `token.tid`. This will be an offset from `t_beg` which I
-think it the beginning timestamp for this segment.
+think is the beginning timestamp for this segment.
 ```console
 (gdb) p ctx->vocab.n_vocab
 $17 = 51865
@@ -257,7 +257,7 @@ string.
 
 So a space only takes 0.01 seconds, while a comma takes 2 seconds etc. And this
 score will be stored for the token. It feels like for the beginning token this
-would note have to be calculated but perhaps there is a reason for this that
+would not have to be calculated but perhaps there is a reason for this that
 might become clear later.
 
 The last thing to happen in the token "initialization/setting" loop the setting
@@ -292,12 +292,12 @@ And the default values for these are:
         float pt;          // probability of the timestamp token
         float ptsum;       // sum of probabilities of all timestamp tokens
 ```
-So the if statement determines if wew should set the tokens timestamp, and is
+So the if statement determines if we should set the tokens timestamp, and is
 checking the probability of the timestamp for the token and token probability
 sum meet the thresholds. It also makes sure that the token id is greater than
 the last token id. This last one is confusing to me. So currently `tid_last` is
-the beginning token id which is 50364 so this will timestamp for the token will
-not be set this time. Now, we need to understand that the model can generate
+the beginning token id which is 50364 so this timestamp for the token will not
+be set this time. Now, we need to understand that the model can generate
 timestamp tokens and that these are all the tokens greater than 50363:
 ```console
 (gdb) p whisper_token_to_str(&ctx, 50364)
@@ -310,7 +310,7 @@ $16 = 0x55555635e5c8 "[_TT_2]"
 So only timestamp tokens will be set, provided they also meet the other
 conditions.
 
-For examples, token 7 will have the following values:
+For example, token 7 will have the following values:
 ```console
 (gdb) p token
 $7 = (whisper_token_data &) @0x55555cd44538: {id = 1029, tid = 50466, p = 0.471208423, plog = -0.752454758, pt = 0.0830370337,
@@ -431,7 +431,7 @@ After that we have:
         }
     }
 ```
-So thiw will go through the tokens and first find the first token which has an
+So this will go through the tokens and first find the first token which has an
 end time stamp set. Then it will iterate over the token that come before that
 token and perform the computations:
 ```c++
@@ -454,7 +454,7 @@ token and perform the computations:
 ```
 This starts by summing all the voice lengths for the tokens in the range.
 `dt` is the time duration of the tokens in the range (end token - start token).
-Folling that the cutoff time, `ct`, is calculated:
+Following that the cutoff time, `ct`, is calculated:
 ```
 proportional_duration = (dt * tokens[j - 1].vlen) / psum
 ```
@@ -553,3 +553,144 @@ of the previous token. So if there is an overlap then the start time will be set
 to the end time of the previous token.
 
 And a similar things is the performed for s1.
+
+Now, the tokens[j].t0 and tokens[j].t1 are timestamps in centiseconds and are
+stored as uint64_t types.
+
+### VAD token timestamp integration
+When VAD is enabled, this is the VAD that uses a model to detect voice activity
+and then filters the input audio samples to only include the parts where there
+is speach. This means that the timestamps that whisper sees are the ones that
+are relative to the filtered audio and not the original audio. But what we have
+done is aligned these to the original audios timestamps by using a mapping.
+This is what is reported by the following timestamps:
+```console
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,290",
+				"to": "00:00:10,450"
+			},
+			"offsets": {
+				"from": 290,
+				"to": 10450
+			},
+			"text": " And so, my fellow Americans ask not what your country can do for you, ask what you can do for your country.",
+```
+These timestamps are retreived by calling:
+```c++
+static void output_json(
+             struct whisper_context * ctx,
+                      std::ofstream & fout,
+               const whisper_params & params,
+    std::vector<std::vector<float>>   pcmf32s) {
+        ...
+            const int n_segments = whisper_full_n_segments(ctx);
+            for (int i = 0; i < n_segments; ++i) {
+                const char * text = whisper_full_get_segment_text(ctx, i);
+
+                const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
+                const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
+
+                start_obj(nullptr);
+                    times_o(t0, t1, false);
+                    value_s("text", text, !params.diarize && !params.tinydiarize && !full);
+
+                    ...
+```
+`whisper_full_get_segment_t0` and `whisper_full_get_segment_t1` will will return
+timestamps that are aligned to the original audio and these are the timestamps
+for the segment as a whole. There is also the option to enable token level
+timestamps using
+`--output-json-full/-ojf`:
+```console
+			"tokens": [
+				{
+					"text": "[_BEG_]",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,000"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 0
+					},
+					"id": 50364,
+					"p": 0.989351,
+					"t_dtw": -1
+				},
+				{
+					"text": " And",
+					"timestamps": {
+						"from": "00:00:00,040",
+						"to": "00:00:00,240"
+					},
+					"offsets": {
+						"from": 40,
+						"to": 240
+					},
+					"id": 400,
+					"p": 0.584645,
+					"t_dtw": -1
+				},
+```
+Now, these timestamps per token and are generated by the following code:
+```c++
+                    if (full) {
+                        start_arr("tokens");
+                        const int n = whisper_full_n_tokens(ctx, i);
+                        for (int j = 0; j < n; ++j) {
+                            auto token = whisper_full_get_token_data(ctx, i, j);
+                            start_obj(nullptr);
+                                value_s("text", whisper_token_to_str(ctx, token.id), false);
+                                if(token.t0 > -1 && token.t1 > -1) {
+                                    // If we have per-token timestamps, write them out
+                                    times_o(token.t0, token.t1, false);
+                                }
+                                value_i("id", token.id, false);
+                                value_f("p", token.p, false);
+                                value_f("t_dtw", token.t_dtw, true);
+                            end_obj(j == (n - 1));
+                        }
+                        end_arr(!params.diarize && !params.tinydiarize);
+                    }
+```
+Above we are getting the token data for each token and using the token
+timestamps to output them for each token. But there is no alignment to the
+original audio in this case.
+
+_wip_
+
+
+The are the token timestamps for the first token when vad is enabled:
+```console
+(gdb) p tokens[0].t0
+$1 = 0
+(gdb) p tokens[1].t0
+$3 = 28
+```
+This is what we are going to try to align/map to the original audio.
+```c++
+    if (!state.vad_mapping_table.empty()) {
+        for (int j = 0; j < n; j++) {
+            tokens[j].t0 = map_token_timestamp_to_original(&state, tokens[j].t0);
+            tokens[j].t1 = map_token_timestamp_to_original(&state, tokens[j].t1);
+        }
+    }
+```
+```c++
+static int64_t map_token_timestamp_to_original(struct whisper_state * state, uint64_t t) {
+    double ts_sec = t/100.0;
+    double orig_ts_sec = map_processed_to_original_time(ts_sec, state->vad_mapping_table);
+    return (int64_t)(orig_ts_sec * 100 + 0.5);
+}
+```
+```console
+7881	    if (processed_time <= mapping_table.front().processed_time) {
+(gdb) p processed_time
+$5 = 0
+(gdb) p mapping_table.front().processed_time 
+$6 = 0
+(gdb) p mapping_table.front().original_time
+$7 = 0.28999999165534973
+```
