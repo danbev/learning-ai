@@ -659,38 +659,200 @@ Above we are getting the token data for each token and using the token
 timestamps to output them for each token. But there is no alignment to the
 original audio in this case.
 
-_wip_
+I've tried to address this in https://github.com/ggml-org/whisper.cpp/pull/3218.
 
+While working on this I also used an example audio file that was referenced in
+https://github.com/ggml-org/whisper.cpp/issues/3207 where an audio book was used
+, specifically Aladdin. If we listen to the audio we can hear an introduction
+that is about 20 seconds by a speaker with a broad Australian accent. It sounds
+like it is the same speaker that is reading the book, but the accent is not as
+strong as in the introduction. Now, the interesting thing is that the
+introduction does not get transcribed, but the rest of the audio book does. Why
+is this? 
+I wanted to see how OpenAI's Whisper would process this same audio file:
+```console
+(whisper-venv) $ whisper samples/aladdin.mp3 --model medium.en --word_timestamps True
+100%|█████████████████████████████████████| 1.42G/1.42G [07:07<00:00, 3.57MiB/s]t
+[00:00.000 --> 00:25.960]  There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who
+[00:25.960 --> 00:31.760]  would do nothing but play all day long in the streets with little idle boys like himself.
+[00:31.760 --> 00:34.960]  This so grieved the father that he died.
+[00:34.960 --> 00:40.200]  Yet in spite of his mother's tears and prayers, Aladdin did not mend his ways.
+[00:40.200 --> 00:45.720]  One day, when he was playing in the streets as usual, a stranger asked him his age, and
+[00:45.720 --> 00:48.320]  if he was not the son of Mustapha the tailor.
+[00:48.320 --> 00:53.840]  "'I am, sir,' replied Aladdin, but he died a long while ago.
+[00:53.840 --> 01:00.200]  On this the stranger, who was a famous African magician, fell on his neck and kissed him,
+[01:00.200 --> 01:01.200]  saying,
+[01:01.200 --> 01:05.360]  "'I am your uncle, and knew you from your likeness to my brother.
+[01:05.360 --> 01:09.840]  Go to your mother and tell her I am coming.'
+[01:09.840 --> 01:13.360]  Aladdin ran home and told his mother of his newly found uncle.
+[01:13.360 --> 01:15.680]  "'Indeed, child,' she said.
+...
+```
+And the first token timestamps:
+```console
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 20.059999999999995,
+      "end": 28.98,
+      "text": " There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who",
+      "tokens": [
+        50363,
+        1318,
+        1752,
+        5615,
+        257,
+        3595,
+        35280,
+        11,
+        508,
+        550,
+        257,
+        3367,
+        1444,
+        978,
+        46782,
+        11,
+        257,
+        36138,
+        21696,
+        2933,
+        11,
+        508,
+        51661
+      ],
+      "temperature": 0.0,
+      "avg_logprob": -0.22713401794433594,
+      "compression_ratio": 1.075,
+      "no_speech_prob": 0.0505792535841465,
+      "words": [
+        {
+          "word": " There",
+          "start": 20.059999999999995,
+          "end": 20.639999999999997,
+          "probability": 0.1740105301141739
+        },
+```
 
-The are the token timestamps for the first token when vad is enabled:
+And using `whisper-cli` with the same audio file:
 ```console
-(gdb) p tokens[0].t0
-$1 = 0
-(gdb) p tokens[1].t0
-$3 = 28
+[00:00:00.000 --> 00:00:25.960]   There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who
+[00:00:25.960 --> 00:00:31.760]   would do nothing but play all day long in the streets with little idle boys like himself.
+[00:00:31.760 --> 00:00:34.960]   This so grieved the father that he died.
+[00:00:34.960 --> 00:00:40.200]   Yet in spite of his mother's tears and prayers, Aladdin did not mend his ways.
+[00:00:40.200 --> 00:00:45.720]   One day, when he was playing in the streets as usual, a stranger asked him his age, and
+[00:00:45.720 --> 00:00:48.400]   if he was not the son of Mustapha the tailor.
+[00:00:48.400 --> 00:00:53.840]   "I am, sir," replied Aladdin, "but he died a long while ago."
+[00:00:53.840 --> 00:01:00.160]   On this, the stranger, who was a famous African magician, fell on his neck and kissed him,
+[00:01:00.160 --> 00:01:07.000]   saying, "I am your uncle, and knew you from your likeness to my brother; go to your mother,
+[00:01:07.000 --> 00:01:09.860]   and tell her I am coming."
+[00:01:09.860 --> 00:01:13.360]   Aladdin ran home and told his mother of his newly found uncle.
+[00:01:13.360 --> 00:01:20.800]   "Indeed, child," she said, "your father had a brother, but I always thought he was dead."
 ```
-This is what we are going to try to align/map to the original audio.
-```c++
-    if (!state.vad_mapping_table.empty()) {
-        for (int j = 0; j < n; j++) {
-            tokens[j].t0 = map_token_timestamp_to_original(&state, tokens[j].t0);
-            tokens[j].t1 = map_token_timestamp_to_original(&state, tokens[j].t1);
-        }
-    }
-```
-```c++
-static int64_t map_token_timestamp_to_original(struct whisper_state * state, uint64_t t) {
-    double ts_sec = t/100.0;
-    double orig_ts_sec = map_processed_to_original_time(ts_sec, state->vad_mapping_table);
-    return (int64_t)(orig_ts_sec * 100 + 0.5);
-}
-```
+And the full json output:
 ```console
-7881	    if (processed_time <= mapping_table.front().processed_time) {
-(gdb) p processed_time
-$5 = 0
-(gdb) p mapping_table.front().processed_time 
-$6 = 0
-(gdb) p mapping_table.front().original_time
-$7 = 0.28999999165534973
+ "transcription": [
+    {
+      "timestamps": {
+        "from": "00:00:00,000",
+        "to": "00:00:25,960"
+      },
+      "offsets": {
+        "from": 0,
+        "to": 25960
+      },
+      "text": " There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who",
+      "tokens": [
+        {
+          "text": "[_BEG_]",
+          "timestamps": {
+            "from": "00:00:00,000",
+            "to": "00:00:00,000"
+          },
+          "offsets": {
+            "from": 0,
+            "to": 0
+          },
+          "id": 50363,
+          "p": 0.781686,
+          "t_dtw": -1
+        },
+        {
+          "text": " There",
+          "timestamps": {
+            "from": "00:00:01,120",
+            "to": "00:00:21,120"
+          },
+          "offsets": {
+            "from": 1120,
+            "to": 21120
+          },
+          "id": 1318,
+          "p": 0.374393,
+          "t_dtw": -1
+        },
 ```
+Notice that this differs from OpenAI's whisper in tha the `from` is 00:00:01,120
+in our case and 00:00:20,059 in OpenAI's Whisper.
+
+And using whisper-cli with VAD:
+```console
+[00:00:01.120 --> 00:00:25.960]   There once lived a poor Taylor, who had a son called Aladdin, a careless idle-boy, who
+[00:00:25.960 --> 00:00:31.750]   would do nothing but play all day long in the streets, with little idle-boys like himself.
+[00:00:31.750 --> 00:00:37.790]   Aladdin so grieved the father that he died; yet in spite of his mother's tears and prayers,
+[00:00:37.790 --> 00:00:40.180]   Aladdin did not mend his ways.
+[00:00:40.180 --> 00:00:45.670]   One day, when he was playing in the streets as usual, a stranger asked him his age, and
+[00:00:45.670 --> 00:00:48.140]   if he was not the son of Mustapha the Taylor.
+[00:00:48.140 --> 00:00:53.830]   "I am, sir," replied Aladdin; but he died a long while ago.
+[00:00:53.830 --> 00:01:00.070]   On this the stranger, who was a famous African magician, fell on his neck and kissed him,
+[00:01:00.070 --> 00:01:05.160]   saying, "I am your uncle, and knew you from your likeness to my brother.
+[00:01:05.160 --> 00:01:09.820]   Go to your mother, and tell her I am coming."
+[00:01:09.820 --> 00:01:13.480]   Aladdin ran home, and told his mother of his newly found uncle.
+[00:01:13.480 --> 00:01:19.430]   "Indeed, child," she said, "your father had a brother, but I always thought he was dead."
+```
+
+And the full json output:
+```console
+  "transcription": [
+    {
+      "timestamps": {
+        "from": "00:00:01,120",
+        "to": "00:00:25,960"
+      },
+      "offsets": {
+        "from": 1120,
+        "to": 25960
+      },
+      "text": " There once lived a poor Taylor, who had a son called Aladdin, a careless idle-boy, who",
+      "tokens": [
+        {
+          "text": "[_BEG_]",
+          "timestamps": {
+            "from": "00:00:01,120",
+            "to": "00:00:01,120"
+          },
+          "offsets": {
+            "from": 1120,
+            "to": 1120
+          },
+          "id": 50363,
+          "p": 0.925896,
+          "t_dtw": -1
+        },
+        {
+          "text": " There",
+          "timestamps": {
+            "from": "00:00:01,120",
+            "to": "00:00:21,080"
+          },
+          "offsets": {
+            "from": 1120,
+            "to": 21080
+          },
+          "id": 1318,
+          "p": 0.179201,
+          "t_dtw": -1
+        },
+```
+Notice here that we have the same from and to timestamp issue as with non VAD.
