@@ -1305,8 +1305,67 @@ And like we looked at before this is what
 `whisper_exp_compute_token_level_timestamps` will use to compute the token
 level timestamps.
 
+With this parameter set the token level timestamps will be more aligned:
+```console
+  "transcription": [                                                            
+    {                                                                           
+      "timestamps": {                                                           
+        "from": "00:00:20,000",                                                 
+        "to": "00:00:26,000"                                                    
+      },                                                                        
+      "offsets": {                                                              
+        "from": 20000,                                                          
+        "to": 26000                                                             
+      },                                                                        
+      "text": " There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who",
+      "tokens": [                                                               
+        {                                                                       
+          "text": "[_BEG_]",                                                    
+          "timestamps": {                                                       
+            "from": "00:00:20,000",                                             
+            "to": "00:00:20,000"                                                
+          },                                                                    
+          "offsets": {                                                          
+            "from": 20000,                                                      
+            "to": 20000                                                         
+          },                                                                    
+          "id": 50363,                                                          
+          "p": 0.90205,                                                         
+          "t_dtw": -1                                                           
+        },                                                                      
+        {                                                                       
+          "text": " There",                                                     
+          "timestamps": {                                                       
+            "from": "00:00:20,000",                                             
+            "to": "00:00:20,420"                                                
+          },                                                                    
+          "offsets": {                                                          
+            "from": 20000,                                                      
+            "to": 20420                                                         
+          },                                                                    
+          "id": 1318,                                                           
+          "p": 0.873434,                                                        
+          "t_dtw": -1                                                           
+        },                                                                      
+        {                                                                       
+          "text": " once",                                                      
+          "timestamps": {                                                       
+            "from": "00:00:20,450",                                             
+            "to": "00:00:20,670"                                                
+          },                                                                    
+          "offsets": {                                                          
+            "from": 20450,                                                      
+            "to": 20670                                                         
+          },                                                                    
+          "id": 1752,                                                           
+          "p": 0.990979,                                                        
+          "t_dtw": -1                                                           
+        },                               
+```
+
 The difference between OpenAI's Whisper is that they seem to be able to do this
 automatically, while we have to specify the offset manually. The goal of this
-task should be to match OpenAI behavior in this case I think but since this is
-something that can be configured it could be used already to align the tokens
-level timestamps.
+task should be to match OpenAI behavior, at least I think so but there might be
+things that I'm now aware about yet and if this was a choice to have an explicit
+parameter instead. But I'll look into implementing this and then ask for some
+feedback on a PR.
