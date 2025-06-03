@@ -661,6 +661,8 @@ original audio in this case.
 
 I've tried to address this in https://github.com/ggml-org/whisper.cpp/pull/3218.
 
+### Token level timestamps issue
+
 While working on this I also used an example audio file that was referenced in
 https://github.com/ggml-org/whisper.cpp/issues/3207 where an audio book was used
 , specifically Aladdin. If we listen to the audio we can hear an introduction
@@ -792,9 +794,65 @@ And the full json output:
           "p": 0.374393,
           "t_dtw": -1
         },
+                {
+          "text": " once",
+          "timestamps": {
+            "from": "00:00:21,120",
+            "to": "00:00:21,310"
+          },
+          "offsets": {
+            "from": 21120,
+            "to": 21310
+          },
+          "id": 1752,
+          "p": 0.939207,
+          "t_dtw": -1
+        },
+        {
+          "text": " lived",
+          "timestamps": {
+            "from": "00:00:21,310",
+            "to": "00:00:21,540"
+          },
+          "offsets": {
+            "from": 21310,
+            "to": 21540
+          },
+          "id": 5615,
+          "p": 0.983205,
+          "t_dtw": -1
+        },
+        {
+          "text": " a",
+          "timestamps": {
+            "from": "00:00:21,540",
+            "to": "00:00:21,580"
+          },
+          "offsets": {
+            "from": 21540,
+            "to": 21580
+          },
+          "id": 257,
+          "p": 0.988849,
+          "t_dtw": -1
+        },
+        {
+          "text": " poor",
+          "timestamps": {
+            "from": "00:00:21,650",
+            "to": "00:00:21,840"
+          },
+          "offsets": {
+            "from": 21650,
+            "to": 21840
+          },
+          "id": 3595,
+          "p": 0.958758,
+          "t_dtw": -1
+        },
 ```
-Notice that this differs from OpenAI's whisper in tha the `from` is 00:00:01,120
-in our case and 00:00:20,059 in OpenAI's Whisper.
+Notice that this differs from OpenAI's whisper in tha the `from` is
+`00:00:01,120` in our case and `00:00:20,059` in OpenAI's Whisper.
 
 And using whisper-cli with VAD:
 ```console
@@ -854,5 +912,321 @@ And the full json output:
           "p": 0.179201,
           "t_dtw": -1
         },
+                {
+          "text": " once",
+          "timestamps": {
+            "from": "00:00:17,080",
+            "to": "00:00:17,240"
+          },
+          "offsets": {
+            "from": 17080,
+            "to": 17240
+          },
+          "id": 1752,
+          "p": 0.955223,
+          "t_dtw": -1
+        },
+        {
+          "text": " lived",
+          "timestamps": {
+            "from": "00:00:17,240",
+            "to": "00:00:17,380"
+          },
+          "offsets": {
+            "from": 17240,
+            "to": 17380
+          },
+          "id": 5615,
+          "p": 0.986344,
+          "t_dtw": -1
+        },
+        {
+          "text": " a",
+          "timestamps": {
+            "from": "00:00:17,480",
+            "to": "00:00:17,520"
+          },
+          "offsets": {
+            "from": 17480,
+            "to": 17520
+          },
+          "id": 257,
+          "p": 0.983988,
+          "t_dtw": -1
+        },
+        {
+          "text": " poor",
+          "timestamps": {
+            "from": "00:00:17,520",
+            "to": "00:00:17,780"
+          },
+          "offsets": {
+            "from": 17520,
+            "to": 17780
+          },
+          "id": 3595,
+          "p": 0.981929,
+          "t_dtw": -1
+        },
 ```
 Notice here that we have the same from and to timestamp issue as with non VAD.
+```
+            "from": "00:00:01,120",
+            "to": "00:00:21,080"
+```
+And also notice that the second token has:
+```console
+            "from": "00:00:17,080",
+            "to": "00:00:17,240"
+```
+This also look like it is incorrect as it should not be 17 seconds in.
+
+But the other timestamps for the rest of the tokens look correct, at least they
+don't have this huge offset like the first two tokens.
+
+
+Now, just trying to reproduce this using one of the samples in whisper.cpp does
+not seem to work. I suspect that the introduction/credits at the start is what
+is causing the offset. So we can open the audio file in Audacity and then select
+like 50 seconds from the start. The choose `Edit` -> `Remove special` ->
+`Trim Audio` to remove the rest. Then we can export this as a new audio file,
+for example as `aladding-shortened.mp3`.
+```console
+./build/bin/whisper-cli -f samples/aladdin-shortened.mp3 \
+    -m ./models/ggml-base.en.bin \
+    --vad-model ./models/for-tests-silero-v5.1.2-ggml.bin \
+    -ojf -of jfk
+    ...
+[00:00:00.000 --> 00:00:04.040]   Aladdin and the Magic Lamp by Unknown
+[00:00:04.040 --> 00:00:09.040]   This is a LibraVox recording. All LibraVox recordings are in the public domain.
+[00:00:09.040 --> 00:00:13.000]   For more information or to volunteer please visit LibraVox.org.
+[00:00:13.000 --> 00:00:20.000]   Recording by Lucille Farrow. Aladdin and the Magic Lamp by Unknown.
+[00:00:20.000 --> 00:00:24.000]   They once lived a poor tailor who had a son called Aladdin,
+[00:00:24.000 --> 00:00:28.000]   a careless idle boy who would do nothing but play all day long in the streets
+[00:00:28.000 --> 00:00:34.000]   with little idle boys like himself. This so grieved the father that he died.
+[00:00:34.000 --> 00:00:39.000]   Yet in spite of his mother's tears and prayers, Aladdin did not mend his ways.
+[00:00:39.000 --> 00:00:43.000]   One day, when he was playing in the streets as usual,
+[00:00:43.000 --> 00:00:48.000]   a stranger asked him his age and if he was not the son of Mustafa the tailor.
+[00:00:48.000 --> 00:00:50.000]   "I am sir," replied Aladdin.
+output_json: saving output to 'jfk.json'
+```
+Now, this is interesting. The intro is now transcribed but this is not the case
+with the original audio file! Notice that the above is using the model `base.en`
+which was actually by mistake but shows something interesting. The model is
+important here and the base model will transcribe the introduction while the
+medium model will skip it.
+This is using the `medium.en` model:
+```console
+./build/bin/whisper-cli -f samples/aladdin-first30.mp3 -m ./models/ggml-medium.en.bin --vad-model ./models/for-tests-silero-v5.1.2-ggml.bin -ojf -of jfk
+...
+
+[00:00:00.000 --> 00:00:26.000]   There once lived a poor tailor, who had a son called Aladdin, a careless idle-boy, who
+[00:00:26.000 --> 00:00:56.000]   would do nothing but play all day long in the streets, with little idle boys
+output_json: saving output to 'jfk.json'
+```
+And we can confirm this using the OpenAI's Whisper models:
+```console
+(whisper-venv) $ whisper samples/aladdin-shortened.mp3 --model base.en --word_timestamps True
+[00:00.780 --> 00:03.120]  Aladdin and the Magic Lamp by Unknown
+[00:04.000 --> 00:08.540]  This is a LibraVox recording. All LibraVox recordings are in the public domain.
+[00:09.460 --> 00:13.380]  For more information or to volunteer, please visit LibraVox.org.
+[00:13.880 --> 00:18.420]  Recording by Lucille Afaro. Aladdin and the Magic Lamp by Unknown
+[00:20.200 --> 00:28.260]  They once lived a poor tailor who had a son called Aladdin, a careless idle boy who would do nothing but play all day long in the streets
+[00:28.260 --> 00:33.740]  with little idle boys like himself. This so grieved the father that he died.
+[00:34.560 --> 00:38.960]  Yet in spite of his mother's tears and prayers, Aladdin did not mend his ways.
+[00:39.800 --> 00:47.900]  One day, when he was playing in the streets as usual, a stranger asked him his age and if he was not the son of Mustafa the tailor.
+[00:47.900 --> 00:50.300]  I am Sir replied Aladdin.
+```
+
+```console
+(whisper-venv) $ whisper samples/aladdin-shortened.mp3 --model medium.en --word_timestamps True
+[00:20.020 --> 00:28.980]  There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who
+[00:28.980 --> 00:30.640]  like himself.
+[00:31.440 --> 00:37.080]  This so grieved the father that he died, yet in spite of his mother's tears and prayers,
+[00:37.660 --> 00:39.200]  Aladdin did not mend his ways.
+[00:39.980 --> 00:45.640]  One day, when he was playing in the streets as usual, a stranger asked him his age, and
+[00:45.640 --> 00:48.140]  if he was not the son of Mustapha the tailor.
+[00:48.140 --> 00:48.520]  Aladdin.
+[00:48.520 --> 00:50.400]  I am, sir, replied Aladdin.
+```
+
+This indicates that the medium model mitht have been trained on audio books and
+to skip the LibreVox-style introduction. Like the model may have learned to not
+transcribe credits/metadata information.
+
+So we know that with OpenAI's medium.en the intro is skipped and this is also
+the case with whisper.cpp. The issue lies in the token level timestamps that
+are different. For OpenAI we have the following timestamps:
+```console
+{
+  "text": " There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who like himself. This so grieved the father that he died, yet in spite of his mother's tears and prayers, Aladdin did not mend his ways. One day, when he was playing in the streets as usual, a stranger asked him his age, and if he was not the son of Mustapha the tailor. Aladdin. I am, sir, replied Aladdin.",
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 20.019999999999996,
+      "end": 28.98,
+      "text": " There once lived a poor tailor, who had a son called Aladdin, a careless idle boy, who",
+      "tokens": [
+        50363,
+        1318,
+        1752,
+        5615,
+        257,
+        3595,
+        35280,
+        11,
+        508,
+        550,
+        257,
+        3367,
+        1444,
+        978,
+        46782,
+        11,
+        257,
+        36138,
+        21696,
+        2933,
+        11,
+        508,
+        51661
+      ],
+      "temperature": 0.0,
+      "avg_logprob": -0.21897212982177736,
+      "compression_ratio": 1.075,
+      "no_speech_prob": 0.03745606541633606,
+      "words": [
+        {
+          "word": " There",
+          "start": 20.019999999999996,
+          "end": 20.619999999999997,
+          "probability": 0.1965043693780899
+        },
+        {
+          "word": " once",
+          "start": 20.619999999999997,
+          "end": 21.22,
+          "probability": 0.9858121871948242
+        },
+        {
+          "word": " lived",
+          "start": 21.22,
+          "end": 21.5,
+          "probability": 0.9969969987869263
+        },
+        {
+          "word": " a",
+          "start": 21.5,
+          "end": 21.7,
+          "probability": 0.9940487146377563
+        },
+        {
+          "word": " poor",
+          "start": 21.7,
+          "end": 21.88,
+          "probability": 0.995926022529602
+        },
+```
+And for whisper.cpp:
+```console
+  "transcription": [                                                            
+    {                                                                           
+      "timestamps": {                                                           
+        "from": "00:00:00,000",                                                 
+        "to": "00:00:26,000"                                                    
+      },                                                                        
+      "offsets": {                                                              
+        "from": 0,                                                              
+        "to": 26000                                                             
+      },                                                                        
+      "text": " There once lived a poor tailor, who had a son called Aladdin, a careless idle-boy, who",
+      "tokens": [                                                               
+        {                                                                       
+          "text": "[_BEG_]",                                                    
+          "timestamps": {                                                       
+            "from": "00:00:00,000",                                             
+            "to": "00:00:00,000"                                                
+          },                                                                    
+          "offsets": {                                                          
+            "from": 0,                                                          
+            "to": 0                                                             
+          },                                                                    
+          "id": 50363,                                                          
+          "p": 0.755106,                                                        
+          "t_dtw": -1                                                           
+        },                                                                      
+        {                                                                       
+          "text": " There",                                                     
+          "timestamps": {                                                       
+            "from": "00:00:01,140",                                             
+            "to": "00:00:21,120"                                                
+          },                                                                    
+          "offsets": {                                                          
+            "from": 1140,                                                       
+            "to": 21120                                                         
+          },                                                                    
+          "id": 1318,                                                           
+          "p": 0.338112,                                                        
+          "t_dtw": -1                                                           
+        },                                                                      
+        {                                                                       
+          "text": " once",                                                      
+          "timestamps": {                                                       
+            "from": "00:00:21,120",                                             
+            "to": "00:00:21,290"                                                
+          },                                                                    
+          "offsets": {                                                          
+            "from": 21120,                                                      
+            "to": 21290                                                         
+          },                                                                    
+          "id": 1752,                                                           
+          "p": 0.937644,                                                        
+          "t_dtw": -1                                                           
+        },                                     
+         {
+          "text": " lived",
+          "timestamps": {
+            "from": "00:00:21,290",
+            "to": "00:00:21,540"
+          },
+          "offsets": {
+            "from": 21290,
+            "to": 21540
+          },
+          "id": 5615,
+          "p": 0.980597,
+          "t_dtw": -1
+        },
+        {
+          "text": " a",
+          "timestamps": {
+            "from": "00:00:21,540",
+            "to": "00:00:21,600"
+          },
+          "offsets": {
+            "from": 21540,
+            "to": 21600
+          },
+          "id": 257,
+          "p": 0.989806,
+          "t_dtw": -1
+        },
+        {
+          "text": " poor",
+          "timestamps": {
+            "from": "00:00:21,600",
+            "to": "00:00:21,860"
+          },
+          "offsets": {
+            "from": 21600,
+            "to": 21860
+          },
+          "id": 3595,
+          "p": 0.973454,
+          "t_dtw": -1
+        },
+```
+So it actally looks like OpenAI's whisper is using the actual start timestamp,
+that is the one after the introduction while whisper.cpp is using the something
+else (which is what I should investigate).
