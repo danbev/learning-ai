@@ -1227,6 +1227,83 @@ And for whisper.cpp:
           "t_dtw": -1
         },
 ```
-So it actally looks like OpenAI's whisper is using the actual start timestamp,
-that is the one after the introduction while whisper.cpp is using the something
-else (which is what I should investigate).
+So it looks like OpenAI's whisper is using the actual start timestamp, that is
+the one after the introduction while whisper.cpp is using the something else
+(which is what I should investigate).
+
+Debugging:
+After decoding in `whisper_full_with_state` we have the following code:
+```c++
+                            if (params.token_timestamps) {
+                                whisper_exp_compute_token_level_timestamps(
+                                        *ctx, *state, result_all.size() - 1, params.thold_pt, params.thold_ptsum);
+
+                                if (params.max_len > 0) {
+                                    n_new = whisper_wrap_segment(*ctx, *state, params.max_len, params.split_on_word);
+                                }
+                            }
+```
+And if we look at the function `whisper_exp_compute_token_level_timestamps`:
+```c++
+static void whisper_exp_compute_token_level_timestamps(
+        struct whisper_context & ctx,
+          struct whisper_state & state,
+                           int   i_segment,
+                         float   thold_pt,
+                         float   thold_ptsum) {
+    auto & segment = state.result_all[i_segment];
+    auto & tokens  = segment.tokens;
+```
+If we inspect the first segment we can see that it is:
+```console
+(gdb) p segment.text
+$3 = " There once lived a poor tailor, who had a son called Aladdin, a careless idle-boy, who"
+(gdb) p segment.tokens.size()
+$4 = 24
+```
+Now, at this stage we have decoded the audio samples and the model has skipped
+the intro. If we had used the `base.en` model then the first segment would  have
+looked like this:
+```console
+(gdb) p segment.text
+$4 = " Aladdin and the Magic Lamp by Unknown"
+```
+I'm thinking that at this point we only have the tokens that the model produces
+and I don't think we have any reference to the original audio samples so I'm not
+sure looking into this code is doing to help. I'm wondring if I should take a
+look at what OpenAI's Whisper is doing in this case and if they somehow use
+the original audio samples to align the tokens to the original audio.
+
+#### params.offset_t
+While debugging this issue I noticed that `seek_start` is set as follows:
+```c++
+    const int seek_start = params.offset_ms/10;
+    const int seek_end = params.duration_ms == 0 ? whisper_n_len_from_state(state) : seek_start + params.duration_ms/10;
+    ...
+    int seek = seek_start;
+```
+In our case this is set to 0 so there won't be any offset applied in this case.
+But we can set the timestamps offset using the `-ot/--offset-t` parameter:
+```console
+$ ./build/bin/whisper-cli -f samples/aladdin-first30.mp3 \
+    -m ./models/ggml-medium.en.bin \
+    --vad-model ./models/for-tests-silero-v5.1.2-ggml.bin \
+    -ojf \
+    -of jfk \
+    -ot 20000
+```
+The difference between OpenAI's Whisper is that they seem to be able to do this
+automatically, while we have to specify the offset manually.
+
+`seek` is then used to calculate the start timestamp:
+```c++
+                auto t0 = seek + 2*(tokens_cur.front().tid - whisper_token_beg(ctx));
+```
+And then laster to set the timestamp on the segment:
+```c++
+                            result_all.push_back({ tt0, tt1, text, state->no_speech_prob, {}, speaker_turn_next });
+```
+And like we looked at before this is what
+`whisper_exp_compute_token_level_timestamps` will use to compute the token
+level timestamps.
+
