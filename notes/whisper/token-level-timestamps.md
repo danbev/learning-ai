@@ -1292,14 +1292,12 @@ $ ./build/bin/whisper-cli -f samples/aladdin-first30.mp3 \
     -of jfk \
     -ot 20000
 ```
-The difference between OpenAI's Whisper is that they seem to be able to do this
-automatically, while we have to specify the offset manually.
 
 `seek` is then used to calculate the start timestamp:
 ```c++
                 auto t0 = seek + 2*(tokens_cur.front().tid - whisper_token_beg(ctx));
 ```
-And then laster to set the timestamp on the segment:
+And then later to set the timestamp on the segment:
 ```c++
                             result_all.push_back({ tt0, tt1, text, state->no_speech_prob, {}, speaker_turn_next });
 ```
@@ -1307,3 +1305,8 @@ And like we looked at before this is what
 `whisper_exp_compute_token_level_timestamps` will use to compute the token
 level timestamps.
 
+The difference between OpenAI's Whisper is that they seem to be able to do this
+automatically, while we have to specify the offset manually. The goal of this
+task should be to match OpenAI behavior in this case I think but since this is
+something that can be configured it could be used already to align the tokens
+level timestamps.
