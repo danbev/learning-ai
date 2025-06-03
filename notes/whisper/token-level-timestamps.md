@@ -990,7 +990,7 @@ not seem to work. I suspect that the introduction/credits at the start is what
 is causing the offset. So we can open the audio file in Audacity and then select
 like 50 seconds from the start. The choose `Edit` -> `Remove special` ->
 `Trim Audio` to remove the rest. Then we can export this as a new audio file,
-for example as `aladding-shortened.mp3`.
+for example as [aladdin-shortened.mp3](../audio/samples/aladdin-shortened.mp3).
 ```console
 ./build/bin/whisper-cli -f samples/aladdin-shortened.mp3 \
     -m ./models/ggml-base.en.bin \
