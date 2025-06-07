@@ -11,7 +11,9 @@
     vec2: .float 5.0, 6.0, 7.0, 8.0
 
     .align 16
-    result: .space 16
+    result: .space 16                  # uninitialized space for the result
+    #result: .space 16, 0              # initialized to 0
+    #result: .float 0.0, 0.0, 0.0, 0.0 # initialized to 0
 
 # make stack nonexecutable ("") 
 .section .note.GNU-stack,"",@progbits
