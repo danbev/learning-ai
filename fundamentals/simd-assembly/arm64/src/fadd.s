@@ -1,6 +1,6 @@
 // This is the equivalent of the x86_64 addsp instruction example
 .section __DATA,__data
-    .align 4
+    .align 4                         // 4 bytes
     vec1: .float 1.0, 2.0, 3.0, 4.0
     .align 4
     vec2: .float 5.0, 6.0, 7.0, 8.0
