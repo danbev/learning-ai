@@ -155,7 +155,7 @@ static const ggml_type_traits_t type_traits[GGML_TYPE_COUNT] = {
     ...
 };
 ```
-There is an example in [ggml-quants.c](fundamental/ggml/src/ggml-quants.c) which
+There is an example in [ggml-quants.c](../fundamentals/ggml/src/ggml-quants.c) which
 how this type trait can be accessed.
 
 Lets take a look at `from_float` which is a function pointer to
