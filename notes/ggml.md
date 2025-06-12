@@ -5379,7 +5379,7 @@ inline static void ggml_vec_scale_f32(const int n, float * y, const float   v) {
 
 
 ### simd
-There is SIMD support in ggml which is enable by using pre-processor macros
+There is SIMD support in ggml which is enabled by using pre-processor macros
 and these are based on the features of the target CPU that is being compiled
 for.
 
@@ -7464,3 +7464,19 @@ then free the context. But other times we want to keep the tensors around and fo
 that, since the tensor is a pointer into the memory buffer we need to keep the
 memory buffer around, and that means we have to create it ourselves and it will
 not be freed by ggml_free.
+
+### Internal function "protection"
+This is a way to prevent accidental use of internal functions that are not
+intended to be used by the user. This is done by defining a macro that
+replaces the function name with a different name that is not intended to be
+used by the user. For example: 
+```c++
+ 398 float ggml_fp16_to_fp32(ggml_fp16_t x) {
+ 399 #define ggml_fp16_to_fp32 do_not_use__ggml_fp16_to_fp32__in_ggml
+ 400     return GGML_FP16_TO_FP32(x);
+ 401 }
+ ```
+ The compiler will first compile the fuction with the original name. Only after
+ this will the macro be defined and the function will be replaced with the
+ internal name. This way the function can be used externally but not by the
+ internal library.
