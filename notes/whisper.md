@@ -1154,9 +1154,9 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         }
     }
 ```
-This check forces there to be an ggml model even though there might be cases
-where only a Core ML model is used. This is because the Core ML/OpenVINO models
-are only encoders, the decoder is still required in these cases.
+TODO: take a closer look at the verify magic check in combination with using a Core ML
+model. This check forces there to be an ggml model even though there might be cases
+where only a Core ML model is used.
 
 The actual inference is started by `cli.cpp`:
 ```c++
@@ -1755,11 +1755,9 @@ These are the values for j=4:
 ```
 
 ### Alignment Heads
-There is a struct name `whisper_ahead` which stands for alighment heads.
-So what I think at this point is that heads has to do with specific attention
-heads in the transformer arch which are of particular interest to the aligning
-audio and text. So these heads pay attention to the relation ship between the
-audio signal and the text tokens.
+There is a struct name `whisper_ahead` which stands for alignment heads.
+This struct is used with dynamic time warping (DTW) to align the tokens with
+the audio frames.
 
 So different models will often have different numbers of attention heads and
 this means they might have different predefined sets of alignment heads too.
@@ -1793,9 +1791,9 @@ static const std::map<whisper_alignment_heads_preset, whisper_aheads> g_aheads {
 ```c++
 static const whisper_ahead g_aheads_base_en[]   = { {3, 3}, {4, 7}, {5, 1}, {5, 5}, {5, 7} };
 ```
-So this is saying that base en has 5 alignment heads where
-the first number is each pair is the transformer layer and the second head
-number within that layer. For example
+So this is saying that the `base.en` model has 5 alignment heads where the first
+number in each pair is the `transformer layer` and the second number is the head
+within that layer. For example
 ```c++
 {4, 7}
 4 = transformer layer
@@ -2126,3 +2124,15 @@ Layer 0:
       511 [0                1536]
 ```
 _wip_
+
+### Timestamps
+In whisper.cpp timestamps are mostly represented using `unit64_t` types which
+provides exact integer precision without floating-point rounding errors. When
+working on the VAD support I used floats/doubles initially to represent times
+which partly because I though that would be exposed externally and using
+floating point values would be more convenient.
+Integer operations are generally faster than floating-point operations too
+especially on systems that don't have floating point units. uint64_t is 8 bytes
+so it is the same size as a double but it is more cache friendly. Also floating
+point arithmetic can vary slightly between different CPU architectures and
+compilers.
