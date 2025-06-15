@@ -4,6 +4,7 @@
 #include <cstring>
 
 int main() {
+    // y = a * x + y  (vector operation)
     printf("Single (float) Precision a * x + y (SAXPY)\n");
     // Notice that the multiplication operation is only depend on an element
     // of x and y and alpha (which is the same for all) so this could be performed
