@@ -27,6 +27,8 @@ bin/avx: src/avx.cpp | bindir
 bin/ssse3: src/ssse3.c | bindir
 	$(CC) -mno-ssse3 -mavx -o $@ $<
 
+saxpy: CXXFLAGS = -g -Wall -fopenmp -lgomp
+
 # Fused Multiply and Add
 .PHONY: lscpu-fma
 lscpu-fma: FLAG = fma
