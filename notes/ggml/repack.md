@@ -170,3 +170,99 @@ Notice that this used `int8_t` instead of `uint8_t` for the quantized values and
 also the qs arrays is of size 32 and not 16 because each quantized values now
 requires 8-bits and not 4. And there is the choice of packing 4 of these blocks
 or 8 together.
+
+
+```c++
+GGML_CPU_NATIVE_IMPL(ggml_quantize_mat_q8_0_4x4)
+````
+This macro can be found in `ggml-cpu-impl.h`:
+```c++
+#define GGML_CPU_NATIVE_IMPL(name) GGML_WEAK_ALIAS(name, name ## _generic)
+```
+And if we look at the GCC version of `GGML_WEAK_ALIAS` we find:
+```c++
+# define GGML_WEAK_ALIAS(name, alias) GGML_DO_PRAGMA(weak name = alias) // NOLINT
+```
+So the above will expand to:
+```c++
+#pragma weak ggml_quantize_mat_q8_0_4x4 = ggml_quantize_mat_q8_0_4x4_generic
+```
+How this works is that if the symbol `ggml_quantize_mat_q8_0_4x4` is not defined
+then the compiler will set the symbol to point to
+`ggml_quantize_mat_q8_0_4x4_generic`.
+
+
+```c++
+void ggml_quantize_mat_q8_0_4x4_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
+```
+Here `x` is the input, `vy` is the output and the `v` probably stands for `void`
+pointer. k is the width (number of columns) of the matrix.
+```c++
+    assert(QK8_0 == 32);
+    assert(k % QK8_0 == 0);
+    const int nb = k / QK8_0;
+```
+So `k` is the number of columns and it has to be a multiple of `QK8_0` which is
+32. So it could be 32, 64, 96, 128, etc. `nb` is number of blocks per row. 
+```
+Input matrix (4 rows × k columns):
+Row 0: [f f f f f f f f ... ] (k elements)
+Row 1: [f f f f f f f f ... ] (k elements)
+Row 2: [f f f f f f f f ... ] (k elements)
+Row 3: [f f f f f f f f ... ] (k elements)
+       └─ QK8_0=32 ─┘└─ 32 ─┘ (k/32 blocks per row)
+```
+
+Next, `vy` is casted to `block_q8_0x4` pointer:
+```c++
+    block_q8_0x4 * GGML_RESTRICT y = (block_q8_0x4 *) vy;
+```
+```c++
+    // scalar
+    const int blck_size_interleave = 4;
+    float srcv[4][QK8_0];
+    float id[4];
+```
+Here `srcv` is a 2D array that will hold the values for each of the 4 rows and
+id is the array that will hold the deltas/scale factors for each of the 4 rows.
+
+Following that we will iterate over each block, and for each block we have to
+calculate the delta (scale factor), actually this is the inverse os the scale
+factor (1.0f / d) to avoid division, and do to that we need to find the maxium
+value in the block. And since we are extracting values from x these are also
+stored in `srcv` which can then be used in the next loop where we calculate
+the actual quantized values.
+```c++
+    for (int i = 0; i < nb; i++) {
+        for (int row_iter = 0; row_iter < 4; row_iter++) {
+            float amax = 0.0f; // absolute max
+
+            for (int j = 0; j < QK8_0; j++) {
+                srcv[row_iter][j] = x[row_iter * k + i * QK8_0 + j];
+                amax = MAX(amax, fabsf(srcv[row_iter][j]));
+            }
+
+            const float d = amax / ((1 << 7) - 1);
+            id[row_iter] = d ? 1.0f / d : 0.0f;
+
+            y[i].d[row_iter] = GGML_FP32_TO_FP16(d);
+        }
+```
+Next, we have the actual packing part of the current block, here we iterate from
+0 to QK8_0*4 (128).
+
+_wip_
+
+```c++
+        for (int j = 0; j < QK8_0 * 4; j++) {
+            int src_offset = (j / (4 * blck_size_interleave)) * blck_size_interleave;
+            int src_id = (j % (4 * blck_size_interleave)) / blck_size_interleave;
+            src_offset += (j % blck_size_interleave);
+
+            float x0 = srcv[src_id][src_offset] * id[src_id];
+            y[i].qs[j] = roundf(x0);
+        }
+    }
+}
+GGML_CPU_NATIVE_IMPL(ggml_quantize_mat_q8_0_4x4)
+```
