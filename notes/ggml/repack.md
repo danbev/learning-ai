@@ -204,13 +204,18 @@ pointer. k is the width (number of columns) of the matrix.
 ```
 So `k` is the number of columns and it has to be a multiple of `QK8_0` which is
 32. So it could be 32, 64, 96, 128, etc. `nb` is number of blocks per row. 
+
+For example, lets say k=32:
 ```
 Input matrix (4 rows × k columns):
-Row 0: [f f f f f f f f ... ] (k elements)
-Row 1: [f f f f f f f f ... ] (k elements)
-Row 2: [f f f f f f f f ... ] (k elements)
-Row 3: [f f f f f f f f ... ] (k elements)
-       └─ QK8_0=32 ─┘└─ 32 ─┘ (k/32 blocks per row)
+
+x = [
+  Row 0: [f00 f01 f02 f03 f04 f05 f06 f07 ... f28 f29 f30 f31]  (32 floats)
+  Row 1: [f10 f11 f12 f13 f14 f15 f16 f17 ... f38 f39 f40 f41]  (32 floats)
+  Row 2: [f20 f21 f22 f23 f24 f25 f26 f27 ... f48 f49 f50 f51]  (32 floats)
+  Row 3: [f30 f31 f32 f33 f34 f35 f36 f37 ... f58 f59 f60 f61]  (32 floats)
+]
+total size: 4 rows * 32 columns * sizeof(float) = 4 * 32 * 4 = 512 bytes
 ```
 
 Next, `vy` is casted to `block_q8_0x4` pointer:
@@ -248,10 +253,16 @@ the actual quantized values.
             y[i].d[row_iter] = GGML_FP32_TO_FP16(d);
         }
 ```
-Next, we have the actual packing part of the current block, here we iterate from
-0 to QK8_0*4 (128).
+So `srcv` will be filled in the above loop with something like this:
+```
+srcv[0][0-31] = [f00 f01 f02 f03 f04 f05 f06 f07 ... f28 f29 f30 f31]
+srcv[1][0-31] = [f10 f11 f12 f13 f14 f15 f16 f17 ... f38 f39 f40 f41]
+srcv[2][0-31] = [f20 f21 f22 f23 f24 f25 f26 f27 ... f48 f49 f50 f51]
+srcv[3][0-31] = [f30 f31 f32 f33 f34 f35 f36 f37 ... f58 f59 f60 f61]
+```
 
-_wip_
+Next, we have the actual "re-packing" part of the current block, here we iterate from
+0 to QK8_0*4 (128).
 
 ```c++
         for (int j = 0; j < QK8_0 * 4; j++) {
@@ -265,4 +276,190 @@ _wip_
     }
 }
 GGML_CPU_NATIVE_IMPL(ggml_quantize_mat_q8_0_4x4)
+```
+```
+int src_offset = (j / (4 * blck_size_interleave)) * blck_size_interleave;
+int src_offset = (j / (4 * 4                   )) * 4;
+
+j = 0  -> (0  / 16) * 4 = 0 * 4 = 0
+j = 1  -> (1  / 16) * 4 = 0 * 4 = 0
+j = 2  -> (2  / 16) * 4 = 0 * 4 = 0
+...
+j = 15 -> (15 / 16) * 4 = 0 * 4 = 0
+j = 16 -> (16 / 16) * 4 = 1 * 4 = 4
+j = 17 -> (17 / 16) * 4 = 1 * 4 = 4
+j = 18 -> (18 / 16) * 4 = 1 * 4 = 4
+...
+j = 31 -> (31 / 16) * 4 = 1 * 4 = 4
+j = 32 -> (32 / 16) * 4 = 2 * 4 = 8
+j = 33 -> (33 / 16) * 4 = 2 * 4 = 8
+...
+j = 47 -> (47 / 16) * 4 = 2 * 4 = 8
+j = 48 -> (48 / 16) * 4 = 3 * 4 = 12
+j = 49 -> (49 / 16) * 4 = 3 * 4 = 12
+...
+j = 63 -> (63 / 16) * 4 = 3 * 4 = 12
+j = 64 -> (64 / 16) * 4 = 4 * 4 = 16
+j = 65 -> (65 / 16) * 4 = 4 * 4 = 16
+...
+j = 79 -> (79 / 16) * 4 = 4 * 4 = 16
+j = 80 -> (80 / 16) * 4 = 5 * 4 = 20
+j = 81 -> (81 / 16) * 4 = 5 * 4 = 20
+...
+j = 95 -> (95 / 16) * 4 = 5 * 4 = 20
+j = 96 -> (96 / 16) * 4 = 6 * 4 = 24
+j = 97 -> (97 / 16) * 4 = 6 * 4 = 24
+j = 98 -> (98 / 16) * 4 = 6 * 4 = 24
+...
+j = 111 -> (111 / 16) * 4 = 6 * 4 = 24
+j = 112 -> (112 / 16) * 4 = 7 * 4 = 28
+j = 113 -> (113 / 16) * 4 = 7 * 4 = 28
+...
+j = 127 -> (127 / 16) * 4 = 7 * 4 = 28
+```
+So this will give us 8 groups of 16 values.
+
+And notice that this is added to as well:
+```
+src_offset += (j % blck_size_interleave);
+
+0 % 4 = 0
+1 % 4 = 1
+2 % 4 = 2
+3 % 4 = 3
+4 % 4 = 0
+5 % 4 = 1
+6 % 4 = 2
+7 % 4 = 3
+8 % 4 = 0
+...
+```
+
+Then we have the source id which is the row of the `srcv` array
+that we are currently working with:
+```c++
+int src_id = (j % (4 * blck_size_interleave)) / blck_size_interleave;
+int src_id = (0 % (4 *                    4)) / 4
+
+j =  0  -> (0 % 16) / 4 =  0 / 4 = 0
+j =  1  -> (1 % 16) / 4 =  1 / 4 = 0
+j =  2  -> (2 % 16) / 4 =  2 / 4 = 0
+j =  3  -> (3 % 16) / 4 =  3 / 4 = 0
+j =  4  -> (4 % 16) / 4 =  4 / 4 = 1
+j =  5  -> (5 % 16) / 4 =  5 / 4 = 1
+j =  6  -> (6 % 16) / 4 =  6 / 4 = 1
+j =  7  -> (7 % 16) / 4 =  7 / 4 = 1
+j =  8  -> (8 % 16) / 4 =  8 / 4 = 2
+j =  9  -> (9 % 16) / 4 =  9 / 4 = 2
+j = 10 -> (10 % 16) / 4 = 10 / 4 = 2
+j = 11 -> (11 % 16) / 4 = 11 / 4 = 2
+j = 12 -> (12 % 16) / 4 = 12 / 4 = 3
+j = 13 -> (13 % 16) / 4 = 13 / 4 = 3
+j = 14 -> (14 % 16) / 4 = 14 / 4 = 3
+j = 15 -> (15 % 16) / 4 = 15 / 4 = 3
+j = 16 -> (16 % 16) / 4 =  0 / 4 = 0
+j = 17 -> (17 % 16) / 4 =  1 / 4 = 0
+j = 18 -> (18 % 16) / 4 =  2 / 4 = 0
+j = 19 -> (19 % 16) / 4 =  3 / 4 = 0
+j = 20 -> (20 % 16) / 4 =  4 / 4 = 1
+j = 21 -> (21 % 16) / 4 =  5 / 4 = 1
+j = 22 -> (22 % 16) / 4 =  6 / 4 = 1
+j = 23 -> (23 % 16) / 4 =  7 / 4 = 1
+j = 24 -> (24 % 16) / 4 =  8 / 4 = 2
+j = 25 -> (25 % 16) / 4 =  9 / 4 = 2
+j = 26 -> (26 % 16) / 4 = 10 / 4 = 2
+...
+```
+
+```
+       src_offset 
+         |
+  src_id |
+     ↓   ↓
+srcv[0][0-31] = [f00 f01 f02 f03 f04 f05 f06 f07 ... f28 f29 f30 f31]
+srcv[1][0-31] = [f10 f11 f12 f13 f14 f15 f16 f17 ... f38 f39 f40 f41]
+srcv[2][0-31] = [f20 f21 f22 f23 f24 f25 f26 f27 ... f48 f49 f50 f51]
+srcv[3][0-31] = [f30 f31 f32 f33 f34 f35 f36 f37 ... f58 f59 f60 f61]
+```
+And the values are still float32 at this stage, they have not been quantized yet.
+This happens in the loop just below:
+```c++
+float x0 = srcv[src_id][src_offset] * id[src_id];
+```
+And this is using the `id` array which contains the inverse deltas/scale factors
+so we can just multiply the float32 value with the inverse delta to get the
+quantized value in the range of -127 to 127 (since we are using 8 bits for the
+quantized values). And this is stored in 
+```c++
+y[i].qs[j] = roundf(x0);
+```
+And notice that the second loop if from 0-128, which makes sense if we think
+about it; the quantized values are just stored in an 1d array `qs`, so they all
+come after each other, but with the nice property that they quantized values
+from each row are after each other making simd operations more efficient.
+
+So instead of having the order we had above we now have the following order:
+```
+y[0].qs[0-3]   = [f00, f01, f02, f03]   <- first 4 values from first row
+y[0].qs[4-7]   = [f10, f11, f12, f13]   <- first 4 values from second row
+y[0].qs[8-11]  = [f20, f21, f22, f23]   <- first 4 values from third row
+y[0].qs[12-15] = [f30, f31, f32, f33]   <- first 4 values from fourth row
+y[0].qs[16-19] = [f04, f05, f06, f07]   <- second 4 values from first row
+y[0].qs[20-23] = [f14, f15, f16, f17]   <- second 4 values from second row
+y[0].qs[24-27] = [f24, f25, f26, f27]   <- second 4 values from third row
+y[0].qs[28-31] = [f34, f35, f36, f37]   <- second 4 values from fourth row
+y[0].qs[32-35] = [f08, f09, f10, f11]   <- third 4 values from first row
+y[0].qs[36-39] = [f18, f19, f20, f21]   <- third 4 values from second row
+y[0].qs[40-43] = [f28, f29, f30, f31]   <- third 4 values from third row
+y[0].qs[44-47] = [f38, f39, f40, f41]   <- third 4 values from fourth row
+y[0].qs[48-51] = [f16, f17, f18, f19]   <- fourth 4 values from first row
+y[0].qs[52-55] = [f22, f23, f24, f25]   <- fourth 4 values from second row
+y[0].qs[56-59] = [f32, f33, f34, f35]   <- fourth 4 values from third row
+y[0].qs[60-63] = [f42, f43, f44, f45]   <- fourth 4 values from fourth row
+y[0].qs[64-67] = [f20, f21, f22, f23]   <- fifth 4 values from first row
+y[0].qs[68-71] = [f26, f27, f28, f29]   <- fifth 4 values from second row
+y[0].qs[72-75] = [f36, f37, f38, f39]   <- fifth 4 values from third row
+y[0].qs[76-79] = [f46, f47, f48, f49]   <- fifth 4 values from fourth row
+y[0].qs[80-83] = [f24, f25, f26, f27]   <- sixth 4 values from first row
+y[0].qs[84-87] = [f30, f31, f32, f33]   <- sixth 4 values from second row
+y[0].qs[88-91] = [f40, f41, f42, f43]   <- sixth 4 values from third row
+y[0].qs[92-95] = [f50, f51, f52, f53]   <- sixth 4 values from fourth row
+y[0].qs[96-99] = [f32, f33, f34, f35]   <- seventh 4 values from first row
+y[0].qs[100-103] = [f38, f39, f40, f41] <- seventh 4 values from second row
+y[0].qs[104-107] = [f48, f49, f50, f51] <- seventh 4 values from third row
+y[0].qs[108-111] = [f58, f59, f60, f61] <- seventh 4 values from fourth row
+y[0].qs[112-115] = [f44, f45, f46, f47] <- eighth 4 values from first row
+y[0].qs[116-119] = [f50, f51, f52, f53] <- eighth 4 values from second row    
+y[0].qs[120-123] = [f60, f61, f62, f63] <- eighth 4 values from third row
+y[0].qs[124-127] = [f70, f71, f72, f73] <- eighth 4 values from fourth row
+```
+So we for y[0] it will have 64 entries and each group of 4 are 8-bit quantized
+values for float32 values.
+
+For a simd matrix operations this is ideel:
+```c++
+__m128i b0 = _mm_set1_epi32(vector[0]);  // [b0, b0, b0, b0] (as 32-bit)
+__m128i b1 = _mm_set1_epi32(vector[1]);  // [b1, b1, b1, b1]
+__m128i b2 = _mm_set1_epi32(vector[2]);  // [b2, b2, b2, b2]
+__m128i b3 = _mm_set1_epi32(vector[3]);  // [b3, b3, b3, b3]
+
+// Load matrix columns (each load gets one element from each row)
+__m128i col0 = _mm_loadu_si128((__m128i*)&interleaved_matrix[0]);   // [a00,a10,a20,a30]
+__m128i col1 = _mm_loadu_si128((__m128i*)&interleaved_matrix[4]);   // [a01,a11,a21,a31]
+__m128i col2 = _mm_loadu_si128((__m128i*)&interleaved_matrix[8]);   // [a02,a12,a22,a32]
+__m128i col3 = _mm_loadu_si128((__m128i*)&interleaved_matrix[12]);  // [a03,a13,a23,a33]
+
+// Multiply and accumulate (4 dot products in parallel)
+__m128i prod0 = _mm_mullo_epi32(col0, b0);  // [a00×b0, a10×b0, a20×b0, a30×b0]
+__m128i prod1 = _mm_mullo_epi32(col1, b1);  // [a01×b1, a11×b1, a21×b1, a31×b1]
+__m128i prod2 = _mm_mullo_epi32(col2, b2);  // [a02×b2, a12×b2, a22×b2, a32×b2]
+__m128i prod3 = _mm_mullo_epi32(col3, b3);  // [a03×b3, a13×b3, a23×b3, a33×b3]
+
+// Sum up all products
+__m128i sum01 = _mm_add_epi32(prod0, prod1);
+__m128i sum23 = _mm_add_epi32(prod2, prod3);
+__m128i final_sum = _mm_add_epi32(sum01, sum23);
+
+// Store result: [c0, c1, c2, c3]
+_mm_storeu_si128((__m128i*)result, final_sum);
 ```
