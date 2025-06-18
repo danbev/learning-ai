@@ -133,6 +133,105 @@ quantized->dequantized = {0.1998, 0.2997, 0.3996, 0.4995}
 ```
 So this is how the delta stored in the block struct is used.
 
+So that was my initial understanding of how quantization might work but it is
+somewhat naive. For example, lets say we have the following input values:
+```console
+[-1.6, 0.8, 3.2, -0.4]
+max value = 3.2
+delta = 3.2 / 15 = 0.213
+
+-1.6 / 0.213 = -7.5 <- this is outside of the 0-15 range!
+```
+
+What we can do instead something like this which is what ggml does:
+```
+[-1.6, 0.8, 3.2, -0.4]
+max = 3.2 (signed value with largest absolute value)
+d = 3.2 / -8 = -0.4      (not using 15 but -8)
+id = 1.0 / -0.4 = -2.5   (inverse delta so that we can multiple instead of divide)
+
+-1.6 * -2.5 + 8.5 = 4.0 + 8.5 = 12.5 → 12 (OK!)
+```
+
+```
+4-bit signed integers (two's complement):
+Binary   Decimal
+1000  →    -8
+1001  →    -7
+1010  →    -6
+1011  →    -5
+1100  →    -4
+1101  →    -3
+1110  →    -2
+1111  →    -1
+0000  →     0
+0001  →    +1
+0010  →    +2
+0011  →    +3
+0100  →    +4
+0101  →    +5
+0110  →    +6
+0111  →    +7
+```
+So we have 16 different values that we can represent with 4 bits.
+```
+Input: [1.0, -0.5, 3.2, 0.8]
+max = 3.2
+
+d = 3.2 / -8 = -0.4
+id = 1.0 / d = 1.0 / -0.4 = -2.5
+
+3.2 * id = 3.2 * -2.5 = -8.0   (quantized value)
+
+Add offset of 8.5:
+-8.0 + 8.5 = 0.5 → rounds to 0
+```
+```
+Input: [1.0, -0.5, -6.4, 0.8]
+max = -6.4 
+
+d = max / -8 = -6.4 / -8 = 0.8
+id = 1.0 / d = 1.0 / 0.8 = 1.25
+
+-6.4 * id = -6.4 * 1.25 = -8.0  (quantized value)
+
+Add offset of 8.5:
+-8.0 + 8.5 = 0.5 → rounds to 0
+```
+The addition of 8.5 is to bring the values into the range of [0.5-15.5] so that
+we can store them in the `qs` array which is an array of 16 elements of type
+uint8_t (notice that this is unsigned). Casting will truncate the decimal part
+so the 0.5 ensure rounding.
+
+Then when we dequantize we need to "move" back into the original range, so
+from [0-15] to [-8-7], so we have to subtract by 8 (the 0.5 was only for rounding
+and not required at this stage). So we have values in the range of [0-15] in
+"storage" and then to get the quantized values we have to subtract 8:
+```c++
+void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK4_0;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        const float d = GGML_FP16_TO_FP32(x[i].d);
+
+        for (int j = 0; j < qk/2; ++j) {
+            // First we extract the lower bits:
+            const int x0 = (x[i].qs[j] & 0x0F) - 8;
+            // And then the upper bits:
+            const int x1 = (x[i].qs[j] >>   4) - 8;
+
+            y[i*qk + j + 0   ] = x0*d; // scale back to float32 value
+            y[i*qk + j + qk/2] = x1*d; // scale back to float32 value
+        }
+    }
+}
+```
+
+
 ### ggml quantization type traits
 
 Now, if we take a look at how quantization works in ggml this is done using
@@ -140,17 +239,13 @@ type traits. For example in `ggml/src/ggml.c` we have:
 ```c
 static const ggml_type_traits_t type_traits[GGML_TYPE_COUNT] = {
     ...
-    [GGML_TYPE_Q4_K] = {
-        .type_name                = "q4_K",
-        .blck_size                = QK_K,
-        .type_size                = sizeof(block_q4_K),
+    [GGML_TYPE_Q4_0] = {
+        .type_name                = "q4_0",
+        .blck_size                = QK4_0,
+        .type_size                = sizeof(block_q4_0),
         .is_quantized             = true,
-        .to_float                 = (ggml_to_float_t) dequantize_row_q4_K,
-        .from_float               = quantize_row_q4_K,
-        .from_float_reference     = (ggml_from_float_t) quantize_row_q4_K_reference,
-        .vec_dot                  = ggml_vec_dot_q4_K_q8_K,
-        .vec_dot_type             = GGML_TYPE_Q8_K,
-        .nrows                    = 1,
+        .to_float                 = (ggml_to_float_t) dequantize_row_q4_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q4_0_ref,
     },
     ...
 };
@@ -161,11 +256,8 @@ how this type trait can be accessed.
 Lets take a look at `from_float` which is a function pointer to
 `quantize_row_q4_K` and is defined in `ggml-quants.c`:
 ```c
-void quantize_row_q4_0(const float * restrict x, void * restrict y, int64_t k) {
-    quantize_row_q4_0_ref(x, y, k);
-}
-
-void quantize_row_q4_0_ref(const float * restrict x, block_q4_0 * restrict y, int64_t k) {
+// reference implementation for deterministic creation of model files
+void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_RESTRICT y, int64_t k) {
     static const int qk = QK4_0;
 
     assert(k % qk == 0);
@@ -325,7 +417,7 @@ Like before we first need to calculate the delta:
 delta = max_value / 31
 ```
 This time we use 31 because we have 5 bits (11111b, 31d).
-The to get the quantized values we use the formula:
+Then to get the quantized values we use the formula:
 ```
 quantized_value = round(org_value / delta)
 ```
@@ -346,6 +438,20 @@ delta = 0.5 / 31 = 0.0161
 31 (11111b) = qs[3] = 1111b  gh[3] = 1
 ```
 
+And to dequantize we use the formula:
+```console
+dequantized_value = quantized_value * delta
+
+(where the quantized value is reconstructed from the nibbles and the 5th bit)
+
+delta = 0.0161
+
+12 (01100b): nibble=1100b, 5th_bit=0 → 01100b = 12 → 12 * 0.0161 = 0.193 ≈ 0.2
+18 (10010b): nibble=0010b, 5th_bit=1 → 10010b = 18 → 18 * 0.0161 = 0.290 ≈ 0.3
+25 (11001b): nibble=1001b, 5th_bit=1 → 11001b = 25 → 25 * 0.0161 = 0.403 ≈ 0.4
+31 (11111b): nibble=1111b, 5th_bit=1 → 11111b = 31 → 31 * 0.0161 = 0.499 ≈ 0.5
+```
+
 ### `block_q5_1`
 This struct is defined as follows:
 ```c
@@ -362,7 +468,7 @@ typedef struct {
     uint8_t qh[4];         // 5-th bit of quants
     uint8_t qs[QK5_1 / 2]; // nibbles / quants
 } block_q5_1;
-``
+```
 So this is very similar to `block_q5_0` and similar in the same way as
 `block_q4_1` is to `block_q4_0`.
 
