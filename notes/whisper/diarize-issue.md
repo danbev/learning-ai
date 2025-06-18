@@ -172,3 +172,36 @@ Date:   Thu Feb 27 12:06:54 2025 +0500
  create mode 100644 examples/miniaudio.h
  create mode 100644 examples/stb_vorbis.c
  ```
+
+#### Bisect log
+ ```console
+ $ git bisect log
+git bisect start
+# status: waiting for both good and bad commits
+# bad: [f3ff80ea8da044e5b8833e7ba54ee174504c518d] examples : set the C++ standard to C++17 for server (#3261)
+git bisect bad f3ff80ea8da044e5b8833e7ba54ee174504c518d
+# status: waiting for good commit(s), bad commit known
+# good: [8a9ad7844d6e2a10cddf4b92de4089d7ac2b14a9] release : v1.7.4
+git bisect good 8a9ad7844d6e2a10cddf4b92de4089d7ac2b14a9
+# bad: [77e0c86ab62eda9392a8567f4c29ab8d140cb0ba] whisper.wasm : fix unknown language issue (#3000)
+git bisect bad 77e0c86ab62eda9392a8567f4c29ab8d140cb0ba
+# bad: [992b51b3d523e1442048d536272387521b4f5aa2] ggml: aarch64: implement SVE kernels for q2_k_q8_k vector dot (llama/12064)
+git bisect bad 992b51b3d523e1442048d536272387521b4f5aa2
+# good: [3f91832352b2aca890102dc7ebc182f7fa095151] talk-llama : sync llama.cpp
+git bisect good 3f91832352b2aca890102dc7ebc182f7fa095151
+# good: [e22d69839d530175327abc2158c5f56871d0d9c8] vulkan: linux builds + small subgroup size fixes (llama/11767)
+git bisect good e22d69839d530175327abc2158c5f56871d0d9c8
+# good: [4b60ff4f92bd4a767d5aff693484dc8255ec7672] metal : copy kernels for quant to F32/F16 conversions (llama/12017)
+git bisect good 4b60ff4f92bd4a767d5aff693484dc8255ec7672
+# bad: [c774eec709d153b94be60ebec8c7cb97f3bd82cd] go : improve model download (#2756)
+git bisect bad c774eec709d153b94be60ebec8c7cb97f3bd82cd
+# bad: [9f83f67221814dab0477c3970fa5f618ac1e2a2b] common :  fix build min/max (#2845)
+git bisect bad 9f83f67221814dab0477c3970fa5f618ac1e2a2b
+# good: [17addf7104547a5d987a75fd35e1c86563c69f6c] sync : ggml
+git bisect good 17addf7104547a5d987a75fd35e1c86563c69f6c
+# bad: [7d3da68f792018e81a758881e081154d1cbe6b6f] examples : use miniaudio for direct decoding flac, mp3, ogg and wav (#2759)
+git bisect bad 7d3da68f792018e81a758881e081154d1cbe6b6f
+# good: [b5d21359c11fc9d19f8efb7bdcb0688d6b643d58] stream : stop on ^C when no audio is received (#2822)
+git bisect good b5d21359c11fc9d19f8efb7bdcb0688d6b643d58
+# first bad commit: [7d3da68f792018e81a758881e081154d1cbe6b6f] examples : use miniaudio for direct decoding flac, mp3, ogg and wav (#2759)
+```
