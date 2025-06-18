@@ -205,3 +205,51 @@ git bisect bad 7d3da68f792018e81a758881e081154d1cbe6b6f
 git bisect good b5d21359c11fc9d19f8efb7bdcb0688d6b643d58
 # first bad commit: [7d3da68f792018e81a758881e081154d1cbe6b6f] examples : use miniaudio for direct decoding flac, mp3, ogg and wav (#2759)
 ```
+
+### Troubleshooting
+So this change was introduced in [#2759](https://github.com/ggml-org/whisper.cpp/pull/2759).
+
+```console
+$ git bisect reset
+```
+
+So looking at the first bad commit:
+```console
+$ git show 7d3da68f792018e81a758881e081154d1cbe6b6f --stat
+commit 7d3da68f792018e81a758881e081154d1cbe6b6f
+Author: Dmitry Atamanov <data-man@users.noreply.github.com>
+Date:   Thu Feb 27 12:06:54 2025 +0500
+
+    examples : use miniaudio for direct decoding flac, mp3, ogg and wav (#2759)
+
+ Makefile                      |    13 +-
+ examples/addon.node/addon.cpp |     4 +-
+ examples/cli/cli.cpp          |     9 +-
+ examples/common.cpp           |   164 +-
+ examples/common.h             |     2 +-
+ examples/dr_wav.h             |  8815 -----
+ examples/generate-karaoke.sh  |     9 +-
+ examples/miniaudio.h          | 93468 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ examples/server/server.cpp    |    10 +-
+ examples/stb_vorbis.c         |  5584 ++++
+ 10 files changed, 99149 insertions(+), 8929 deletions(-)
+```
+Since the commit was merged there has been some refactoring of the audio decoding and most
+if not all of it has been moved to `examples/whisper-common.cpp`.
+
+One thing to keep in mind is that this might not just be related to diarization but also
+stereo audio decoding which there have been issues opened related to that as well.
+
+_wip_
+
+
+```console
+$ git checkout 7d3da68f^
+HEAD is now at b5d21359 stream : stop on ^C when no audio is received (#2822)
+```
+That should pass which it does, so we can then checkout the failing commit:
+```console
+$ git checkout 7d3da68f
+Previous HEAD position was b5d21359 stream : stop on ^C when no audio is received (#2822)
+HEAD is now at 7d3da68f examples : use miniaudio for direct decoding flac, mp3, ogg and wav (#2759)
+```
