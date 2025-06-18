@@ -240,6 +240,163 @@ if not all of it has been moved to `examples/whisper-common.cpp`.
 One thing to keep in mind is that this might not just be related to diarization but also
 stereo audio decoding which there have been issues opened related to that as well.
 
+```console
+$ git show 7d3da68f -- examples/common.cpp
+```
+
+MiniAudio will upmix mono to stereo (duplicating samples), or downmix stereo to mono
+(averaging), without telling you which means we can’t know if you’re processing actual
+stereo or just duplicated mono.
+
+Looking at the timestamps, first from master:
+```console
+[00:00:00.000 --> 00:00:03.000]  (speaker 1) Sous-titres réalisés para la communauté d'Amara.org
+```
+And then the working:
+```console
+[00:00:00.000 --> 00:00:01.340]  (speaker 1) [sonnerie]
+[00:00:01.340 --> 00:00:05.600]  (speaker 1) [silence]
+[00:00:05.600 --> 00:00:08.880]  (speaker 1) — Salut, jeune homme. — C'est vrai que je te dérange ?
+[00:00:08.880 --> 00:00:10.480]  (speaker 1) — Ah pas du tout, pas du tout, pas du tout.
+[00:00:10.480 --> 00:00:14.020]  (speaker 1) J'étais en train de préparer un courrier.
+```
+
+I've verified that the sample audio has two channels both by inspecting and listening
+to it in Audacity, but also printing like this:
+```console
+read_audio_data: audio data has 2 channel(s)
+```
+
+So in `whisper-cli` we have the following:
+```c++
+        if (!::read_audio_data(fname_inp, pcmf32, pcmf32s, params.diarize)) {
+            fprintf(stderr, "error: failed to read audio file '%s'\n", fname_inp.c_str());
+            continue;
+        }
+```
+This will call into `whisper-common.cpp`:
+```c++
+bool read_audio_data(const std::string & fname, std::vector<float>& pcmf32, std::vector<std::vector<float>>& pcmf32s, bool stereo) {
+    ...
+    // Added by danbev
+    uint32_t actual_channels = decoder.outputChannels;
+    fprintf(stderr, "%s: audio data has %u channel(s)\n", __func__, actual_channels);
+    if (stereo && actual_channels != 2) {
+        fprintf(stderr, "Error: requested stereo, but input is %u channel(s)\n", actual_channels);
+        ma_decoder_uninit(&decoder);
+        return false;
+    }
+
+    ma_uint64 frame_count;
+    ma_uint64 frames_read;
+
+    if ((result = ma_decoder_get_length_in_pcm_frames(&decoder, &frame_count)) != MA_SUCCESS) {
+		fprintf(stderr, "error: failed to retrieve the length of the audio data (%s)\n", ma_result_description(result));
+
+		return false;
+    }
+
+    pcmf32.resize(stereo ? frame_count*2 : frame_count);
+}
+```
+```console
+(lldb) br set -f common-whisper.cpp -l 114
+(lldb) p pcmf32.size()
+(std::vector<float>::size_type) 0
+(lldb) p stereo
+(bool) true
+(lldb) p frame_count
+(ma_uint64) 224256
+(lldb) n
+(lldb) p pcmf32.size()
+(std::vector<float>::size_type) 448512
+```
+Next we are going to read frames using this call:
+```c++
+    if ((result = ma_decoder_read_pcm_frames(&decoder, pcmf32.data(), frame_count, &frames_read)) != MA_SUCCESS) {
+		fprintf(stderr, "error: failed to read the frames of the audio data (%s)\n", ma_result_description(result));
+
+		return false;
+    }
+```
+And notice the size of `pcmf32` and the `frame_count`:
+```console
+(lldb) p pcmf32.size()
+(std::vector<float>::size_type) 448512
+(lldb) p frame_count
+(ma_uint64) 224256
+```
+After the call the number of frames read is:
+```console
+(lldb) p frames_read
+(ma_uint64) 224256
+```
+And the final part of the function looks like this:
+```c++
+    if (stereo) {
+        fprintf(stderr, "%s: processing stereo audio data.......\n", __func__);
+		pcmf32s.resize(2);
+		pcmf32s[0].resize(frame_count);
+		pcmf32s[1].resize(frame_count);
+		for (uint64_t i = 0; i < frame_count; i++) {
+			pcmf32s[0][i] = pcmf32[2*i];
+			pcmf32s[1][i] = pcmf32[2*i + 1];
+		}
+    }
+
+    ma_decoder_uninit(&decoder);
+
+    return true;
+}
+```
+So that is resizing `pcmf32s` to 2 channels and then copying the data from `pcmf32` into
+the two channels.
+But the number of frames read is just 224256 and each of the vectors of `pcmf32s` is
+224256, so we have 224256 * 2 = 448512 which is the size of `pcmf32` but only half
+of that number of frames has been read.
+
+If we look at the working version in `commmon.cpp`:
+```c++
+718     std::vector<int16_t> pcm16;
+719     pcm16.resize(n*wav.channels);
+720     drwav_read_pcm_frames_s16(&wav, n, pcm16.data());
+721     drwav_uninit(&wav);
+722
+723     // convert to mono, float
+724     fprintf(stderr, "[danbev], n == %llu, wav.channels == %d\n", n, wav.channels);
+725     fprintf(stderr, "[danbev], pcm16.size() == %zu\n", pcm16.size());
+726     pcmf32.resize(n);
+727     if (wav.channels == 1) {
+728         for (uint64_t i = 0; i < n; i++) {
+729             pcmf32[i] = float(pcm16[i])/32768.0f;
+730         }
+731     } else {
+732         for (uint64_t i = 0; i < n; i++) {
+733             pcmf32[i] = float(pcm16[2*i] + pcm16[2*i + 1])/65536.0f;
+734         }
+735     }
+736
+737     if (stereo) {
+738         // convert to stereo, float
+739         pcmf32s.resize(2);
+740
+741         pcmf32s[0].resize(n);
+742         pcmf32s[1].resize(n);
+743         for (uint64_t i = 0; i < n; i++) {
+744             pcmf32s[0][i] = float(pcm16[2*i])/32768.0f;
+745             pcmf32s[1][i] = float(pcm16[2*i + 1])/32768.0f;
+746         }
+747     }
+```
+Notice that `pcmf32` is updated with the interleaved channels, and this is missing
+from the current implementation.
+So the previous version would read stereo int16 data -> pcm16 (448512 samples) and
+then convert to mono (224256 samples), and also convert to stereo in `pcmf32s`
+
+The current code is missing the conversion to mono, so it reads stereo float data
+(448512 samples) and then converts to stereo in `pcmf32s` (224256 samples each).
+
+
 _wip_
 
 
