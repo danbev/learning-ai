@@ -2,15 +2,129 @@
 In broad terms this is about taking a floating point number like a single
 precision floating point number (32 bits), or a half precision floating point
 number (16 bits), and converting it to a fixed point number with a fixed number
-of bits. 
+of bits. We do this to save space and memory and also to speed up computations.
 
+The type of quantization to use is not just a matter of the level of precision
+that we want to maintain which I thought initially, but the actual data that
+we are quantizing also matters and should influence the choice of quantization
+strategy/type. I'm just mentioning this as it was not obivious to me at first,
+and I'll include examples that illustrate this.
+
+### Symmetric quantization
+This is where we map zero in the original data range to zero in the quantized
+representation.
+
+### Asymmetric quantization
+This type of quantization allows for a non-zero offset in the quantized, so the
+zero point can be shifted making it asymmetric with respect to zero in the
+original data range. This is useful when the data has a non-zero mean or
+when the distribution of values is not centered around zero.
 
 ### scale
+So in the following we have a range of float values represented by by `r_min`
+and `r_max`, and a range of quantized values represented by `q_min` and `q_max`.
 ```
-         (x_max - x_min)         floating point range
+         (r_max - r_min)         floating point range
 scale =  ---------------         --------------------
          (q_max - q_min)           quantized range
-           
+```
+Notice that the scale is just the ratio of the distance/range of the floating
+point values and the quantized values. I might help to view these as points in
+a coordinate system.
+```
+Float Values (r)
+     ↑
+ 2.4 |────────────────●  ← Point 2: (q_max, r_max) = (15, 2.4)
+     │               ╱
+ 1.2 │            ╱
+     │         ╱
+ 0.0 │      ╱
+     │   ╱
+-1.2 ●╱──────────────────→ Quantized Values (q)
+     0     5    10    15
+     ↑
+Point 1: (q_min, r_min) = (0, -1.2)
+
+So we have two points:
+(0, -1.2)
+(15, 2.4)
+
+        (r_max - r_min) = (2.4 - (-1.2))   3.6
+scale = ------------------------------- = ------ = 0.24
+        (q_max - q_min) = (15  -  0         15
+```
+Notice that this is just like caculating the slope (y2 - y1) / (x2 - x1). So
+this tells us that for every 1 unit increase in the quantized values we have
+0.24 unit increase in the floating point values.
+```
+quantized 0  → float -1.2
+quantized 1  → float -0.96
+quantized 2  → float -0.72
+quantized 3  → float -0.48
+quantized 4  → float -0.24
+quantized 5  → float 0.0
+quantized 6  → float 0.24
+quantized 7  → float 0.48
+quantized 8  → float 0.72
+quantized 9  → float 0.96
+quantized 10 → float 1.2
+quantized 11 → float 1.44
+quantized 12 → float 1.68
+quantized 13 → float 1.92
+quantized 14 → float 2.16
+quantized 15 → float 2.4
+```
+
+To quantize a float, a value on the y axis, we calculate the distance from the
+minimum value on the y axis, `r_min`, which is how far up the y axis am I from
+the starting point. And then we want to figure out, so if each x-step moves me
+0.24 unit up the y axis, how many x-steps do I need to take to travel the
+distance calculated. For this we use the scale:
+```
+quantized_value = round((float_value - r_min) / scale)
+
+Example float -1.2:
+quantized_value = round((-1.2 - (-1.2)) / 0.24)
+                = round((0) / 0.24)
+                = round(0) = 0
+
+Example float -0.96:
+quantized_value = round((-0.96 - (-1.2)) / 0.24)
+                = round((0.24) / 0.24)
+                = round(1) = 1
+
+Example float 0.0:
+quantized_value = round((0.0 - (-1.2)) / 0.24)
+                = round((1.2) / 0.24)
+                = round(5) = 5
+```
+So we are taking the float value, the y axis and subtracting the minium
+
+To dequantize we do:
+```
+float_value = scale * quantized_value + offset
+offset      = r_min - (scale * q_min)
+
+offset = -1.2 - (0.24 * 0) = -1.2
+
+Example:
+Quantized Value: 0
+float_value = 0.24 * 0 + (-1.2) = -1.2
+
+Quantized Value: 1
+float_value = 0.24 * 1 + (-1.2) = -0.96
+```
+Notice that this is basically `y = mx + b`:
+```
+float_value = scale × quantized_value + offset
+     ↑           ↑         ↑             ↑
+   y-axis     slope      x-axis      y-intercept
+```
+And this is called linear quantization. The offset is the zero point which is
+
+### zero point
+```
+zero_point = round(q_min - (r_min / scale))
 ```
 
 ### Notation
@@ -62,15 +176,7 @@ typedef struct {
 } block_q4_0;
 ```
 The delta (`d`) is used to map the range of float values into the range of
-integer values. This is calculated by finding the maximum value in the block of
-float values and dividing it by the maximum value that can be represented by the
-quantized value. In this case we have 4 bits which gives a range of 0 to 15
-(0000-1111).
-```
-delta = max_value / quantized range
-delta = max_value / 15                (1111b)
-```
-
+integer values. 
 `qs` is where the quantized values are stored. So we have a array of 16 elements
 (32/2=16), and notice the type is `uint8_t` which is 1 byte so each entry can
 hold 8 bits.
@@ -80,79 +186,128 @@ array:
 ```
    [ nibble0  ][ nibble1   ]
    +--+--+--+--+--+--+--+--+
-0  |0 |1 |2 |3 |4 |5 |6 |7 |
+0  |0 |1 |2 |3 |4 |5 |6 |7 |     (0 1)
    +--+--+--+--+--+--+--+--+
-   ...
+1  |0 |1 |2 |3 |4 |5 |6 |7 |     (2 3)
    +--+--+--+--+--+--+--+--+
-15 |0 |1 |2 |3 |4 |5 |6 |7 |
+2  |0 |1 |2 |3 |4 |5 |6 |7 |     (4 5)
+   +--+--+--+--+--+--+--+--+
+3  |0 |1 |2 |3 |4 |5 |6 |7 |     (6 7)
+   +--+--+--+--+--+--+--+--+
+4  |0 |1 |2 |3 |4 |5 |6 |7 |     (8 9)
+   +--+--+--+--+--+--+--+--+
+5  |0 |1 |2 |3 |4 |5 |6 |7 |     (10 11)
+   +--+--+--+--+--+--+--+--+
+6  |0 |1 |2 |3 |4 |5 |6 |7 |     (12 13)
+   +--+--+--+--+--+--+--+--+
+7  |0 |1 |2 |3 |4 |5 |6 |7 |     (14 15)
+   +--+--+--+--+--+--+--+--+
+8  |0 |1 |2 |3 |4 |5 |6 |7 |     (16 17)
+   +--+--+--+--+--+--+--+--+
+9  |0 |1 |2 |3 |4 |5 |6 |7 |     (18 19)
+   +--+--+--+--+--+--+--+--+
+10 |0 |1 |2 |3 |4 |5 |6 |7 |     (20 21)
+   +--+--+--+--+--+--+--+--+
+11 |0 |1 |2 |3 |4 |5 |6 |7 |     (22 23)
+   +--+--+--+--+--+--+--+--+
+12 |0 |1 |2 |3 |4 |5 |6 |7 |     (24 25)
+   +--+--+--+--+--+--+--+--+
+13 |0 |1 |2 |3 |4 |5 |6 |7 |     (26 27)
+   +--+--+--+--+--+--+--+--+
+14 |0 |1 |2 |3 |4 |5 |6 |7 |     (28 29)
+   +--+--+--+--+--+--+--+--+
+15 |0 |1 |2 |3 |4 |5 |6 |7 |     (30 31)
    +--+--+--+--+--+--+--+--+
    [ nibble0  ][ nibble1   ]
 ```
 
 #### Quantization
-First we need to calculate the delta which is defined as:
-```
-org_values = {0.2, 0.3, 0.4, 0.5}
+To quantize the following function is called:
+```c++
+void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK4_0;
 
-delta = max_value / 15
-delta = 0.5 / 15
-delta ~ 0.0333
-```
-This means that all values in my set of floating point numbers will be divided
-by this delta so that they will be able to be represented by one of the numbers
-in the range from 0-15. And the max value will be mapped to the value 15.
-```
-0.0333 * 15 = 0.4995 ~ 0.5
-```
+    assert(k % qk == 0);
 
-Then we quantize using the formula:
-```
-quantized_value = round(org_value / delta)
+    const int nb = k / qk;
 
-0.2 -> 0.2 / 0.0333 = 6
-0.3 -> 0.3 / 0.0333 = 9
-0.4 -> 0.4 / 0.0333 = 12
-0.5 -> 0.5 / 0.0333 = 15
+    for (int i = 0; i < nb; i++) {
+        float amax = 0.0f; // absolute max
+        float max  = 0.0f;
 
-quantized_values = {6, 9, 12, 15}
+        for (int j = 0; j < qk; j++) {
+            const float v = x[i*qk + j];
+            if (amax < fabsf(v)) {
+                amax = fabsf(v);
+                max  = v;
+            }
+        }
+
+        const float d  = max / -8;
+        const float id = d ? 1.0f/d : 0.0f;
+
+        y[i].d = GGML_FP32_TO_FP16(d);
+
+        for (int j = 0; j < qk/2; ++j) {
+            const float x0 = x[i*qk + 0    + j]*id;
+            const float x1 = x[i*qk + qk/2 + j]*id;
+
+            const uint8_t xi0 = MIN(15, (int8_t)(x0 + 8.5f));
+            const uint8_t xi1 = MIN(15, (int8_t)(x1 + 8.5f));
+
+            y[i].qs[j]  = xi0;
+            y[i].qs[j] |= xi1 << 4;
+        }
+    }
+}
 ```
+So this function takes in a pointer to float `x`, a pointer to `block_q4_0` which
+is `y`, and `k` which is the size of x. This has be be divisable by 32.
+We calculate the number of blocks `nb` and then iterate over them. For each
+block we calculate the absolute max and the max value that block (32 value).
+
+After the first loop we use max value to compute the delta/scale value:
+```c++
+        const float d  = max / -8;
+        const float id = d ? 1.0f/d : 0.0f;
+```
+So each float32 (single precision) value is going to be represented with 4 bits.
+The `block_q4_0` stores its members as `uint8_t` which is 1 byte (8 bits) and
+unsigned so it can only store positive values. That gives as a range of [0-15]
+(0000b-1111b) which is 16 values. 
+
+But notice that the code above is using -8 as the denominator and this is creating
+a range of [-8, 7]. Why do this? With this range 0 is always maps to the center
+of our quantization range and using [0-15] range might not, it depends on the
+actual values.
+
+And notice that in the quantization stage later we are adding 8.5 to the
+quantized value:
+```c++
+            const uint8_t xi0 = MIN(15, (int8_t)(x0 + 8.5f));
+            const uint8_t xi1 = MIN(15, (int8_t)(x1 + 8.5f));
+```
+This for rounding and storing the quantized value in the range of [0-15]. And
+we will see later that we subtract 8 when we dequantize the value to get it back
+into the range of [-8, 7].
+
+```
+Input: [2.1, 2.3, 2.5, 2.7, 2.9]
+
+max = 2.9  // extremal value
+d = 2.9 / -8 = -0.3625
+id = 1.0 / -0.3625 = -2.758
+
+// Quantize each value:
+2.1 * -2.758 = -5.792 → -5.792 + 8.5 = 2.708 → stored as 2
+2.3 * -2.758 = -6.343 → -6.343 + 8.5 = 2.157 → stored as 2  
+2.5 * -2.758 = -6.895 → -6.895 + 8.5 = 1.605 → stored as 1
+2.7 * -2.758 = -7.447 → -7.447 + 8.5 = 1.053 → stored as 1
+2.9 * -2.758 = -7.998 → -7.998 + 8.5 = 0.502 → stored as 0
+```
+Notice that there are multiple values that map to the same quantized value!
 
 #### Dequantization
-To dequantize we use the formula:
-```
-org_value = quantized_value * delta
-
-{6, 9, 12, 15}
-6 -> 6 * 0.0333 = 0.1998
-9 -> 9 * 0.0333 = 0.2997
-12 -> 12 * 0.0333 = 0.3996
-15 -> 15 * 0.0333 = 0.4995
-
-org_values             = {0.2   , 0.3   , 0.4   , 0.5   }
-quantized->dequantized = {0.1998, 0.2997, 0.3996, 0.4995}
-```
-So this is how the delta stored in the block struct is used.
-
-So that was my initial understanding of how quantization might work but it is
-somewhat naive. For example, lets say we have the following input values:
-```console
-[-1.6, 0.8, 3.2, -0.4]
-max value = 3.2
-delta = 3.2 / 15 = 0.213
-
--1.6 / 0.213 = -7.5 <- this is outside of the 0-15 range!
-```
-
-What we can do instead something like this which is what ggml does:
-```
-[-1.6, 0.8, 3.2, -0.4]
-max = 3.2 (signed value with largest absolute value)
-d = 3.2 / -8 = -0.4      (not using 15 but -8)
-id = 1.0 / -0.4 = -2.5   (inverse delta so that we can multiple instead of divide)
-
--1.6 * -2.5 + 8.5 = 4.0 + 8.5 = 12.5 → 12 (OK!)
-```
-
 ```
 4-bit signed integers (two's complement):
 Binary   Decimal
@@ -332,28 +487,17 @@ but with `_1` there is an additional field to store data which in this case is
 the minimum. I'm thinking that `_0` is because it needs at least the delta.
 
 #### Quantization
-Calculate min and delta using the forumla:
 ```
-delta = (max_value - min_value) / 15
-```
-The 15 comes from the number of bits used for quantization which in this case
-is 4 (1111b, 15d).
+min = 2.1, max = 2.9
+d = (2.9 - 2.1) / 15 = 0.8 / 15 = 0.0533
+id = 1.0 / 0.0533 = 18.75
 
-Then quantize using the formula:
-```
-quantized_value = round((org_value - min_value) / delta)
-
-org_values = {0.2, 0.3, 0.4, 0.5}
-min_value = 0.2
-delta = (0.5 - 0.2) / 15
-delta = 0.3 / 15
-delta ~ 0.02
-0.2 -> (0.2 - 0.2) / 0.02 = 0
-0.3 -> (0.3 - 0.2) / 0.02 = 5
-0.4 -> (0.4 - 0.2) / 0.02 = 10
-0.5 -> (0.5 - 0.2) / 0.02 = 15
-
-quantized_values = {0, 5, 10, 15}
+// Quantize each value:
+(2.1 - 2.1) * 18.75 = 0.0   → 0.0 + 0.5 = 0.5     → stored as 0
+(2.3 - 2.1) * 18.75 = 3.75  → 3.75 + 0.5 = 4.25   → stored as 4
+(2.5 - 2.1) * 18.75 = 7.5   → 7.5 + 0.5 = 8.0     → stored as 8
+(2.7 - 2.1) * 18.75 = 11.25 → 11.25 + 0.5 = 11.75 → stored as 11
+(2.9 - 2.1) * 18.75 = 15.0  → 15.0 + 0.5 = 15.5   → stored as 15
 ```
 
 #### Dequantization
