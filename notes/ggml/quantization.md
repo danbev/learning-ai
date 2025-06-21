@@ -645,18 +645,196 @@ Now the line is just a mental model, or something that we could do manually
 perhaps is a better way of thinking about it. But to actually perform this
 operation we use calculus and derivatives to find the best fit line.
 
-For any line `y = scale * x + min` the total error is:
+For any line `y = scale * x + min` we can calculate the error using:
+```console
+error_i = actual_value_i - predicted_value_i
+error_i =            y_i - (scale × x_i + min)
 ```
-Total_Error = (f1_error)² +
-              (f2_error)² +
-              (f3_error)² +
-              (f4_error)²
+For example, lets take point 1:
+```console
+point: (1, 11.0)
+scale: 1.4
+min: 9.9
+
+predicted_value = (1.4   × 1 + 9.9) = 11.3
+                  (scale × x + min)
+error           = 11.0 - 11.3 = -0.3
+```
+So that is for a single value, but we want to calculate the total error for all
+the points and also square them, so we can use the following formula:
+```console
+Total_Error = (f1_error)² + (f2_error)² + (f3_error)² + (f4_error)²
+
+Total_Error = Σ(squared_error_i)
+            = Σ(y_i - (scale × x_i + min))²
+            =   (y₁ - (scale ×  x₁ + min))² +
+                (y₂ - (scale ×  x₂ + min))² +
+                (y₃ - (scale ×  x₃ + min))² +
+                (y₄ - (scale ×  x₄ + min))²
 
 Total_Error = (10.0 - (scale × 0 + min))² +
               (11.0 - (scale × 1 + min))² +
               (13.0 - (scale × 2 + min))² +
               (14.0 - (scale × 3 + min))²
+```
+Now, notice that we have two unknowns here, the `scale` and the `min`.
+```
+total_error = ∑(y_i - (scale * x_i + min))²
+```
+So we take the derivative with respect to `scale`:
+```console
+d(Total_Error)/d(scale) = d/d(scale) [Σ(y_i - (scale × x_i + min))²]
+```
+We move the derivative (d/d(scale)) inside the summation
+(linearity of derivatives):
+```console
+d(Total_Error)/d(scale) = Σ(d/d(scale) [(y_i - (scale × x_i + min))²])
+```
+So we now have:
+```
+Σ( d/d(scale) [(y_i - (scale * x_i + min))²])
+And just recall that d/d(scale) is a function so we can think of it as:
+Σ( d/d(scale)([(y_i - (scale * x_i + min))²]))
 
+So d/d(scale) is the derivative operator/function that takes (y_i - scale * x_i + min))²
+as its input.
+
+This can be helpful when we want to apply the chain rule:
+Σ( d/d(scale)([(y_i - (scale * x_i + min))²]))
+   {         outer function                 }
+              { inner function             }
+We start by taking the derivative of the outer function:
+
+Let u = y_i - (scale * x_i + min)
+So the outer function is u²:
+d/du(u²) = 2u = 2(y_i - (scale * x_i + min))
+
+And we also have to take the derivative of the inner function:
+du/d(scale) = d/d(scale)(y_i - (scale * x_i + min))
+            = - x_i
+
+And then we combine the two:
+2(y_i - (scale * x_i + min)) * (-x_i)
+-2x_i(y_i - (scale * x_i + min))
+
+And we can then place this back into the summation:
+
+Σ( d/d(scale)([(y_i - (scale × x_i + min))²])) = ∑(-2x_i(y_i - (scale * x_i + min)))
+                                               = -2Σ(x_i * (y_i - (scale * x_i + min)))
+Set to zero:
+-2Σ(x_i × (y_i - (scale × x_i + min))) = 0
+Σ(x_i × (y_i - (scale × x_i + min))) = 0
+Expand:
+Σ(x_i × y_i - x_i × (scale × x_i + min)) = 0
+Σ(x_i × y_i - x_i × scale × x_i - x_i × min) = 0
+Σ(x_i × y_i - scale × x_i² - min × x_i) = 0
+
+Σ(x_i × y_i) - Σ(scale × x_i²) - Σ(min × x_i) = 0
+
+Σ(x_i × y_i) - scale × Σ(x_i²) - min × Σ(x_i) = 0
+
+Σ(x_i × y_i) = scale × Σ(x_i²) + min × Σ(x_i)
+```
+
+And then we do something similar but for the `min`:
+```console
+d(Total_Error)/d(min) = d/d(min) [Σ(y_i - (scale × x_i + min))²]
+
+Move the derivate inside of the summation:
+= Σ [d/d(min) (y_i - (scale × x_i + min))²]
+
+Apply the chain rule:
+Let u = y_i - (scale × x_i + min), so we have u²
+
+Chain rule: d(u²)/d(min) = 2u × du/d(min)
+
+Find the derivative of the outer function:
+d/du(u²) = 2u = 2(y_i - (scale × x_i + min))
+
+Find the derivative of the inner function:
+du/d(min) = d/d(min)[y_i - (scale × x_i + min)]
+          = -1
+
+Combine the two:
+d/d(min)[(y_i - (scale × x_i + min))²] = 2(y_i - (scale × x_i + min)) × (-1)
+                                       = -2(y_i - (scale × x_i + min))
+
+And place this back into the summation:
+Σ[d/d(min) (y_i - (scale × x_i + min))²] = Σ[-2(y_i - (scale × x_i + min))]
+                                         = -2Σ(y_i - (scale × x_i + min))
+
+Set to zero:
+-2Σ(y_i - (scale × x_i + min)) = 0
+Σ(y_i - (scale × x_i + min)) = 0
+Σ(y_i) - scale×Σ(x_i) - min×n = 0
+
+Rearranging:
+Σ(y_i) = scale×Σ(x_i) + min×n
+```
+So that gives us two equations:
+```
+Equation 1: Σ(x_i × y_i) = scale × Σ(x_i²) + min × Σ(x_i)
+Equation 2: Σ(y_i)       = scale × Σ(x_i)  + min × n
+```
+So we start by solving for `min`:
+```console
+Σ(y) = scale × Σ(x) + min × n
+
+Subtract scale × Σ(x) from both sides:
+Σ(y) - scale × Σ(x) = min × n
+
+Divide by n:
+min = [Σ(y) - scale × Σ(x)] / n
+```
+And then we can substitute this into the first equation:
+```console
+Σ(xy) = scale × Σ(x²) + min × Σ(x)
+
+Σ(xy) = scale × Σ(x²) + [Σ(y) - scale × Σ(x)] / n × Σ(x)
+
+n × Σ(xy) = n × scale × Σ(x²) + [Σ(y) - scale × Σ(x)] × Σ(x)
+n × Σ(xy) = n × scale × Σ(x²) + Σ(y) × Σ(x) - scale × Σ(x) × Σ(x)
+n × Σ(xy) = n × scale × Σ(x²) + Σ(y) × Σ(x) - scale × [Σ(x)]²
+
+n × Σ(xy) - Σ(y) × Σ(x) = n × scale × Σ(x²) - scale × [Σ(x)]²
+n × Σ(xy) - Σ(y) × Σ(x) = scale × [n × Σ(x²) - [Σ(x)]²]
+
+scale = [n × Σ(xy) - Σ(y) × Σ(x)] / [n × Σ(x²) - [Σ(x)]²]
+
+We can try this out with our example:
+min = [Σ(y) - scale × Σ(x)] / n
+
+n = 4, Σ(x) = 6, Σ(y) = 48, Σ(xy) = 79, Σ(x²) = 14
+
+scale = [4×79 - 48×6] / [4×14 - 6²] = [316 - 288] / [56 - 36] = 28/20 = 1.4
+
+min = [48 - 1.4×6] / 4 = [48 - 8.4] / 4 = 39.6/4 = 9.9
+```
+Notice that we need a number of values to be able to calculate the scale and
+the min which is something we will see in the code later.
+
+Now, with the scale and the min values calculated we have found the optimal
+linear mapping from our input floating point values to our quantized units.
+We can use this to quantized values:
+```console
+quantized_value = (float_value - min) / scale
+
+10.0 → (10.0 - 9.9) / 1.4 = 0.1 / 1.4 ≈ 0
+11.0 → (11.0 - 9.9) / 1.4 = 1.1 / 1.4 ≈ 1
+13.0 → (13.0 - 9.9) / 1.4 = 3.1 / 1.4 ≈ 2
+14.0 → (14.0 - 9.9) / 1.4 = 4.1 / 1.4 ≈ 3
+```
+And we can dequantize the values using the inverse mapping:
+```console
+reconstructed_value = scale × quantized_value + min
+
+0 → 1.4 × 0 + 9.9 = 9.9  ≈ 10.0
+1 → 1.4 × 1 + 9.9 = 11.3 ≈ 11.0
+2 → 1.4 × 2 + 9.9 = 12.7 ≈ 13.0
+3 → 1.4 × 3 + 9.9 = 14.1 ≈ 14.0
+```
+
+```
 float values[4]     = {10.0, 11.0, 13.0, 14.0};
 2 bits quantization = [ 0 1 2 3 ] ("units" of quantization/level)
 
@@ -729,11 +907,14 @@ void quantize_row_q4_K_ref(const float * GGML_RESTRICT x, block_q4_K * GGML_REST
     for (int i = 0; i < nb; i++) {
         float max_scale = 0; // as we are deducting the min, scales are always positive
         float max_min = 0;
+        // QK_K is 256, so we have 8 blocks of 32 elements each. j's range 0-8.
         for (int j = 0; j < QK_K/32; ++j) {
+
             float sum_x2 = 0;
             for (int l = 0; l < 32; ++l) {
                 sum_x2 += x[32*j + l] * x[32*j + l];
             }
+
             float av_x = sqrtf(sum_x2/32);
             for (int l = 0; l < 32; ++l) {
                 weights[l] = av_x + fabsf(x[32*j + l]);
