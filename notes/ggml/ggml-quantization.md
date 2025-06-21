@@ -281,6 +281,11 @@ a range of [-8, 7]. Why do this? With this range 0 is always maps to the center
 of our quantization range and using [0-15] range might not, it depends on the
 actual values.
 
+Also notice that this is using the inverse delta `id` which is done so that
+division can be avoided and instead just a multiplication operation performed
+instead. The "real" delta/scale is the only thing stored in the block as that
+is what is required for dequantization.
+
 And notice that in the quantization stage later we are adding 8.5 to the
 quantized value:
 ```c++
@@ -482,6 +487,15 @@ So we can now have either a struct of a `ggml_half2` (the same information only
 packed, two `ggml_half`'s, into one `ggml_half2` I think) member. The `m` member is
 used to store the smallest value (min) in the block of float values.
 
+So each `block_q4_1` will be storing:
+```
+d  = uint8_t     = 16 bits (2 bytes) (delta/scale value)
+m  = uint8_t     = 16 bits (2 bytes) (minimum value in the block)
+qs = uint8_t[16] = 16 * 8 = 128 bits (16 bytes) (quantized values)
+
+Total: 16 + 16 + 128 = 160 bits = 20 bytes
+```
+
 So the above is a common patterns where `_0` there is only the one delta value
 but with `_1` there is an additional field to store data which in this case is
 the minimum. I'm thinking that `_0` is because it needs at least the delta.
@@ -514,6 +528,274 @@ quantized values = {0, 5, 10, 15}
 org_values             = {0.2, 0.3, 0.4, 0.5}
 quantized->dequantized = {0.2, 0.3, 0.4, 0.5}
 ```
+
+### `block_q4_K`
+So lets start with what this is all about. This is about efficiently storing
+multiple blocks.
+
+Lets say we wanted to store 8 separete `block_q4_1` blocks:
+```
+One block_q4_1:
+d  = uint8_t     = 16 bits (2 bytes) (delta/scale value)
+m  = uint8_t     = 16 bits (2 bytes) (minimum value in the block)
+qs = uint8_t[16] = 16 * 8 = 128 bits (16 bytes) (quantized values)
+
+Total: 16 + 16 + 128 = 160 bits = 20 bytes
+
+8 block_q4_1:
+Total: 8 x 20 = 160 bytes
+```
+
+Now, a `block_q4_K` looks like this:
+```c++
+#define QK_K 256
+#define K_SCALE_SIZE 12
+
+// 4-bit quantization
+// 8 blocks of 32 elements each
+// weight is represented as x = a * q + b
+// Effectively 4.5 bits per weight
+typedef struct {
+    GGML_EXTENSION union {
+        struct {
+            ggml_half d;    // super-block scale for quantized scales
+            ggml_half dmin; // super-block scale for quantized mins
+        } GGML_COMMON_AGGR_S;
+        ggml_half2 dm;
+    } GGML_COMMON_AGGR_U;
+    uint8_t scales[K_SCALE_SIZE]; // scales and mins, quantized with 6 bits
+    uint8_t qs[QK_K/2];           // 4--bit quants
+} block_q4_K;
+```
+And before we go into the details of this struct lets first look at what the
+storage requirements for such a block in comparision with the 8 single
+`block_q4_1` blocks:
+```
+d          = ggml_half = 16 bits (2 bytes) (super-scale for scales)
+dmin       = ggml_half = 16 bits (2 bytes) (super-scale for mins)
+scales[12] = 96 bits (12 bytes) (8 scales + 8 mins, 6 bits each)
+qs[128]    = 1024 bits (128 bytes) (256 values, 4 bits each)
+
+Total: 16 + 16 + 96 + 1024 = 1152 bits = 144 bytes
+```
+So notice that our 8 individual `block_q4_1` blocks would take 160 bytes, and
+this single `block_q4_K` block takes 144 bytes, so we save 16 bytes which is
+about 10% of the size. This is a significant saving when we have many blocks.
+
+So how is this saving achieved?  
+The "secret" is how the the instead of using full precision values for the
+delta/scale and the minimum value the K block quantizes these values. So there
+is like two levels of quantization being used here.
+```
+8 block_q4_1:
+8 full precision deltas/scales: 8 x 16 = 128 bits
+8 full precision mins         : 8 x 16 = 128 bits
+Parameter totals              : 256 bits = 32 bytes
+
+block_q4_K:
+2 super-scales/deltas         : 2 × 16 = 32 bits
+8 quantized scales/deltas     : 8 × 6 = 48 bits  
+8 quantized mins              : 8 × 6 = 48 bits
+Parameter overhead            : 128 bits total
+```
+Notice that only 6 bits are availble for the scale and min values for each of
+the 8 blocks. In the case of individual `block_q4_1` blocks we have 16 bits for
+the scale and 16 bits for the minimum value which gives us plenty of precision.
+So we have these precision constraints for the scales and min values in this
+case which is why the code it not as straightforward as the standalone blocks.
+So we have to find scale/min values that work well for quantization but also that
+themselves can be quantized to 6 bits.
+
+So we have a set of floating point values which we can imagine as points on the
+y axis like we did perviously, and on the x axis we have the quantized units.
+
+What we want to do is to find a line that fits these points well and we can
+use linear regression/least squares to find the best fit line. The slope of this
+line is the scale and the y-intercept is the minimum value. But we also have
+additional constraits that the slope/intercept must fit in 6 bits.
+```
+float values[4]     = {10.0, 11.0, 13.0, 14.0};
+2 bits quantization = [ 0 1 2 3 ] ("units" of quantization/level)
+
+  ^
+14-            *
+  |
+13-        *
+  |
+12-
+  |
+11-   *
+  |
+  |
+10*
+  |
+  |
+  |
+  |
+  |----|---|---|---|------->
+  0    1   2   3   4
+
+// Data points (level, float_value):
+(0, 10.0)
+(1, 11.0)
+(2, 13.0)
+(3, 14.0)
+```
+Now the line is just a mental model, or something that we could do manually
+perhaps is a better way of thinking about it. But to actually perform this
+operation we use calculus and derivatives to find the best fit line.
+
+For any line `y = scale * x + min` the total error is:
+```
+Total_Error = (f1_error)² +
+              (f2_error)² +
+              (f3_error)² +
+              (f4_error)²
+
+Total_Error = (10.0 - (scale × 0 + min))² +
+              (11.0 - (scale × 1 + min))² +
+              (13.0 - (scale × 2 + min))² +
+              (14.0 - (scale × 3 + min))²
+
+float values[4]     = {10.0, 11.0, 13.0, 14.0};
+2 bits quantization = [ 0 1 2 3 ] ("units" of quantization/level)
+
+    +--------------------+
+    | x  | y  | xy | x^2 |
+    +--------------------+
+    | 0  | 10 |  0 | 0   |
+    +----+----+----+-----+
+    | 1  | 11 | 11 | 1   |
+    +----+----+----+-----+
+    | 2  | 13 | 26 | 4   |
+    +----+----+----+-----+
+    | 3  | 14 | 42 | 9   |
+    +----+----+----+-----+
+
+Sums
+    +----+----+----+-----+
+    | 6  | 48 | 79 | 14  |
+    +----+----+----+-----+
+
+y = mx + b
+
+n = number of floating point values = 4
+
+m = slope (scale) = (n * Σxy - Σx * Σy) / (n * Σx^2 - (Σx)^2)
+  = (4 * 79 - 6 * 48) / (4 * 14 - 6^2)
+  = (316 - 288) / (56 - 36)
+  = 28 / 20
+  = 1.4
+
+So this gives us a slope of 1.4 which is the scale value.
+
+b = y-intercept (minimum) = (Σy - m * Σx) / n
+  = (48 - 1.4 * 6) / 4
+  = (48 - 8.4) / 4
+  = 39.6 / 4
+  = 9.9
+
+So that gives us:
+y = 1.4x + 9.9
+
+x = 0:
+y = 1.4 * 0 + 9.9 = 9.9     (error: 0.1)
+
+x = 1:
+y = 1.4 * 1 + 9.9 = 11.3    (error: 0.3)
+
+x = 2:
+y = 1.4 * 2 + 9.9 = 12.7    (error: 0.3)
+
+x = 3:
+y = 1.4 * 3 + 9.9 = 14.1    (error: 0.1)
+
+Total squared error: 
+(0.1^2 + 0.3^2 + 0.3^2 + 0.1^2) = 0.20
+```
+
+So that sound great, and lets take a look at how this works in practice.
+```c++
+void quantize_row_q4_K_ref(const float * GGML_RESTRICT x, block_q4_K * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_K == 0);
+    const int nb = k / QK_K;
+
+    uint8_t L[QK_K];
+    uint8_t Laux[32];
+    float   weights[32];
+    float mins[QK_K/32];
+    float scales[QK_K/32];
+
+    for (int i = 0; i < nb; i++) {
+        float max_scale = 0; // as we are deducting the min, scales are always positive
+        float max_min = 0;
+        for (int j = 0; j < QK_K/32; ++j) {
+            float sum_x2 = 0;
+            for (int l = 0; l < 32; ++l) {
+                sum_x2 += x[32*j + l] * x[32*j + l];
+            }
+            float av_x = sqrtf(sum_x2/32);
+            for (int l = 0; l < 32; ++l) {
+                weights[l] = av_x + fabsf(x[32*j + l]);
+            }
+            scales[j] = make_qkx2_quants(32, 15, x + 32*j, weights, L + 32*j, &mins[j], Laux, -1.f, 0.1f, 20, false);
+            float scale = scales[j];
+            if (scale > max_scale) {
+                max_scale = scale;
+            }
+            float min = mins[j];
+            if (min > max_min) {
+                max_min = min;
+            }
+        }
+
+        float inv_scale = max_scale > 0 ? 63.f/max_scale : 0.f;
+        float inv_min   = max_min   > 0 ? 63.f/max_min   : 0.f;
+        for (int j = 0; j < QK_K/32; ++j) {
+            uint8_t ls = nearest_int(inv_scale*scales[j]);
+            uint8_t lm = nearest_int(inv_min*mins[j]);
+            ls = MIN(63, ls);
+            lm = MIN(63, lm);
+            if (j < 4) {
+                y[i].scales[j] = ls;
+                y[i].scales[j+4] = lm;
+            } else {
+                y[i].scales[j+4] = (ls & 0xF) | ((lm & 0xF) << 4);
+                y[i].scales[j-4] |= ((ls >> 4) << 6);
+                y[i].scales[j-0] |= ((lm >> 4) << 6);
+            }
+        }
+        y[i].d = GGML_FP32_TO_FP16(max_scale/63.f);
+        y[i].dmin = GGML_FP32_TO_FP16(max_min/63.f);
+
+        uint8_t sc, m;
+        for (int j = 0; j < QK_K/32; ++j) {
+            get_scale_min_k4(j, y[i].scales, &sc, &m);
+            const float d = GGML_FP16_TO_FP32(y[i].d) * sc;
+            if (!d) continue;
+            const float dm = GGML_FP16_TO_FP32(y[i].dmin) * m;
+            for (int ii = 0; ii < 32; ++ii) {
+                int l = nearest_int((x[32*j + ii] + dm)/d);
+                l = MAX(0, MIN(15, l));
+                L[32*j + ii] = l;
+            }
+        }
+
+        uint8_t * q = y[i].qs;
+        for (int j = 0; j < QK_K; j += 64) {
+            for (int l = 0; l < 32; ++l) {
+                q[l] = L[j + l] | (L[j + l + 32] << 4);
+            }
+            q += 32;
+        }
+
+        x += QK_K;
+    }
+}
+```
+
+_wip_
+
 
 ### Naming Convention
 So the above is a common patterns where `_0` there is only the one delta value
