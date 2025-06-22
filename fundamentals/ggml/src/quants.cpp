@@ -18,9 +18,9 @@ int main(int argc, char **argv) {
     // So we need 8 blocks of 32 elements each, which is 256 elements total.
     float src[256] = {
         10.0, 11.0, 13.0, 14.0,
-        10.0, 11.0, 13.0, 14.0,
-        10.0, 11.0, 13.0, 14.0,
-        10.0, 11.0, 13.0, 14.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
 
         0.0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0,
@@ -57,17 +57,15 @@ int main(int argc, char **argv) {
         0.0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0};
 
-    std::vector<float> dst;
+    size_t dst_size = ggml_row_size(GGML_TYPE_Q4_K, 256) * 1;
+    std::vector<uint8_t> dst(dst_size);
 
-    auto ret = ggml_quantize_chunk(GGML_TYPE_Q4_K,
-            src,
-            dst.data(),
-            0,
-            4,
-            256,
-            nullptr);
+    auto ret = ggml_quantize_chunk(GGML_TYPE_Q4_K, src, dst.data(), 0, 1, 256, nullptr);
 
     fprintf(stderr, "Quantized %d elements to %zu bytes\n", 4, ret);
+    for (size_t i = 0; i < dst.size(); ++i) {
+        fprintf(stderr, "%02x ", dst[i]);
+    }
 
 
     ggml_free(ctx);
