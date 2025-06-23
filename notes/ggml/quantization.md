@@ -584,7 +584,7 @@ about 10% of the size. This is a significant saving when we have many blocks.
 
 So how is this saving achieved?  
 The "secret" is how the the instead of using full precision values for the
-delta/scale and the minimum value the K block quantizes these values. So there
+delta/scale and the minimum value, the K block quantizes these values. So there
 is like two levels of quantization being used here.
 ```
 8 block_q4_1:
@@ -601,17 +601,18 @@ Parameter overhead            : 128 bits total
 Notice that only 6 bits are availble for the scale and min values for each of
 the 8 blocks. In the case of individual `block_q4_1` blocks we have 16 bits for
 the scale and 16 bits for the minimum value which gives us plenty of precision.
+
 So we have these precision constraints for the scales and min values in this
 case which is why the code it not as straightforward as the standalone blocks.
 So we have to find scale/min values that work well for quantization but also that
 themselves can be quantized to 6 bits.
 
 So we have a set of floating point values which we can imagine as points on the
-y axis like we did perviously, and on the x axis we have the quantized units.
+y axis like we did previously, and on the x axis we have the quantized units.
 
 What we want to do is to find a line that fits these points well and we can
 use linear regression/least squares to find the best fit line. The slope of this
-line is the scale and the y-intercept is the minimum value. But we also have
+line is the scale, and the y-intercept is the minimum value. But we also have
 additional constraits that the slope/intercept must fit in 6 bits.
 ```
 float values[4]     = {10.0, 11.0, 13.0, 14.0};
@@ -696,8 +697,8 @@ So we now have:
 And just recall that d/d(scale) is a function so we can think of it as:
 Σ( d/d(scale)([(y_i - (scale * x_i + min))²]))
 
-So d/d(scale) is the derivative operator/function that takes (y_i - scale * x_i + min))²
-as its input.
+So d/d(scale) is the derivative operator/function that takes
+(y_i - scale * x_i + min))² as its input.
 
 This can be helpful when we want to apply the chain rule:
 Σ( d/d(scale)([(y_i - (scale * x_i + min))²]))
@@ -893,33 +894,280 @@ Total squared error:
 ```
 
 So that sound great, and lets take a look at how this works in practice.
+
+So lets say we have 1 block of 256 elements, so we have 8 blocks of 32 elements.
 ```c++
 void quantize_row_q4_K_ref(const float * GGML_RESTRICT x, block_q4_K * GGML_RESTRICT y, int64_t k) {
     assert(k % QK_K == 0);
     const int nb = k / QK_K;
+```
+```console
+(gdb) p k
+$7 = 256
 
+(gdb) p nb
+$8 = 1
+```
+
+```c++
     uint8_t L[QK_K];
     uint8_t Laux[32];
     float   weights[32];
     float mins[QK_K/32];
     float scales[QK_K/32];
+```
+Lets take a look at the sizes of these arrays:
+```console
+(gdb) p sizeof(L)
+$13 = 256
+(gdb) p sizeof(Laux)
+$21 = 32
+(gdb) p sizeof(weights)/sizeof(float)
+$22 = 32
+(gdb) p sizeof(mins)/sizeof(float)
+$18 = 8
+(gdb) p sizeof(scales)/sizeof(float)
+$19 = 8
+```
 
+So the following loop will iteratate over the number of blocks, in this case
+1 block:
+```c++
     for (int i = 0; i < nb; i++) {
-        float max_scale = 0; // as we are deducting the min, scales are always positive
+        float max_scale = 0;
         float max_min = 0;
-        // QK_K is 256, so we have 8 blocks of 32 elements each. j's range 0-8.
+
+        // This will iterate over the 8 blocks of 32 elements each.
         for (int j = 0; j < QK_K/32; ++j) {
 
             float sum_x2 = 0;
             for (int l = 0; l < 32; ++l) {
                 sum_x2 += x[32*j + l] * x[32*j + l];
             }
+```
+So at this we ahve the sum of the `x^2` for the 32 elements in the block for
+table above and ∑(x^2) in the equation:
+```console
+                                                ↓
+m = slope (scale) = (n * Σxy - Σx * Σy) / (n * Σx^2 - (Σx)^2)
+```
 
+The next part of the loop is something that we did not see in the above
+discussion as this is specific to the quantization in ggml. This is dealing with
+the contstraint that the scale and min values must fit in 6 bits:
+```c++
             float av_x = sqrtf(sum_x2/32);
             for (int l = 0; l < 32; ++l) {
                 weights[l] = av_x + fabsf(x[32*j + l]);
             }
+```
+First we have a root mean square of the 32 values which gives us a "typical"
+magnitude which is stored in `av_x` (average x?). The for loop then calculates
+a weight for each of the 32 values which is average magnitude plus the absolute
+value of the current value. So larger values will have a larger weight and
+smaller values will have a smaller weight.
+
+Next we are going to find the optimal scale and min values for quantizing this
+block of 32 values, with the contraints that values must fit into limited range.
+```c++
             scales[j] = make_qkx2_quants(32, 15, x + 32*j, weights, L + 32*j, &mins[j], Laux, -1.f, 0.1f, 20, false);
+```
+The first argument is the number of elements of the block which is 32, and after
+that we have the number of bits that we want to quantize the values to, which is
+15 bits. The third argument is the pointer to the current block. Following
+that we have the weights we just calculated. Next we have the pointer to the
+output quantized values, and then then a pointer to the output min values. Next
+is Laux which is a temporary array that I think is used to store and compare
+different quantization results. Then we have a few "search" parameters which
+I'll try to address in the code/notes below.
+
+```c++
+static float make_qkx2_quants(int n, int nmax, const float * GGML_RESTRICT x, const float * GGML_RESTRICT weights,
+        uint8_t * GGML_RESTRICT L, float * GGML_RESTRICT the_min, uint8_t * GGML_RESTRICT Laux,
+        float rmin, float rdelta, int nstep, bool use_mad) {
+    float min = x[0];
+    float max = x[0];
+    float sum_w = weights[0];
+    float sum_x = sum_w * x[0];
+```
+This is setting the initial min, and max value to the first value in the block
+which is:
+```console
+(gdb) p x[0]
+$8 = 10
+(gdb) p weights[0]
+$9 = 14.2793102
+```
+And we also set the intial sum of the weights and the sum of the weighted
+values to the first value in the block multiplied by the weight of that value:
+```console
+(gdb) p sum_x
+$10 = 142.793106
+```
+
+Next we set the rest of the min, max, and sum values:
+```c++
+    for (int i = 1; i < n; ++i) {
+        if (x[i] < min) min = x[i];
+        if (x[i] > max) max = x[i];
+        float w = weights[i];
+        sum_w += w;
+        sum_x += w * x[i];
+    }
+```
+We want 0 to be the minimum value, so we adjust the min to zero if it is g
+reater than zero, and if the max is equal to the min we set all the 
+quantized values to zero and return 0 as the scale:
+```c++
+    if (min > 0) min = 0;
+    if (max == min) {
+        for (int i = 0; i < n; ++i) L[i] = 0;
+        *the_min = -min;
+        return 0.f;
+    }
+```
+The following will iterate over all then values in the current block and
+quantize the floating point value, and then dequantize it back and subtract
+the original value to find the error. The error is then weighted by the
+weight of the value. Note that this is using the simple linear mapping that we
+would see when creating the block_q4_1, so there is nothing special happeing
+yet, like nothing to do with the constraints of the scale and min values that we
+mentioned earlier, but this is to have something to compare with:
+```c++
+    float iscale = nmax/(max - min); // quantized = iscale * (orig - min)
+    float scale = 1/iscale;          // reconstructed = scale * quantized_value + min
+    float best_mad = 0;              // should perhaps be best_error instead?
+    for (int i = 0; i < n; ++i) {
+        int l = nearest_int(iscale*(x[i] - min)); // calculate quantized value
+        L[i] = MAX(0, MIN(nmax, l)); // clamp to 0..nmax
+        float diff = scale * L[i] + min - x[i]; // reconstruct/dequantize the value and calculate the error
+                                                   by  subtracting the original value
+        diff = use_mad ? fabsf(diff) : diff * diff; // either use MAD or squared error
+        float w = weights[i]; // get the weight for the current value
+        best_mad += w * diff; // apply the weight to the error
+    }
+```
+The variable name `best_mad` feels a bit misleading as if Mean Absolute Deviation
+(MAD) is not used, which is the case for us, the it it is really just the
+weighted quared error for a simple linear mapping.
+```console
+(gdb) p iscale
+$21 = 1.07142854
+
+(gdb) p scale
+$22 = 0.933333337
+```
+Next there is a check if the number of steps is less than 1 in which case we
+simple return the scale calculated which would be the same as the normal
+block_q4_1:
+```c++
+    if (nstep < 1) {
+        *the_min = -min;
+        return scale;
+    }
+```
+Next we will iterate over all the steps specified and see if we can improve
+the base line quantization that we calculated above.
+Now, some of the values that will be used are:
+```console
+(gdb) p nstep
+$23 = 20
+(gdb) p min
+$24 = 0
+(gdb) p rmin
+$25 = -1
+(gdb) p rdelta
+$26 = 0.100000001
+(gdb) p nmax
+$27 = 15
+(gdb) p rmin
+$28 = -1
+(gdb) p rdelta
+$29 = 0.100000001
+(gdb) p nmax
+$30 = 15
+(gdb) p max
+$31 = 14
+(gdb) p min
+$32 = 0
+```
+```c++
+    for (int is = 0; is <= nstep; ++is) {
+        iscale = (rmin + rdelta*is + nmax)/(max - min); // calculate the scale for this iteration
+        float sum_l = 0, sum_l2 = 0, sum_xl = 0;
+        for (int i = 0; i < n; ++i) {
+            int l = nearest_int(iscale*(x[i] - min)); // quantize float using the current scale
+            l = MAX(0, MIN(nmax, l));  // clamp to 0..nmax
+            Laux[i] = l; // store the quantized value in Laux for the current step.
+            float w = weights[i]; // get the weight for the current value
+            sum_l += w*l; // sum of the quantized value weighted by the weight
+            sum_l2 += w*l*l; // sum of the squared quantized value weighted by the weight
+            sum_xl += w*l*x[i]; // sum of the quantized values weighted by the weight and the original value
+        }
+```
+The `sum_l`, `sum_l2`, and `sum_xl` are sums that we need for the weighted
+least squares calculation.
+* sum_l: weighted sum of the quantized values
+* sum_l2: weighted sum of the squared quantized values (like Σ(wx^2))
+* sum_xl: weighted sum of the quantized values multiplied by the original values (like Σ(wxy))
+
+Notice that Laux is the quantized values for the current step. And as we go
+through the steps (will be the next section) if the error is less that the
+current best then we will update L to have these quantized values.
+
+```console
+is = 0: iscale  = (-1.0 + 0.0 + 15)/14 = 14/14   = 1.000
+is = 5: iscale  = (-1.0 + 0.5 + 15)/14 = 14.5/14 = 1.036
+is = 10: iscale = (-1.0 + 1.0 + 15)/14 = 15/14   = 1.071 ← Close to baseline!
+is = 15: iscale = (-1.0 + 1.5 + 15)/14 = 15.5/14 = 1.107
+is = 20: iscale = (-1.0 + 2.0 + 15)/14 = 16/14   = 1.143
+```
+Notice that we are trying scales around the baseline 1.071, from lower 1.000
+to higher 1.143.
+
+Following that we have:
+```c++
+        float D = sum_w * sum_l2 - sum_l * sum_l;  // D = denominator for least squares
+        if (D > 0) {
+            float this_scale = (sum_w * sum_xl - sum_x * sum_l)/D;
+            float this_min   = (sum_l2 * sum_x - sum_l * sum_xl)/D;
+            if (this_min > 0) { // we need the minimum to be zero
+                this_min = 0; // force to 0
+                this_scale = sum_xl / sum_l2; // recalculate the scale
+            }
+            float mad = 0; // trail_error
+            for (int i = 0; i < n; ++i) {
+               float diff = this_scale * Laux[i] + this_min - x[i]; // dequantize the quantized value in Laux
+               diff = use_mad ? fabsf(diff) : diff * diff; // compute the error, absolut or squared
+               float w = weights[i]; // get the weight
+               mad += w * diff; // weight the error
+            }
+            if (mad < best_mad) {
+                for (int i = 0; i < n; ++i) {
+                    L[i] = Laux[i]; // Set the quantized value.
+                }
+                best_mad = mad; // set the best error found so far
+                scale = this_scale; // set the best scale found so far
+                min = this_min; // set the best minimum found so far
+            }
+        }
+```
+And when that loop completes we return:
+```
+    *the_min = -min;
+    return scale;
+}
+```
+And recall that the quantized values are stored in `L`. So this will return
+us to:
+```c++
+        for (int j = 0; j < QK_K/32; ++j) {
+            //scales[j] = make_qkx1_quants(32, 15, x + 32*j, L + 32*j, &mins[j], 9, 0.5f);
+            float sum_x2 = 0;
+            for (int l = 0; l < 32; ++l) sum_x2 += x[32*j + l] * x[32*j + l];
+            float av_x = sqrtf(sum_x2/32);
+            for (int l = 0; l < 32; ++l) weights[l] = av_x + fabsf(x[32*j + l]);
+->          scales[j] = make_qkx2_quants(32, 15, x + 32*j, weights, L + 32*j, &mins[j], Laux, -1.f, 0.1f, 20, false);
             float scale = scales[j];
             if (scale > max_scale) {
                 max_scale = scale;
@@ -929,51 +1177,92 @@ void quantize_row_q4_K_ref(const float * GGML_RESTRICT x, block_q4_K * GGML_REST
                 max_min = min;
             }
         }
+```
+So we can see that the scale is saved in the scales array and the max scale is
+updated if the new scale is larger than the current max scale. The same goes for
+the min value.
 
-        float inv_scale = max_scale > 0 ? 63.f/max_scale : 0.f;
-        float inv_min   = max_min   > 0 ? 63.f/max_min   : 0.f;
-        for (int j = 0; j < QK_K/32; ++j) {
-            uint8_t ls = nearest_int(inv_scale*scales[j]);
-            uint8_t lm = nearest_int(inv_min*mins[j]);
-            ls = MIN(63, ls);
-            lm = MIN(63, lm);
-            if (j < 4) {
-                y[i].scales[j] = ls;
-                y[i].scales[j+4] = lm;
-            } else {
-                y[i].scales[j+4] = (ls & 0xF) | ((lm & 0xF) << 4);
-                y[i].scales[j-4] |= ((ls >> 4) << 6);
-                y[i].scales[j-0] |= ((lm >> 4) << 6);
+Next we will quantize the scale an min values. Notice that 63 is uses as the
+maximum value for the scale and min values, so we are going to quantize the
+scales and mins to fit in 6 bits, which is the number of bits required to
+represent 63.
+```c++
+        float inv_scale = max_scale > 0 ? 63.f/max_scale : 0.f; // 8 different scales (on per 32-element block)
+        float inv_min   = max_min   > 0 ? 63.f/max_min   : 0.f; // 8 different mins (on per 32-element block)
+        for (int j = 0; j < QK_K/32; ++j) { // we are going to quantize these to save space (QK_K/32 = 8)
+            uint8_t ls = nearest_int(inv_scale*scales[j]); // quantize the current scale. ls = quantized level
+            uint8_t lm = nearest_int(inv_min*mins[j]); // quantize the current min.
+            ls = MIN(63, ls); // clamp the scale to 0..63
+            lm = MIN(63, lm); // clamp the min to 0..63
+            // So j can be 0..7, and we have 8 scales and mins and each needs
+            // 6 bits, so we have 16*6 = 96 bits, which is 12 bytes. And recall
+            // that scales is uint8_t scales[12]
+            // 
+            //  6-bit value: [5][4][3][2][1][0]
+            //                └──┘ └─────────┘
+            //               high 2   low 4
+            if (j < 4) { // just store the scale and min directly in the scales array after each other
+                y[i].scales[j] = ls; // scales[0-3] = full 8 bit values (but only 6 bits used)
+                y[i].scales[j+4] = lm; // scales[4-7] = full 8 bit values (but only 6 bits used)
+            // After first 4 blocks:
+            // scales[0] = ls₀ (scale for block 0)
+            // scales[1] = ls₁ (scale for block 1)
+            // scales[2] = ls₂ (scale for block 2)
+            // scales[3] = ls₃ (scale for block 3)
+            // scales[4] = lm₀ (min for block 0)
+            // scales[5] = lm₁ (min for block 1)
+            // scales[6] = lm₂ (min for block 2)
+            // scales[7] = lm₃ (min for block 3)
+            } else { // j=4,5,6,7
+                // Place the low 4 bits of both the scale and min in th
+                y[i].scales[j+4] = (ls & 0xF) | ((lm & 0xF) << 4); // uses all 8 bits
+                y[i].scales[j-4] |= ((ls >> 4) << 6); // add to previous top bits
+                y[i].scales[j-0] |= ((lm >> 4) << 6); // add to previous top bits
             }
         }
-        y[i].d = GGML_FP32_TO_FP16(max_scale/63.f);
-        y[i].dmin = GGML_FP32_TO_FP16(max_min/63.f);
+        y[i].d = GGML_FP32_TO_FP16(max_scale/63.f); // store the delta/scale so that the scales can be dequantized
+        y[i].dmin = GGML_FP32_TO_FP16(max_min/63.f); // store the min delta/scale so that the mins can be dequantized.
+```
+Now, notice that we started with 8 32-bit floats scales = 32 bytes.
+And we had 8 32-bit float mins = 32 bytes.
+And we ended up with 12 bytes for all quantized scales and mins, plus 4 bytes
+for the dequantization (d and dmin) giving us a total of 16 bytes!
+The nice thing with the bit packing is that the 2 high bits of the later scale
+and min values are placed in the unused bits of the first 4 entries (remember
+that each entry is 8 bits but we only need 6 for one quantized value).
 
+So we have the quantified the scales and mins and packed them into the scales
+array, and we have the dequantize information in d and dmin. What is remaining
+not is to store the quantified floating point values in the `q` member of the
+block:
+```c++
         uint8_t sc, m;
         for (int j = 0; j < QK_K/32; ++j) {
             get_scale_min_k4(j, y[i].scales, &sc, &m);
-            const float d = GGML_FP16_TO_FP32(y[i].d) * sc;
+            const float d = GGML_FP16_TO_FP32(y[i].d) * sc; // dequantize scale delta
             if (!d) continue;
-            const float dm = GGML_FP16_TO_FP32(y[i].dmin) * m;
+            const float dm = GGML_FP16_TO_FP32(y[i].dmin) * m; // dequantize min delta
             for (int ii = 0; ii < 32; ++ii) {
-                int l = nearest_int((x[32*j + ii] + dm)/d);
-                l = MAX(0, MIN(15, l));
-                L[32*j + ii] = l;
+                int l = nearest_int((x[32*j + ii] + dm)/d); // quantize the float value (level)
+                l = MAX(0, MIN(15, l)); // clamp to 0..15
+                L[32*j + ii] = l; // store the quantized value in the L array (8 bits per entry)
             }
         }
 
-        uint8_t * q = y[i].qs;
+        uint8_t * q = y[i].qs; // now we store the quantized values in the q member of the block
         for (int j = 0; j < QK_K; j += 64) {
             for (int l = 0; l < 32; ++l) {
-                q[l] = L[j + l] | (L[j + l + 32] << 4);
+                q[l] = L[j + l] | (L[j + l + 32] << 4); // pack the quantized values from L into q
+                                                        // each entry in L is 8 bits but only hold
+                                                        // 4 bits of the quantized value, so we can
+                                                        // pack two quantized values into one byte.
             }
             q += 32;
         }
 
         x += QK_K;
-    }
-}
 ```
+And that is the complete quantization for the `block_q4_K` type.
 
 _wip_
 
