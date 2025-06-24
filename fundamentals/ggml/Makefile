@@ -47,6 +47,7 @@ CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framewor
 WHOLE_ARCHIVE  = -Wl,-force_load,ggml/build/src/libggml.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-base.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cpu.a
+WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/ggml-metal/libggml-metal.a
 #WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cuda.a
 endif
 
