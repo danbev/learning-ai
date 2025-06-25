@@ -1264,9 +1264,6 @@ block:
 ```
 And that is the complete quantization for the `block_q4_K` type.
 
-_wip_
-
-
 ### Naming Convention
 So the above is a common patterns where `_0` there is only the one delta value
 but with `_1` there is an additional field to store data which in this case is
@@ -1491,4 +1488,435 @@ as there is no risk of another pointer accessing the same memory concurrently.
 aggressively, as there is no risk of data dependencies between iterations due to
  aliasing.
 
-### Bits Per Weight (BPW)
+###  TQ1_0 (Ternary Quantiztion
+The `1` I think stands for the floor of the bits per weight which is floor(1.6875bpw = 1).
+And `0` has the same meaning as for the other quantization types, like `q4_0`, `q5_0` and means
+that there is only one delta value for the quantization and no minimum value.
+
+Like the other types we can find the definition in `ggml-common.h`:
+```c++
+#define QK_K 256
+
+// 1.6875 bpw
+typedef struct {
+    uint8_t qs[(QK_K - 4 * QK_K / 64) / 5]; // 5 elements per byte (3^5 = 243 < 256)
+    uint8_t qh[QK_K/64]; // 4 elements per byte
+    ggml_half d;
+} block_tq1_0;
+```
+`QK_K` is 256 and the size of `qs` will be (256-4 * 256/64) / 5 = 48 bytes. And notice that
+we also have `qh` which is 4 elements per byte, so we have 64/4 = 16 bytes for `qh` which gives
+us a total of 48 + 16 + 2 = 66 bytes.
+
+Here we have 3 quantization levels (0, 1, 2) and we can represent 3^5 = 243 values in 5 bits.
+So this base 3:
+```
+-1  -> 0
+ 0  -> 1
+ 1  -> 2
+
+3⁰ = 1
+3¹ = 3
+3² = 9
+3³ = 27
+3⁴ = 81
+3⁵ = 243
+```
+So like the other quantization methods we've seen before this also takes an array of floating point
+values, and a block to store the quantized values in:
+```c++
+void quantize_row_tq1_0_ref(const float * GGML_RESTRICT x, block_tq1_0 * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_K == 0);
+    const int64_t nb = k / QK_K;
+
+    for (int64_t i = 0; i < nb; i++) {
+        float amax = 0.0f; // absolute max
+
+        for (int j = 0; j < QK_K; j++) {
+            const float v = x[j];
+            amax = MAX(amax, fabsf(v));
+        }
+
+        const float d = amax;
+        const float id = d ? 1.0f/d : 0.0f;
+
+        y[i].d = GGML_FP32_TO_FP16(d);
+```
+So the above will iterate over all 256 elements all blocks (nb is number of blocks).
+And this first for looop will go through all the floating point values to get the
+largest absolute max. This value will be used as the delta/scale and stored in d.
+The we have the inverse of the delta `id` which allows us to use multiplication
+instead of division in the computations. But as before the delta, not the inverse, is
+what is stored in the block.
+In our case `amax` will be 14.
+```console
+(lldb) p amax
+(float) 14
+(lldb) p id
+(const float) 0.0714285746
+```
+
+Next we have the following loop which will:
+```c++
+        // 5 elements per byte, along 32 bytes
+        for (size_t j = 0; j < sizeof(y->qs) - sizeof(y->qs) % 32; j += 32) {
+            for (size_t m = 0; m < 32; ++m) {
+                uint8_t q = 0;
+                for (size_t n = 0; n < 5; ++n) {
+                    int xi = lroundf(x[m + n*32] * id) + 1; // -1, 0, 1 -> 0, 1, 2
+                    q *= 3;
+                    q += xi;
+                }
+                // ceiling division (243 == pow(3, 5))
+                q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+                y[i].qs[j + m] = q;
+            }
+            x += 5*32;
+        }
+```
+```console
+(lldb) p sizeof(y->qs)
+(unsigned long) 48
+(lldb) p sizeof(y->qs) % 32
+(unsigned long) 16
+(lldb) p sizeof(y->qs) - sizeof(y->qs) % 32
+(unsigned long) 32
+```
+Lets break this down a bit, first we have the quantiztion using the inverse delta:
+```c++
+    (x[m + n*32] * id)
+```
+So this will produce a value between -1 and 1, and then we round it to the nearest
+integer and then add 1 to convert it to unsigned (so -1 will become 0, 0 will become 1, and
+1 will become 2):
+```console
+(lldb) p x[m + n*32] * id
+(float) 0.714285731
+(lldb) p (long) lround(x[m + n*32] * id)
+(long) 1
+(lldb) p (long) lround(x[m + n*32] * id) + 1
+(long) 2
+(lldb) p xi
+(int) 2
+```
+One thing to notice is that this is doing `n*32` each time through the loop. So this is processing
+with a stride of 32. Now, we need to keep in mind how the weight are used.
+```console
+input: [i0, i1, i2, i3]  (1×4 vector)
+
+weights matrix (4×4):
+Row 0: [w00, w01, w02, w03]
+Row 1: [w10, w11, w12, w13]
+Row 2: [w20, w21, w22, w23]
+Row 3: [w30, w31, w32, w33]
+```
+
+Each vector multiplication (I’m thinking of the vector x matrix multiplication as separate individual
+operations here) will need to load column of the weights. In my mind I see the operation like this:
+the input vector is like a function that takes 4 parameters.
+```
+    [i0, i1, i2, i3]  [w00]
+                      [w10]
+                      [w20]
+                      [w30]
+```
+So we call the function with the first column of the matrix to get the first output.
+And by storing the weight with a spacing we can perform one load and get the weight's we
+need for the function call..
+
+For `TQ1_0` with stride 32:
+```
+x[m + 0*32] = x[m]     // Weight from "row" 0
+x[m + 1*32] = x[m+32]  // Weight from "row" 32
+x[m + 2*32] = x[m+64]  // Weight from "row" 64
+x[m + 3*32] = x[m+96]  // Weight from "row" 96
+x[m + 4*32] = x[m+128] // Weight from "row" 128
+```
+These 5 weights (originally separated by 32 positions) get packed into the same quantized byte
+because they'll be needed together during one SIMD operation.
+
+These 5 weights (originally separated by 32 positions) get packed into the same quantized byte
+because they'll be needed together during one SIMD operation.
+
+So we have now calculated the packed quantized value `q`:
+```c++
+                for (size_t n = 0; n < 5; ++n) {
+                    int xi = lroundf(x[m + n*32] * id) + 1; // -1, 0, 1 -> 0, 1, 2
+                    q *= 3;
+                    q += xi;
+                }
+                // ceiling division (243 == pow(3, 5))
+->              q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+                y[i].qs[j + m] = q;
+```
+So prior to the above marked line q is:
+```console
+(lldb) p (int) q
+(int) 202
+```
+This is in base 3, so the range is [0, 242] (3^5 - 1). But a byte can store [0, 255] (8 bits), and this
+means that 13 bits are unused (243-255).
+```c++
+new_q = (old_q * 256 + 242) / 243;
+```
+So first the current q value is scaled to the range [0, 255] by multiplying it with 256.
+Then we add 242 to ensure that we round up instead of truncating. This is doing a ceiling
+division by dividing by 243 (the +242/243 part).
+```console
+(lldb) p  ((q * 256) + 242) / 243
+(int) 213
+
+(lldb) p  ((242 * 256) + 242) / 243
+(int) 255
+```
+One advantage of this is when we want to unpack a digit we can do the following:
+```console
+(lldb) expr int $packed = 255
+(lldb) p $packed
+(int) 255
+(lldb) p ($packed * 243) / 256
+(int) 242
+(lldb) p (213 * 243) / 256
+(int) 202
+```
+So the purpose of this is to be able to efficiently pack and unpack the quantized values. Using
+division by 256 is a fast bitshift operation so unpacking will be very fast.
+The last thing that happens is that x is incremented by `5*32`, so we move to the next set of
+floating point values.
+
+Next we have another loop which is very similar to the previous one except that this
+time we are using a stride of 16 instead of 32. Now, in our case `y->qs` is 48 bytes, the
+previous loop processed 32 element. And there are no more increments of 32 left so this is going
+to process the remaining which is 48-32 = 16 elements. So notice that this is setting j = 32,
+before the loop starts.
+```c++
+        // along 16 bytes
+        for (size_t j = sizeof(y->qs) - sizeof(y->qs) % 32; j < sizeof(y->qs); j += 16) {
+            for (size_t m = 0; m < 16; ++m) {
+                uint8_t q = 0;
+                for (size_t n = 0; n < 5; ++n) {
+                    int xi = lroundf(x[m + n*16] * id) + 1; // -1, 0, 1 -> 0, 1, 2
+                    q *= 3; // multiple by the base
+                    q += xi;
+                }
+                // ceiling division (243 == pow(3, 5))
+                q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+                y[i].qs[j + m] = q;
+            }
+            x += 5*16;
+        }
+```
+And lastly we increment `x` by `5*16` which is 80 bytes.
+
+Next we are going to populate the `qh` array.
+```c++
+        // 4 elements per byte
+        for (size_t j = 0; j < sizeof(y->qh); ++j) {
+            uint8_t q = 0;
+            for (size_t m = 0; m < 4; ++m) {
+                // -1, 0, 1 -> 0, 1, 2
+                int xi = lroundf(x[j + m*sizeof(y->qh)] * id) + 1;
+                q *= 3; // multiple by the base
+                q += xi;
+            }
+            // shift the first value to the most significant trit (Ternary digit)
+            q *= 3;
+            // ceiling division (243 == pow(3, 5))
+            q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+            y[i].qh[j] = q;
+        }
+        x += 4*sizeof(y->qh);
+```
+So this looks pretty much like the previous loop but this time we are using a stride of 4 and
+notice that we have an additional multiplication by 3 before the division.
+
+So lets just step back and see where we are:
+First loop processed with stride of 32, j = 0, and processed 32 bytes
+```
+x += 5*32 = 160 elements
+```
+Second loop processed with stride of 16, j = 32, and processed 16 bytes
+```
+x += 5*16 = 80 elements
+```
+Total so far is 160 + 80 = 240 elements processed.
+Remaining elements is 256 - 240 = 16 elements.
+
+Third loop processed with stride of 4, and processes 4 bytes.
+```
+j = 0, x[0], x[4],  x[8], x[12] -> qh[0]
+j = 1, x[1], x[5],  x[9], x[13] -> qh[1]
+j = 2, x[2], x[6], x[10], x[14] -> qh[2]
+j = 3, x[3], x[7], x[11], x[15] -> qh[3]
+```
+So this is packing the last 16 elements into the `qh` array which is 4 bytes. And this is using
+a different packing that than `qs` array. So `qh` is the final 16 elements of the 256-element
+weight vector.
+
+Next we have:
+```c++
+    q *= 3;
+```
+So what is happening here is that are multiplying the packed base-3 number (ternary digit) by 3. Just think about
+what this would do in base 10:
+```
+number = 42
+(4 * 10¹) + (2 * 10⁰)
+
+If we multiply this by 10 (the base) we get:
+(4 x 10²) + (2 x 10¹) + (0 x 10⁰)
+
+(4 x 100) + (2 x 10) + (0 x 1) = 420
+```
+Notice how the digits get shifted to the left and that we got a new digit at the end which is 0.
+
+We are doing the same thing here but in base 3:
+```
+               2, 0, 1, 2
+                   ↓
+(2 * 3³) + (0 * 3²) + (1 * 3¹) + (2 * 3⁰) = 
+                   ↓
+(2 * 27) + (0 * 9) + (1 * 3) + (2 * 1) = 54 + 0 + 3 + 2 = 59
+```
+So this is a 4 trit number represented as an int 59. And now we shift it by multiplying it by
+the base (3):
+```
+q_new = q * 3
+3⁴ (81)	  3³ (27)	3² (9)	 3¹ (3)	   3⁰ (1)
+  2         0         1        2        0 
+
+This now becomes a 5 trit number:
+q_new = (2 * 81) + (0 * 27) + (1 * 9) + (2 * 3) + (0 * 1)
+q_new =   162    +    0     +    9    +    6    +    0    = 177
+```
+And then the same operation is performed as before:
+```c++
+    q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+```
+
+Now looking at the dequantization:
+```c++
+         for (size_t n = 0; n < 4; ++n) {
+             for (size_t j = 0; j < sizeof(x->qh); ++j) {
+                 uint8_t q = x[i].qh[j] * pow3[n];
+                 int16_t xi = ((uint16_t) q * 3) >> 8;
+                 *y++ = (float) (xi - 1) * d;
+             }
+         }
+```
+We have 16 floats left to process, and the gh array which holds quantized data is 4 bytes long. So
+n is which trit to extract, and j is the index of the 0-3 bytes of gh.
+And for each element we are multiplying by a power of 3:
+```c++
+    const uint8_t pow3[6] = {1, 3, 9, 27, 81, 243};
+```
+`qh[j]` will just be an integer like 187 which is represents 5 packed trit values (with the last one just
+zero and will be ignored).
+
+The pow3 multiplication is used to move the trit of interest to be the most significant trit (t⁴). So the
+first thing we to is isolate the trit of interest:
+```c++
+2162                 uint8_t q = x[i].qh[j] * pow3[n];
+```
+Recall from above that this is like multiplying by the base which shifts the trit of interest to the left,
+doing this once, multiplying by 3 will move one step, and multiplying by 9 will move two steps, and so on.
+
+And next we extract the most significant trit (t⁴) from the byte q:
+```c++
+                     int16_t xi = ((uint16_t) q * 3) >> 8;
+```
+We have q which is a byte which is the quantized values that we packed. The >> 8 is the same
+as dividing by 256. So this is equivalent to floor(q * 3 / 256).
+
+So what is happening is something like this:
+```
+most_sig_trit(v) = (v * 3) >> 8
+remainder(v)     = (uint8_t)(v * 3)
+
+Let's trace q = 187:
+
+
+n = 0 (Extracting t₄):
+q_shifted = 187 * pow3[0] = 187 * 1 = 187
+xi = most_sig_trit(187)
+xi = (187 * 3) >> 8 = 561 >> 8 = 2.
+
+We extracted t₄ = 2. Correct.
+The conceptual "remainder" for the next step is remainder(187) = (uint8_t)(187 * 3) = 49.
+
+n = 1 (Extracting t₃):
+Here's the trick:
+q_shifted = 187 * pow3[1] = 187 * 3
+Due to the uint8_t cast, this becomes:
+(uint8_t)(561) = 49.
+This is the exact same value as the "remainder" from the previous step.
+xi = most_sig_trit(49)
+xi = (49 * 3) >> 8 = 147 >> 8 = 0.
+We extracted t₃ = 0. Correct.
+
+The "remainder" is remainder(49) = (uint8_t)(49 * 3) = 147.
+
+n = 2 (Extracting t₂):
+q_shifted = (uint8_t)(187 * pow3[2]) = (uint8_t)(187 * 9) = (uint8_t)(1683) = 147.
+Again, this is the remainder from the prior step.
+xi = most_sig_trit(147)
+xi = (147 * 3) >> 8 = 441 >> 8 = 1. We extracted t₂ = 1. Correct.
+
+n = 3 (Extracting t₁):
+q_shifted = (uint8_t)(187 * pow3[3]) = (uint8_t)(187 * 27) = (uint8_t)(5049) = 185.
+xi = most_sig_trit(185)
+xi = (185 * 3) >> 8 = 555 >> 8 = 2. We extracted t₁ = 2. Correct.
+```
+
+And the first iteration will multiply 187 by 1:
+```
+(lldb) p (187 * 1) * 3 >> 8
+(int) 2
+      ↓
+      2 0 1 2 0
+```
+Now for the next iteration we will multiply by 3, but notice that we are storing the result in an
+unsigned 8 bit integer so we only have 8 bits, that is 0-255, so this will overflow (which is alright
+and not undefined behavior like it would be for signed integers):
+```console
+(lldb) p 187 * 3
+(int) 561
+(lldb) p/u 561 % 256
+(int) 49
+
+(lldb) p/u (uint8_t) (187 * 3)
+(uint8_t) 49
+(lldb) p/u (uint8_t) (49 * 3) >> 8
+(int) 0
+      ↓
+    2 0 1 2 0
+```
+```console
+(lldb) p/u (uint8_t)(187 * 9)
+(uint8_t) 147
+
+(lldb) p (uint16_t)(147 * 3) >> 8
+(int) 1
+      ↓
+  2 0 1 2 0
+```
+```console
+(lldb) p/u (uint8_t)(187 * 27)
+(uint8_t) 185
+(lldb) p (uint16_t)(185 * 3) >> 8
+(int) 2
+      ↓
+2 0 1 2 0
+```
+Or a little more compact:
+```console
+(lldb) p/u (uint8_t) (187 * 1) * 3 >> 8
+(int) 2
+(lldb) p/u (uint8_t) (187 * 3) * 3 >> 8
+(int) 0
+(lldb) p/u (uint8_t) (187 * 9) * 3 >> 8
+(int) 1
+(lldb) p/u (uint8_t) (187 * 27) * 3 >> 8
+(int) 2
+```
+And we only process 4 elements so this will simply skip the last 0 trit.
