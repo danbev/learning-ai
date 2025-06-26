@@ -1493,6 +1493,70 @@ The `1` I think stands for the floor of the bits per weight which is floor(1.687
 And `0` has the same meaning as for the other quantization types, like `q4_0`, `q5_0` and means
 that there is only one delta value for the quantization and no minimum value.
 
+For some backgound on this quantization method we have only three states (ternary) which are:
+```
+-1, 0, 1
+Which we map to:
+0, 1, 2
+
+State 0: 00
+State 1: 01
+State 2: 10
+         11 (unused bits)
+```
+So we can see that we need two bits to represent the three states, and we can also see that
+we have one additional state which is unused. So storing the values using 2 bits will make us
+waste 1/4 of the bits which is not great.
+What we can do instead it we can take multiple ternary numbers and pack them into a single byte.
+```
+[2, 1]
+```
+Convert to single base-3 number:
+```
+[2, 1] = 2 * 3^1 + 1 * 3^0 = 6 + 1 = 7
+       =       6 + 1       = 7
+7 in binary is 00000111
+```
+And we can get back the original values by converting the base-3 number back to ternary:
+```
+Packed value  : 7 (binary 00000111)
+Original trits: [2, 1]
+
+#include <cstdio>
+
+int main() {
+    int packed = 7;
+    printf("Packed: %d\n", packed);
+    int trit0 = packed % 3;
+    packed /= 3;
+    int trit1 = packed % 3;
+
+    printf("trits: [%d, %d]\n", trit1, trit0);
+    return 0;
+}
+
+int packed = 7;
+int trit0 = packed % 3;        // 7 % 3 = 1  (rightmost digit)
+packed = packed / 3;           // 7 / 3 = 2  (shift right in base-3)
+int trit1 = packed % 3;        // 2 % 3 = 2  (next digit)
+packed = packed / 3;           // 2 / 3 = 0  (done)
+```
+But notice that we are still wasting many bits if we only pack two values. In 8 bits we have 256
+available values that can be represented:
+```
+3² = 9
+3³ = 27
+3⁴ = 81
+3⁵ = 243 (just right)
+3⁶ = 729 (to big)
+```
+So we pack 5 ternary values into a single byte, which gives us 3^5 = 243 values.
+```
+Bits per trit = 8 bits ÷ 5 trits = 1.6 bits per trit
+```
+
+
+
 Like the other types we can find the definition in `ggml-common.h`:
 ```c++
 #define QK_K 256
@@ -1654,8 +1718,7 @@ So prior to the above marked line q is:
 (lldb) p (int) q
 (int) 202
 ```
-This is in base 3, so the range is [0, 242] (3^5 - 1). But a byte can store [0, 255] (8 bits), and this
-means that 13 bits are unused (243-255).
+This is in base 3, so the range is [0, 242] (3^5 - 1).
 ```c++
 new_q = (old_q * 256 + 242) / 243;
 ```
@@ -1669,6 +1732,11 @@ division by dividing by 243 (the +242/243 part).
 (lldb) p  ((242 * 256) + 242) / 243
 (int) 255
 ```
+So we have our base-3 value, like 196, which is in the range of [0, 242], when we rescale this are
+we like stretching this value (that represents our packed trits) to map into the range [0,255] and
+this will allow the >> 8 work correctly. The underlying trits are still representing the original
+values but we are "viewing" them in a different way.
+
 One advantage of this is when we want to unpack a digit we can do the following:
 ```console
 (lldb) expr int $packed = 255
