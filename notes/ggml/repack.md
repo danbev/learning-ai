@@ -1,4 +1,34 @@
 ## Repack
+So [quantization](quantiztion.md) time rearrangement makes sure that within
+a block the values are spaced so that values in a column can be loaded together
+in one simd operation. And repacking allows us to something similar but for
+multiple blocks.
+
+So the quantization rearrangement looks something like this:
+```
+Original matrix layout:
+Row 0: [w00, w01, w02, w03, w04, w05, ...]
+Row 1: [w10, w11, w12, w13, w14, w15, ...]
+Row 2: [w20, w21, w22, w23, w24, w25, ...]
+Row 3: [w30, w31, w32, w33, w34, w35, ...]
+
+After quantization rearrangement:
+Block: [w00, w10, w20, w30,  w01, w11, w21, w31,  w02, w12, w22, w32, ...]
+        └─── column 0 ────┘  └─── column 1 ────┘  └─── column 2 ────┘
+```
+And the 
+```
+Before repacking (4 separate blocks):
+Block0: [col0_weights, col1_weights, col2_weights, ...]
+Block1: [col0_weights, col1_weights, col2_weights, ...]
+Block2: [col0_weights, col1_weights, col2_weights, ...]
+Block3: [col0_weights, col1_weights, col2_weights, ...]
+
+After repacking:
+SuperBlock: [Block0_col0, Block1_col0, Block2_col0, Block3_col0,
+             Block0_col1, Block1_col1, Block2_col1, Block3_col1, ...]
+```
+
 Lets say we have 4 quantized blocks and each one contains a delta (scale factor)
 and 16 quantized values:
 ```
