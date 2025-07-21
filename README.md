@@ -3,6 +3,7 @@ This repository contains notes and code examples related to AI.
 
 ### In-progress
 
+* [Model Context Protocol (MCP)](./notes/mcp.md)
 * [Voice Activity Detection (VAD)](./notes/vad.md) VAD for whisper.cpp
 * [whisper.cpp](./notes/whisper.md) Whisper.cpp
 
