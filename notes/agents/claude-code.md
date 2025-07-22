@@ -209,10 +209,10 @@ Commands:
                                                  project
   help [command]                                 display help for command
 ```
+
 So I have configured an MCP server for whisper.cpp and would like to try it
-with claude code.
-So lets add this (I actually added this using claude) but I want to have the
-commands handy:
+with claude code. So lets add this (I actually added this using claude) but I
+want to have the commands handy:
 ```console
 $ claude mcp add-json whisper '{
     "command": "/home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server",
@@ -245,6 +245,9 @@ to restart the session to actually see the MCP server:
 │                                                                                                                                    │
 │ ❯ 1. whisper  ✔ connected · Enter to view details                                                                                  │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+And selecting the whisper MCP server will show the details:
+```console
 > /mcp
   ⎿  (no content)
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -259,7 +262,9 @@ to restart the session to actually see the MCP server:
 │ ❯ 1. View tools                                                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
    Esc to go back
-
+```
+And we can view the tools that are available:
+```console
    > /mcp
   ⎿  (no content)
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -269,7 +274,9 @@ to restart the session to actually see the MCP server:
 │   2. model_info                                                                                                                    │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
    Esc to go back
-
+```
+And selecting the `transcribe` tool will show the details:
+```console
 > /mcp 
   ⎿  (no content)
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
