@@ -209,3 +209,116 @@ Commands:
                                                  project
   help [command]                                 display help for command
 ```
+So I have configured an MCP server for whisper.cpp and would like to try it
+with claude code.
+So lets add this (I actually added this using claude) but I want to have the
+commands handy:
+```console
+$ claude mcp add-json whisper '{
+    "command": "/home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server",
+    "args": [
+      "--model",
+      "/home/danbev/work/ai/whisper-work/models/ggml-base.en.bin"
+    ]
+  }'
+```
+List the configured MCP servers:
+```console
+$ claude mcp list
+whisper: /home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server --model /home/danbev/work/ai/whisper-work/models/for-tests-ggml-medium.bin
+```
+Get information about the whisper MCP server:
+```console
+$ claude mcp get whisper
+whisper:
+  Scope: Local (private to you in this project)
+
+To remove this server, run: claude mcp remove "whisper" -s local
+```
+In an interactive claude session, which is how I added the mcp server, I needed
+to restart the session to actually see the MCP server:
+```console
+ /mcp 
+  ⎿  (no content)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Manage MCP servers                                                                                                                 │
+│                                                                                                                                    │
+│ ❯ 1. whisper  ✔ connected · Enter to view details                                                                                  │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+> /mcp
+  ⎿  (no content)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Whisper MCP Server                                                                                                                 │
+│                                                                                                                                    │
+│ Status: ✔ connected                                                                                                                │
+│ Command: /home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server                                                            │
+│ Args: --model /home/danbev/work/ai/whisper-work/models/ggml-base.en.bin                                                   │
+│ Capabilities: tools                                                                                                                │
+│ Tools: 2 tools                                                                                                                     │
+│                                                                                                                                    │
+│ ❯ 1. View tools                                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+   Esc to go back
+
+   > /mcp
+  ⎿  (no content)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Tools for whisper (2 tools)                                                                                                        │
+│                                                                                                                                    │
+│ ❯ 1. transcribe                                                                                                                    │
+│   2. model_info                                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+   Esc to go back
+
+> /mcp 
+  ⎿  (no content)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ transcribe (whisper)                                                                                                               │
+│                                                                                                                                    │
+│ Tool name: transcribe                                                                                                              │
+│ Full name: mcp__whisper__transcribe                                                                                                │
+│                                                                                                                                    │
+│ Description:                                                                                                                       │
+│ Transcribe audio file using whisper.cpp                                                                                            │
+│                                                                                                                                    │
+│ Parameters:                                                                                                                        │
+│   • file (required): string - Path to audio file                                                                                   │
+│   • language: string - Language code (optional, auto-detect if not specified)                                                      │
+│   • translate: boolean - Translate to English                                                                                      │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+   Esc to go back
+```
+So we should be able to transcribe a file now:
+```console
+> Can you transcribe @audio/samples/jfk.wav?
+
+● I'll transcribe the audio file for you using the whisper transcription tool.
+
+● whisper - transcribe (MCP)(file: "audio/samples/jfk.wav")
+
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Tool use                                                                                                                           │
+│                                                                                                                                    │
+│   whisper - transcribe(file: "audio/samples/jfk.wav") (MCP)                                                                        │
+│   Transcribe audio file using whisper.cpp                                                                                          │
+│                                                                                                                                    │
+│ Do you want to proceed?                                                                                                            │
+│ ❯ 1. Yes                                                                                                                           │
+│   2. Yes, and don't ask again for whisper - transcribe commands in /home/danbev/work/ai/learning-ai                                │
+│   3. No, and tell Claude what to do differently (esc)                                                                              │
+│                                                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+Selecting `1. Yes` will produce the following output:
+```console
+> Can you transcribe @audio/samples/jfk.wav?
+
+● whisper - transcribe (MCP)(file: "audio/samples/jfk.wav")
+  ⎿   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+
+● The transcription is: "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your
+  country."
+```
+The mcp configuration is stored in `~/.claude.json`.
+
+
