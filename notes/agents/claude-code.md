@@ -225,7 +225,7 @@ $ claude mcp add-json whisper '{
 List the configured MCP servers:
 ```console
 $ claude mcp list
-whisper: /home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server --model /home/danbev/work/ai/whisper-work/models/for-tests-ggml-medium.bin
+whisper: /home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server --model /home/danbev/work/ai/whisper-work/models/ggml-base.en.bin
 ```
 Get information about the whisper MCP server:
 ```console
