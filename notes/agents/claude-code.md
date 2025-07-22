@@ -252,7 +252,7 @@ to restart the session to actually see the MCP server:
 │                                                                                                                                    │
 │ Status: ✔ connected                                                                                                                │
 │ Command: /home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server                                                            │
-│ Args: --model /home/danbev/work/ai/whisper-work/models/ggml-base.en.bin                                                   │
+│ Args: --model /home/danbev/work/ai/whisper-work/models/ggml-base.en.bin                                                            │
 │ Capabilities: tools                                                                                                                │
 │ Tools: 2 tools                                                                                                                     │
 │                                                                                                                                    │
