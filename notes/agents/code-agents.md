@@ -18,50 +18,11 @@ Is a terminal based code assistant.
 github: https://github.com/All-Hands-AI/OpenHands/
 
 ### goose
+github: https://github.com/block/goose
 
 ### OpenCode
-github: https://github.com/sst/opencode
-
-Install:
-```console
-$ npm i -g opencode-ai@latest
-```
-
-Configure whisper mcp server by adding the following to opencode.json (create
-it if needed):
-```console
-$ cat opencode.json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "whisper": {
-      "type": "local",
-      "command": [
-        "/home/danbev/work/ai/whisper-work/build/bin/whisper-mcp-server",
-        "--model",
-        "/home/danbev/work/ai/whisper-work/models/ggml-base.en.bin"
-      ],
-      "enabled": true
-    }
-  }
-}
-```
-Then restart opencode if it is running.
-```console
-Can you transcribe the file audio/samples/jfk.wav?
-danbev (04:51 PM)
-
-I'll transcribe the audio file for you using the whisper transcription tool.
-claude-sonnet-4-20250514 (04:51 PM)
-
-Whisper_transcribe audio/samples/jfk.wav
-
- And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
-
-The transcription is: "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your
-country."
-claude-sonnet-4-20250514 (04:51 PM)
-```
+OpenCode is an open-source terminal user interface for AI code assistants.
+More information can be found in the [opencode.md](opencode.md) file.
 
 ### Gemini CLI
 Command line but does not support other LLMs than Gemini.
