@@ -270,6 +270,7 @@ So lets say we want to the keys for sequence 1, "Today is a bad day":
 seq_to_stream[1] = 0 → use stream 0
 ```
 Look at v_cells[0] to find which cells belong to seq 1:
+```
 Cell0 (pos=0): belongs to seq {0,1,2} ✓  [0]
 Cell1 (pos=1): belongs to seq {0,1,2} ✓  [0, 1]
 Cell2 (pos=2): belongs to seq {0,1,2} ✓  [0, 1, 2]
@@ -278,7 +279,7 @@ Cell4 (pos=3): belongs to seq {1} ✓      [0, 1, 2, 4]
 Cell6 (pos=4): belongs to seq {0,1,2} ✓  [0, 1, 2, 4, 6]
 ```
 So sequence 1 uses tensor indices: [0, 1, 2, 4, 6], and we can now
-extract those specific rows from layers[layer].k_stream[0] to use the keys (and same for the
+extract those specific rows from `layers[layer].k_stream[0]` to use the keys (and same for the
 values in `layers[layer].v_stream[0]`).
 
 
