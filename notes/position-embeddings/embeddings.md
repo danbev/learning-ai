@@ -73,7 +73,7 @@ embeddings for a given input. As an overview of this process
 We pass in a prompt to the LLM which will tokenize it and then lookup the
 token embeddings for each token in the prompt. The embeddings are not context
 aware, meaning that the embeddings are the same for a given token regardless of
-the context in which it appears. This is the passed to the LLM and goes through
+the context in which it appears. This is then passed to the LLM and goes through
 the forward pass of the model. The final layer of the of the forward pass this
 is a matrix with one row for each token in the token sequence, and the
 dimensions is the embedding dimension. Now, what should be returned here is
@@ -589,7 +589,7 @@ I've been struggling to understand the usefulness of last pooling but I think I
 need to keep in mind that this embedding is the result of the attention
 mechanism so just because the last token in the sequence might "look" like it
 represent a subword/word/sentence it might not be the case. For example, lets 
-say we have the followign input sequence that we want to created token embeddings
+say we have the following input sequence that we want to created token embeddings
 for: "I was skeptical at first, but in the end, I loved it!"
 The last token embedding might represent the `!` which I did not think would be
 useful but in this case the returned token embedding is a semantic
@@ -607,4 +607,112 @@ learns to encode sequence-level information into this first token.
 This method assumes that the first token can adequately represent the entire
 sequence, which may or may not be true depending on the model's architecture
 and training.
+
+### Bidirectional Attentions for Embeddings
+With causal attention, the model can only attend to previous tokens in the
+sequence. This is true even for the initial prompt which is passed to the
+llm, but it is still only allowed to look at the previous tokens from the
+current token being processed.
+But for embeddings we want to be able to look at the entire sequence.
+
+Causal attention:
+```console
+Token:  [A] [B] [C] [D]
+A can see: A
+B can see: A, B
+C can see: A, B, C
+D can see: A, B, C, D
+```
+Causal mask:
+```console
+[[1, 0, 0, 0],
+ [1, 1, 0, 0],
+ [1, 1, 1, 0],
+ [1, 1, 1, 1]]
+```
+
+Bi-directional attention:
+```console
+Token:  [A] [B] [C] [D]
+A can see: A, B, C, D
+B can see: A, B, C, D
+C can see: A, B, C, D
+D can see: A, B, C, D
+```
+Bi-directional mask:
+```console
+[[1, 1, 1, 1],
+ [1, 1, 1, 1],
+ [1, 1, 1, 1],
+ [1, 1, 1, 1]]
+```
+
+In llama.cpp these masks are currently applied in
+```console
+void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
+    const int64_t n_kv     = ubatch->n_tokens;
+    const int64_t n_tokens = ubatch->n_tokens;
+
+    GGML_ASSERT(kq_mask);
+    GGML_ASSERT(ggml_backend_buffer_is_host(kq_mask->buffer));
+
+    float * data = (float *) kq_mask->data;
+
+    for (int h = 0; h < 1; ++h) {
+        for (int i1 = 0; i1 < n_tokens; ++i1) {
+            const llama_seq_id s1 = ubatch->seq_id[i1][0];
+
+            for (int i0 = 0; i0 < n_tokens; ++i0) {
+                float f = -INFINITY;
+
+                for (int s = 0; s < ubatch->n_seq_id[i0]; ++s) {
+                    const llama_seq_id s0 = ubatch->seq_id[i0][0];
+
+                    // TODO: reimplement this like in llama_kv_cache_unified
+                    if (s0 == s1 && (!cparams.causal_attn || ubatch->pos[i0] <= ubatch->pos[i1])) {
+                        if (hparams.use_alibi) {
+                            f = -std::abs(ubatch->pos[i0] - ubatch->pos[i1]);
+                        } else {
+                            f = 0.0f;
+                        }
+                        break;
+                    }
+                }
+
+                data[h*(n_kv*n_tokens) + i1*n_kv + i0] = f;
+            }
+        }
+    }
+}
+```
+
+One thing to keep in mind is that embeddings are not like causal attention. For casual attention
+the model will store the computed Key and Value vectors for each token so that they don't have to
+be recomputed for each token in the sequence. This is not the case for embeddings because embeddings
+are processed in parallel in a single forward/decode pass. So embedding models don't need memory
+which is what this is called now.
+For example if we take a look in `llama_model.cpp` we can see that the following:
+```c++
+llama_memory_i * llama_model::create_memory(const llama_memory_params & params, llama_cparams & cparams) const {
+    llama_memory_i * res;
+
+    switch (arch) {
+        // Models that need specific instantiation should be handled in the
+        // switch statement
+        case LLM_ARCH_BERT:
+        case LLM_ARCH_JINA_BERT_V2:
+        case LLM_ARCH_NOMIC_BERT:
+        case LLM_ARCH_NOMIC_BERT_MOE:
+        case LLM_ARCH_NEO_BERT:
+        case LLM_ARCH_WAVTOKENIZER_DEC:
+        case LLM_ARCH_DREAM:
+            {
+                res = nullptr;
+            } break;
+        ....
+``` 
+Notice that these are setting the res variable which is of type `llama_memory_i` to null.
+So let say we have a version of a model, which also has an embedding model, which will
+probably have to be able to differentiate between the two so that the embedding model does
+not have memory and the LLM model does.
 
