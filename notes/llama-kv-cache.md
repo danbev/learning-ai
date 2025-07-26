@@ -3,7 +3,13 @@ I've gone through the theory of Key-Value caching in the transformer architectur
 in [llama.md](llama.md). This document is a more detailed look at the
 implementation of the key-value cache in the llama.cpp codebase.
 
+> 📝 **Note:** Most of the content in this document was written before a major refactoring
+> in llama.cpp during 2025. I'm in the process of going through the code again and updating
+> this document to reflect the changes. But note that some of the content may be out of date.
+
 ## Table of Contents
+- [Unified KV-Cache](#llama_kv_cache_unified)
+- [Streams](#streams)
 - [KV-Cache at inference time](#inference-with-kv-cache)
 - [llama_kv_cache details](#llama_kv_cache)
 - [has_shift](#has_shift)
@@ -48,6 +54,33 @@ llama_kv_cache_unified::llama_kv_cache_unified(
 
     }
 ```
+I don't think the `model` parameter needs and explanation.
+The `filter` parameter is a callback function defined in `llama-kv-cache-unified.h` and can be used
+to filter out layers that should not be included in the cache.:
+```c++
+class llama_kv_cache_unified : public llama_memory_i {
+public:
+    static uint32_t get_padding(const llama_cparams & cparams);
+
+    // this callback is used to filter out layers that should not be included in the cache
+    using layer_filter_cb = std::function<bool(int32_t il)>;
+    ...
+```
+The `v_trans` is a parameter that controls if the Value tensor is stored in transposed form in the
+KV cache or not. This is used for Flash Attention where this would be false, and true for normal
+attention.
+The `offload` parameter determines whether the KV cache lives in GPU VRAM or CPU RAM.
+
+
+So a unified kv-cache can be normal full attention or sliding window attention (SWA) based on the
+The types of swa are:
+```c++
+enum llama_swa_type {
+    LLAMA_SWA_TYPE_NONE     = 0,
+    LLAMA_SWA_TYPE_STANDARD = 1,
+    LLAMA_SWA_TYPE_CHUNKED  = 2,
+};
+```
 
 ### `llama_kv_cache_unified_iswa`
 The `i` here stands for `interleaved` I think and it is used for models which have both sliding
@@ -74,6 +107,180 @@ public:
 ```
 The `swa_full` allows for this to bascially revert full attentions, so no SWA, and would act
 like a normal `llama_kv_cache_unified` in that case.
+
+### Streams
+In `llama_kv_cache_unified.h` we have a vector of unsigned integers named `seq_to_stream`:
+```c++
+    const uint32_t n_stream  = 1;
+
+    // maps from a sequence id to a stream id
+    std::vector<uint32_t> seq_to_stream;
+```
+The value of `n_stream` is set by the constructor:
+```c++
+    n_seq_max(n_seq_max), n_stream(unified ? 1 : n_seq_max)
+```
+Lets say we are processing three sequences in the current batch. Again, lets start with the
+non-unified case:
+```
+Sequence 0: [KV Buffer 0] - dedicated buffer for sequence 0
+Sequence 1: [KV Buffer 1] - dedicated buffer for sequence 1
+Sequence 2: [KV Buffer 2] - dedicated buffer for sequence 2
+
+seq_to_stream mapping: [0, 1, 2]
+```
+In this case the three buffers are completely independent and there is no sharing of
+data between them. The size of each of these buffers will need to be the same as the
+maxium size of the possible sequence length.
+```
+Buffer 0: [........................................] ← sized for max length
+Buffer 1: [........................................] ← sized for max length
+Buffer 2: [........................................] ← sized for max length
+
+Actual usage:
+Buffer 0: [Today|is|a|nice|day|_____________unused_] ← 5 tokens, rest wasted
+Buffer 1: [Today|is|a|bad|day|______________unused_] ← 5 tokens, rest wasted
+Buffer 2: [Today|is|a|fine|day|_____________unused_] ← 5 tokens, rest wasted
+```
+
+Lets say the sequences looks something like this:
+```
+0 Today is a nice day
+1 Today is a bad day
+2 Today is a fine day
+```
+The three kv-caches will have to store the results for all three sequences regardless of
+the fact that some of the results will be the same.
+
+So we have two issues, one we might be wasting memory because each buffer needs to be able
+to store the maximum size of the sequence, and two we might be wasting compute because
+the same tokens will be processed multiple times, once for each sequence.
+
+So if we are using a unified cache, that is one single buffer that is shared across all
+sequences, then `n_stream` will be 1. If we are using a non-unified cache, then we will
+have `n_seq_max` streams, which is the maximum number of sequences that can be processed.
+
+Now, lets take a look at the unified case:
+```
+[ Cell0 | Cell1 | Cell2 | Cell3 | Cell4 | Cell5 | Cell6 | Cell7 | Cell8 |...]
+
+seq_to_stream = [0, 0, 0, ...]  // All sequences → stream 0
+```
+Now, these indices are then used in `v_cells`:
+```
+// The REAL magic happens in v_cells[stream_id]
+v_cells[0] = {  // Stream 0's cells
+    Cell0: { pos=0, seq_id={0, 1, 2} },    // "Today" - belongs to seqs 0,1,2
+    Cell1: { pos=1, seq_id={0, 1, 2} },    // "is" - belongs to seqs 0,1,2
+    Cell2: { pos=2, seq_id={0, 1, 2} },    // "a" - belongs to seqs 0,1,2
+    Cell3: { pos=3, seq_id={0      } },    // "nice" - only seq 0
+    Cell4: { pos=3, seq_id={1      } },    // "bad" - only seq 1
+    Cell5: { pos=3, seq_id={2      } },    // "fine" - only seq 2
+    Cell6: { pos=4, seq_id={0, 1, 2} },    // "day" - belongs to seqs 0,1,2
+    ...
+}
+```
+Notice that all the sequences share `one` logical buffer.
+1) Process "Today"
+All sequences need to "Today" as position 0. The KV computation for "Today" is stored once
+but marked as belonging to all three sequences.
+
+2) Process "is"
+All sequences need "is" as position 1. The KV computation for "is" is stored once.
+
+3) Process "a"
+All sequences need "a" as position 2. The KV computation for "a" is stored once.
+
+4) Sequences diverge as position 3
+Seq 0: needs "nice" at position 3, so cell 3 will contain:
+```
+    Cell3: { pos=3, seq_id={0}}
+```
+Seq 1: needs "bad" at position 3, so cell 4 will contain:
+```
+    Cell4: { pos=3, seq_id={1}}
+```
+Seq 2: needs "fine" at position 3, so cell 5 will contain:
+```
+    Cell5: { pos=3, seq_id={2}}
+```
+
+5) Process "day"
+All sequences need "day" at position 4. The KV computation for "day" is stored once but marked
+as belonging to all three sequences.
+
+So if we compare the non-unified and unified cases, we can see that the unified case we only
+have to store 7 cells in comparison to 15 cells in the non-unified case.
+
+There are two members in the `llama_kv_cache_unified` class that are used to store the
+metadata about the cache:
+```c++
+    std::vector<uint32_t> v_heads;
+    std::vector<llama_kv_cells_unified> v_cells;
+```
+Note that `v` in this context does refer to the Value tensor, those are stored in the
+the `layers` vector:
+```c++
+    std::vector<kv_layer> layers; // one per transformer layer.
+
+    struct kv_layer {
+        // layer index in the model
+        // note: can be different from the layer index in the KV cache
+        uint32_t il;
+
+        ggml_tensor * k;
+        ggml_tensor * v;
+
+        std::vector<ggml_tensor *> k_stream;
+        std::vector<ggml_tensor *> v_stream;
+    };
+```
+
+What `v_cell` does is it tracks:
+* What cells are occupied.
+* Which sequence owns each cell.
+* What position each cell represents.
+
+
+So to access a key/value for a sequence:
+1. use `sequence_to_stream` to find the stream. 
+2. use the returned stream to look up cell `v_cells[stream]`.
+
+And before we go further recall that this is the unified case so the tensor
+for the layers will be one (only one stream for unified remember):
+```
+layers[layer].k_stream[stream]
+```
+This is just a raw tensor data which is a big array of key/value vectors. And this is storing all
+the key/values for all the sequences in the batch.
+```
+Key values
+ 0  1  2  3  4  5  6  ...                        4095
+[                                                   ]
+
+Value values
+ 0  1  2  3  4  5  6  ...                        4095
+[                                                   ]
+```
+We need to have a way to pick out the values that are relevant for the current sequence. This is where
+the `v_cells` comes in.
+
+So lets say we want to the keys for sequence 1, "Today is a bad day":
+```
+seq_to_stream[1] = 0 → use stream 0
+```
+Look at v_cells[0] to find which cells belong to seq 1:
+Cell0 (pos=0): belongs to seq {0,1,2} ✓  [0]
+Cell1 (pos=1): belongs to seq {0,1,2} ✓  [0, 1]
+Cell2 (pos=2): belongs to seq {0,1,2} ✓  [0, 1, 2]
+Cell3 (pos=3): belongs to seq {0} ✗      
+Cell4 (pos=3): belongs to seq {1} ✓      [0, 1, 2, 4]
+Cell6 (pos=4): belongs to seq {0,1,2} ✓  [0, 1, 2, 4, 6]
+```
+So sequence 1 uses tensor indices: [0, 1, 2, 4, 6], and we can now
+extract those specific rows from layers[layer].k_stream[0] to use the keys (and same for the
+values in `layers[layer].v_stream[0]`).
+
 
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
