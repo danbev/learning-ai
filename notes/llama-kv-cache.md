@@ -9,6 +9,72 @@ implementation of the key-value cache in the llama.cpp codebase.
 - [has_shift](#has_shift)
 - [kv_cache size](#size-of-the-cache)
 
+
+### `llama_kv_cache_unified`
+This class `llama_kv_cache_unified` is a concrete type of [memory](./llama_memory.md).
+
+To understand this better lets first look at the non-unified case first:
+```
+Sequence 0: [KV Buffer 0] (dedicated)
+Sequence 1: [KV Buffer 1] (dedicated)
+Sequence 2: [KV Buffer 2] (dedicated)
+```
+Each sequence gets its own separate KV buffer.
+
+With the unified approach, the KV buffers are shared across sequences:
+```
+Sequence 0,1,2: [Shared KV Buffer] (unified)
+```
+
+Unified in `llama_kv_cache_unified` refers to how it unifies both approaches into a single
+implementation that can handle either mode based on the unified parameter.
+```c++
+llama_kv_cache_unified::llama_kv_cache_unified(
+        const llama_model &  model,
+          layer_filter_cb && filter,
+                ggml_type    type_k,
+                ggml_type    type_v,
+                     bool    v_trans,
+                     bool    offload,
+                     bool    unified,
+                 uint32_t    kv_size,
+                 uint32_t    n_seq_max,
+                 uint32_t    n_pad,
+                 uint32_t    n_swa,
+           llama_swa_type    swa_type) :
+    model(model), hparams(model.hparams), v_trans(v_trans),
+    n_seq_max(n_seq_max), n_stream(unified ? 1 : n_seq_max), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type) {
+        ...
+
+    }
+```
+
+### `llama_kv_cache_unified_iswa`
+The `i` here stands for `interleaved` I think and it is used for models which have both sliding
+window attention (SWA) and normal attention (full attention). For example, Gemma3 uses this and it
+has 5 layers of SWA, followed by 1 full attention layer and so on.
+
+```c++
+class llama_kv_cache_unified_iswa : public llama_memory_i {
+public:
+    llama_kv_cache_unified_iswa(
+            const llama_model & model,
+                    ggml_type   type_k,
+                    ggml_type   type_v,
+                         bool   v_trans,
+                         bool   offload,
+                         bool   swa_full,
+                         bool   unified,
+                     uint32_t   kv_size,
+                     uint32_t   n_seq_max,
+                     uint32_t   n_ubatch,
+                     uint32_t   n_pad);
+
+    ~llama_kv_cache_unified_iswa() = default;
+```
+The `swa_full` allows for this to bascially revert full attentions, so no SWA, and would act
+like a normal `llama_kv_cache_unified` in that case.
+
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
 the kv-cache.
