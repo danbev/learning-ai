@@ -17,7 +17,7 @@ implementation of the key-value cache in the llama.cpp codebase.
 
 
 ### `llama_kv_cache_unified`
-This class `llama_kv_cache_unified` is a concrete type of [memory](./llama_memory.md).
+This class `llama_kv_cache_unified` is a concrete type of [memory](./llama-memory.md).
 
 To understand this better lets first look at the non-unified case first:
 ```
