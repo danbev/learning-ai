@@ -2,6 +2,41 @@
 This document will take a look at the `embd` field of `llama_batch` and see how
 it can be used and for what purposes.
 
+In the llama_batch we have tokens which I understand is a array or int32 values which
+are the token id which map to a value in the models vocabulary. These are then
+"looked up"/retrieved from the embedding matrix of the model which gives the embedding
+vector for each token when processing the batch. But the embd field is a 2d array, the
+size of the number of tokens in the batch. Is this for when we somehow have alreay got
+the embedding vectors for the tokens and in this case don't need to look them up
+
+### Two Input Modes for `llama_batch`
+Mode 1: Token IDs (Most Common)
+```
+  // Input: Token IDs
+  llama_batch batch;
+  batch.token = [123, 456, 789];  // Token IDs
+  batch.embd = nullptr;           // No embeddings provided
+
+  // Model does: embedding_matrix[token_id] → embedding_vector
+````
+
+Mode 2: Direct Embeddings (Special Cases)
+```
+  // Input: Pre-computed embeddings
+  llama_batch batch;
+  batch.token = nullptr;                   // No token IDs
+  batch.embd = [emb_vec1, emb_vec2, ...];  // Direct embedding vectors
+
+  // Model skips embedding lookup entirely
+```
+
+So I understand the concept but it was not clear to me when we would use direct embeddings.
+One use case is in mulit-modal models where we might have images encoded as embeddings. For
+example there might have been an image encoder that project the image into the embedding
+vector space of the text model, in which case we don't have token ids but instead we aldready
+have the embedding vectors for the image.
+
+
 So this is a field similar to the `llama_batch.token` field which is a pointer
 to the input tokens. So we might have a prompt which we tokenize which is bacically
 splitting the prompt into tokens and looking them up in the models
