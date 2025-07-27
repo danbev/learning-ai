@@ -54,7 +54,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
 
     }
 ```
-I don't think the `model` parameter needs and explanation.
+I don't think the `model` parameter needs any explanation.
 The `filter` parameter is a callback function defined in `llama-kv-cache-unified.h` and can be used
 to filter out layers that should not be included in the cache.:
 ```c++
@@ -73,7 +73,7 @@ The `offload` parameter determines whether the KV cache lives in GPU VRAM or CPU
 
 
 So a unified kv-cache can be normal full attention or sliding window attention (SWA) based on the
-The types of swa are:
+`swa_type` which can be one of:
 ```c++
 enum llama_swa_type {
     LLAMA_SWA_TYPE_NONE     = 0,
@@ -81,6 +81,12 @@ enum llama_swa_type {
     LLAMA_SWA_TYPE_CHUNKED  = 2,
 };
 ```
+None is the normal full attention, standard is the sliding window attention. For chunked there is
+no sliding going on but we instead have a fixed "chunks". This is for situations where we have
+chunks that are independent of each other. Perhaps we have a PDF where each page is separate
+from the other pages, so we can process each page independently and they don't have to attend
+to each other, or perhaps we have a batch of emails that are also separate from each other.
+
 
 ### `llama_kv_cache_unified_iswa`
 The `i` here stands for `interleaved` I think and it is used for models which have both sliding
@@ -105,8 +111,9 @@ public:
 
     ~llama_kv_cache_unified_iswa() = default;
 ```
-The `swa_full` allows for this to bascially revert full attentions, so no SWA, and would act
-like a normal `llama_kv_cache_unified` in that case.
+The `swa_full` allows for this to bascially revert to full attentions, so no SWA, and would act
+like a normal `llama_kv_cache_unified` in that case. This might seem odd but it allows for this
+to be configurable at runtime.
 
 ### Streams
 In `llama_kv_cache_unified.h` we have a vector of unsigned integers named `seq_to_stream`:
