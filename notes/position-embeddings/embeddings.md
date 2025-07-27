@@ -647,7 +647,8 @@ Bi-directional mask:
  [1, 1, 1, 1]]
 ```
 
-In llama.cpp these masks are currently applied in
+In the case of a non-causal model, one where there is no need for a kv-cache, the
+attention mask is created in `llama-graph.cpp` and the function `llm_graph_input_attn_no_cache::set_input`:
 ```console
 void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
     const int64_t n_kv     = ubatch->n_tokens;
@@ -659,16 +660,18 @@ void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
     float * data = (float *) kq_mask->data;
 
     for (int h = 0; h < 1; ++h) {
-        for (int i1 = 0; i1 < n_tokens; ++i1) {
-            const llama_seq_id s1 = ubatch->seq_id[i1][0];
+        for (int i1 = 0; i1 < n_tokens; ++i1) {   // iterate over all the tokenns in the micro batch
+            const llama_seq_id s1 = ubatch->seq_id[i1][0]; // get the sequence of the id of the first token.
 
             for (int i0 = 0; i0 < n_tokens; ++i0) {
                 float f = -INFINITY;
 
                 for (int s = 0; s < ubatch->n_seq_id[i0]; ++s) {
-                    const llama_seq_id s0 = ubatch->seq_id[i0][0];
+                    const llama_seq_id s0 = ubatch->seq_id[i0][0]; // get the sequence id of the first token
 
                     // TODO: reimplement this like in llama_kv_cache_unified
+                    // Only attend to tokens from the same sequence and if causual attention then a token
+                    // can only attend to tokens that are before it in the sequence.
                     if (s0 == s1 && (!cparams.causal_attn || ubatch->pos[i0] <= ubatch->pos[i1])) {
                         if (hparams.use_alibi) {
                             f = -std::abs(ubatch->pos[i0] - ubatch->pos[i1]);
@@ -716,3 +719,38 @@ So let say we have a version of a model, which also has an embedding model, whic
 probably have to be able to differentiate between the two so that the embedding model does
 not have memory and the LLM model does.
 
+So the attention for an embedding model is full attention. But is it is possible that the model
+used sliding window attention. This would have an impact on the attention mask. We still need a
+bidirectional mask but the attention will only be applied to a limited number of tokens in the
+sequence.
+```console
+[[1, 1, 1, 1],
+ [1, 1, 1, 1],
+ [1, 1, 1, 1],
+ [1, 1, 1, 1]]
+```
+
+For sliding window attention in the standard way, it will only look at the previous tokens in the sequence.
+For bidirectional attention though, we want it to also look forward in the sequence but not the entire
+sequence which would be the case with full attention. For this we can introduce a symmetric sliding
+window attention type (`LLAMA_SWA_TYPE_SYMMETRIC`).
+
+For example, if we have a sequence with 7 tokens and a `n_swa` of 2, each token can attend to
+itself plus 1 token in each direction (`half_window = n_swa/2 = 1`). The attention mask would look like this:
+window attention type (`LLAMA_SWA_TYPE_SYMMETRIC`).
+
+For example, if we have a sequence with 7 token and a `n_swa` of 2 the attention mask would look like this:
+```console
+=== Attention mask ===
+'0' = can attend, '∞' = masked
+Rows = query tokens, Columns = key/value tokens
+
+     0 1 2 3 4 5 6
+ 0:  0 0 ∞ ∞ ∞ ∞ ∞
+ 1:  0 0 0 ∞ ∞ ∞ ∞
+ 2:  ∞ 0 0 0 ∞ ∞ ∞
+ 3:  ∞ ∞ 0 0 0 ∞ ∞
+ 4:  ∞ ∞ ∞ 0 0 0 ∞
+ 5:  ∞ ∞ ∞ ∞ 0 0 0
+ 6:  ∞ ∞ ∞ ∞ ∞ 0 0
+```
