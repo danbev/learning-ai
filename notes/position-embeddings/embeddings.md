@@ -714,34 +714,32 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
             } break;
         ....
 ``` 
-Notice that these are setting the res variable which is of type `llama_memory_i` to null.
+Notice that these are setting the `res` variable which is of type `llama_memory_i` to nullptr.
 So let say we have a version of a model, which also has an embedding model, which will
 probably have to be able to differentiate between the two so that the embedding model does
 not have memory and the LLM model does.
 
-So the attention for an embedding model is full attention. But is it is possible that the model
-used sliding window attention. This would have an impact on the attention mask. We still need a
-bidirectional mask but the attention will only be applied to a limited number of tokens in the
-sequence.
-```console
-[[1, 1, 1, 1],
- [1, 1, 1, 1],
- [1, 1, 1, 1],
- [1, 1, 1, 1]]
-```
+### Bidirectional attentions with Sliding Window Attention
+So the attention for an embedding model is full attention. But is it is possible
+that a model uses sliding window attention. This would have an impact on thei
+attention mask. We still need a bidirectional mask but the attention will only
+be applied to a limited number of tokens in the sequence, the size of the window
+in both directions.
 
-For sliding window attention in the standard way, it will only look at the previous tokens in the sequence.
-For bidirectional attention though, we want it to also look forward in the sequence but not the entire
-sequence which would be the case with full attention. For this we can introduce a symmetric sliding
+For sliding window attention in the standard way, it will only look at the
+previous tokens in the sequence. For bidirectional attention though, we want it
+to also look forward in the sequence but not the entire sequence which would be
+the case with full attention. For this we can introduce a symmetric sliding
 window attention type (`LLAMA_SWA_TYPE_SYMMETRIC`).
 
-For example, if we have a sequence with 7 tokens and a `n_swa` of 2, each token can attend to
-itself plus 1 token in each direction (`half_window = n_swa/2 = 1`). The attention mask would look like this:
-window attention type (`LLAMA_SWA_TYPE_SYMMETRIC`).
+For example, if we have a sequence with 7 tokens and a `n_swa` of 2, each token
+can attend to itself plus 1 token in each direction (`half_window = n_swa/2 = 1`).
 
-For example, if we have a sequence with 7 token and a `n_swa` of 2 the attention mask would look like this:
+For example, if we have a sequence with 7 token and a `n_swa` of 2 the attention
+mask would look like this:
 ```console
 === Attention mask ===
+n_swa : 2, n_kv: 7, swq_type: symmetric
 '0' = can attend, '∞' = masked
 Rows = query tokens, Columns = key/value tokens
 
