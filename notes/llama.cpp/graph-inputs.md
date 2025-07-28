@@ -20,17 +20,27 @@ Standard transformer input, either tokens ids or pre-computed token embeddings
 * llm_graph_input_pos 
 Positional information for each token in the sequence.
 
-* llm_graph_input_attn_temp 
+* llm_graph_input_attn_temp
+Temperature tuning for attention, used by Llama 4.
+
 * llm_graph_input_pos_bucket 
 * llm_graph_input_pos_bucket_kv 
-* llm_graph_input_out_ids 
+Relative position buckets for attention, used by T5, PaLM.
+
+* llm_graph_input_out_ids           (pooling)
+For extracting specific tokens (not all)
 * llm_graph_input_mean              (pooling)
 * llm_graph_input_cls               (pooling)
-* LLm_graph_input_rs                (pooling?) What does rs mean? 
+
+* lLm_graph_input_rs                (recurrent state)
+
 * llm_graph_input_attn_no_cache
 * llm_graph_input_attn_kv_unified 
 * llm_graph_input_attn_kv_unified_iswa 
+
 * llm_graph_input_attn_cross 
+For cross attention between encoder and decoder.
+
 * llm_graph_input_mem_hybrid 
 
 So lets take a look at one of these and see where they get created. For example,
