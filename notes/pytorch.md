@@ -73,3 +73,60 @@ this class will have:
         super().__setattr__("_load_state_dict_post_hooks", OrderedDict())
         super().__setattr__("_modules", {})
 ```
+
+### nn.Linear
+The operation that this layer performs is:
+```
+y = xW^T + b
+
+where:
+x = input matrix
+W = weight matrix
+b = bias vector
+y = output matrix
+```
+The constructor of Linear take the dimensions of the input and output:
+```console
+linear = nn.Linear(3, 2)
+```
+This means the tensor will look like this:
+```console
+x = [1 2 3]
+    [4 5 6]
+
+W = [1 2 3]
+    [4 5 6]
+
+b = [1 2]
+```
+The weight matrix is transposed:
+```console
+W^T = [1 4]
+      [2 5]
+      [3 6]
+```
+And the operation will be a matrix multiplication:
+```console
+[1, 2, 3] @ [1, 4] 
+            [2, 5] = [1*1 + 2*2 + 3*3, 1*4 + 2*5 + 3*6] = [14, 32]
+            [3, 6] 
+```
+And then the bias is added:
+```console
+[14, 32] + [1, 2] = [15, 34]
+```
+And the second sample in the input:
+```console
+[4 5 6] @ [1 4] 
+            [2 5] = [4*1 + 5*2 + 6*3, 4*4 + 5*5 + 6*6] = [32, 77]
+            [3 6] 
+```
+And then the bias is added:
+```console
+[32, 77] + [1, 2] = [33, 79]
+```
+The resulting output matrix `y` will then be:
+```console
+y = [15, 34]
+    [33, 79]
+```
