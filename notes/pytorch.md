@@ -130,3 +130,129 @@ The resulting output matrix `y` will then be:
 y = [15, 34]
     [33, 79]
 ```
+
+Now, we can use `inspect` to see what the `forward` method of `nn.Linear` does:
+```python
+    def forward(self, input: Tensor) -> Tensor:
+        return F.linear(input, self.weight, self.bias)
+```
+So that does not really tell us much. And trying to get the source of `F.linear`
+will result in an error:
+```console
+  File "/usr/lib/python3.11/inspect.py", line 916, in getfile
+    raise TypeError('module, class, method, function, traceback, frame, or '
+TypeError: module, class, method, function, traceback, frame, or code object was expected, got builtin_function_or_method
+```
+This is because there is no python source for `F.linear` as it is a C++ function.
+
+So lets look at `F` which is from `torch.nn.functional` which can be found in
+https://github.com/pytorch/pytorch/blob/a4fc051c9a91a3170094f933f47fdbd81740de02/torch/nn/functional.py#L2302C1-L2323C2:
+```python
+linear = _add_docstr(
+    torch._C._nn.linear,
+    r"""
+linear(input, weight, bias=None) -> Tensor
+
+Applies a linear transformation to the incoming data: :math:`y = xA^T + b`.
+
+This operation supports 2-D :attr:`weight` with :ref:`sparse layout<sparse-docs>`
+
+{sparse_beta_warning}
+
+This operator supports :ref:`TensorFloat32<tf32_on_ampere>`.
+
+Shape:
+
+    - Input: :math:`(*, in\_features)` where `*` means any number of
+      additional dimensions, including none
+    - Weight: :math:`(out\_features, in\_features)` or :math:`(in\_features)`
+    - Bias: :math:`(out\_features)` or :math:`()`
+    - Output: :math:`(*, out\_features)` or :math:`(*)`, based on the shape of the weight
+""".format(**sparse_support_notes),
+)
+```
+Now, `_add_docstr` is a function that takes a function and a docstring as input.
+And we can see that the function is `torch._C._nn.linear`. This is a C++ function
+which we can inspect by importing:
+```python
+import torch._C
+
+print("torch._C is the C extension module:")
+print(f"   Type: {type(torch._C)}")
+print(f"   Module: {torch._C}")
+```
+And printing this:
+```console
+torch._C is the C extension module:
+   Type: <class 'module'>
+   Module: <module 'torch._C' from '/home/danbev/work/ai/learning-ai/fundamentals/pytorch/venv/lib/python3.11/site-packages/torch/_C.cpython-311-x86_64-linux-gnu.so'>
+```
+```python
+    if hasattr(torch._C._nn, 'linear'):
+        linear_func = torch._C._nn.linear
+        print(f"\ntorch._C._nn.linear:")
+        print(f"   Type: {type(linear_func)}")
+        print(f"   Same as F.linear? {F.linear is linear_func}")
+```
+```console
+torch._C._nn.linear:
+   Type: <class 'builtin_function_or_method'>
+   Same as F.linear? True
+```
+The cpp implementation can be found in https://github.com/pytorch/pytorch/blob/c9642048291f427ffd39deb91e8f7c7461b8b75c/aten/src/ATen/native/Linear.cpp#L68C1-L118C2
+```c++
+Tensor linear(const Tensor& input, const Tensor& weight, const std::optional<Tensor>& bias_opt) {
+  // _matmul_impl checks this again later, but _flatten_nd_linear does not work on scalars inputs,
+  // so let's try to catch this here already
+  const auto input_dim = input.dim();
+  const auto weight_dim = weight.dim();
+  TORCH_CHECK(input_dim != 0 && weight_dim != 0,
+              "both arguments to linear need to be at least 1D, but they are ",
+              input_dim, "D and ", weight_dim, "D");
+
+  // See [Note: hacky wrapper removal for optional tensor]
+  auto bias = bias_opt.has_value()
+    ? c10::MaybeOwned<Tensor>::borrowed(*bias_opt)
+    : c10::MaybeOwned<Tensor>::owned(std::in_place);
+  if (input.is_mkldnn()) {
+    return at::mkldnn_linear(input, weight, *bias);
+  }
+#if defined(C10_MOBILE)
+  if (xnnpack::use_linear(input, weight, *bias)) {
+    return xnnpack::linear(input, weight, *bias);
+  }
+#endif
+  if (input_dim == 2 && bias->defined()) {
+    // Fused op is marginally faster.
+    return at::addmm(*bias, input, weight.t());
+  }
+  if (bias->defined() && !input.is_xla()) {
+    // Also hit the fused path for contiguous 3D input, if not using xla
+    // backend. Reshaping/flattening has some performance implications on xla.
+    bool is_contiguous = input.is_contiguous_or_false();
+    if (is_contiguous && input_dim == 3) {
+      return _flatten_nd_linear(input, weight, *bias);
+    } else if (is_contiguous && input.layout() == c10::kStrided && weight.layout() == c10::kStrided && bias->dim() == 1) {
+      return _flatten_nd_linear(input, weight, *bias);
+    } else if (parseLinearFlatten3d() && input_dim == 3) {
+      // If user forces flattening via env var
+      const Tensor input_cont = input.contiguous();
+      return _flatten_nd_linear(input_cont, weight, *bias);
+    }
+  }
+  auto output = at::matmul(input, weight.t());
+  if (bias->defined()) {
+    // for composite compliance use out-of-place version of `add`
+    if (isTensorSubclassLike(*bias) ||
+        bias->_fw_grad(/*level*/ 0).defined()) {
+      output = at::add(output, *bias);
+    } else {
+      output.add_(*bias);
+    }
+  }
+  return output;
+}
+```
+TODO: Explain how this works with PyBind11.
+
+__wip__
