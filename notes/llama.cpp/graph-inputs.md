@@ -14,17 +14,17 @@ public:
 };
 ```
 There are a number of concrete inputs defined
-* llm_graph_input_embd 
+* llm_graph_input_embd  
 Standard transformer input, either tokens ids or pre-computed token embeddings
 
-* llm_graph_input_pos 
+* llm_graph_input_pos  
 Positional information for each token in the sequence.
 
-* llm_graph_input_attn_temp
+* llm_graph_input_attn_temp 
 Temperature tuning for attention, used by Llama 4.
 
-* llm_graph_input_pos_bucket 
-* llm_graph_input_pos_bucket_kv 
+* llm_graph_input_pos_bucket
+* llm_graph_input_pos_bucket_kv  
 Relative position buckets for attention, used by T5, PaLM.
 
 * llm_graph_input_out_ids           (pooling)
@@ -38,7 +38,7 @@ For extracting specific tokens (not all)
 * llm_graph_input_attn_kv_unified 
 * llm_graph_input_attn_kv_unified_iswa 
 
-* llm_graph_input_attn_cross 
+* llm_graph_input_attn_cross  
 For cross attention between encoder and decoder.
 
 * llm_graph_input_mem_hybrid 
@@ -107,11 +107,11 @@ type = class llm_graph_result {
 ```
 At first this might sound a bit strange that a result type has inputs in addition
 to output, at least this was this case for me. But if we look this we can see
-the there is a `can_resuse` method on this interface. So it is possible that in
-stead of rebuilding the computation graph for every inference call the graph can
-be reused. So we could use the same model arch and batch configuration but for
-different input tokens/embeddings. So this type contains the inputs, the compute
-graph, and the results of the computation.
+the there is a `can_resuse` method on this interface. So it is possible that
+instead of rebuilding the computation graph for every inference call the graph
+can be reused. So we could use the same model arch and batch configuration but
+for different input tokens/embeddings. So this type contains the inputs, the
+compute graph, and the results of the computation.
 
 So if we have an embedding model we might have both `llm_graph_input_embd` and
 `llm_graph_input_pos`:
@@ -128,8 +128,8 @@ $16 = {_vptr.llm_graph_input_i = 0x7ffff7ef72c8 <vtable for llm_graph_input_embd
 $17 = {_vptr.llm_graph_input_i = 0x7ffff7ef7298 <vtable for llm_graph_input_pos+16>}
 ```
 
-The input are created in `llama-model.cpp` and the `llm_build_xxx` functions, 
-for example for
+The inputs are created in `llama-model.cpp` and the `llm_build_xxx` functions, 
+for example:
 ```c++
 struct llm_build_gemma3_iswa : public llm_graph_context {
     llm_build_gemma3_iswa(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -154,6 +154,7 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
 ```
 
 And later when `process_ubatch` in `llama-context.cpp` is called, the inputs
+`set_input` functions are called.
 ```c++
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch,
     llm_graph_type gtype,
