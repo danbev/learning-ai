@@ -133,3 +133,104 @@ When m.def("add", &add, "...") executes:
 - Registers in module's method table with name "add"
 - Stores docstring for help() function
 - Links to your C++ function add(int, int)
+
+### Debugging
+```console
+$ gdb python3
+#
+# Defining a custom gdb command (basically an alias to json dump())
+Reading symbols from python3...
+(No debugging symbols found in python3)
+(gdb) set args test/pybind-example-test.py
+(gdb) break add
+(gdb) br PyInit_pybind_example
+Function "add" not defined.
+Breakpoint 1 (add) pending.
+(gdb) r
+Starting program: /usr/bin/python3 test/pybind-example-test.py
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+✓ Import successful!
+
+Available in module:
+  add: <class 'builtin_function_or_method'>
+  subtract: <class 'builtin_function_or_method'>
+
+Breakpoint 1, add (i=10, j=20) at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/src/module.cpp:4
+4	    return i + j;
+```
+
+```console
+(gdb) bt
+#0  add (i=10, j=20) at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/src/module.cpp:4
+#1  0x00007ffff7ac070f in pybind11::detail::argument_loader<int, int>::call_impl<int, int (*&)(int, int), 0ul, 1ul, pybind11::detail::void_type>(int (*&)(int, int), std::integer_sequence<unsigned long, 0ul, 1ul>, pybind11::detail::void_type&&) && (
+    this=0x7fffffffce10, f=@0xc4a4f8: 0x7ffff7a93d81 <add(int, int)>)
+    at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/pybind11/include/pybind11/cast.h:2132
+#2  0x00007ffff7abd48c in pybind11::detail::argument_loader<int, int>::call<int, pybind11::detail::void_type, int (*&)(int, int)>(int (*&)(int, int)) && (this=0x7fffffffce10, f=@0xc4a4f8: 0x7ffff7a93d81 <add(int, int)>)
+    at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/pybind11/include/pybind11/cast.h:2100
+#3  0x00007ffff7ab8348 in pybind11::cpp_function::initialize<int (*&)(int, int), int, int, int, pybind11::name, pybind11::scope, pybind11::sibling, char [86]>(int (*&)(int, int), int (*)(int, int), pybind11::name const&, pybind11::scope const&, pybind11::sibling const&, char const (&) [86])::{lambda(pybind11::detail::function_call&)#1}::operator()(pybind11::detail::function_call&) const (
+    __closure=0x0, call=...)
+    at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/pybind11/include/pybind11/pybind11.h:429
+#4  0x00007ffff7ab83b1 in pybind11::cpp_function::initialize<int (*&)(int, int), int, int, int, pybind11::name, pybind11::scope, pybind11::sibling, char [86]>(int (*&)(int, int), int (*)(int, int), pybind11::name const&, pybind11::scope const&, pybind11::sibling const&, char const (&) [86])::{lambda(pybind11::detail::function_call&)#1}::_FUN(pybind11::detail::function_call&) ()
+    at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/pybind11/include/pybind11/pybind11.h:400
+#5  0x00007ffff7aa4ac8 in pybind11::cpp_function::dispatcher (self=0x7ffff7b19f90, args_in=0x7ffff7133a00, kwargs_in=0x0)
+    at /home/danbev/work/ai/learning-ai/fundamentals/pytorch/pybind-example/pybind11/include/pybind11/pybind11.h:1064
+#6  0x0000000000581d4f in ?? ()
+#7  0x0000000000548f85 in _PyObject_MakeTpCall ()
+#8  0x00000000005d6b2f in _PyEval_EvalFrameDefault ()
+#9  0x00000000005d500b in PyEval_EvalCode ()
+#10 0x00000000006081e2 in ?? ()
+#11 0x00000000006b5033 in ?? ()
+#12 0x00000000006b4d9a in _PyRun_SimpleFileObject ()
+#13 0x00000000006b4bcf in _PyRun_AnyFileObject ()
+#14 0x00000000006bcc35 in Py_RunMain ()
+#15 0x00000000006bc71d in Py_BytesMain ()
+#16 0x00007ffff7c2a1ca in __libc_start_call_main (main=main@entry=0x518950, argc=argc@entry=2, argv=argv@entry=0x7fffffffd808)
+    at ../sysdeps/nptl/libc_start_call_main.h:58
+#17 0x00007ffff7c2a28b in __libc_start_main_impl (main=0x518950, argc=2, argv=0x7fffffffd808, init=<optimized out>,
+    fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffffffd7f8) at ../csu/libc-start.c:360
+#18 0x00000000006575a5 in _start ()
+```
+There is quite a bit of overhead in the call stack, and for function that does
+very little like `add(int i, int j)`, this overhead can be significant. But when
+the c++ function does more work, the overhead becomes negligible, and this is
+where the performance of PyBind11 shines.
+```console
+#0  add (i=10, j=20)                    ← YOUR CODE (~1-5ns)
+#1  argument_loader::call_impl          ← Type conversion (~30-50ns)
+#2  argument_loader::call               ← Argument processing (~20-30ns)
+#3  cpp_function::initialize            ← Wrapper logic (~20-40ns)
+#4  cpp_function::dispatcher            ← Pybind11 dispatch (~30-60ns)
+#5  _PyObject_MakeTpCall                ← Python C API (~20-40ns)
+#6  _PyEval_EvalFrameDefault            ← Python interpreter (~10-20ns)
+```
+This is a reason that PyTorch operates on whole tensors and not individual
+elements.
+
+Python → C++ conversion requires:
+- Type checking: Is this really an int?
+- Object conversion: Python int → C++ int
+- Memory management: Reference counting, cleanup
+- Error handling: Exception translation
+- Result conversion: C++ int → Python int
+- Object creation: New Python integer object
+
+Conceptually, Python does this:
+```python
+def python_call_add(py_int1, py_int2):
+    # 1. Validate types
+    if not isinstance(py_int1, int) or not isinstance(py_int2, int):
+        raise TypeError("Arguments must be integers")
+
+    # 2. Convert Python objects to C++ values
+    cpp_int1 = extract_c_int_from_python_object(py_int1)
+    cpp_int2 = extract_c_int_from_python_object(py_int2)
+
+    # 3. Call your function (same as GDB!)
+    cpp_result = add(cpp_int1, cpp_int2)
+
+    # 4. Convert result back to Python object
+    py_result = create_python_int_object(cpp_result)
+
+    return py_result
+```
