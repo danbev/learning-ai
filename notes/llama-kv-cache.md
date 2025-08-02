@@ -394,6 +394,44 @@ llama_context::llama_context(
     }
 ```
 
+Lets take a closer look at the constructor for `llama_kv_cache_unified`:
+```c++
+llama_kv_cache_unified::llama_kv_cache_unified(
+        const llama_model &  model,
+          layer_filter_cb && filter,
+                ggml_type    type_k,
+                ggml_type    type_v,
+                     bool    v_trans,
+                     bool    offload,
+                     bool    unified,
+                 uint32_t    kv_size,
+                 uint32_t    n_seq_max,
+                 uint32_t    n_pad,
+                 uint32_t    n_swa,
+           llama_swa_type    swa_type) :
+    model(model), hparams(model.hparams), v_trans(v_trans),
+    n_seq_max(n_seq_max), n_stream(unified ? 1 : n_seq_max), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type) {
+    ...
+
+
+    v_heads.resize(n_stream);
+    for (uint32_t s = 0; s < n_stream; ++s) {
+        v_heads[s] = 0;
+    }
+    v_cells.resize(n_stream);
+    for (uint32_t s = 0; s < n_stream; ++s) {
+        v_cells[s].resize(kv_size);
+    }
+```
+```console
+(gdb) p n_stream
+$1 = 1
+(gdb) ptype v_heads
+type = std::vector<unsigned int>
+```
+
+__wip__
+
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
 the kv-cache.
