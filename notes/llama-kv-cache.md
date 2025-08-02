@@ -10,6 +10,7 @@ implementation of the key-value cache in the llama.cpp codebase.
 ## Table of Contents
 - [Unified KV-Cache](#llama_kv_cache_unified)
 - [Streams](#streams)
+- [KV-Cache creation](#kv-cache-creation)
 - [KV-Cache at inference time](#inference-with-kv-cache)
 - [llama_kv_cache details](#llama_kv_cache)
 - [has_shift](#has_shift)
@@ -288,6 +289,110 @@ So sequence 1 uses tensor indices: [0, 1, 2, 4, 6], and we can now extract those
 specific rows from `layers[layer].k_stream[0]` to use the keys (and same for the
 values in `layers[layer].v_stream[0]`).
 
+### KV-Cache creation
+The kv-cache implementations in llama.cpp are a type of memory which we mentioned
+earlier:
+```c++
+class llama_kv_cache_unified : public llama_memory_i {
+    ...
+}
+class llama_kv_cache_unified_iswa : public llama_memory_i {
+    ...
+}
+```
+These are created by the function `llama_model::create_memory`:
+```c++
+llama_memory_i * llama_model::create_memory(const llama_memory_params & params, llama_cparams & cparams) const {
+    llama_memory_i * res;
+    ...
+    switch (arch) {
+        ...
+}
+```
+The type of model architecture determines what type of memory is created or
+if no memory should be created (like for embedding models for example).
+Ignoring recurrent models and hybrid models for now the default case clause
+has the following:
+```c++
+                    const auto padding = llama_kv_cache_unified::get_padding(cparams);
+                    uint32_t n_ctx_per_stream = cparams.n_ctx;
+
+                    if (!cparams.kv_unified) {
+                        n_ctx_per_stream = (cparams.n_ctx + cparams.n_seq_max - 1)/cparams.n_seq_max;
+                        n_ctx_per_stream = GGML_PAD(n_ctx_per_stream, padding);
+                        cparams.n_ctx = n_ctx_per_stream*cparams.n_seq_max;
+                    } else {
+                        n_ctx_per_stream = GGML_PAD(n_ctx_per_stream, padding);
+                        cparams.n_ctx = n_ctx_per_stream;
+                    }
+
+                    if (hparams.swa_type != LLAMA_SWA_TYPE_NONE) {
+                        res = new llama_kv_cache_unified_iswa(
+                                *this,
+                                params.type_k,
+                                params.type_v,
+                                !cparams.flash_attn,
+                                cparams.offload_kqv,
+                                params.swa_full,
+                                cparams.kv_unified,
+                                n_ctx_per_stream,
+                                cparams.n_seq_max,
+                                cparams.n_ubatch,
+                                padding);
+                    } else {
+                        res = new llama_kv_cache_unified(
+                                *this,
+                                nullptr,
+                                params.type_k,
+                                params.type_v,
+                                !cparams.flash_attn,
+                                cparams.offload_kqv,
+                                cparams.kv_unified,
+                                n_ctx_per_stream,
+                                cparams.n_seq_max,
+                                padding,
+                                hparams.n_swa,
+                                hparams.swa_type);
+                    }
+                }
+            }
+```
+So we can see that this is where either `llama_kv_cache_unified` or
+`llama_kv_cache_unified_iswa` get created.
+In `llama_init_from_model` we have:
+```c++
+llama_context * llama_init_from_model(
+                 llama_model * model,
+        llama_context_params   params) {
+    ...
+    try {
+        auto * ctx = new llama_context(*model, params);
+        return ctx;
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: failed to initialize the context: %s\n", __func__, err.what());
+    }
+    return nullptr;
+}
+```
+```c++
+llama_context::llama_context(
+        const llama_model & model,
+              llama_context_params params) :
+    model(model),
+    balloc(std::make_unique<llama_batch_allocr>(model.hparams.n_pos_per_embd())) {
+    ...
+
+    // init the memory module
+    if (!hparams.vocab_only) {
+        llama_memory_params params_mem = {
+            /*.type_k   =*/ params.type_k,
+            /*.type_v   =*/ params.type_v,
+            /*.swa_full =*/ params.swa_full,
+        };
+
+        memory.reset(model.create_memory(params_mem, cparams));
+    }
+```
 
 ### Inference with KV-Cache
 Lets set a break point before `llama_decode` and see how this interacts with
