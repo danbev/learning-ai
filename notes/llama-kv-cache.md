@@ -357,8 +357,14 @@ has the following:
                 }
             }
 ```
-So we can see that this is where either `llama_kv_cache_unified` or
-`llama_kv_cache_unified_iswa` get created.
+So we can see that this is where either `llama_kv_cache_unified` or `llama_kv_cache_unified_iswa` get created, 
+and notice that which one to be used is determined by the compute parameter `cparams.kv_unified`.
+So we can set this to false to try this path out later:
+```c++
+    llama_context_params ctx_params = llama_context_default_params();
+    ctx_params.kv_unified = false;
+```
+
 In `llama_init_from_model` we have:
 ```c++
 llama_context * llama_init_from_model(
@@ -423,12 +429,300 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         v_cells[s].resize(kv_size);
     }
 ```
+I'll be using the `simple-prompt-multi` example to step through the code related to the kv-cache.
 ```console
+(lldb) br set -n llama_kv_cache_unified::llama_kv_cache_unified
+(lldb) r
+```
+
+```console
+(lldb) p type_k
+(ggml_type) GGML_TYPE_F16
+(lldb) p type_v
+(ggml_type) GGML_TYPE_F16
+(lldb) p v_trans
+(bool) true
+(lldb) p offload
+(bool) true
+(lldb) p unified
+(bool) true
+(lldb) p kv_size
+(uint32_t) 1024
+(lldb) p n_seq_max
+(uint32_t) 2
+(lldb) p n_pad
+(uint32_t) 32
+(lldb) p n_swa
+(uint32_t) 0
+
+
 (gdb) p n_stream
 $1 = 1
 (gdb) ptype v_heads
 type = std::vector<unsigned int>
 ```
+Next, the `seq_to_stream` vector is initialized:
+```c++
+    // by default, all sequence ids are mapped to the 0th stream
+    seq_to_stream.resize(LLAMA_MAX_SEQ, 0);
+```
+```console
+(lldb) p seq_to_stream.size()
+(std::vector<unsigned int>::size_type) 64
+```
+Next, if `n_stream` is greater than 1, we will resize the `seq_to_stream`.
+```
+
+    if (n_stream > 1) {
+        seq_to_stream.resize(n_stream, 0);
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            seq_to_stream[s] = s;
+        }
+    }
+```
+Just to clarify this, regardless of the type of kv-cache, unified or non-unified, there can still
+be an specific number of sequences availble to be used, for example:
+```
+- Sequence 0: "What is the capital of Sweden?"
+- Sequence 1: "What is LoRA?"
+- Sequence 5: "Explain quantum entanglement"
+```
+So we want to be able to lookup the stream for a sequence even when we only have unified cache:
+```
+  uint32_t stream = seq_to_stream[5];  // Always returns 0 in unified mode
+```
+
+Following that we have the actual creation of the kv-cache tensors:
+```c++
+    for (uint32_t il = 0; il < n_layer_cache; il++) {
+        if (filter && !filter(il)) {
+            LLAMA_LOG_DEBUG("%s: layer %3d: skipped\n", __func__, il);
+            continue;
+        }
+```
+First, if there were was a filter callback passed into the constructor they will get
+applied to the layer and given the option to skip the layer.
+```c++
+        ggml_tensor * k;
+        ggml_tensor * v;
+
+        k = ggml_new_tensor_3d(ctx, type_k, n_embd_k_gqa, kv_size, n_stream);
+        v = ggml_new_tensor_3d(ctx, type_v, n_embd_v_gqa, kv_size, n_stream);
+
+        ggml_format_name(k, "cache_k_l%d", il);
+        ggml_format_name(v, "cache_v_l%d", il);
+
+        std::vector<ggml_tensor *> k_stream;
+        std::vector<ggml_tensor *> v_stream;
+
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            k_stream.push_back(ggml_view_2d(ctx, k, n_embd_k_gqa, kv_size, k->nb[1], s*k->nb[2]));
+            v_stream.push_back(ggml_view_2d(ctx, v, n_embd_v_gqa, kv_size, v->nb[1], s*v->nb[2]));
+        }
+
+        map_layer_ids[il] = layers.size();
+
+        layers.push_back({ il, k, v, k_stream, v_stream, });
+```
+```console
+(lldb) p k->ne
+(int64_t[4])  ([0] = 4096, [1] = 1024, [2] = 1, [3] = 1)
+```
+So the cache for the Keys will have room for 1024 entries (token embeddings), each having 4096 dimentions,
+and we would only have one if `n_stream` is 1 (unified).
+
+Recall that what we are storing in the Key tensor cache is:
+```
+Input token embeddings → Key weights × embeddings = Key vectors (CACHED)
+```
+So the Key tensor will look something like this where we will later store the projections
+of the Keys:
+```
+token embedding 0    [0                     4095]    (Key vector for token 0)
+                                 .
+                                 .
+                                 .
+token embedding 1024 [0                     4095]    (Key vector for token 1024)
+```
+Where each "Key vector" is the result of `token_embedding * W_k`. Each layer has the same `W_k`.
+
+
+And for non-unified where `n_seq_max` is 2 we would have two streams:
+```
+stream 0:
+token embedding 0    [0                     4095]    (Key vector for token 0)
+                                 .
+                                 .
+                                 .
+token embedding 1024 [0                     4095]    (Key vector for token 1024)
+
+stream 1:
+token embedding 0    [0                     4095]    (Key vector for token 0)
+                                 .
+                                 .
+                                 .
+token embedding 1024 [0                     4095]    (Key vector for token 1024)
+```
+So that is what the Key tensor will look like, and notice that this is a `3D` tensor which
+will become important in the next stage.
+Next we have two vectors of view tensors for the keys and values:
+```c++
+        std::vector<ggml_tensor *> k_stream;
+        std::vector<ggml_tensor *> v_stream;
+
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            k_stream.push_back(ggml_view_2d(ctx, k, n_embd_k_gqa, kv_size, k->nb[1], s*k->nb[2]));
+            v_stream.push_back(ggml_view_2d(ctx, v, n_embd_v_gqa, kv_size, v->nb[1], s*v->nb[2]));
+        }
+```
+Focusing on the Key tensor, this is creating a  `2D` tensor that is a view into the 3D tensor we
+created earlier. Now because in the case of unified kv-cache we only have one stream, the this
+will only create a view into Key tensor which is bascially a 2D tensor because the third dimension (z)
+is 1.
+```console
+(lldb) p ggml_view_2d(ctx, k, n_embd_k_gqa, kv_size, k->nb[1], s*k->nb[2])->ne
+(int64_t[4])  ([0] = 4096, [1] = 1024, [2] = 1, [3] = 1)
+
+Key tensor (3D): [4096, 1024, 1]  // Third dimension is 1
+k_stream[0]: 2D view [4096, 1024] // Single view into the whole tensor
+```
+So for a unified kv-cache, the Key tensor will be a 3D tensor with the third dimension as 1, so
+basically a 2D tensor. And the key view will be a view into that 2D tensor.
+But if we had set `cparams.kv_unified` to false, then we would have two streams and the Key tensor would
+have had another dimension, and lets say we have two sequences which would mean that the third dimension
+would be 2 instead of 1, then we have a completely separate 2D tensor for each sequence. And in this case
+`k_streams` would have two views into the Key tensor, one for each sequence and they are into separate
+dimensions. Hope this makes sense as I think it does while writing it.
+```
+Key tensor (3D): [4096, 1024, 2]  // Third dimension is 2 (for 2 streams)
+k_stream[0]: 2D view [4096, 1024] // View into slice 0 of dimension 2
+k_stream[1]: 2D view [4096, 1024] // View into slice 1 of dimension 2
+```
+
+The above also holds for the Value tensor so I'll skip that part here.
+Next, we have the following which is the final thing done for the layer:
+```c++, but
+        map_layer_ids[il] = layers.size();
+
+        layers.push_back({ il, k, v, k_stream, v_stream, });
+    }
+```
+The `map_layers_ids` tells us which layer in the model corresponds to which layer in the kv-cache.
+```c++
+    // model layer id -> KV cache layer id
+    std::unordered_map<int32_t, int32_t> map_layer_ids;
+```
+Notice that this is not using `il` as the key and instead using `layers.size()`. This is because
+of the filtering that we saw earlier and this might skip layers in which case the `il` would not
+match the index in the `layers` vector.
+And after that the current kv-cache information is added to the layers 
+```c++
+    std::vector<kv_layer> layers;
+```
+And the `kv_layer` struct is defined as follows:
+```c++
+    struct kv_layer {
+        // layer index in the model
+        // note: can be different from the layer index in the KV cache
+        uint32_t il;
+
+        ggml_tensor * k;
+        ggml_tensor * v;
+
+        std::vector<ggml_tensor *> k_stream;
+        std::vector<ggml_tensor *> v_stream;
+    };
+ ```
+ And now this make perfect sence to me which it did not before, `il` is the layer index in the model and
+ it also mentions that the index can be different from the layer index in the KV cache because of filtering
+ as we also mentioned. Then we have the actual tensors for the keys and values, and then the vectors of
+ views into the keys and values for each stream. 
+
+ So the above is done for all layers which are 32 in the case of `LLaMA v2`.
+
+ Next we have a special case for Gemma3n which is a model that supports 
+```c++
+    // TODO: this is temporary until we support passing reuse layer filters [KV_REUSE]
+    if (model.arch == LLM_ARCH_GEMMA3N) {
+        LLAMA_LOG_DEBUG("%s: GEMMA3N: reuse layers [%d, %d]\n", __func__, n_layer_cache, hparams.n_layer - 1);
+
+        for (uint32_t il = n_layer_cache; il < hparams.n_layer; il++) {
+            if (filter && !filter(il)) {
+                LLAMA_LOG_DEBUG("%s: layer %3d: skipped\n", __func__, il);
+                continue;
+            }
+
+            const bool     is_swa   = hparams.is_swa(il);
+            const uint32_t il_reuse = n_layer_cache - (is_swa ? 2 : 1);
+
+            GGML_ASSERT(map_layer_ids.find(il_reuse) != map_layer_ids.end());
+            map_layer_ids[il] = map_layer_ids[il_reuse];
+
+            LLAMA_LOG_DEBUG("%s: layer %3d: reuse layer %d, isw = %d\n", __func__, il, il_reuse, is_swa);
+        }
+    }
+```
+TODO: Take a closer look at Gemma3n.
+Next we have:
+```c++
+    // allocate tensors and initialize the buffers to avoid NaNs in the padding
+    for (auto it : ctx_map) {
+        auto * buft = it.first;
+        auto * ctx  = it.second;
+
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        if (!buf) {
+            throw std::runtime_error("failed to allocate buffer for kv cache");
+        }
+
+        LLAMA_LOG_INFO("%s: %10s KV buffer size = %8.2f MiB\n", __func__, ggml_backend_buffer_name(buf), ggml_backend_buffer_get_size(buf)/1024.0/1024.0);
+
+        ggml_backend_buffer_clear(buf, 0);
+        bufs.emplace_back(buf);
+    }
+```
+```console
+(lldb) thread until 167
+```
+This will allocate the tensors that were defined in the context to the backend device.
+
+Next, there is some logging:
+```c++
+    {
+        const size_t memory_size_k = size_k_bytes();
+        const size_t memory_size_v = size_v_bytes();
+
+        LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u/%2u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
+                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f), kv_size, (int) layers.size(), n_seq_max, n_stream,
+                ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
+                ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
+    }
+```
+I notice that this looks a little odd to me with the `n_seq_max` and `n_stream`:
+```console
+llama_kv_cache_unified: size =  512.00 MiB (  1024 cells,  32 layers,  2/ 1 seqs), K (f16):  256.00 MiB, V (f16):  256.00 MiB
+```
+The `n_stream` value is right aligned and perhaps it should be left alighed to be `1/1` instead of ` 1/ 1`?
+After this we have:
+```c++
+    const char * LLAMA_KV_CACHE_DEBUG = getenv("LLAMA_KV_CACHE_DEBUG");
+    debug = LLAMA_KV_CACHE_DEBUG ? atoi(LLAMA_KV_CACHE_DEBUG) : 0;
+```
+Followed by:
+```c++
+    const char * LLAMA_SET_ROWS = getenv("LLAMA_SET_ROWS");
+    supports_set_rows = LLAMA_SET_ROWS ? atoi(LLAMA_SET_ROWS) != 0 : 0;
+
+    if (!supports_set_rows) {
+        // ref: https://github.com/ggml-org/llama.cpp/pull/14363
+        GGML_ASSERT(unified && "cannot use non-unified KV cache without ggml_set_rows() support");
+    }
+
+    if (!supports_set_rows) {
+        LLAMA_LOG_WARN("%s: LLAMA_SET_ROWS=0, using old ggml_cpy() method for backwards compatibility\n", __func__);
+    }
+```
+TODO: Take a closer look at `LLAMA_SET_ROWS`.
 
 __wip__
 
