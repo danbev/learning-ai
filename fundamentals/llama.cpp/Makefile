@@ -1,43 +1,48 @@
 CUDA_DIR = /usr/local/cuda-12.4/lib64
+LLAMA_BUILD_DIR=llama.cpp/build
 
 OS := $(shell uname -s)
 
 # Make llama.cpp
+llama-init:
+ifeq ($(UNAME_S),Darwin)
+	cd llama.cpp && cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DLLAMA_DEBUG=ON -DGGML_METAL_EMBED_LIBRARY=ON
+else ifeq ($(UNAME_S),Linux)
+	cd llama.cpp && cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DLLAMA_DEBUG=ON
+else
+	cd llama.cpp && cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DLLAMA_DEBUG=ON
+endif
+
 llama: 
-	cd llama.cpp && cmake --build build
+	cd llama.cpp && \
+		cmake --build build 
 
 llama-cuda: 
-	. ./cuda-env.sh && cd llama.cpp && cmake --build build -DGGML_CUDA=ON
+	. ./cuda-env.sh && cd llama.cpp && \
+		cmake --build build -DGGML_CUDA=ON
 
 llama-vulkan:
-	. ./cuda-env.sh && cd llama.cpp && cmake --build build -DGGML_VULKAN=ON
+	. ./cuda-env.sh && cd llama.cpp && \
+		cmake --build build -DGGML_VULKAN=ON
 
 llama-kompute:
-	cd llama.cpp && rm -rf build && mkdir build && cd build \
-		&& cmake .. -DGGML_KOMPUTE=ON \
-		&& cmake --build build
+	cd llama.cpp && rm -rf build && mkdir build && \
+		cmake --build build -DGGML_KOMPUTE=ON
 
 llama-cuda-debug:
-	. ./cuda-env.sh && cd llama.cpp && cmake -build build -DGGML_CUDA=ON -DLLAMA_DEBUG=ON -DCMAKE_BUILD_TYPE=ON -DLLAMA_METAL=1
-
-# Use the following target with causion as it will probably mess up an
-# actual run of a specific program. Just use it for debugging/learning and
-# then switch back to the normal target for testing.
-llama-debug: 
-	cd llama.cpp && cmake -build build -DLLAMA_DEBUG=ON -CMAKE_BUILD_TYPE=Debug
+	. ./cuda-env.sh && cd llama.cpp && \
+		cmake -build build -DGGML_CUDA=ON -DLLAMA_DEBUG=ON -DCMAKE_BUILD_TYPE=DEBUG -DLLAMA_METAL=1
 
 CXXFLAGS = -std=c++17 -g -Wall \
 					 -Illama.cpp/include \
 					 -Illama.cpp/ggml/include \
 					 -Illama.cpp/common \
 					 -Illama.cpp/src \
-					 -Lllama.cpp/build/src \
+					 -Lllama.cpp/build/bin \
 					 -lllama \
-					 -Lllama.cpp/build/ggml/src \
 					 -lggml \
-					 -lggml-cpu
-
-LD_PATH = llama.cpp/build/src:llama.cpp/build/ggml/src
+					 -lggml-cpu \
+					 -Wl,-rpath,$(LLAMA_BUILD_DIR)/bin
 
 ifeq ($(OS),Linux)
 CXXFLAGS += -fopenmp
@@ -45,65 +50,32 @@ else ifeq ($(OS),Darwin)
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 endif
 
-ifeq ($(OS),Darwin)
-OBJ_GGML += llama.cpp/ggml/src/ggml-blas.o
-endif
-
-ifeq ($(OS),Darwin)
-OBJ += \
-	llama.cpp/ggml/src/ggml-metal.o \
-	llama.cpp/ggml/src/ggml-metal-embed.o
-endif
-
-#OBJ_GGML += llama.cpp/ggml/src/ggml-cuda.o
-#        OBJ_GGML += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/*.cu))
-
-#OBJ_CUDA_TMPL = $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-wmma*.cu))
-#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/mmq*.cu))
-#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu))
-#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu))
-#OBJ_CUDA_TMPL += $(patsubst %.cu,%.o,$(wildcard llama.cpp/ggml/src/ggml-cuda/template-instances/fattn-vec*f16-f16.cu))
-
-OBJ_GGML += $(OBJ_CUDA_TMPL)
-
 kv-cache: src/kv-cache.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ)
 
 simple-prompt: src/simple-prompt.cpp
-	echo $(OBJ_GGML)
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	$(CXX) $(CXXFLAGS) $^ -o $@
 
 simple-prompt-multi: src/simple-prompt-multi.cpp
-	echo $(OBJ_GGML)
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	$(CXX) $(CXXFLAGS) $^ -o $@ 
 
 batch: src/batch.cpp
-	env LD_LIBRARY_PATH=${LD_PATH} $(CXX) $< $(CXXFLAGS) -o $@
-
-.PHONY: run-batch
-run-batch: batch
-	env LD_LIBRARY_PATH=${LD_PATH} ./batch
+	$(CXX) $< $(CXXFLAGS) -o $@
 
 embeddings: src/embeddings.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	$(CXX) $(CXXFLAGS) $^ -o $@
 
 logging: src/logging.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ_GGML) $(OBJ) $(OBJ_COMMON) $(LIBS)
+	$(CXX) $(CXXFLAGS) $^ -o $@
 
 logging-pre: src/logging.cpp
 	$(CXX) $(CXXFLAGS) -E $^
 
-run-simple-prompt: simple-prompt
-	./simple-prompt
-
-simple-prompt-cuda: OBJ += llama.cpp/ggml/src/ggml-cuda.o
 simple-prompt-cuda: CXXFLAGS += -std=c++11 -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
-simple-prompt-cuda: LIBS += -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
 run-simple-prompt-cuda: simple-prompt-cuda
 	./simple-prompt 0 33
 
-simple-prompt-vulkan: OBJ += llama.cpp/ggml/src/ggml-vulkan.o
 simple-prompt-vulkan: CXXFLAGS += -lvulkan
 simple-prompt-vulkan: simple-prompt
 
@@ -127,7 +99,7 @@ update-llama:
 
 .PHONY clean:
 clean:
-	$(RM) -f simple-prompt finetune tokenize
+	$(RM) -f simple-prompt simple-prompt-multi finetune tokenize
 
 .PHONY clean-llama:
 clean-llama:
