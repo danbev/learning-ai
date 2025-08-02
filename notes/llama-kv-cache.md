@@ -174,7 +174,6 @@ seq_to_stream = [0, 0, 0, ...]  // All sequences → stream 0
 ```
 Now, these indices are then used in `v_cells`:
 ```
-// The REAL magic happens in v_cells[stream_id]
 v_cells[0] = {  // Stream 0's cells
     Cell0: { pos=0, seq_id={0, 1, 2} },    // "Today" - belongs to seqs 0,1,2
     Cell1: { pos=1, seq_id={0, 1, 2} },    // "is" - belongs to seqs 0,1,2
@@ -189,8 +188,8 @@ v_cells[0] = {  // Stream 0's cells
 Notice that all the sequences share `one` logical buffer.
 
 1) Process "Today"
-All sequences need to "Today" as position 0. The KV computation for "Today" is stored once
-but marked as belonging to all three sequences.
+All sequences need to "Today" as position 0. The KV computation for "Today" is
+stored once but marked as belonging to all three sequences.
 
 2) Process "is"
 All sequences need "is" as position 1. The KV computation for "is" is stored once.
@@ -213,20 +212,21 @@ Seq 2: needs "fine" at position 3, so cell 5 will contain:
 ```
 
 5) Process "day"
-All sequences need "day" at position 4. The KV computation for "day" is stored once but marked
-as belonging to all three sequences.
+All sequences need "day" at position 4. The KV computation for "day" is stored
+once but marked as belonging to all three sequences.
 
-So if we compare the non-unified and unified cases, we can see that the unified case we only
-have to store 7 cells in comparison to 15 (5 tokens * 3) cells in the non-unified case.
+So if we compare the non-unified and unified cases, we can see that the unified
+case we only have to store 7 cells in comparison to 15 (5 tokens * 3) cells in
+the non-unified case.
 
-There are two members in the `llama_kv_cache_unified` class that are used to store the
-metadata about the cache:
+There are two members in the `llama_kv_cache_unified` class that are used to
+store metadata about the cache:
 ```c++
     std::vector<uint32_t> v_heads;
     std::vector<llama_kv_cells_unified> v_cells;
 ```
-Note that `v` in this context does _not_ refer to the Value tensor, those are stored in the
-the `layers` vector:
+Note that `v` in this context does _not_ refer to the Value tensor, those are
+stored in the the `layers` vector:
 ```c++
     std::vector<kv_layer> layers; // one per transformer layer.
 
@@ -249,7 +249,7 @@ What `v_cell` (`src/llama-kv-cells.h`) does is it tracks the following informati
 * What position each cell represents.
 
 So to access a key/value for a sequence the process would be something like this:
-1. use `sequence_to_stream` to find the stream for a particular sequence. 
+1. use `seq_to_stream` to find the stream for a particular sequence. 
 2. use the returned stream to look up cell `v_cells[stream]`.
 
 And before we go further recall that this is the unified case so the tensor
@@ -257,8 +257,8 @@ for the layers will be one (only one stream for unified remember):
 ```
 layers[layer].k_stream[stream]
 ```
-This is just a raw tensor data which is a big array of key/value vectors. And this is storing all
-the key/values for all the sequences in the batch.
+This is just a raw tensor data which is a big array of key/value vectors. And
+this stores all the key/values for all the sequences in the batch.
 ```
 Key values
  0  1  2  3  4  5  6  ...                        4095
@@ -268,8 +268,8 @@ Value values
  0  1  2  3  4  5  6  ...                        4095
 [                                                   ]
 ```
-We need to have a way to pick out the values that are relevant for the current sequence. This is where
-the `v_cells` comes in.
+We need to have a way to pick out the values that are relevant for the current
+sequence. This is where the `v_cells` comes in.
 
 So lets say we want to the keys for sequence 1, "Today is a bad day":
 ```
@@ -284,8 +284,8 @@ Cell3 (pos=3): belongs to seq {0} ✗
 Cell4 (pos=3): belongs to seq {1} ✓      [0, 1, 2, 4]
 Cell6 (pos=4): belongs to seq {0,1,2} ✓  [0, 1, 2, 4, 6]
 ```
-So sequence 1 uses tensor indices: [0, 1, 2, 4, 6], and we can now
-extract those specific rows from `layers[layer].k_stream[0]` to use the keys (and same for the
+So sequence 1 uses tensor indices: [0, 1, 2, 4, 6], and we can now extract those
+specific rows from `layers[layer].k_stream[0]` to use the keys (and same for the
 values in `layers[layer].v_stream[0]`).
 
 
