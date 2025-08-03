@@ -15,23 +15,23 @@ endif
 
 llama: 
 	cd llama.cpp && \
-		cmake --build build 
+		cmake --build build -j8
 
 llama-cuda: 
 	. ./cuda-env.sh && cd llama.cpp && \
-		cmake --build build -DGGML_CUDA=ON
+		cmake --build build -DGGML_CUDA=ON -j8
 
 llama-vulkan:
 	. ./cuda-env.sh && cd llama.cpp && \
-		cmake --build build -DGGML_VULKAN=ON
+		cmake --build build -DGGML_VULKAN=ON -j8
 
 llama-kompute:
 	cd llama.cpp && rm -rf build && mkdir build && \
-		cmake --build build -DGGML_KOMPUTE=ON
+		cmake --build build -DGGML_KOMPUTE=ON -j8
 
 llama-cuda-debug:
 	. ./cuda-env.sh && cd llama.cpp && \
-		cmake -build build -DGGML_CUDA=ON -DLLAMA_DEBUG=ON -DCMAKE_BUILD_TYPE=DEBUG -DLLAMA_METAL=1
+		cmake -build build -DGGML_CUDA=ON -DLLAMA_DEBUG=ON -DCMAKE_BUILD_TYPE=DEBUG -DLLAMA_METAL=1 -j8
 
 CXXFLAGS = -std=c++17 -g -Wall \
 					 -Illama.cpp/include \
@@ -59,7 +59,7 @@ simple-prompt: src/simple-prompt.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
 simple-prompt-multi: src/simple-prompt-multi.cpp
-	$(CXX) $(CXXFLAGS) $^ -o $@ 
+	$(CXX) $^ -o $@ $(CXXFLAGS)
 
 batch: src/batch.cpp
 	$(CXX) $< $(CXXFLAGS) -o $@
@@ -105,7 +105,7 @@ clean:
 
 .PHONY clean-llama:
 clean-llama:
-	cd llama.cpp && make clean
+	${RM} -rf llama.cpp/build
 
 quantize-llama-model:
 	./llama.cpp/llama-quantize models/llama-2-7b.gguf models/llama-2-7b-Q4.gguf Q4_1
