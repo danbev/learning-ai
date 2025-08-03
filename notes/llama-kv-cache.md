@@ -724,6 +724,149 @@ Followed by:
 ```
 TODO: Take a closer look at `LLAMA_SET_ROWS`.
 
+And that completes the constructor and this will return us to `llama-context.cpp` and the `llama_context`
+constructor.
+
+### `llama_decode`
+With the kv-cache created in the previous section, then next interaction with the kv-cache is in the
+function `llama_decode`.
+
+We can find the following in this function:
+```c++
+    // handle any pending defrags/shifts
+    kv_self_update(false);
+```
+```c++
+// deprecated
+bool llama_context::kv_self_update(bool optimize) {
+    if (!memory) {
+        return false;
+    }
+
+    {
+        // TODO: remove in the future
+        optimize |= memory_force_optimize;
+        memory_force_optimize = false;
+
+        const auto mctx = memory->init_update(this, optimize);
+```
+The call to `init_update` will end up in `llama_kv_cache_unified::init_update`:
+```c++
+llama_memory_context_ptr llama_kv_cache_unified::init_update(llama_context * lctx, bool optimize) {
+    bool do_shift = get_has_shift();
+```
+```c++
+bool llama_kv_cache_unified::get_has_shift() const {
+    bool result = false;
+
+    for (uint32_t s = 0; s < n_stream; ++s) {
+        result |= v_cells[s].get_has_shift();
+    }
+
+    return result;
+}
+```
+Each KV-Cache entry, or cell, stores the position of its token embeddins in the sequence. If a sequence is
+modified in some way the position of this tokens might need to be updated. This is important for
+[RoPE](positiona-encodings/rope.md) and recall that RoPE in contrast to absolute positional encodings
+where the token embeddings have positional information added to them, with RoPE the positional information
+is added to the Query and Key vectors at inference time. So if the position of a token changes then the RoPE
+encoding will also change and the kv-cache needs to be recalculated to reflect this.
+
+So when and why would the token embedding positions in the sequence change?
+Well there are public functions that are exposed in `llama.h` related to the `kv-cache` (note that the kv-cache
+name has been replaced with memory in the public API and the kv-cache functions are now deprecated):
+```c++
+    // Adds relative position "delta" to all tokens that belong to the specified sequence and have positions in [p0, p1)
+    // p0 < 0 : [0,  p1]
+    // p1 < 0 : [p0, inf)
+    LLAMA_API void llama_memory_seq_add(
+            llama_memory_t mem,
+              llama_seq_id seq_id,
+                 llama_pos p0,
+                 llama_pos p1,
+                 llama_pos delta);
+```
+
+One use case for this is when we have a long converation that exceeds the model's context length.
+For example, lets say our models context length is 6 tokens:
+```
+Original sequence (positions 0-7):
+[Hello] [how] [are] [you] [today] [?] [I] [am]
+  0     1     2     3     4       5   6   7
+[---------context window------------]
+```
+But since our context window is only 6 tokens we need to "slide" the window:
+After sliding (shift all positions by -2):
+```
+[are] [you] [today] [?] [I] [am] [fine] [thanks]
+  0    1     2       3   4   5     6       7
+[---------context window------------]
+```
+So this will "corrupt" the Key values in the KV-Cache. So these values are not invalid in that
+they were rotated with the original position information but now if the model was to interpret these token
+embeddings they would point with an angle that the model understands to be the original position of that
+token embedding in the original sequence.
+
+So in this case the KV-cache already contains the computed keys which were "RoPEd" with the original positions,
+Before sliding (context window 6):
+```
+Position in cache: 0      1      2     3      4       5    6     7
+Token:           [Hello] [how] [are]  [you] [today]  [?]  [I]   [am]
+                 [---------context window (6 tokens)---]
+````
+We don't have room for the two new tokens so we need to slide the window, remove the first two
+token embeddings, 'Hello' and 'how', which leaves us with "are you today ? I am". The new tokens are RoPed
+with the correct positions relative to the context size, so 'I' is now at position 4 and 'am' is at position 5.
+
+After sliding - BEFORE K-shift (broken state):
+```
+Position in cache: 0     1      2      3    4    5      6      7
+Token:           [are] [you] [today]  [?]  [I]  [am]  [fine] [thanks]
+RoPE encoding:    pos2  pos3   pos4   pos5 pos6 pos7   pos6   pos7
+Expected pos:     pos0  pos1   pos2   pos3 pos4 pos5   pos6   pos7
+                   ↑     ↑      ↑      ↑
+                 MISMATCH! These have wrong RoPE encoding
+```
+Notice that tokens that 'I' and 'am' were RoPed with the correct positions, positions 4 and 5, but the
+ones before it are not correct. These need to be shifted to the left by 2 positions:
+```
+Position in cache: 0     1      2      3    4    5      6      7
+Token:           [are] [you] [today]  [?]  [I]  [am]  [fine] [thanks]
+RoPE encoding:    pos2  pos3   pos4   pos5 pos6 pos7   pos6   pos7
+                  -2    -2     -2     -2    OK   OK
+                  pos0  pos1   pos2   pos3 pos4 pos5   pos6   pos7
+                 [-----context window (6 tokens)---]
+```
+Doing this will make them line up again. And the nice thing is that we don't have to recompute the actual
+values for the keys, we just need to shift the RoPE encoding by -2 positions.
+The K-shift operation uses RoPE's mathematical properties to efficiently transform the cached Key vectors
+without recomputing them from scratch.
+
+The same idea can be applied for sequence editing. If a user modifies a prompt and inserts a word, instead
+of clearning the complete kv-cache and recomputing the keys, we can just shift the positions of the tokens
+in question and then recompute the keys for the new tokens that were added.
+
+This also applies when we want to keep a system prompt but rotate the conversation history.
+
+The problem we are trying to solve here is to prevent the model's attention score to become incorrect
+as if we did not fix the positional information it would "see" tokens as closer to each other than they
+actually are. The attention scores depends on their relative positions in the sequence, so if we
+did not fix the positions then the attention scores would be incorrect and the model would not
+understand the context correctly.
+
+So back in `get_has_shift` this is checking if there are any shift operations that have been requested
+during the last decode. This is a lazy process and the shift is not done directly but only marked
+as needed.
+
+Back in `llama_kv_cache_unified::init_update` we have:
+```c++
+llama_memory_context_ptr llama_kv_cache_unified::init_update(llama_context * lctx, bool optimize) {
+    bool do_shift = get_has_shift();
+
+    defrag_info dinfo;
+```
+
 __wip__
 
 ### Inference with KV-Cache
