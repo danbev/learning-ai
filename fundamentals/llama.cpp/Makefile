@@ -50,6 +50,8 @@ else ifeq ($(OS),Darwin)
 CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 endif
 
+all: simple-prompt-multi
+
 kv-cache: src/kv-cache.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(OBJ)
 
