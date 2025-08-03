@@ -354,7 +354,7 @@ Now, I think that 10000 is the `base_freq` parameter in llama.cpp and perhaps
 that -2 is the `freq_scale`.
 
 ### Position Interpolation (PI)
-Is an extension ofr RoPE which allows for the model to handle longer sequences.
+Is an extension of RoPE which allows for the model to handle longer sequences.
 This is a way to squeeze larger context lengths into the length that the model
 was trained on. Instead of extending the position indices beyond the range the
 model was trained on, PI interpolates the positional embeddings for the new
