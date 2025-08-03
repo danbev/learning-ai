@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
 
     size_t graph_work_size = ggml_graph_size(c_graph);
     size_t graph_nodes = ggml_graph_n_nodes(c_graph);
-    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 2, graph_nodes, graph_work_size);
+    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 2, graph_nodes, graph_work_size, false);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
         ggml_backend_free(cpu_backend);
