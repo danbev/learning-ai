@@ -22,7 +22,7 @@ jobs:
           make ggml
           make
 
-  llama.cpp:
+  llama_cpp:
     runs-on: ubuntu-latest
 
     steps:
