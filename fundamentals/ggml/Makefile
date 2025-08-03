@@ -29,9 +29,7 @@ VULKAN_FLAGS :=
 SRCDIR = src
 BINDIR = bin
 
-SOURCES_C := $(wildcard $(SRCDIR)/*.c)
 SOURCES_CPP := $(wildcard $(SRCDIR)/*.cpp)
-TARGETS_C := $(patsubst $(SRCDIR)/%.c, %, $(SOURCES_C))
 TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 
 ifeq ($(OS),Linux)
@@ -53,14 +51,9 @@ endif
 
 .PHONY: all clean
 
-all: $(TARGETS_C)
+all: $(TARGETS_CPP)
 
 ggml-quants: CFLAGS += -Iggml/src -Iggml/include/ggml
-
-$(TARGETS_C): % : $(SRCDIR)/%.c | bindir
-	$(CXX) $(CXXFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
-	$(WHOLE_ARCHIVE) \
-	-lm $(CUDA_FLAGS) $(VULKAN_FLAGS)
 
 $(TARGETS_CPP): % : $(SRCDIR)/%.cpp | bindir
 	$(CXX) $(CXXFLAGS) $(LDFLAGS)  -o ${BINDIR}/$@ $< \
