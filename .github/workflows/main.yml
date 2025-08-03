@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  ggml:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,3 +21,17 @@ jobs:
           make ggml-init
           make ggml
           make
+
+  llama.cpp:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Building llama.cpp examples
+        run: |
+          cd fundamentals/llama.cpp
+          git submodule update --init llama.cpp
+          make llama-init
+          make llama
+          make all
