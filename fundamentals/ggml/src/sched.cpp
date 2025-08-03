@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
         ggml_backend_get_default_buffer_type(cpu_backend)
     };
     size_t graph_size = ggml_graph_size(g1);
-    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 1, graph_size, false);
+    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 1, graph_size, false, false);
     if (!sched) {
         fprintf(stderr, "Failed to create scheduler\n");
         ggml_backend_free(cpu_backend);

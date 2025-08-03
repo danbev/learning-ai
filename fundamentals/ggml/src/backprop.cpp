@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
   ggml_set_i32_1d(a, 0, 2);
   // Since 'a' is a parameter it's gradient should be stored by calling ggml_set_param.
   // This will duplicate the tensor in a->grad.
-  ggml_set_param(ctx, a);
+  ggml_set_param(a);
 
   printf("Parameter a:\n");
   printf("a: %f\n", ggml_get_f32_1d(a, 0));
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
   ggml_set_name(b, "b");
   ggml_set_f32_1d(b, 0, 3);
   // Again since 'b' is a parameter it's gradient should be stored by calling ggml_set_param.
-  ggml_set_param(ctx, b);
+  ggml_set_param(b);
   printf("Parameter b:\n");
   printf("b: %f\n", ggml_get_f32_1d(b, 0));
   //printf("b->grad: %s\n", b->grad->name);
@@ -74,8 +74,9 @@ int main(int argc, char **argv) {
   // backpropagation).
   ggml_graph_reset(f_graph);
 
-  struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph);
-  ggml_build_backward_expand(static_ctx, ctx, b_graph, /*accumulate*/ false);
+  struct ggml_cgraph* b_graph = ggml_graph_dup(ctx, f_graph, true);
+  //ggml_build_backward_expand(static_ctx, ctx, b_graph);
+  // TODO: fix this above function call.
   ggml_graph_print(b_graph);
 
   // Set the gradient of the output tensor (mul) which would be the value of

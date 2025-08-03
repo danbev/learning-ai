@@ -76,7 +76,8 @@ int main(int argc, char **argv) {
     };
     size_t graph_size = ggml_graph_size(l_g);
     bool parallel = false;
-    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 2, graph_size, parallel);
+    bool offload  = false;
+    ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 2, graph_size, parallel, offload);
 
     if(!ggml_backend_sched_reserve(sched, l_g)) {
         fprintf(stderr, "Failed to reserve graph\n");

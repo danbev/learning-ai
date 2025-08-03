@@ -11,8 +11,13 @@ int main(int argc, char **argv) {
   struct ggml_init_params params = {
     .mem_size   = 16*1024*1024,
     .mem_buffer = NULL,
+    .no_alloc   = true,
   };
   struct ggml_context* ctx = ggml_init(params);
+  
+  // Initialize backend
+  ggml_backend_t backend = ggml_backend_cpu_init();
+  
   // d_inner is the dimension of the inner layer (after the projection layer).
   int d_inner = 8;
   // seq_len is the length of the input sequence.
@@ -105,19 +110,29 @@ int main(int argc, char **argv) {
   struct ggml_tensor* C = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_state, seq_len);
   ggml_set_name(C, "C");
 
+  // ids is typically used for batch processing - create a simple ids tensor
+  struct ggml_tensor* ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, seq_len);
+  ggml_set_name(ids, "ids");
+
   // y is the result of the scan operation. Which is a one dimensional tensor 
   // with the number of elements of x plus the number of elements in s.
   //
   // [0    ...  31   ... 160]
   //
-  struct ggml_tensor* y = ggml_ssm_scan(ctx, s, x, dt, A, B, C);
+  struct ggml_tensor* y = ggml_ssm_scan(ctx, s, x, dt, A, B, C, ids);
   ggml_set_name(y, "y");
 
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, y);
 
-  int n_threads = 1;
-  enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
+  // Allocate tensors using backend
+  ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+
+  // Set thread count
+  ggml_backend_cpu_set_n_threads(backend, 1);
+  
+  // Compute graph using backend
+  enum ggml_status st = ggml_backend_graph_compute(backend, c_graph);
   if (st != GGML_STATUS_SUCCESS) {
     printf("could not compute graph\n");
     return 1;
@@ -126,6 +141,9 @@ int main(int argc, char **argv) {
   printf("y nelements: %lld:\n", ggml_nelements(y));
   printf("y ne[0]: %lld:\n", y->ne[0]);
 
+  // Cleanup
+  ggml_backend_buffer_free(buffer);
+  ggml_backend_free(backend);
   ggml_free(ctx);
   return 0;
 }

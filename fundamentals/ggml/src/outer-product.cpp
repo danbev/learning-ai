@@ -17,13 +17,13 @@ int main(int argc, char **argv) {
   ggml_set_name(a, "a");
   ggml_set_i32_1d(a, 0, 1);
   ggml_set_i32_1d(a, 1, 2);
-  ggml_set_param(ctx, a);
+  ggml_set_param(a);
 
   struct ggml_tensor* b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 2);
   ggml_set_name(b, "b");
   ggml_set_f32_1d(b, 0, 3);
   ggml_set_f32_1d(b, 1, 4);
-  ggml_set_param(ctx, b);
+  ggml_set_param(b);
 
   struct ggml_tensor* out = ggml_out_prod(ctx, a, b);
   ggml_set_name(out, "out_prod");
