@@ -34,7 +34,7 @@ Sequence 0,1,2: [Shared KV Buffer] (unified)
 ```
 
 Unified in `llama_kv_cache_unified` refers to how it unifies both approaches into a single
-implementation that can handle either mode based on the unified parameter.
+implementation that can handle either mode based on the `unified` parameter.
 ```c++
 llama_kv_cache_unified::llama_kv_cache_unified(
         const llama_model &  model,
@@ -57,7 +57,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
 ```
 I don't think the `model` parameter needs any explanation.
 The `filter` parameter is a callback function defined in `llama-kv-cache-unified.h` and can be used
-to filter out layers that should not be included in the cache.:
+to filter out layers that should not be included in the cache:
 ```c++
 class llama_kv_cache_unified : public llama_memory_i {
 public:
@@ -82,7 +82,7 @@ enum llama_swa_type {
     LLAMA_SWA_TYPE_CHUNKED  = 2,
 };
 ```
-None is the normal full attention, standard is the sliding window attention. For chunked there is
+`None` is the normal full attention, standard is the sliding window attention. For chunked there is
 no sliding going on but we instead have a fixed "chunks". This is for situations where we have
 chunks that are independent of each other. Perhaps we have a PDF where each page is separate
 from the other pages, so we can process each page independently and they don't have to attend
@@ -149,7 +149,7 @@ seq_to_stream mapping: [0, 1, 2]
 ```
 In this case the three buffers are completely independent and there is no sharing of
 data between them. The size of each of these buffers will need to be the same as the
-maxium size of the possible sequence length.
+maximum size of the possible sequence length.
 ```
 Buffer 0: [........................................] ← sized for max length
 Buffer 1: [........................................] ← sized for max length
@@ -243,6 +243,13 @@ stored in the the `layers` vector:
         std::vector<ggml_tensor *> v_stream;
     };
 ```
+`v_head` stores the current search position, the head for each stream. To get
+the head for a stream we use the following:
+```c++
+v_heads[seq_to_stream[seq_id]]
+```
+So for a unified cache with a single stream here would just be one head. But
+for non-unified each stream will maintain its own search head position.
 
 What `v_cell` (`src/llama-kv-cells.h`) does is it tracks the following information:
 * What cells are occupied.
@@ -252,13 +259,17 @@ What `v_cell` (`src/llama-kv-cells.h`) does is it tracks the following informati
 So to access a key/value for a sequence the process would be something like this:
 1. use `seq_to_stream` to find the stream for a particular sequence. 
 2. use the returned stream to look up cell `v_cells[stream]`.
+More commonly in code:
+```c++
+const auto & cells = v_cells[seq_to_stream[seq_id]];
+```
 
 And before we go further recall that this is the unified case so the tensor
 for the layers will be one (only one stream for unified remember):
 ```
 layers[layer].k_stream[stream]
 ```
-This is just a raw tensor data which is a big array of key/value vectors. And
+This is just a raw tensor data which is an array of key/value vectors. And
 this stores all the key/values for all the sequences in the batch.
 ```
 Key values
@@ -547,21 +558,22 @@ token embedding 1024 [0                     4095]    (Key vector for token 1024)
 Where each "Key vector" is the result of `token_embedding * W_k`. Each layer has the same `W_k`.
 
 
-And for non-unified where `n_seq_max` is 2 we would have two streams:
+And for non-unified where `n_seq_max` is 2 we would have two streams (the last
+dimension will be 2 instead of 1):
 ```
 stream 0:
-token embedding 0    [0                     4095]    (Key vector for token 0)
-                                 .
-                                 .
-                                 .
-token embedding 1024 [0                     4095]    (Key vector for token 1024)
+    token embedding 0    [0                     4095]    (Key vector for token 0)
+                                     .
+                                     .
+                                     .
+    token embedding 1024 [0                     4095]    (Key vector for token 1024)
 
 stream 1:
-token embedding 0    [0                     4095]    (Key vector for token 0)
-                                 .
-                                 .
-                                 .
-token embedding 1024 [0                     4095]    (Key vector for token 1024)
+    token embedding 0    [0                     4095]    (Key vector for token 0)
+                                     .
+                                     .
+                                     .
+    token embedding 1024 [0                     4095]    (Key vector for token 1024)
 ```
 So that is what the Key tensor will look like, and notice that this is a `3D` tensor which
 will become important in the next stage.
@@ -576,9 +588,9 @@ Next we have two vectors of view tensors for the keys and values:
         }
 ```
 Focusing on the Key tensor, this is creating a  `2D` tensor that is a view into the 3D tensor we
-created earlier. Now because in the case of unified kv-cache we only have one stream, the this
-will only create a view into Key tensor which is bascially a 2D tensor because the third dimension (z)
-is 1.
+created earlier. Now because in the case of unified kv-cache we only have one stream, this
+will only create a view into Key tensor which is bascially a 2D tensor because
+the third dimension (z) is 1.
 ```console
 (lldb) p ggml_view_2d(ctx, k, n_embd_k_gqa, kv_size, k->nb[1], s*k->nb[2])->ne
 (int64_t[4])  ([0] = 4096, [1] = 1024, [2] = 1, [3] = 1)
@@ -586,13 +598,17 @@ is 1.
 Key tensor (3D): [4096, 1024, 1]  // Third dimension is 1
 k_stream[0]: 2D view [4096, 1024] // Single view into the whole tensor
 ```
-So for a unified kv-cache, the Key tensor will be a 3D tensor with the third dimension as 1, so
-basically a 2D tensor. And the key view will be a view into that 2D tensor.
-But if we had set `cparams.kv_unified` to false, then we would have two streams and the Key tensor would
-have had another dimension, and lets say we have two sequences which would mean that the third dimension
-would be 2 instead of 1, then we have a completely separate 2D tensor for each sequence. And in this case
-`k_streams` would have two views into the Key tensor, one for each sequence and they are into separate
-dimensions. Hope this makes sense as I think it does while writing it.
+So for a unified kv-cache, the Key tensor will be a 3D tensor with the third
+dimension as 1, so basically a 2D tensor. And the key view will be a view into
+that 2D tensor.
+
+But if we had set `cparams.kv_unified` to false, then we would have two streams
+and the Key tensor would have had another dimension, and lets say we have two
+sequences which would mean that the third dimension would be 2 instead of 1, then
+we have a completely separate 2D tensor for each sequence. And in this case
+`k_streams` would have two views into the Key tensor, one for each sequence and
+they are into separate dimensions. Hope this makes sense as I think it does
+while writing it.
 ```
 Key tensor (3D): [4096, 1024, 2]  // Third dimension is 2 (for 2 streams)
 k_stream[0]: 2D view [4096, 1024] // View into slice 0 of dimension 2
@@ -607,14 +623,16 @@ Next, we have the following which is the final thing done for the layer:
         layers.push_back({ il, k, v, k_stream, v_stream, });
     }
 ```
-The `map_layers_ids` tells us which layer in the model corresponds to which layer in the kv-cache.
+The `map_layers_ids` tells us which layer in the model corresponds to which layer
+in the kv-cache.
 ```c++
     // model layer id -> KV cache layer id
     std::unordered_map<int32_t, int32_t> map_layer_ids;
 ```
-Notice that this is not using `il` as the key and instead using `layers.size()`. This is because
-of the filtering that we saw earlier and this might skip layers in which case the `il` would not
-match the index in the `layers` vector.
+Notice that this is not using `il` as the key and instead using `layers.size()`.
+This is because of the filtering that we saw earlier and this might skip layers
+in which case the `il` would not match the index in the `layers` vector.
+
 And after that the current kv-cache information is added to the layers 
 ```c++
     std::vector<kv_layer> layers;
@@ -663,6 +681,7 @@ And the `kv_layer` struct is defined as follows:
     }
 ```
 TODO: Take a closer look at Gemma3n.
+
 Next we have:
 ```c++
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
@@ -726,6 +745,232 @@ TODO: Take a closer look at `LLAMA_SET_ROWS`.
 
 And that completes the constructor and this will return us to `llama-context.cpp` and the `llama_context`
 constructor.
+
+Now, when going through this the first time I though that using the unified
+kv-cache would most ofter be the best option, and while it does save memory if
+the sequences are similar it does not save on computation. With unified caching 
+we have just a single tensor for all sequences, and this is used for the
+attention computation, but only the results for a particular sequence passes
+through the mask, but the other results are still computed. 
+If we take a look at `set_input_kq_mask` we can see the following:
+```c++
+void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
+    const uint32_t n_tokens = ubatch->n_tokens;
+    ...
+
+                    // mask the token if not the same sequence
+                    if (!cells.seq_has(j, seq_id)) {
+                        continue;
+                    }
+```
+The same function handles both unified and non-unified kv-caches, but for the
+non-unified case there will be separate streams and I don't think the above
+check will ever be true in that case.
+So unified caching saves memory at the cost of computational overhead from
+cross-sequence masking, while non-unified caching trades memory for computational
+efficiency by pre-separating sequences into streams.
+
+### ggml_set_rows
+To understand this I think it might help to think about the unified kv-cache, 
+and recall there is only one tensor 2d tensor for all sequences (one stream if
+you will but the last dimension is 1):
+```
+Tensor shape: [n_embd, kv_size, n_stream] - effectively 2D: [n_embd, kv_size]
+
+ubatch: 3 tokens
+Token 0: "hello" → needs to go to position 5
+Token 1: "world" → needs to go to position 6
+Token 2: "test"  → needs to go to position 7
+
+Each token has:
+- k_cur: Key vector (size: n_embd_k_gqa = 4096 dimensions)
+- v_cur: Value vector (size: n_embd_v_gqa = 4096 dimensions)
+```
+```
+// Unified cache tensor shape: [4096, 8192, 1] (effectively 2D)
+k = ggml_new_tensor_3d(ctx, type_k, 4096, 8192, 1);
+
+Current cache state:
+[pos0][pos1][pos2][pos3][pos4][empty][empty][empty][pos8][pos9]...
+  0    1     2     3     4      5      6      7      8     9
+                                ↑      ↑      ↑
+                              Need to fill these positions
+
+```
+```c++
+// Line from build_attn
+ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
+
+// This calls unified cache's cpy_k method:
+ggml_tensor * llama_kv_cache_unified::cpy_k(...) const {
+    // k_cur contains 3 tokens: [hello_k, world_k, test_k] (contiguous)
+    k_cur = ggml_reshape_2d(ctx, k_cur, k->ne[0], n_tokens); // [4096, 3]
+
+    // Create view starting at position 5 (head position)
+    ggml_tensor * k_view = ggml_view_1d(ctx, k,
+            n_tokens*n_embd_k_gqa,                     // Size: 3 * 4096 = 12288 elements
+            ggml_row_size(k->type, n_embd_k_gqa)*5);   // Offset: start at position 5
+
+    // Simple contiguous copy: source[0,1,2] → destination[5,6,7]
+    return ggml_cpy(ctx, k_cur, k_view);
+}
+```
+```
+Before: [pos0][pos1][pos2][pos3][pos4][empty][empty][empty][pos8][pos9]
+After:  [pos0][pos1][pos2][pos3][pos4][hello][world][test ][pos8][pos9]
+                                        5      6      7
+```
+
+Now, lets look at the non-unified kv-cache case:
+```
+// Non-unified cache tensor shape: [4096, 8192, 3] (3 streams)
+k = ggml_new_tensor_3d(ctx, type_k, 4096, 8192, 3);
+
+Current cache state:
+Stream 0: [pos0 ][pos1 ][empty][pos3][pos4]...
+Stream 1: [pos0 ][empty][pos2 ][pos3]...
+Stream 2: [empty][pos1 ][pos2 ]...
+
+Our tokens need to go to:
+Token 0 "hello" → Stream 1, position 1
+Token 1 "world" → Stream 0, position 2  
+Token 2 "test"  → Stream 2, position 0
+```
+So we will need to copy Token 0 to stream 1, position 1:
+```
+stream_1[position_1] = hello_k;  // Stream 1, pos 1
+```
+This would requies multiple calls to `ggml_cpy` to copy each token to its
+specific position in the kv-cache.
+For example:
+```c++
+// Without ggml_set_rows (made up):
+for (int i = 0; i < n_tokens; i++) {
+    ggml_tensor * view = create_view_for_position(k, target_indices[i]);
+    ggml_build_forward_expand(gf, ggml_cpy(ctx, k_cur_slice[i], view));
+}
+// Result: 3 separate kernel launches, poor GPU utilization
+
+// With ggml_set_rows:
+ggml_build_forward_expand(gf, ggml_set_rows(ctx, k, k_cur, k_idxs));
+// Result: 1 kernel launch, optimal GPU utilization
+```
+
+```c++
+ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
+```
+Now k_cur is a tensor and has the shape of `[4096, 3]`:
+```
+  token embedding 0: [0                    4095] (hello)
+  token embedding 1: [0                    4095] (world)
+  token embedding 2: [0                    4095] (test)
+```
+We can think of each of these as vectors, or a row in a matrix and might make
+the name `ggml_set_rows` more intuitive.
+
+```c++
+ggml_tensor * llama_kv_cache_unified::cpy_k(...) const {
+    // k_cur contains 3 tokens embeddings: [hello_k, world_k, test_k] (contiguous)
+    k_cur = ggml_reshape_2d(ctx, k_cur, k->ne[0], n_tokens); // [4096, 3]
+
+    // k_idxs contains the scattered destination indices:
+    // k_idxs = [stream1_pos1_offset, stream0_pos2_offset, stream2_pos0_offset]
+    // k_idxs = [1*8192 + 1,          0*8192 + 2,          2*8192 + 0]
+    // k_idxs = [8193,                2,                   16384]
+
+    // Use ggml_set_rows to scatter the contiguous source to scattered destinations
+    return ggml_set_rows(ctx, k, k_cur, k_idxs);
+}
+```
+```c++
+ggml_set_rows(ggml_context, destination_tensor, source_data, index_array)
+
+destination_tensor: The full 3D cache [4096, 8192, 3]
+source_data: [hello_k, world_k, test_k] (3 contiguous tokens)
+index_array: [8193, 2, 16384] (where each token should go)
+
+Result:
+- hello_k goes to index 8193 (Stream 1, position 1)
+- world_k goes to index 2 (Stream 0, position 2)
+- test_k goes to index 16384 (Stream 2, position 0)
+```
+```
+Stream 0: [pos0][pos1 ][world][pos3][pos4]...  ← world_k inserted at pos 2
+Stream 1: [pos0][hello][pos2 ][pos3]...        ← hello_k inserted at pos 1
+Stream 2: [test][pos1 ][pos2 ]...              ← test_k inserted at pos 0
+```
+This is done in one kernel call instead multiple separate copies. And multiple
+streams can be updated simultaneously.
+
+Now, the backend need to support the `ggml_set_rows` function to be able to
+which is why we have the various checks at the moment in the code base. Each
+backend needs specialized code to implement the scatter/gather efficiently.
+```c++
+if (!supports_set_rows && !cparams.kv_unified) {
+    LLAMA_LOG_WARN("%s: non-unified KV cache requires ggml_set_rows() - forcing unified KV cache\n", __func__);
+    cparams.kv_unified = true;
+}
+```
+
+
+
+All tokens from a batch go into continuous positions starting from sinfo.head().
+```c++
+ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il, const slot_info & sinfo) const {
+    ...
+
+    ggml_tensor * k_view = ggml_view_1d(ctx, k,
+            n_tokens * n_embd_k_gqa,
+            ggml_row_size(k->type, n_embd_k_gqa) * sinfo.head());
+
+    return ggml_cpy(ctx, k_cur, k_view);
+```
+
+
+For the non-unified kv-cache the `ggml_set_rows` function is important but it
+was not obvious to me why. Looking at the non-unified kv-cache, each stream
+is a in a separate dimention in the tensor, so my thinking is that they are already
+separate from each other.
+
+
+This
+function is specifically used for this case to enable targeting specific rows
+wise updates (only updating one stream without effecting others).
+
+```c++
+llama_kv_cache_unified::llama_kv_cache_unified(
+    ...
+    const char * LLAMA_SET_ROWS = getenv("LLAMA_SET_ROWS");
+    supports_set_rows = LLAMA_SET_ROWS ? atoi(LLAMA_SET_ROWS) != 0 : 0;
+
+    if (!supports_set_rows) {
+        // ref: https://github.com/ggml-org/llama.cpp/pull/14363
+        GGML_ASSERT(unified && "cannot use non-unified KV cache without ggml_set_rows() support");
+    }
+```
+
+And in `llama-context.cpp` we have
+```c++
+llama_context::llama_context(
+        const llama_model & model,
+              llama_context_params params) :
+    model(model),
+    balloc(std::make_unique<llama_batch_allocr>(model.hparams.n_pos_per_embd())) {
+    ...
+
+    {
+        const char * LLAMA_SET_ROWS = getenv("LLAMA_SET_ROWS");
+        supports_set_rows = LLAMA_SET_ROWS ? (atoi(LLAMA_SET_ROWS) != 0) : false;
+
+        if (!supports_set_rows && !cparams.kv_unified) {
+            LLAMA_LOG_WARN("%s: non-unified KV cache requires ggml_set_rows() - forcing unified KV cache\n", __func__);
+            cparams.kv_unified = true;
+        }
+    }
+```
+So when testing this it is not enough to enough to seet `cparams.kv_unified` to
+false as if `LLAMA_SET_ROWS` is not set to `1` then the code will force
+`cparams.kv_unified` to `true`.
 
 ### `llama_decode`
 With the kv-cache created in the previous section, then next interaction with the kv-cache is in the
