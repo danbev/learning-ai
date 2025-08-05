@@ -11,6 +11,7 @@ implementation of the key-value cache in the llama.cpp codebase.
 - [Unified KV-Cache](#llama_kv_cache_unified)
 - [Streams](#streams)
 - [KV-Cache creation](#kv-cache-creation)
+- [ggml_set_rows](#ggml_set_rows)
 - [KV-Cache at inference time](#inference-with-kv-cache)
 - [llama_kv_cache details](#llama_kv_cache)
 - [has_shift](#has_shift)
@@ -839,6 +840,8 @@ Token 2 "test"  → Stream 2, position 0
 So we will need to copy Token 0 to stream 1, position 1:
 ```
 stream_1[position_1] = hello_k;  // Stream 1, pos 1
+stream_0[position_2] = world_k; // Stream 0, pos 2
+stream_2[position_0] = test_k;  // Stream 2, pos 0
 ```
 This would requies multiple calls to `ggml_cpy` to copy each token to its
 specific position in the kv-cache.
