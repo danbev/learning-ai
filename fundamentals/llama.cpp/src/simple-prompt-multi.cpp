@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     model_params.n_gpu_layers = num_gpu_layers;
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
-    std::string prompt = "What is LoRA?";
+    std::string prompt = "Hello ";
     std::string prompt2 = "Dan loves ice cream";
 
     ggml_backend_load_all();
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
         batch.token[i] = input_tokens[i];
         batch.pos[i] = i,
         batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;  // the sequence id
+        batch.seq_id[i][0] = 0;
         batch.logits[i] = false;
         batch.n_tokens++;
     }
