@@ -5,37 +5,41 @@
 #include <cstdlib>
 #include <vector>
 
+std::string get_token_as_string(llama_token token, const llama_vocab* vocab) {
+    if (token == llama_vocab_eos(vocab)) {
+        fprintf(stderr, "\n");
+        fflush(stderr);
+        return "<eos>";
+    }
+    int lsplit = 0;
+    bool special = false;
+    std::vector<char> piece(8, 0);
+    int n_tokens = llama_token_to_piece(vocab, token, piece.data(), piece.size(), lsplit, special);
+    if (n_tokens < 0) {
+        piece.resize(-n_tokens);
+        llama_token_to_piece(vocab, token, piece.data(), piece.size(), lsplit, special);
+    } else {
+        piece.resize(n_tokens);
+    }
+
+    return std::string(piece.data(), piece.size());
+}
+
 int main(int argc, char** argv) {
     llama_model_params model_params = llama_model_default_params();
-
-    // parse the two optional integers named "main_gpu" and "n_gpu_layers" and set the default to zero if they are not provided.
     int main_gpu = 0;
     int num_gpu_layers = 0;
     std::string model_path = "models/llama-2-7b.Q4_K_M.gguf";
-
-    if (argc > 1) {
-        main_gpu = atoi(argv[1]);
-    }
-    if (argc > 2) {
-        num_gpu_layers = atoi(argv[2]);
-    }
-    if (argc > 3) {
-        model_path = argv[3];
-    }
 
     model_params.main_gpu = main_gpu;
     model_params.n_gpu_layers = num_gpu_layers;
     fprintf(stdout, "llama.cpp example using model: %s\n", model_path.c_str());
 
-    // If the prompt provided is in the form of a question like it is here
-    // the model will predict the first token to be a new line, completing the
-    // prompt with a new line. It will then predict the next token to be the
-    // another new line.
     std::string prompt = "What is LoRA?";
     std::string prompt2 = "Dan loves ice cream";
 
+    ggml_backend_load_all();
     llama_backend_init();
-    //llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
 
     llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
     const llama_vocab* vocab = llama_model_get_vocab(model);
@@ -86,7 +90,7 @@ int main(int argc, char** argv) {
         input_tokens.resize(n_tokens);
     }
     fprintf(stderr, "\n");
-    fprintf(stdout, "n_tokens: %d\n", n_tokens);
+    fprintf(stdout, "seq_0 n_tokens: %d\n", n_tokens);
 
     int input2_len = prompt2.length() + add_bos;
     std::vector<llama_token> input_tokens2(input2_len);
@@ -103,10 +107,10 @@ int main(int argc, char** argv) {
     } else {
         input_tokens2.resize(n_tokens2);
     }
-    printf("prompt2.len: %ld\n", prompt2.length());
+    fprintf(stdout, "seq_1 n_tokens: %d\n", n_tokens2);
 
     // Create a new batch
-    llama_batch batch = llama_batch_init(512,/*embd*/ 0, /*n_seq_max*/ 2);
+    llama_batch batch = llama_batch_init(512, /*embd*/ 0, /*n_seq_max*/ 2);
     for (int i = 0; i < n_tokens; i++) {
         batch.token[i] = input_tokens[i];
         batch.pos[i] = i,
@@ -115,19 +119,22 @@ int main(int argc, char** argv) {
         batch.logits[i] = false;
         batch.n_tokens++;
     }
+    batch.logits[batch.n_tokens - 1] = true;
+    int seq_0_cur = n_tokens;
 
     int pos = batch.n_tokens;
     for (int i = 0; i < n_tokens2; i++) {
-	int idx = pos + i;
+        int idx = pos + i;
         batch.token[idx] = input_tokens2[i];
-        batch.pos[idx] = idx,
+        batch.pos[idx] = i,
         batch.n_seq_id[idx] = 1;
         batch.seq_id[idx][0] = 1;
         batch.logits[idx] = false;
         batch.n_tokens++;
     }
-    // Instruct llama to generate the logits for the last token
     batch.logits[batch.n_tokens - 1] = true;
+    int seq_1_cur = n_tokens2;
+
     fprintf(stderr, "batch.n_tokens: %d\n", batch.n_tokens);
     fprintf(stderr, "batch.tokens: [");
     for (int i = 0; i < batch.n_tokens; i++) {
@@ -135,7 +142,8 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "]\n");
 
-    fprintf(stderr, "prompt: %s", prompt.c_str());
+    fprintf(stderr, "prompt seq0: %s\n", prompt.c_str());
+    fprintf(stderr, "prompt seq1: %s\n", prompt2.c_str());
     fflush(stderr);
 
     if (llama_decode(ctx, batch) != 0) {
@@ -143,55 +151,72 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const int n_len = 80;
+    const int n_len = 30;
 
     int n_cur = batch.n_tokens;
     int n_decode = batch.n_tokens;
+
+    std::vector<std::string> seq_0_output;
+    std::vector<std::string> seq_1_output;
     
     while (n_cur <= n_len) {
-        const llama_token new_token_id = llama_sampler_sample(sampler, ctx, -1);
-        // This is the token id that the model predicted.
+        const llama_token new_token_id_0 = llama_sampler_sample(sampler, ctx, -2);
+        const llama_token new_token_id_1 = llama_sampler_sample(sampler, ctx, -1);
+        llama_batch new_batch = llama_batch_init(2, 0, 2);
+        new_batch.n_tokens = 2;
+        new_batch.token[0] = new_token_id_0;
+        new_batch.token[1] = new_token_id_1;
+        new_batch.pos[0] = seq_0_cur++;
+        new_batch.pos[1] = seq_1_cur++;
+        new_batch.n_seq_id[0] = 1;
+        new_batch.n_seq_id[1] = 1;
+        new_batch.seq_id[0][0] = 0;
+        new_batch.seq_id[1][0] = 1;
+        new_batch.logits[0] = true;
+        new_batch.logits[1] = true;
 
-        // is it an end of stream?
-        if (new_token_id == llama_vocab_eos(vocab) || n_cur == n_len) {
-            fprintf(stderr, "\n");
-            fflush(stderr);
-            break;
+        // Sequence 1
+        {
+            std::string token_str = get_token_as_string(new_token_id_0, vocab);
+            if (n_cur == n_len || token_str == "<eos>") {
+                fprintf(stderr, "\n");
+                fflush(stderr);
+                break;
+            }
+            seq_0_output.push_back(std::move(token_str));
         }
 
-        int lsplit = 0;
-        bool special = false;
-        std::vector<char> piece(8, 0);
-        int n_tokens = llama_token_to_piece(vocab, new_token_id, piece.data(), piece.size(), lsplit, special);
-        if (n_tokens < 0) {
-            piece.resize(-n_tokens);
-            llama_token_to_piece(vocab, new_token_id, piece.data(), piece.size(), lsplit, special);
-        } else {
-            piece.resize(n_tokens);
+        // Sequence 2
+        {
+            std::string token_str = get_token_as_string(new_token_id_1, vocab);
+            if (n_cur == n_len || token_str == "<eos>") {
+                fprintf(stderr, "\n");
+                fflush(stderr);
+                break;
+            }
+            seq_1_output.push_back(std::move(token_str));
         }
-        std::string piece_str = std::string(piece.data(), piece.size());
-        fprintf(stderr, "%s", piece_str.c_str());
-        fflush(stderr);
-
-        llama_batch single_token_batch = llama_batch_init(1,/*embd*/ 0, /*n_seq_max*/ 1);
-        single_token_batch.n_tokens = 1; // We are only passing in one token.
-        single_token_batch.token[0] = new_token_id; // the new token id.
-        single_token_batch.pos[0] = n_cur, // the position in the sequence.
-        single_token_batch.n_seq_id[0] = 1;  // the number of sequences for this token.
-        single_token_batch.seq_id[0][0] = 1; // the actual sequence id.
-        single_token_batch.logits[0] = true;
-
         n_decode += 1;
         n_cur += 1;
 
-        // With the new token added to the batch, we can now predict the next token.
-        if (llama_decode(ctx, single_token_batch)) {
+        if (llama_decode(ctx, new_batch)) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
         }
-        llama_batch_free(single_token_batch);
+        llama_batch_free(new_batch);
     }
-    fprintf(stdout, "\nDecoded %d tokens\n", n_decode);
+
+    fprintf(stdout, "\nSequence 0:");
+    for (auto str : seq_0_output) {
+        fprintf(stdout, "%s", str.c_str());
+    }
+
+    fprintf(stdout, "\n\nSequence 1:");
+    for (auto str : seq_1_output) {
+        fprintf(stdout, "%s", str.c_str());
+    }
+
+    fprintf(stdout, "\n\nDecoded %d tokens\n", n_decode);
     llama_batch_free(batch);
     llama_free(ctx);
     llama_model_free(model);
