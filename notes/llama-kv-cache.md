@@ -742,7 +742,6 @@ Followed by:
         LLAMA_LOG_WARN("%s: LLAMA_SET_ROWS=0, using old ggml_cpy() method for backwards compatibility\n", __func__);
     }
 ```
-TODO: Take a closer look at `LLAMA_SET_ROWS`.
 
 And that completes the constructor and this will return us to `llama-context.cpp` and the `llama_context`
 constructor.
@@ -798,10 +797,13 @@ Current cache state:
                               Need to fill these positions
 
 ```
+And in `llama-graph.cpp` and the `build_attn` function we have the following:
 ```c++
 // Line from build_attn
 ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
+```
 
+```c++
 // This calls unified cache's cpy_k method:
 ggml_tensor * llama_kv_cache_unified::cpy_k(...) const {
     // k_cur contains 3 tokens: [hello_k, world_k, test_k] (contiguous)
@@ -915,6 +917,1063 @@ if (!supports_set_rows && !cparams.kv_unified) {
 }
 ```
 
+So to try this out we need to use a backend that supports `ggml_set_rows`, and
+for now we also have to set the environment variable `LLAMA_SET_ROWS=1`
+```console
+$ export LLAMA_SET_ROWS=1
+$ export LLAMA_KV_CACHE_DEBUG=1       (this is for looking into an issue with find_slot)
+$ gdb --args simple-prompt-multi
+#
+# Defining a custom gdb command (basically an alias to json dump())
+Reading symbols from simple-prompt-multi...
+(gdb) br llama-kv-cache-unified.cpp:35
+(gdb) r
+```
+And this time we can see that `unified` is indeed `false`, and `n_seq_max` is
+`2`:
+```console
+gdb) p unified
+$1 = false
+(gdb) p n_seq_max
+$2 = 2
+```
+
+One thing to note when we use a non-unified kv-cache is how ubatches are handled:
+```c++
+llama_memory_context_ptr llama_kv_cache_unified::init_batch(
+            llama_batch_allocr & balloc,
+            uint32_t n_ubatch,
+            bool embd_all) {
+    GGML_UNUSED(embd_all);
+
+    do {
+        balloc.split_reset();
+
+        std::vector<llama_ubatch> ubatches;
+        while (true) {
+            auto ubatch = n_stream == 1 ? balloc.split_simple(n_ubatch) : balloc.split_equal(n_ubatch, true);
+
+            if (ubatch.n_tokens == 0) {
+                break;
+            }
+
+            ubatches.push_back(std::move(ubatch)); // NOLINT
+        }
+```
+In this case `n_streams` will not be `1` and we will use the `split_equal`:
+```console
+(gdb) p n_stream
+$55 = 2
+```
+Now, this is creating a microbatch where all sequences have the same number of
+tokens. Notice that there is a vector of `llama_ubatch` which will be added
+to during the loop.
+
+This is what our original batch looked like:
+```console
+(gdb) p batch
+$56 = {n_tokens = 10, token = 0x55555562bf00,
+embd = 0x0, pos = 0x555555638af0, n_seq_id = 0x555555639300,
+seq_id = 0x555555639b10, logits = 0x55555563cce0 ""}
+
+(gdb) p batch.token[0]
+$57 = 1
+(gdb) p batch.token[1]
+$58 = 15043
+(gdb) p batch.token[2]
+$59 = 29871
+(gdb) p batch.token[3]
+$60 = 1
+(gdb) p batch.token[4]
+$61 = 3951
+(gdb) p batch.token[5]
+$62 = 12355
+(gdb) p batch.token[6]
+$63 = 267
+(gdb) p batch.token[7]
+$64 = 14890
+(gdb) p batch.token[8]
+$65 = 907
+(gdb) p batch.token[9]
+$66 = 314
+
+(gdb) p this.model.vocab.token_get_text(1)
+$70 = 0x555555643808 "<s>"
+(gdb) p this.model.vocab.token_get_text(2)
+$71 = 0x555555643830 "</s>"
+(gdb) p this.model.vocab.token_get_text(1)
+$72 = 0x555555643808 "<s>"
+(gdb) p this.model.vocab.token_get_text(15043)
+$73 = 0x5555556d6658 "▁Hello"
+(gdb) p this.model.vocab.token_get_text(29871)
+$74 = 0x555555767338 "▁"
+(gdb) p this.model.vocab.token_get_text(1)
+$75 = 0x555555643808 "<s>"
+(gdb) p this.model.vocab.token_get_text(3951)
+$76 = 0x55555566a138 "▁Dan"
+(gdb) p this.model.vocab.token_get_text(12355)
+$77 = 0x5555556bc258 "▁lov"
+(gdb) p this.model.vocab.token_get_text(267)
+$78 = 0x555555646198 "es"
+(gdb) p this.model.vocab.token_get_text(14890)
+$79 = 0x5555556d4e70 "▁ice"
+(gdb) p this.model.vocab.token_get_text(907)
+$80 = 0x55555564c598 "▁cre"
+(gdb) p this.model.vocab.token_get_text(314)
+$81 = 0x5555556468f0 "am"
+```
+Now, we know we have two sequences, the first one has 3 tokens and the second
+one has 7. 
+
+```console
+(gdb) p batch
+$36 = {n_tokens = 10, token = 0x555555638af0, embd = 0x0,
+pos = 0x555555639b00, n_seq_id = 0x55555563ab10, seq_id = 0x55555563bb20,
+logits = 0x55555557b1c0 ""}
+(gdb) p *batch.seq_id[1]
+$39 = 0
+(gdb) p *batch.seq_id[2]
+$40 = 0
+(gdb) p *batch.seq_id[3]
+$41 = 1
+(gdb) p *batch.seq_id[4]
+$42 = 1
+(gdb) p *batch.seq_id[5]
+$43 = 1
+(gdb) p *batch.seq_id[6]
+$44 = 1
+(gdb) p *batch.seq_id[7]
+$45 = 1
+(gdb) p *batch.seq_id[8]
+$46 = 1
+(gdb) p *batch.seq_id[9]
+$47 = 1
+```
+In llama_batch there is a `seq_set` which is a vector of bitsets that tell us
+which sequence a token belongs to:
+```console
+(gdb) p seq_set[0]
+(gdb) p seq_set[0]
+$67 = std::bitset = {[0] = 1}
+```
+So we are asking here about token 0, and it belongs to sequence 0 because that
+bit is set:
+`[0] = 1` means bit 0 (sequence 0) is set/active.
+
+```console
+$49 = std::vector of length 10, capacity 16 = {
+std::bitset = {[0] = 1},           // [0] = 1 means bit 0 (sequence 0) is set/active
+std::bitset = {[0] = 1},           //  ↑
+std::bitset = {[0] = 1},           //  bit 0
+std::bitset = {[1] = 1},           // [1] = 1 means bit 1 (sequence 1) is set/active
+std::bitset = {[1] = 1},           //  ↑
+std::bitset = {[1] = 1},           //  bit 1 (sequence 1) is set/active
+std::bitset = {[1] = 1},
+std::bitset = {[1] = 1},
+std::bitset = {[1] = 1},
+std::bitset = {[1] = 1}}
+```
+So that can tell us which sequence a token belongs to, and with the information
+we can get all the tokens that belong to that sequence:
+```console
+(gdb) p seq_set_map
+$50 = std::unordered_map with 2 elements = {
+[std::bitset = {[0] = 1}] = std::vector of length 3, capacity 4 = {0, 1, 2}}
+[std::bitset = {[1] = 1}] = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9},
+```
+These structures allows us to quickly look up which sequence a token belongs to:
+```console
+(gdb) p seq_set_map[seq_set[0]]
+$56 = std::vector of length 3, capacity 4 = {0, 1, 2}
+(gdb) p seq_set_map[seq_set[1]]
+$57 = std::vector of length 3, capacity 4 = {0, 1, 2}
+(gdb) p seq_set_map[seq_set[2]]
+$58 = std::vector of length 3, capacity 4 = {0, 1, 2}
+(gdb) p seq_set_map[seq_set[3]]
+$59 = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9}
+(gdb) p seq_set_map[seq_set[4]]
+$60 = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9}
+(gdb) p seq_set_map[seq_set[5]]
+$61 = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9}
+(gdb) p seq_set_map[seq_set[6]]
+$62 = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9}
+(gdb) p seq_set_map[seq_set[8]]
+$63 = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9}
+(gdb) p seq_set_map[seq_set[9]]
+$64 = std::vector of length 7, capacity 8 = {3, 4, 5, 6, 7, 8, 9}
+```
+
+```console
+(gdb) p *udata
+$100 = {token = std::vector of length 6, capacity 6 = {1, 15043, 29871, 1, 3951, 12355}, embd = std::vector of length 0, capacity 0,
+  pos = std::vector of length 6, capacity 6 = {0, 1, 2, 0, 1, 2}, n_seq_id = std::vector of length 6, capacity 6 = {1, 1, 1, 1, 1,
+    1}, seq_id = std::vector of length 6, capacity 6 = {0x5555555bfa20, 0x555555637930, 0x555555637950, 0x555555637ac0,
+    0x555555637a80, 0x5555555a2570}, seq_id_unq = std::vector of length 0, capacity 0,
+  seq_idx = std::vector of length 64, capacity 64 = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, output = std::vector of length 6, capacity 6 = {0 '\000', 0 '\000', 1 '\001',
+    0 '\000', 0 '\000', 0 '\000'}}
+(gdb) p udata->token
+$101 = std::vector of length 6, capacity 6 = {1, 15043, 29871, 1, 3951, 12355}
+(gdb) p udata->token[0]
+$102 = 1
+(gdb) p udata->token[1]
+$103 = 15043
+(gdb) p udata->token[2]
+$104 = 29871
+(gdb) p udata->token[3]
+$105 = 1
+(gdb) p udata->token[4]
+$106 = 3951
+(gdb) p udata->token[5]
+$107 = 12355
+(gdb) p udata->seq_id[0]
+$108 = (int *) 0x5555555bfa20
+(gdb) p *udata->seq_id[0]
+$109 = 0
+(gdb) p *udata->seq_id[1]
+$110 = 0
+(gdb) p *udata->seq_id[2]
+$111 = 0
+(gdb) p *udata->seq_id[3]
+$112 = 1
+(gdb) p *udata->seq_id[4]
+$113 = 1
+(gdb) p *udata->seq_id[5]
+$114 = 1
+```
+
+```console
+Token Index: 0      1      2      3      4      5
+Token ID:    1      15043  29871  1      3951   12355
+Position:    0      1      2      0      1      2
+Sequence:    0      0      0      1      1      1
+```
+
+Now, `seq_id_unq` is a compact list of unique sequence IDs actually used in this
+ubatch. And `seq_idx` maps from sequence ID to an index in seq_id_unq.
+```console
+(gdb) ptype udata->seq_id_unq
+type = std::vector<int>
+
+(gdb) ptype udata->seq_id
+type = std::vector<int*>
+```
+```c++
+llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, uint32_t n_seqs, bool equal_seqs) {
+    ...
+
+    for (uint32_t s = 0; s < n_seq_max; ++s) {
+        if (seq_set_unq.test(s)) {
+            udata->seq_idx[s] = udata->seq_id_unq.size();
+            udata->seq_id_unq.push_back(s);
+        }
+    }
+```
+Now, what is happeing is that first the size of the `seq_id_unq` vector is used
+for the index (this is before it is added to data->seq_is_unq on the following
+line), so this allows the correct index to be added. And notice that this is
+guarded by the if statement so there is no guarantee that s can act as a sequence
+id.
+So after that we have:
+```console
+(gdb) p udata->seq_id_unq
+$127 = std::vector of length 2, capacity 2 = {0, 1}
+```
+
+And the final ubatch create will look like this:
+```console
+(gdb) p res
+$129 = {b_equal_seqs = 1, n_tokens = 6, n_seq_tokens = 3, n_seqs = 2,
+n_seqs_unq = 2, token = 0x555555dfb280, embd = 0x0, pos = 0x555555dfb300,
+n_seq_id = 0x555555dfb320, seq_id = 0x55555557d1c0,
+seq_id_unq = 0x555555dfb3a0, seq_idx = 0x5555555a2650, output = 0x555555dfb340 "",
+data = std::shared_ptr<llama_ubatch::data_t> (use count 1, weak count 0) = {get() = 0x555555637820}}
+```
+So we have `n_seq_unq` which is `2` and `n_seqs` which is also `2`.
+```console
+(gdb) p res.token[0]
+$163 = 1
+```
+To get the sequence id for this token we can do:
+```console
+(gdb) p *res.seq_id[0]
+$164 = 0     <--- token belongs to sequence 0
+```
+Get the compact index for this sequence:
+```console
+(gdb) p res.seq_idx[0]
+$171 = 0     <--- index in seq_id_unq
+```
+And then we can get the unique sequence id:
+```console
+(gdb) p res.seq_id_unq[res.seq_idx[*res.seq_id[0]]]
+$178 = 0
+```
+
+_wip_ Continue here next time...
+
+What `split_equal` will do is check the sequences for an equal number of tokens.
+So the first sequence has 3 tokens so it can create a microbatch with 3 tokens
+from the first sequence and 3 tokens from the second sequence:
+```console
+gdb) p ubatch
+$82 = (const llama_ubatch &) @0x55555563d570: {b_equal_seqs = 1, n_tokens = 6, n_seq_tokens = 3, n_seqs = 2, n_seqs_unq = 2,
+  token = 0x55555563d230, embd = 0x0, pos = 0x55555563d2b0, n_seq_id = 0x55555563d2d0, seq_id = 0x55555557d1c0,
+  seq_id_unq = 0x55555563d350, seq_idx = 0x5555555a2650, output = 0x55555563d2f0 "",
+  data = std::shared_ptr<llama_ubatch::data_t> (use count 1, weak count 0) = {get() = 0x555555637820}}
+```
+So we can see that we have a total of 6 tokens, the number of tokens per sequence
+is 3 and there are two sequences in total.
+```console
+(gdb) p ubatch.seq_id_unq[1]
+$84 = 1
+(gdb) p ubatch.token[0]
+$85 = 1
+(gdb) p ubatch.token[1]
+$86 = 15043
+(gdb) p ubatch.token[2]
+$87 = 29871
+```
+The second ubatch will then look like this:
+```console
+(gdb) p ubatch
+$92 = {b_equal_seqs = 1, n_tokens = 4, n_seq_tokens = 4, n_seqs = 1, n_seqs_unq = 1, token = 0x55555563d330, embd = 0x0, 
+  pos = 0x55555563d4c0, n_seq_id = 0x55555563d4e0, seq_id = 0x55555563d500, seq_id_unq = 0x55555563d310, seq_idx = 0x555555637970, 
+  output = 0x55555563d530 "", data = std::shared_ptr<llama_ubatch::data_t> (use count 1, weak count 0) = {get() = 0x55555563d3f0}}
+```
+And this only contains the remaining tokens from the second sequence.
+
+Now, this vector is then passed to `llama_kv_cache_unified::prepare`:
+```c++
+llama_kv_cache_unified::slot_info_vec_t llama_kv_cache_unified::prepare(const std::vector<llama_ubatch> & ubatches) {
+    llama_kv_cache_unified::slot_info_vec_t res;
+    ...
+    for (const auto & ubatch : ubatches) {
+        // non-continuous slots require support for ggml_set_rows()
+        const bool cont = supports_set_rows ? false : true;
+
+        // only find a suitable slot for the ubatch. don't modify the cells yet
+        const auto sinfo_new = find_slot(ubatch, cont);
+```
+And this will iterate over all the microbatches and call `find_slot` for each
+one, and `cont` is fasle in our case (don't forget the `LLAMA_SET_ROWS` environment
+variable!).
+
+```c++
+llama_kv_cache_unified::slot_info llama_kv_cache_unified::find_slot(const llama_ubatch & ubatch, bool cont) const {
+    if (debug > 0) {
+        const auto & cells = v_cells[seq_to_stream[1]];
+
+        const uint32_t head_cur = v_heads[1];
+
+        LLAMA_LOG_DEBUG("%s: n = %5d, used = %5d, head = %5d, size = %5d, n_swa = %5d\n",
+                __func__, cells.used_max_p1(), cells.get_used(), head_cur, get_size(), n_swa);
+```
+Now, this is where I'm a little confused as to why this is getting the sequence
+for stream 1 and not all the streams. We know we have two streams in this case,
+but this will always look up stream for sequence 1:
+```console
+(gdb) p ubatch.n_seqs_unq
+$3 = 2
+```
+And we can see that which tokens belong to which sequence:
+```console
+(gdb) p *ubatch.seq_id[0]
+$5 = 0
+(gdb) p *ubatch.seq_id[1]
+$6 = 0
+(gdb) p *ubatch.seq_id[2]
+$7 = 0
+(gdb) p *ubatch.seq_id[3]
+$8 = 1
+(gdb) p *ubatch.seq_id[4]
+$9 = 1
+(gdb) p *ubatch.seq_id[5]
+$10 = 1
+```
+So the `seq_to_stream` is getting the stream for the sequence id `1`.
+
+The above will print:
+```console
+find_slot: n =     0, used =     0, head =     0, size =   512, n_swa =     0
+```
+If we continue to line 800:
+```c++
+    uint32_t n_tokens = ubatch.n_tokens;
+    uint32_t n_seqs   = 1;
+
+    if (n_stream > 1) {
+        GGML_ASSERT(n_tokens % ubatch.n_seqs_unq == 0);
+
+        n_seqs   = ubatch.n_seqs_unq;
+        n_tokens = n_tokens / n_seqs;
+    }
+```
+Before:
+```console
+(gdb) p n_tokens
+$99 = 6
+```
+After:
+```console
+(gdb) p n_seqs
+$102 = 2
+(gdb) p n_tokens
+$103 = 3
+```
+Next a `slot_info` is created:
+```c++
+    slot_info res = {
+        /*.s0   =*/ LLAMA_MAX_SEQ,
+        /*.s1   =*/ 0,
+        /*.strm =*/ { },
+        /*.idxs =*/ { },
+    };
+
+    res.resize(n_seqs);
+```
+Notice that `slot_info` is initialized with `LLAMA_MAX_SEQ` for the first
+sequence, which is the maximum sequence id, and `0` for the second sequence.
+This struct is tells the KV cache implementation exactly where to place tokens
+from a microbatch.
+```c++
+    // for each ubatch, create a slot_info that contains information about where the ubatch should be inserted in the
+    //   KV cells. for example, cell indices for each token, such that: token[i] -> goes to cells[idxs[i]]
+    struct slot_info {
+        // data for ggml_set_rows
+        using idx_vec_t = std::vector<uint32_t>;
+
+        // number of streams: ns = s1 - s0 + 1
+        llama_seq_id s0;
+        llama_seq_id s1;
+
+        std::vector<llama_seq_id> strm; // [ns]
+        std::vector<idx_vec_t>    idxs; // [ns]
+```
+Now, resize looks like this:
+```c++
+        void resize(size_t n) {
+            strm.resize(n);
+            idxs.resize(n);
+        }
+```
+So both the `strm` and `idxs` vectors are resized to the number of sequences
+which in our case is 2.
+```console
+(gdb) p res
+$19 = {s0 = 64, s1 = 0, strm = std::vector of length 2, capacity 2 = {0, 0}, idxs = std::vector of length 2, capacity 2 = {
+    std::vector of length 0, capacity 0, std::vector of length 0, capacity 0}}
+```
+Next, we iterate over all the sequences in the batch.
+```c++
+
+    for (uint32_t s = 0; s < n_seqs; ++s) {
+        const auto seq_id = ubatch.seq_id_unq[s];
+
+        if (n_stream > 1) {
+            GGML_ASSERT(ubatch.n_seq_id[s*n_tokens]    == 1);
+            GGML_ASSERT(ubatch.seq_id  [s*n_tokens][0] == seq_id);
+        }
+        res.s0 = std::min<llama_seq_id>(res.s0, seq_to_stream[seq_id]);
+```
+So this is setting s0 to the what ever is smaller of 64 and the stream for
+the current sequence id (0). In this first iteration s0 will be set to 0 which
+is the stream for sequence 0.
+
+Next the value of `s1` is set to the `maximum` of the current value (0) and
+the value of `seq_to_stream[seq_id]`, again 0 in this case:
+```c++
+        res.s1 = std::max<llama_seq_id>(res.s1, seq_to_stream[seq_id]);
+```
+So `s0` is the min stream id that is involed in this microbatch and `s1` is the
+max stream id that is involved in this microbatch.
+
+* seq_to_stream[seq_id] maps sequence IDs to stream IDs
+* s0 = minimum stream ID in this microbatch
+* s1 = maximum stream ID in this microbatch
+
+So I think s0 and s1 provide a range/span of stream that are involed in this
+microbatch which might help with optimizing operations.
+
+Next, we have:
+```c++
+        res.strm[s] = seq_to_stream[seq_id];
+```
+This is just setting the first entry to stream 0.
+
+Then `idxs` (indices?), which will be 3 tokens in this case, recall that we
+have a split batch with 3 tokens per sequence:
+```c++
+        res.idxs[s].reserve(n_tokens);
+```
+```console
+(gdb) p res.idxs[0]
+$38 = std::vector of length 0, capacity 3
+```
+Next we get the kv-cache cells for the current stream:
+```c++
+        const auto & cells = v_cells[seq_to_stream[seq_id]];
+```
+Recall that each sequence gets its own cells (v_cells is an array) which is
+512 in this case which is the default:
+```c++
+llama_context_params llama_context_default_params() {
+    llama_context_params result = {
+        /*.n_ctx                       =*/ 512,
+        ...
+```
+This is then set by:
+```c++
+llama_memory_i * llama_model::create_memory(const llama_memory_params & params, llama_cparams & cparams) const {
+    llama_memory_i * res;
+    ...
+
+                    uint32_t n_ctx_per_stream = cparams.n_ctx;
+                    ...
+
+                        res = new llama_kv_cache_unified(
+                                *this,
+                                nullptr,
+                                params.type_k,
+                                params.type_v,
+                                !cparams.flash_attn,
+                                cparams.offload_kqv,
+                                cparams.kv_unified,
+                                n_ctx_per_stream,
+                                cparams.n_seq_max,  <--------
+                                padding,
+                                hparams.n_swa,
+                                hparams.swa_type);
+                    }
+```
+And in the constructor of `llama_kv_cache_unified` we have:
+```c++
+llama_kv_cache_unified::llama_kv_cache_unified(
+        const llama_model &  model,
+          layer_filter_cb && filter,
+                ggml_type    type_k,
+                ggml_type    type_v,
+                     bool    v_trans,
+                     bool    offload,
+                     bool    unified,
+                 uint32_t    kv_size,
+                 uint32_t    n_seq_max,
+                 uint32_t    n_pad,
+                 uint32_t    n_swa,
+           llama_swa_type    swa_type) :
+    model(model), hparams(model.hparams), v_trans(v_trans),
+    n_seq_max(n_seq_max), n_stream(unified ? 1 : n_seq_max), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type) {
+    ...
+
+    v_cells.resize(n_stream);
+    for (uint32_t s = 0; s < n_stream; ++s) {
+        v_cells[s].resize(kv_size);
+    }
+```
+So this is how we have multiple `v_cells`, one for each stream and the size is
+the `kv_size`, which is 512 in this case which was a little surprising to me
+as I set the `n_ctx` to 1024 in the `llama_context_params`:
+```c++
+llama_context_params ctx_params = llama_context_default_params();           
+ctx_params.n_ctx = 1024;                                                    
+ctx_params.n_threads = 4;                                                   
+ctx_params.n_threads_batch = 4;                                             
+ctx_params.rope_scaling_type = LLAMA_ROPE_SCALING_TYPE_LINEAR;              
+ctx_params.n_seq_max = 2;  
+```
+But because we are using 2 sequences the context per sequence is 1024 / 2 = 512.
+We can increase `n_ctx` if needed but I just wanted to understand why this was
+happening. And each sequence needs its own kv-cache and doesnt intefere with the
+other sequences.
+
+And also the current head for the stream (where to start looking for new slots):
+```c++
+        uint32_t head_cur = v_heads[seq_to_stream[seq_id]];
+```
+
+After that little detour we are back in `find_slot`:
+```c++
+        uint32_t n_tested = 0;
+
+        const uint32_t n_test = cont ? n_tokens : 1;
+```
+`n_tested` is a counter of how many cache positions we've looked at so far. This
+is used to know when we should give up looking for a slot and return.
+
+And `n_test` will be `1`.
+
+```c++
+        while (true) {
+            if (head_cur + n_test > cells.size()) {
+                n_tested += cells.size() - head_cur;
+                head_cur = 0;
+                continue;
+            }
+```
+If the current head plus the number of tokens to test is larger than the
+size of the cells then we will reset the head to `0` and continue.
+`n_tested` which again is the counter of cache positions we looked at, so we
+are skipping positions [head_cur, cell.size()-1]] and starting from the beginning.
+So to make this more concrete:
+```console
+cells.size() = 100
+head.cur     = 95
+n_text       = 10 (need 10 consecutive positions)
+
+95 + 10 = 105 > 100 which can't fit.
+
+n_tested += 100 - 95 = 5
+head_cur = 0
+```
+So we need to increase `n_tested` by the number of positions we skipped/looked
+at or we would never exit the loop.
+
+Next, we will iterate over the number of tokens we need to test for, which is
+1 in our case:
+```c++
+            for (uint32_t i = 0; i < n_test; i++) {
+                const auto idx = head_cur;
+
+                head_cur++;
+                n_tested++;
+
+                bool can_use = cells.is_empty(idx);
+
+                if (!can_use && cells.seq_count(idx) == 1) {
+                    const llama_pos pos_cell = cells.pos_get(idx);
+
+                    if (!can_use) {
+                        const llama_seq_id seq_id_cell = cells.seq_get(idx);
+
+                        // SWA mask
+                        if (is_masked_swa(pos_cell, cells.seq_pos_max(seq_id_cell) + 1)) {
+                            can_use = true;
+                        }
+                    }
+                }
+```
+Notice that even if a cache cell is occupied, we can overwrite it if the stored
+token is outside the sliding window and therefore no longer needed for attention
+computation.
+The cell is occupied (!can_use) but only by a single sequence (seq_count(idx) == 1)
+If multiple sequences share this cell, we can't safely overwrite it without
+affecting other sequences.
+
+After that we check if the index can be used and if so add it to `idxs`:
+```c++
+                if (can_use) {
+                    res.idxs[s].push_back(idx);
+                } else {
+                    if (cont) {
+                        break;
+                    }
+                }
+```
+After both seqeuences have been processed res will look like this:
+```console
+$16 = {s0 = 0, s1 = 1,
+strm = std::vector of length 2, capacity 2 = {0, 1},
+idxs = std::vector of length 2, capacity 2 = {
+    std::vector of length 3, capacity 3 = {0, 1, 2},
+    std::vector of length 3, capacity 3 = {0, 1, 2}}
+}
+```
+So this means that we have two streams, stream 0 and stream 1, and we can look
+up the indices that are going to be used/requested for each stream, for example
+0, 1, 2 are the positions in the cache that will be used.
+So that was `find_slot` and this will return us to `llama_kv_cache_unified::prepare`:
+```c++
+        const auto sinfo_new = find_slot(ubatch, cont);
+        if (sinfo_new.empty()) {
+            success = false;
+            break;
+        }
+```
+And notice that the only debug information that was printed was for stream 1.
+
+Next we have the following which is also done for each ubatch in ubatches.
+And recall that `find_slot` was used to locate available positions for this
+microbatch, and sinfo contains the mapping of token cells to cache cell indices.
+```c++
+class llama_kv_cache_unified : public llama_memory_i {
+public:
+    using slot_info_vec_t = std::vector<slot_info>;
+```
+And `res` (result) is:
+```c++
+    llama_kv_cache_unified::slot_info_vec_t res;
+```
+So it is a vector of slot_infos and we start by adding the current slot_info
+to it:
+```c++
+        // remember the position that we found
+        res.push_back(sinfo_new);
+
+        {
+            // Undo/Recovery plan.
+            state_t state = { sinfo_new, v_heads, {} };
+
+            for (uint32_t s = 0; s < sinfo_new.n_stream(); ++s) {
+                auto & cells = v_cells[sinfo_new.strm[s]];
+
+                state.v_cells.push_back(cells.cp(sinfo_new.idxs[s]));
+            }
+
+            states.push_back(std::move(state));
+        }
+
+        // now emplace the ubatch
+        apply_ubatch(sinfo_new, ubatch);
+
+```
+The `state_t` struct is looks like this which is like an undo/recovery plan.
+The `sinfo` is the new allocation information which is needed to know what to
+undo later.
+`v_heads_old` are the current head positions (before any modifications).
+```c++
+    struct state_t {
+        slot_info sinfo;                             // slot info for the ubatch
+        std::vector<uint32_t> v_heads_old;           // old positions of the heads, before placing the ubatch
+        std::vector<llama_kv_cells_unified> v_cells; // copy of the old cells, before placing the ubatch
+    };
+```
+Note that this line confused me a bit at first:
+```c++
+                state.v_cells.push_back(cells.cp(sinfo_new.idxs[s]));
+```
+It looked like we were copying the new cells or something but what is happing
+if that the indices of the new slot_info are used to "backup" what is currently
+in those cells so we can restore them later.
+To make this more concrete lets say we have a cache that looks like this before:
+```console
+Cell[100]: contains token from seq=5, pos=200, data="hello"
+Cell[101]: contains token from seq=5, pos=201, data="world"  
+Cell[102]: empty
+```
+And the microbatch wants to use cells `[100, 101, 102]` for new data:
+```console
+New tokens: seq=7, pos=[50, 51, 52], data=["the", "cat", "sat"]
+```
+
+```console
+old_state = {
+    cell[100]: {seq=5, pos=200, data="hello"},  // Will be overwritten!
+    cell[101]: {seq=5, pos=201, data="world"},  // Will be overwritten!
+    cell[102]: {empty}                          // Nothing to lose here
+}
+```
+And after `apply_ubatch`:
+```console
+Cell[100]: now contains seq=7, pos=50, data="the"
+Cell[101]: now contains seq=7, pos=51, data="cat"
+Cell[102]: now contains seq=7, pos=52, data="sat"
+```
+What `apply_ubatch` does is it takes the token information in the microbatch
+and writes it to the kv-cache (metadata that is) at the locations specified by
+`sinfo_new`:
+```c++
+        apply_ubatch(sinfo_new, ubatch);
+```
+
+And then this is undone, and notice that this will use the information stored
+in the stored cells (`it->v_cells`) and the old head positions (`v_heads_old`):
+```c++
+    // iterate backwards and restore the cells to their original state
+    for (auto it = states.rbegin(); it != states.rend(); ++it) {
+        const auto & sinfo = it->sinfo;
+
+        for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
+            auto & cells = v_cells[sinfo.strm[s]];
+            auto & head  = v_heads[sinfo.strm[s]];
+
+            cells.set(sinfo.idxs[s], it->v_cells[s]);
+            head = it->v_heads_old[s];
+        }
+    }
+```
+But we still have the slot information for the microbatch now and we know that
+it will fit in the kv-cache.
+
+And this information is returned by `prepare`:
+```c++
+        auto sinfos = prepare(ubatches);
+        if (sinfos.empty()) {
+            break;
+        }
+```
+And it is passed to the constructor of `llama_kv_cache_unified_context`:
+```c++
+        return std::make_unique<llama_kv_cache_unified_context>(
+                this, std::move(sinfos), std::move(ubatches));
+```
+```c++
+class llama_kv_cache_unified_context : public llama_memory_context_i {
+public:
+    llama_kv_cache_unified_context(
+            llama_kv_cache_unified * kv,
+            slot_info_vec_t sinfos,
+            std::vector<llama_ubatch> ubatches);
+
+llama_kv_cache_unified_context::llama_kv_cache_unified_context(
+        llama_kv_cache_unified * kv,
+        llama_kv_cache_unified::slot_info_vec_t sinfos,
+        std::vector<llama_ubatch> ubatches) : status(LLAMA_MEMORY_STATUS_SUCCESS),
+        kv(kv), sinfos(std::move(sinfos)), ubatches(std::move(ubatches)) { }
+```
+And that will return us to `llama_context::decode`:
+```c++
+    while (true) {
+        mctx = memory->init_batch(*balloc, cparams.n_ubatch, output_all);
+        if (!mctx) {
+            return -2;
+        }
+
+        switch (mctx->get_status()) {
+            case LLAMA_MEMORY_STATUS_SUCCESS:
+                {
+                } break;
+}
+```
+The next usage of `mctx` is:
+```c++
+    do {
+        const auto & ubatch = mctx->get_ubatch();
+```
+And looking at the get_ubatch function we see:
+```c++
+const llama_ubatch & llama_kv_cache_unified_context::get_ubatch() const {
+    assert(status == LLAMA_MEMORY_STATUS_SUCCESS);
+
+    return ubatches[i_cur];
+}
+```
+So notice that the context keeps track of which ubatch is currently being
+processed.
+```console
+(gdb) p ubatches.size()
+$58 = 2
+(gdb) p ubatches[0]
+$59 = {b_equal_seqs = 1, n_tokens = 6, n_seq_tokens = 3, n_seqs = 2, n_seqs_unq = 2, token = 0x555555643760, embd = 0x0,
+  pos = 0x555555dfb2c0, n_seq_id = 0x555555dfb2e0, seq_id = 0x55555557a040, seq_id_unq = 0x555555dfb360, seq_idx = 0x5555555a25b0,
+  output = 0x555555dfb300 "", data = std::shared_ptr<llama_ubatch::data_t> (use count 1, weak count 0) = {get() = 0x555555637720}}
+(gdb) p ubatches[1]
+$60 = {b_equal_seqs = 1, n_tokens = 4, n_seq_tokens = 4, n_seqs = 1, n_seqs_unq = 1, token = 0x555555dfb340, embd = 0x0,
+  pos = 0x555555dfb4d0, n_seq_id = 0x555555dfb4f0, seq_id = 0x5555556437a0, seq_id_unq = 0x555555dfb320, seq_idx = 0x555555637870,
+  output = 0x555555dfb510 "", data = std::shared_ptr<llama_ubatch::data_t> (use count 1, weak count 0) = {get() = 0x555555dfb400}}
+```
+And a little further down we have:
+```c++
+        ggml_status status;
+        const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_DECODER, mctx.get(), status);
+```
+```c++
+llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch,
+    llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
+
+    if (mctx && !mctx->apply()) {
+        LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
+        ret = GGML_STATUS_FAILED;
+        return nullptr;
+    }
+    ...
+}
+```
+Now, the `apply` function is called on the `llama_kv_cache_unified_context`:
+```c++
+bool llama_kv_cache_unified_context::apply() {
+    assert(!llama_memory_status_is_fail(status));
+
+    // no ubatches -> this is a KV cache update
+    if (ubatches.empty()) {
+        kv->update(lctx, do_shift, dinfo, sc_info);
+
+        return true;
+    }
+
+    kv->apply_ubatch(sinfos[i_cur], ubatches[i_cur]);
+
+    n_kv = kv->get_n_kv();
+
+    return true;
+}
+```
+In our case the ubatches is not empty (we have two of them) so this will call
+`apply_ubatch` on the `llama_kv_cache_unified` instance:
+```console
+(gdb) p kv
+$61 = (llama_kv_cache_unified *) 0x555555580da0
+```
+And notice that we are using the `sinfos` vector to get the slot information for
+the current microbatch, and also passing in the current microbatch. I kind of
+avoided to go into details about `apply_ubatch` before but this time we won't be
+undoing the changes but actually make the changes to the kv-cache.
+
+```c++
+void llama_kv_cache_unified::apply_ubatch(const slot_info & sinfo, const llama_ubatch & ubatch) {
+    llama_seq_id seq_pos_max_rm[LLAMA_MAX_SEQ];
+    for (uint32_t s = 0; s < LLAMA_MAX_SEQ; ++s) {
+        seq_pos_max_rm[s] = -1;
+    }
+```
+This is just initalizing the `seq_pos_max_rm` array which will be used to keep
+track of the maximum position that needs to be removed for each sequence. -1 mean
+don't remove anything and is the default values for each sequence.
+```console
+(gdb) p seq_pos_max_rm
+$62 = {-1 <repeats 64 times>}
+```
+
+Next we are going to iterate over all the streams in the `sinfo` (2) and sinfo
+size returns the number of indices (3):
+```console
+(gdb) p sinfo.n_stream()
+$71 = 2
+(gdb) p sinfo.size()
+$72 = 3
+(gdb) p ubatch
+$70 = (const llama_ubatch &) @0x555555dfb550: {b_equal_seqs = 1, n_tokens = 6, n_seq_tokens = 3, n_seqs = 2, n_seqs_unq = 2,
+  token = 0x555555643760, embd = 0x0, pos = 0x555555dfb2c0, n_seq_id = 0x555555dfb2e0, seq_id = 0x55555557a040,
+  seq_id_unq = 0x555555dfb360, seq_idx = 0x5555555a25b0, output = 0x555555dfb300 "",
+  data = std::shared_ptr<llama_ubatch::data_t> (use count 1, weak count 0) = {get() = 0x555555637720}}
+```
+
+```c++
+    for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
+        for (uint32_t ii = 0; ii < sinfo.size(); ++ii) {
+            const uint32_t i = s*sinfo.size() + ii;
+
+            auto & cells = v_cells[sinfo.strm[s]]; // get the cells for this stream
+
+            const auto idx = sinfo.idxs[s][ii];    // get cache cell index
+
+            if (!cells.is_empty(idx)) {
+                assert(cells.seq_count(idx) == 1);
+
+                const llama_seq_id seq_id = cells.seq_get(idx);
+                const llama_pos    pos    = cells.pos_get(idx);
+
+                seq_pos_max_rm[seq_id] = std::max(seq_pos_max_rm[seq_id], pos); // tracks the removal
+
+                cells.rm(idx); // Remove old data
+            }
+
+            cells.pos_set(idx, ubatch.pos[i]); // sets the position
+
+            for (int32_t s = 0; s < ubatch.n_seq_id[i]; s++) { // for each sequence in the microbatch
+                cells.seq_add(idx, ubatch.seq_id[i][s]); // add the sequence id to the cell
+            }
+        }
+    }
+```
+And to recap this again: a cell has a position which is the position the token
+embedding has in the sequence. And each cell has one or more sequence ids. So a
+single cell position can be part of multiple sequences. But also keep in mind
+that we are looking at the non-unified kv-cache here, so each sequence gets its
+own kv-cache, separate from the others so there is no sharing of cells between
+sequences.
+
+Next, we want to make sure that for any sequence, if position X and Z are in
+the cache then all the positions inbetween X and Z must also be in the cache.
+This is only if something was removed from the cache, which is tracked by
+`seq_pos_max_rm`:
+```c++
+    for (uint32_t s = 0; s < LLAMA_MAX_SEQ; ++s) {
+        if (seq_pos_max_rm[s] == -1) {
+            continue;
+        }
+
+        GGML_ASSERT(s < seq_to_stream.size());
+
+        auto & cells = v_cells[seq_to_stream[s]];
+
+        if (cells.seq_pos_min(s) <= seq_pos_max_rm[s]) {
+            LLAMA_LOG_DEBUG("%s: purging positions [%d, %d] of sequence %d from KV cache\n",
+                    __func__, cells.seq_pos_min(s), seq_pos_max_rm[s], s);
+
+            seq_rm(s, cells.seq_pos_min(s), seq_pos_max_rm[s] + 1);
+        }
+    }
+```
+To clarify this:
+```
+Position:    98  99  100  101  102   103  104    105   106
+Sequence 5: [T] [h]  [e]  [qu] [ick] [br] [own] [fox] [jmp]
+Cache cells: 50  51  52    53    54   55   56     57   58
+```
+Sequence 5 wants to add new tokens at positions 107, 108, 109, but the cache is
+getting full. The sliding window size is 6 tokens. Currently sequence 5 spans
+positions 98-106 (9 tokens), which exceeds the window.
+Reuse cells 50, 51, 52 (which held positions 98, 99, 100)
+```
+Cell 50 contained: pos=98, seq=5  → seq_pos_max_rm[5] = max(-1, 98) = 98
+Cell 51 contained: pos=99, seq=5  → seq_pos_max_rm[5] = max(98, 99) = 99
+Cell 52 contained: pos=100, seq=5 → seq_pos_max_rm[5] = max(99, 100) = 100
+```
+And then overwrite the cells:
+```console
+Cell 50: pos=98,seq=5 → pos=107,seq=5
+Cell 51: pos=99,seq=5 → pos=108,seq=5
+Cell 52: pos=100,seq=5 → pos=109,seq=5
+```
+```
+Sequence 5 now has:
+Position:    98   99   100  101  102  103  104  105  106
+Cache cells: 107  108  109  53    54   55   56   57   58
+```
+Notice that the positions 98, 99, 100 are still in there but have been overwritten
+and this has made the sequence non-contiguous in the cache. Also the sequence
+range will be 101 to 109, but this is not the case.
+TODO: revisit this with a fresh mind, I think I am missing something here.
+
+```c++
+
+    // move the head at the end of the slot
+    for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
+        auto & head = v_heads[sinfo.strm[s]];
+
+        head = sinfo.idxs[s].back() + 1;
+    }
+}
+```
+After `apply_ubatch` we return back into `llama_kv_cache_unified_context::apply`:
+```c+
+    n_kv = kv->get_n_kv();
+
+    return true;
+```
+
+```c++
+void llm_graph_input_attn_kv_unified::set_input(const llama_ubatch * ubatch) {
+    mctx->set_input_k_idxs(self_k_idxs, ubatch);
+    mctx->set_input_v_idxs(self_v_idxs, ubatch);
+
+    mctx->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn);
+}
+```
+
+```c++
+void llama_kv_cache_unified::set_input_k_idxs(ggml_tensor * dst, const llama_ubatch * ubatch, const slot_info & sinfo) const {
+    if (!supports_set_rows) {
+        return;
+    }
+
+    const uint32_t n_tokens = ubatch->n_tokens;
+    GGML_ASSERT(n_tokens == (int64_t) sinfo.size()*sinfo.n_stream());
+
+    GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
+    int64_t * data = (int64_t *) dst->data;
+
+    for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
+        const int64_t offs = sinfo.strm[s]*get_size();
+
+        for (uint32_t i = 0; i < sinfo.size(); ++i) {
+            data[s*sinfo.size() + i] = offs + sinfo.idxs[s][i];
+        }
+    }
+}
+```
+_wip_
 
 
 All tokens from a batch go into continuous positions starting from sinfo.head().
@@ -3425,7 +4484,7 @@ After this the returned ubatch will look like this:
   output = 0x00006000015d0000
 }
 ```
-So this has split the batch into two equals sized ubatches (not that we have
+So this has split the batch into two equals sized ubatches (note that we have
 9 tokens in total so there is one left over which I'll return to later).
 We can see that this ubatch has two sequences, and that each sequence is of equal
 size and the size of each is 4 tokens. 
