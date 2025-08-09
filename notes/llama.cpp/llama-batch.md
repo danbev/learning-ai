@@ -1,6 +1,326 @@
 ## llama_batch
 _wip_
 
+### batch
+```console
+(lldb) expr batch
+(llama_batch) $4 = {
+  n_tokens = 10
+  token = 0x0000000144abb400
+  embd = 0x0000000000000000
+  pos = 0x0000000144cac400
+  n_seq_id = 0x0000000144cacc00
+  seq_id = 0x0000000144cad400
+  logits = 0x0000000143187990
+}
+```
+```c++
+struct llama_batch {
+    int32_t      n_tokens;    // Total number of tokens
+    llama_token* token;       // Array of token IDs
+    float*       embd;        // Embeddings (if provided instead of tokens)
+    llama_pos*   pos;         // Position of each token in its sequence
+    int32_t*     n_seq_id;    // Number of sequences each token belongs to
+    llama_seq_id** seq_id;    // For each token, array of sequence IDs it belongs to
+    int8_t*      logits;      // Whether to compute logits for each token
+}
+```
+So we can see that a token in the batch can belong to multiple sequences, if its `n_seq_id` is greater
+than 1. In this case, the `seq_id` array will contain multiple sequence IDs for that token.
+
+```console
+Batch with 6 tokens:
+Token 0,1,2 → sequence 0
+Token 3,4,5 → sequence 1
+
+n_tokens = 6
+token = [tok0, tok1, tok2, tok3, tok4, tok5]
+n_seq_id = [1, 1, 1, 1, 1, 1]  // Each token belongs to 1 sequence
+seq_id[0] → [0]  // Token 0 belongs to sequence 0
+seq_id[1] → [0]  // Token 1 belongs to sequence 0
+seq_id[2] → [0]  // Token 2 belongs to sequence 0
+seq_id[3] → [1]  // Token 3 belongs to sequence 1
+seq_id[4] → [1]  // Token 4 belongs to sequence 1
+seq_id[5] → [1]  // Token 5 belongs to sequence 1
+```
+
+### ubatch
+```console
+(lldb) type lookup llama_ubatch
+struct llama_ubatch {
+    uint32_t b_equal_seqs;
+    uint32_t n_tokens;
+    uint32_t n_seq_tokens;
+    uint32_t n_seqs;
+    uint32_t n_seqs_unq;
+    llama_token *token;
+    float *embd;
+    llama_pos *pos;
+    int32_t *n_seq_id;
+    llama_seq_id **seq_id;
+    llama_seq_id *seq_id_unq;
+    int32_t *seq_idx;
+    int8_t *output;
+    struct data_t;
+    std::shared_ptr<llama_ubatch::data_t> data;
+    bool equal_seqs() const;
+}
+```
+```c++
+struct llama_ubatch {
+    uint32_t b_equal_seqs;    // Whether all tokens have same sequence pattern (split equal)
+    uint32_t n_tokens;        // Total tokens (same as batch)
+    uint32_t n_seq_tokens;    // Tokens per sequence
+    uint32_t n_seqs;          // Number of sequence sets in this ubatch
+    uint32_t n_seqs_unq;      // Number of unique sequence IDs
+
+    // Per-token data (same as batch)
+    llama_token* token;       // Token IDs
+    float*       embd;        // Embeddings
+    llama_pos*   pos;         // Positions
+    int32_t*     n_seq_id;    // Number of sequences per token
+    llama_seq_id** seq_id;    // Sequence IDs per token (pointers to original)
+
+    llama_seq_id* seq_id_unq; // Compact list of unique seq IDs [0, 1]
+    int32_t*      seq_idx;    // Maps seq_id → index in seq_id_unq
+
+    int8_t*      output;      // Replaces batch.logits
+
+    // Internal data
+    std::shared_ptr<data_t> data;  // Shared data structures
+}
+```
+
+```console
+Batch with 6 tokens:
+Token 0,1,2 → sequence 0
+Token 3,4,5 → sequence 1
+
+b_equal_seqs = 1        // All tokens follow same pattern (3 per seq)
+n_seq_tokens = 3        // 3 tokens per sequence
+n_seqs = 2              // 2 sequence sets in batch
+n_seqs_unq = 2          // 2 unique sequence IDs
+
+seq_id_unq = [0, 1]     // List of unique sequences
+seq_idx = [0, 1, -1, -1, ...]  // Remapping table
+         // ↑  ↑
+         // seq 0 at index 0
+         //    seq 1 at index 1
+
+// Output control (replaces logits)
+output = [0, 0, 1, 0, 0, 1]  // Which tokens generate output
+```
+
+#### `seq_id_unq` and `seq_idx`
+Instead of having to have an array of 64 entries, one for each possible sequence if we have
+less then 64 only the actuall uses sequence ids are stored in `seq_id_unq`. And `seq_idx` is used
+to identify which of these a token belongs to.
+
+```
+// Only allocate for ACTIVE sequences
+float kv_cache_compact[2][max_tokens][dim];  // Just 2 sequences!
+
+// Remapping via seq_idx:
+seq_id_unq = [5, 27]        // The actual sequence IDs
+seq_idx[5] = 0              // Sequence 5 → use kv_cache_compact[0]
+seq_idx[27] = 1             // Sequence 27 → use kv_cache_compact[1]
+
+// Now fully utilized:
+kv_cache_compact[0][...]    // USED for sequence 5
+kv_cache_compact[1][...]    // USED for sequence 27
+
+// Memory usage: 2 × max_tokens × dim × sizeof(float)
+// 100% of allocated memory is used!
+```
+
+So without this compaction we would have something like this:
+```c++
+int token_idx = 2;
+llama_seq_id seq_id = *ub.seq_id[token_idx];  // = 27
+
+// float* kv = kv_cache[27];  // Direct index, but cache is huge
+
+int compact_idx = ub.seq_idx[seq_id];  // seq_idx[27] = 1
+float* kv = kv_cache_compact[compact_idx];  // Use slot 1
+```
+So this will allow the kv-cache and attention mask matrices to be much smaller, so
+instead of having to reserve 64 entires for the kv-cache we can just reserve
+the number of sequences that are actually used in the batch.
+
+So we use the token id to look up the sequence id for that particular token using
+`ubatch.seq_id(token_id)`. This will give us a sequence id for the token. We then
+use this sequence id to look up the index of the sequence in the `seq_id_unq` array
+using `ubatch.seq_idx(seq_id)`. This will give us the index of the sequence in the
+`seq_id_unq` array.
+So something like this:
+```c++
+(lldb) p ubatch.token[3]
+(llama_token) 1                // The actual token value (vocab ID)
+
+(lldb) p ubatch.n_seq_id[3]
+(int32_t) 1                    // Number of sequences this token belongs to
+
+(lldb) p ubatch.seq_id[3][0]  // Token at index 3 belongs to sequence 1, only 1 hence [0]
+(llama_seq_id) 1
+
+(lldb) p ubatch.seq_idx[1]   // Sequence 1 is at compact index 1
+(int32_t) 1
+
+(lldb) p ubatch.seq_id_unq[1] // Verify: compact slot 1 contains sequence 1
+(llama_seq_id) 1
+```
+
+### Walkthrough of non-unified kv-cache for llama_batch
+First we need to make sure that the environment variable `LLAMA_SET_ROWS` is set to `1`:
+```console
+$ export LLAMA_SET_ROWS=1
+```
+And then start the example program `simple-prompt-multi`which sets up a batch with two
+sequences:
+```console
+$ lldb simple-prompt-multi
+```
+And well start by setting a breakpoint in `llama_batch_allocr::init_batch`:
+```console
+(lldb) br set -f llama-kv-cache-unified.cpp -l 485
+(lldb) r
+```
+
+The entry point of this this session will be `llama_context::decode`:
+```c++
+    if (!balloc->init(batch_inp, vocab, memory.get(), n_embd,
+        cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max, output_all)) {
+```
+In this case we are looking at the non-unified case so `cparams.kv_unified` will be `false`:
+```console
+(lldb) expr  cparams.kv_unified
+(bool) $1 = false
+```
+And `balloc` is of type `llama_batch_allocr`:
+```
+(lldb) expr this->balloc
+(std::unique_ptr<llama_batch_allocr>) $3 = llama_batch_allocr @ 0x00000001431056b0 {
+  pointer = 0x00000001431056b0
+}
+(lldb) type lookup llama_batch_allocr
+class llama_batch_allocr {
+    llama_batch batch;
+    const llama_vocab *vocab;
+    const uint32_t n_pos_per_embd;
+    uint32_t n_embd;
+    uint32_t n_seq_max;
+    uint32_t n_outputs;
+    std::array<int, 1> seq_id_0;
+    std::vector<int> pos;
+    std::vector<int> n_seq_id;
+    std::vector<int *> seq_id;
+    std::vector<int> seq_id_unq;
+    std::vector<int> seq_idx;
+    std::vector<signed char> output;
+    bool has_cpl;
+    std::vector<std::set<int> > seq_pos;
+    std::vector<std::vector<bool> > seq_cpl;
+    std::vector<std::bitset<64> > seq_set;
+    std::unordered_map<std::bitset<64>, std::vector<int> > seq_set_map;
+    std::vector<int> out_ids;
+    uint32_t n_used;
+    std::vector<bool> used;
+    int debug;
+public:
+    llama_batch_allocr(uint32_t);
+    bool init(const llama_batch &, const llama_vocab &, const llama_memory_i *, uint32_t, uint32_t, bool);
+    const llama_batch &get_batch() const;
+    uint32_t get_n_tokens() const;
+    uint32_t get_n_outputs() const;
+    uint32_t get_n_used() const;
+    std::vector<int> &get_out_ids();
+    llama_pos seq_pos_min(llama_seq_id) const;
+    llama_pos seq_pos_max(llama_seq_id) const;
+    void split_reset();
+    llama_ubatch split_simple(uint32_t);
+    llama_ubatch split_equal(uint32_t, bool);
+    llama_ubatch split_seq(uint32_t);
+    llama_ubatch ubatch_reserve(uint32_t, uint32_t);
+    void clear();
+    llama_ubatch ubatch_add(const std::vector<int> &, uint32_t, bool);
+    void ubatch_print(const llama_ubatch &, int);
+}
+```
+
+So the first thing that happens is that `llama_batch_allocr::init` is called:
+```c++
+bool llama_batch_allocr::init(
+        const llama_batch & batch_inp,
+        const llama_vocab & vocab,
+        const llama_memory_i * memory,
+        uint32_t n_embd,
+        uint32_t n_seq_max,
+        bool output_all) {
+    ...
+    batch = batch_inp;
+}
+```
+And our input batch looks like this:
+```console
+(lldb) p batch_inp
+(const llama_batch &) 0x000000016fdfe698: {
+  n_tokens = 10
+  token = 0x0000000144abb400
+  embd = 0x0000000000000000
+  pos = 0x0000000144cac400
+  n_seq_id = 0x0000000144cacc00
+  seq_id = 0x0000000144cad400
+  logits = 0x0000000143187990
+}
+```
+There are a number of sanity checks that are performed in init and also it will add missing
+information if information is missing from the batch, and notice that balloc will store a reference
+to `batch_inp`.
+In this case all the fields are set so I'll skip this part.
+```c++
+    //
+    // compute stats
+    //
+
+    this->n_embd    = n_embd;
+    this->n_seq_max = n_seq_max;
+
+    // count the outputs in this batch
+    for (int32_t i = 0; i < batch.n_tokens; ++i) {
+        n_outputs += batch.logits[i] != 0;
+    }
+```
+Notice how the the number of outputs is counted here, it checks which tokens have there logits
+set and count them.
+
+Next, there will be a check to see if there are sequences that are coupled
+```
+    has_cpl = false;
+
+    // determine coupled sequences
+    // these are pairs of sequences that have at least one token in the input batch that is assigned to both of them
+    for (int32_t i = 0; i < batch.n_tokens; ++i) {
+        const llama_seq_id s0 = batch.seq_id[i][0];
+
+        for (int32_t s = 0; s < batch.n_seq_id[i]; ++s) {
+            const llama_seq_id s1 = batch.seq_id[i][s];
+
+            seq_pos[s1].insert(batch.pos[i]);
+
+            if (s > 0) {
+                // mark that sequence s1 is coupled to s0
+                seq_cpl[s1][s0] = true;
+
+                // note: tracking the other way around is not necessary for now
+                //seq_cpl[s0][s1] = true;
+
+                has_cpl = true;
+            }
+        }
+    }
+```
+
+
 One thing to note when we use a non-unified kv-cache is how ubatches are handled:
 ```c++
 llama_memory_context_ptr llama_kv_cache_unified::init_batch(
