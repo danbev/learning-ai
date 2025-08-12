@@ -55,7 +55,7 @@ variable is the thread id. The `blockIdx.x` is the block id and the
 number of threads in a block. The `blockIdx.x * blockDim.x + threadIdx.x`
 is the global thread id.
 
-There is an example in [array_add](../gpu/cuda/src/array_add.cu) that shows the
+There is an example in [array-add](../gpu/cuda/src/array-add.cu) that shows the
 above example.
 
 ### Parallel Thread Execution (PTX)
