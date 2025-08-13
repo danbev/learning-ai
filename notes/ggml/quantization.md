@@ -249,13 +249,18 @@ void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_REST
         y[i].d = GGML_FP32_TO_FP16(d);
 
         for (int j = 0; j < qk/2; ++j) {
+            // Extract and scale/divide value in x for positions 0, 1, 2, 3, ... , 15
             const float x0 = x[i*qk + 0    + j]*id;
+            // Extract and scale/divide value in x for positions 16, 17, 18, 19, .. , 31
+            // because qk is 32.
             const float x1 = x[i*qk + qk/2 + j]*id;
 
             const uint8_t xi0 = MIN(15, (int8_t)(x0 + 8.5f));
             const uint8_t xi1 = MIN(15, (int8_t)(x1 + 8.5f));
 
+            // Store xi0 (not uint8_t) in lower 4 bits
             y[i].qs[j]  = xi0;
+            // Store xi1 (not uint8_t) in upper 4 bits
             y[i].qs[j] |= xi1 << 4;
         }
     }
@@ -273,8 +278,8 @@ After the first loop we use max value to compute the delta/scale value:
 ```
 So each float32 (single precision) value is going to be represented with 4 bits.
 The `block_q4_0` stores its members as `uint8_t` which is 1 byte (8 bits) and
-unsigned so it can only store positive values. That gives as a range of [0-15]
-(0000b-1111b) which is 16 values. 
+unsigned so it can only store positive values.
+That gives as a range of [0-15] (0000b-1111b) which is 16 values. 
 
 But notice that the code above is using -8 as the denominator and this is creating
 a range of [-8, 7]. Why do this? With this range 0 is always maps to the center
@@ -285,6 +290,56 @@ Also notice that this is using the inverse delta `id` which is done so that
 division can be avoided and instead just a multiplication operation performed
 instead. The "real" delta/scale is the only thing stored in the block as that
 is what is required for dequantization.
+
+And notice that in the following how the scaled values are extracted from the
+input array `x`:
+```c++
+            // Extract and scale/divide value in x for positions 0, 1, 2, 3, ... ,15
+            const float x0 = x[i*qk + 0    + j]*id;
+            // Extract and scale/divide value in x for positions 16, 17, 18, 19, .. ,31
+            const float x1 = x[i*qk + qk/2 + j]*id;
+```
+So this is accessing values from the input array in pairs, {0, 15}, {1, 16},
+{2, 17}, ..., {15, 31}. This will cause the quantized values to be stored
+in way something like this:
+```console
+x 
+  [f0, f1, f2, f3, f4, f5, f6, f7, f8, f0, f10, f11, f12, f13, f14, f15, f16, f17... f31]
+
+    low  high
+qa  [f0, f16]
+    [f1, f17]
+    [f2, f18]
+    [f3, f19]
+     ...
+    [f15, f31]
+```
+Notice that in the low bits we have the first quantized values, and in the high
+bits we have the second quantized values.
+
+So a single 16-byte load holds all 32 4-bit codes: the first 16 in the low
+nibbles and the second 16 in the high nibbles.
+
+So why would we do this? Well if we are thinking in pure C/C++ programming we
+would have to access these values using something like:
+```c++
+for (int i = 0; i < 16; i++) {
+    lo[i] = qs[i] & 0x0F;
+}
+```
+To get the low values that is.
+
+The advantage of this packing though is that it allows efficient processing using
+SIMD instructions we can now do the following:
+```console
+__m128i v   = _mm_loadu_si128((const __m128i*)qs);      // loads qs[0..15]
+__m128i msk = _mm_set1_epi8(0x0F);                      // mask = 0x0F repeated in all bytes
+__m128i lo  = _mm_and_si128(v, msk);
+```
+This does the same things as our c code above but for all 16 bytes in `v` get
+masked in parallel — no loop needed, no single-value restriction.
+
+And example of can be found in [packing.cpp](../fundamentals/simd/src/packing.cpp)
 
 And notice that in the quantization stage later we are adding 8.5 to the
 quantized value:
@@ -311,6 +366,13 @@ id = 1.0 / -0.3625 = -2.758
 2.9 * -2.758 = -7.998 → -7.998 + 8.5 = 0.502 → stored as 0
 ```
 Notice that there are multiple values that map to the same quantized value!
+
+```c++
+            // Store xi0 (not uint8_t) in lower 4 bits
+            y[i].qs[j]  = xi0;
+            // Store xi1 (not uint8_t) in upper 4 bits
+            y[i].qs[j] |= xi1 << 4;
+```
 
 #### Dequantization
 ```
