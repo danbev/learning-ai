@@ -5,7 +5,7 @@ operations. ARM processors use NEON instructions.
 
 ### Introduction
 SIMD utilizes special registers which can hold 128, 256, 512, or even 1024 bits
-of data. The register used is divided into smaller blocks of 8, 16, 32, or 64
+of data. The register used are divided into smaller blocks of 8, 16, 32, or 64
 bits and perform the same operation on all the blocks simultaneously.
 
 Now, the processor itself needs to have physical support for the instructions,
@@ -22,7 +22,7 @@ $ gcc --target-help
 
 * -mavx512vl (Vector Length Extension) enables AVX512 ops on 256/128 bit regs
 * -mavx512bw (Byte and Word) enables AVX512 ops on 512 bit regs
-* -mavx512vbmi (Vector Byte Manipulation Instructions) extens the existing AVX512
+* -mavx512vbmi (Vector Byte Manipulation Instructions) extends the existing AVX512
 instruction set byte and work operations (8/16 bit operations).
 * -mfma (Fused Multiply-Add) enables FMA instructions
 * -mf16c (Half Precision Floating Point Conversion) provides support for
@@ -77,11 +77,32 @@ registers were renamed from XMM0–XMM7 to YMM0–YMM7. It adds 8 new registers
 
 #### Functions format
 ```
-_mm<bit_width>_<name<data_type>
+_mm[width]_<operator>_<element_type>
 ```
-`_mm` is a prefix for all SIMD functions. The `<bit_width>` is the width of the
-return type register. The `<name>` is the name of the function and the
-`<data_type>` is the data type of the function arguments:
+* `_mm` is a prefix for all SIMD functions.
+* `[width]` optional bit width (128 is the default, 256 for AVX, 512 for AVX512).
+* `<operator>` what the function does (add, sub, mul, div, etc.).
+* `<element_type>` how to interpret the data inside the register.
+
+For example:
+```c++
+__m128i m0f = _mm_set1_epi8(0x0F);
+```
+* __mm SSE intrinsic function (128-bit default).
+* set1 broadcast a value to all elements in the register.
+* epi8 `extended` packed integer 8-bit (128/8 = 16 elements of 8 bits each).
+
+The `extended` is a historical leftover from earlier MMX instructions that worked
+on 64-bit registers. SSE "extended" this to 128-bit registers.
+So we you see `epi8` think of this as 126/8 = 16 elements of 8 bits each.
+And if you see `epi16` think of this as 128/16 = 8 elements of 16 bits each and
+so on:
+```
+__m128i with epi8:  128 bits ÷ 8 bits  = 16 elements (bytes)
+__m128i with epi16: 128 bits ÷ 16 bits = 8  elements (shorts)
+__m128i with epi32: 128 bits ÷ 32 bits = 4  elements (ints)
+__m128i with epi64: 128 bits ÷ 64 bits = 2  elements (long long)
+```
 
 Data types:
 * __m128     128-bit register 4 floats
@@ -91,14 +112,15 @@ Data types:
 * __m256d    256-bit register 4 doubles
 * __m256i    256-bit register 8 integers
 
-In the function names `ps` stands for packed single precision (floats), `pd`
-stands for packed double precision (doubles), `epi` stands for extended packed
-integer, `si` stands for scalar integer, `sd` stands for scalar double, `ss`
-stands for scalar single, `epi8` stands for extended packed integer 8-bit.
+In the function names `ps` stands for packed single precision (floats 32-bits),
+`pd` stands for packed double precision (doubles 64-bits), `epi` stands for
+extended packed integer, `si` stands for scalar integer, `sd` stands for scalar
+double, `ss` stands for scalar single, `epi8` stands for extended packed
+integer 8-bit.
 
 ### maskload
 The idea here is that one might have a data type that does not fill a complete
-vector register. In this one can add a mask to the operation to only operate
+vector register. In this case one can add a mask to the operation to only operate
 on the elements that are set in the mask. For examples:
 ```c
 #include <stdio.h>
@@ -125,7 +147,7 @@ $ ./bin/masking
 1 2 3 4 0 0 0 0
 ```
 My initial though would be that -1 would be used to indicate that the elements
-should be included in the operation but the reason for using -1 is that that
+should be included in the operation, but the reason for using -1 is that that it
 produces a 1 in all bits of the integer and the most signficant bit is 1 so this
 is a simple check to be performed. This is using -1 so the processor can check
 the MSB and if it is 1 then it knows to include this element, and if zero it
@@ -135,9 +157,10 @@ bits to make sure they are all zeros as well which would be more work.
 
 
 ### immintrin.h
-This header provides immidate access to SIMD instructions. Immediate in that one
-only has to include this single header file to get access to all the SIMD and
-then compiler flags will determine which headers to include.
+This header provides immediate access to SIMD instructions. Immediate in that one
+only has to include this single header file to get access to all the available
+SIMD features (includes headers for them), and then compiler flags will determine
+which headers to include.
 ```c
 #include <x86gprintrin.h>
 #include <xmmintrin.h>
