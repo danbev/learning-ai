@@ -2,6 +2,9 @@
 Intel and AMD processors use AVX and AVX3 instructions to perform SIMD
 operations. ARM processors use NEON instructions.
 
+More notes (and example code) can be found in
+[fundamentals/simd](../fundamentals/simd/README.md).
+
 
 ### Introduction
 SIMD utilizes special registers which can hold 128, 256, 512, or even 1024 bits
@@ -682,3 +685,4 @@ Notice the `vpmaddubsw` instruction which is only availabe in AVX and AVX2.
 ```
 Now, the `xmm0` and `xmm1` registers are 128-bit registers and the `vpmaddubsw`
 and AVX2 uses 256-bit registers `ymm0, ymm1...ymm31`. This is a clear indication
+
