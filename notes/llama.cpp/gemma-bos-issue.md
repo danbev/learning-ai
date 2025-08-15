@@ -61,7 +61,7 @@ know when to start.
 
 ### Behavior of instruction tuned model
 ```console
-(venv) $ ./build/bin/llama-cli -m models/gemma-3-270m-it.gguf -p "What is the capital of France?" -n 20 -sp -no-cnv
+(venv) $ ./build/bin/llama-cli -m models/gemma-3-270m-it.gguf -p "What is the capital of France?" -n 20 -sp
 ...
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = gemma3
@@ -124,7 +124,7 @@ The instruction tuned model has the following in `tokenizer_config.json`:
 Now, the instruction tuned model have chat/conversation templates and their
 training data contains explicit role markers like `<start_of_turn>`. This already
 tells the model that this is the beginning of a user message and there is no
-need for a `<bos>` token.
+need for a `<bos>` token (apart for the one in the template, more on this later).
 
 So the above is not correct output for `llama-cli`.
 
@@ -198,38 +198,45 @@ With this change the bos token is added for the base model but not for the
 instruction tuned model. But here is still an issue with the `--jinja` flag.
 
 ### Issue with `--jinja` flag
-Even with the workaround in place the following output is generated when the
-`--jinja` flag is used with the instruction tuned model:
-```console
+The issue with `--jinja` flag is that 2 `<bos>` tokens are added instead of only
+one.
 (venv) $ build/bin/llama-cli -m models/gemma-3-270m-it.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt
 ...
-
-main: prompt: 'Test'
-main: number of tokens in prompt = 10
-     2 -> '<bos>'
-   105 -> '<start_of_turn>'
-  2364 -> 'user'
-   107 -> '
-'
-  3694 -> 'Test'
-   106 -> '<end_of_turn>'
-   107 -> '
-'
-   105 -> '<start_of_turn>'
-  4368 -> 'model'
-   107 -> '
-'
+Add output...
 ```
-Before the workaround there where two `<bos>` tokens in the prompt.
+
+In chat.cpp we have the following:
+```c++
+    minja::chat_template_options tmpl_opts;
+    // To avoid double BOS / EOS tokens, we're manually removing begining / trailing tokens
+    // instead of using `chat_template_options.use_bos_token = false`, since these tokens
+    // may be needed inside the template / between messages too.
+    auto result = tmpl.apply(tmpl_inputs, tmpl_opts);
+    if (inputs.add_bos && string_starts_with(result, tmpl.bos_token())) {
+        result = result.substr(tmpl.bos_token().size());
+    }
+    if (inputs.add_eos && string_ends_with(result, tmpl.eos_token())) {
+        result = result.substr(0, result.size() - tmpl.eos_token().size());
+    }
+    return result;
+```
 
 ```console
-(venv) $ gdb --args build/bin/llama-cli -m models/gemma-3-270m-it.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt
-(gdb) br main.cpp:153
-(gdb) r
-Thread 1 "llama-cli" hit Breakpoint 1, main (argc=10, argv=0x7fffffffd5f8) at /home/danbev/work/ai/llama.cpp/tools/main/main.cpp:153
-warning: Source file is more recent than executable.
-153	    auto chat_templates = common_chat_templates_init(model, params.chat_template);
-
+(gdb) p result
+$4 = "<bos><start_of_turn>user\nYou are a helpful assistant\n\nHello<end_of_turn>\n<start_of_turn>model\nHi there<end_of_turn>\n<start_of_turn>user\nHow are you?<end_of_turn>\n<start_of_turn>model\n"
+(gdb) p inputs.add_bos
+$5 = true
+gdb) p string_starts_with(result, tmpl.bos_token())
+$6 = true
+```
+And this does remove the bos token:
+```console
+(gdb) p result
+$8 = "<start_of_turn>user\nYou are a helpful assistant\n\nHello<end_of_turn>\n<start_of_turn>model\nHi there<end_of_turn>\n<start_of_turn>user\nHow are you?<end_of_turn>\n<start_of_turn>model\n"
+```
+So we first have:
+```c++
+    auto chat_templates = common_chat_templates_init(model, params.chat_template);
 ```
 ```c++
 common_chat_templates_ptr common_chat_templates_init(
@@ -238,23 +245,80 @@ common_chat_templates_ptr common_chat_templates_init(
     const std::string & bos_token_override,
     const std::string & eos_token_override)
 {
-    std::string default_template_src;
-    std::string template_tool_use_src;
+    ...
 
-    bool has_explicit_template = !chat_template_override.empty();
-    if (chat_template_override.empty()) {
-        GGML_ASSERT(model != nullptr);
-        const auto * str = llama_model_chat_template(model, /* name */ nullptr);
+    bool add_bos = false;
+    bool add_eos = false;
+    if (model) {
+        const auto * vocab = llama_model_get_vocab(model);
+        const auto get_token = [&](llama_token token, const char * name, const char * jinja_variable_name) {
+            if (token == LLAMA_TOKEN_NULL) {
+                if (default_template_src.find(jinja_variable_name) != std::string::npos
+                    || template_tool_use_src.find(jinja_variable_name) != std::string::npos) {
+                    LOG_WRN("common_chat_templates_init: warning: vocab does not have a %s token, jinja template won't work as intended.\n", name);
+                }
+                return std::string();
+            }
+            return common_token_to_piece(vocab, token, true);
+        };
+        token_bos = get_token(llama_vocab_bos(vocab), "BOS", "bos_token");
+        token_eos = get_token(llama_vocab_eos(vocab), "EOS", "eos_token");
+        add_bos = llama_vocab_get_add_bos(vocab);
+        add_eos = llama_vocab_get_add_eos(vocab);
+    }
+}
 ```
-So this is getting the chat template from the model.
+
 ```console
-(gdb) set print elements 0
-(gdb) p (char*) str
-$5 = 0x55555672ae50 "{{ bos_token }}\n{%- if messages[0]['role'] == 'system' -%}\n    {%- if messages[0]['content'] is string -%}\n        {%- set first_user_prefix = messages[0]['content'] + '\n\n' -%}\n    {%- else -%}\n        {%- set first_user_prefix = messages[0]['content'][0]['text'] + '\n\n' -%}\n    {%- endif -%}\n    {%- set loop_messages = messages[1:] -%}\n{%- else -%}\n    {%- set first_user_prefix = \"\" -%}\n    {%- set loop_messages = messages -%}\n{%- endif -%}\n{%- for message in loop_messages -%}\n    {%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}\n        {{ raise_exception(\"Conversation roles must alternate user/assistant/user/assistant/...\") }}\n    {%- endif -%}\n    {%- if (message['role'] == 'assistant') -%}\n        {%- set role = \"model\" -%}\n    {%- else -%}\n        {%- set role = message['role'] -%}\n    {%- endif -%}\n    {{ '<start_of_turn>' + role + '\n' + (first_user_prefix if loop.first else \"\") }}\n    {%- if message['content'] is string -%}\n        {{ message['content'] | trim }}\n    {%- elif message['content'] is iterable -%}\n        {%- for item in message['content'] -%}\n", ' ' <repeats 12 times>, "{%- if item['type'] == 'image' -%}\n", ' ' <repeats 16 times>, "{{ '<start_of_image>' }}\n", ' ' <repeats 12 times>, "{%- elif item['type'] == 'text' -%}\n", ' ' <repeats 16 times>, "{{ item['text'] | trim }}\n", ' ' <repeats 12 times>, "{%- endif -%}\n        {%- endfor -%}\n    {%- else -%}\n        {{ raise_exception(\"Invalid content type\") }}\n    {%- endif -%}\n    {{ '<end_of_turn>\n' }}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n    {{'<start_of_turn>model\n'}}\n{%- endif -%}\n"
+(gdb) until 586
+common_chat_templates_init (model=0x555555dced00, chat_template_override="", bos_token_override="", eos_token_override="")
+    at /home/danbev/work/ai/llama.cpp/common/chat.cpp:586
+586	        add_bos = llama_vocab_get_add_bos(vocab);
+(gdb) n
+587	        add_eos = llama_vocab_get_add_eos(vocab);
+(gdb) p add_bos
+$28 = true
 ```
-Notice that this has the `bos_token` is in chat template which is as it should
-be. It should be in control of over the `bos_token`. The problem we had before
-was that because the model had `add_bos_token` set to `true`, it would also
-insert a `<bos>` token at the start of the prompt, resultin in the two `<bos>`
-tokens.
 
+Now, back in main.cpp we later have the following:
+```c++
+    const bool add_bos = llama_vocab_get_add_bos(vocab) && !params.use_jinja;
+```
+Now, here we have `params.use_jinja` set to `true`, so this is `false` so this
+means that the removal of the `<bos>` token in the chat template will not happen:
+```c++
+293             if (!params.system_prompt.empty() || !params.prompt.empty()) {
+294                 common_chat_templates_inputs inputs;
+295                 inputs.use_jinja = g_params->use_jinja;
+296                 inputs.messages = chat_msgs;
+297                 inputs.add_generation_prompt = !params.prompt.empty();
+298
+299                 prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
+300             }
+```
+But notice that `inputs.add_bos` is not set so the default will be false. Perhaps
+this should instead be set to `add_bos` from above?
+```console
+diff --git a/tools/main/main.cpp b/tools/main/main.cpp
+index dc776f59e..04379201e 100644
+--- a/tools/main/main.cpp
++++ b/tools/main/main.cpp
+@@ -255,7 +255,7 @@ int main(int argc, char ** argv) {
+         }
+     }
+
+-    const bool add_bos = llama_vocab_get_add_bos(vocab) && !params.use_jinja;
++    const bool add_bos = llama_vocab_get_add_bos(vocab);
+     if (!llama_model_has_encoder(model)) {
+         GGML_ASSERT(!llama_vocab_get_add_eos(vocab));
+     }
+@@ -294,6 +294,7 @@ int main(int argc, char ** argv) {
+                 common_chat_templates_inputs inputs;
+                 inputs.use_jinja = g_params->use_jinja;
+                 inputs.messages = chat_msgs;
++                inputs.add_bos = add_bos;
+                 inputs.add_generation_prompt = !params.prompt.empty();
+
+                 prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
+
+```
