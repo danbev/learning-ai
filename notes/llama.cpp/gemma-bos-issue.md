@@ -55,6 +55,9 @@ The pretrained/base model has following in `tokenizer_config.json`:
   ```
 }
 ```
+The pretrained/basemodels learn during training that a `<bos` token means
+this is the start of a new prompt/sentence. Without this the model will not
+know when to start.
 
 ### Behavior of instruction tuned model
 ```console
@@ -118,3 +121,140 @@ The instruction tuned model has the following in `tokenizer_config.json`:
   ...
 }
 ```
+Now, the instruction tuned model have chat/conversation templates and their
+training data contains explicit role markers like `<start_of_turn>`. This already
+tells the model that this is the beginning of a user message and there is no
+need for a `<bos>` token.
+
+So the above is not correct output for `llama-cli`.
+
+And running with `--jinja` flag, the output is:
+```console
+(venv) $ build/bin/llama-cli -m models/gemma-3-270m-it.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt
+...
+tokenize: Added a BOS token to the prompt as specified by the model but the prompt also starts with a BOS token. So now the final prompt starts with 2 BOS tokens. Are you sure this is what you want?
+main: prompt: 'Test'
+main: number of tokens in prompt = 11
+     2 -> '<bos>'
+     2 -> '<bos>'
+   105 -> '<start_of_turn>'
+  2364 -> 'user'
+   107 -> '
+'
+  3694 -> 'Test'
+   106 -> '<end_of_turn>'
+   107 -> '
+'
+   105 -> '<start_of_turn>'
+  4368 -> 'model'
+   107 -> '
+'
+
+main: interactive mode on.
+sampler seed: 1414592202
+sampler params:
+	repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+	dry_multiplier = 0.000, dry_base = 1.750, dry_allowed_length = 2, dry_penalty_last_n = 32768
+	top_k = 40, top_p = 0.950, min_p = 0.050, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 0.800
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+sampler chain: logits -> logit-bias -> penalties -> dry -> top-n-sigma -> top-k -> typical -> top-p -> min-p -> xtc -> temp-ext -> dist
+generate: n_ctx = 32768, n_batch = 2048, n_predict = -1, n_keep = 0
+
+== Running in interactive mode. ==
+ - Press Ctrl+C to interject at any time.
+ - Press Return to return control to the AI.
+ - To return control without starting a new line, end your input with '/'.
+ - If you want to submit another line, end your input with '\'.
+ - Not using system message. To change it, set a different value via -sys PROMPT
+
+user
+Test
+model
+Okay, I understand. I'm ready to help! I'm
+>
+```
+
+### Workaround
+The workaround for this was to add the following to `convert_hf_to_gguf.py`:
+```python
+class Gemma3Model(TextModel):
+    model_arch = gguf.MODEL_ARCH.GEMMA3
+    norm_shift = 1.0  # Gemma3RMSNorm adds 1.0 to the norm value
+
+    def set_vocab(self):
+        self._set_vocab_sentencepiece()
+
+        self.gguf_writer.add_add_space_prefix(False)
+
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(self.dir_model)
+        if tokenizer.chat_template is None:
+            self.gguf_writer.add_add_bos_token(True)
+        else:
+            self.gguf_writer.add_add_bos_token(False)
+
+```
+With this change the bos token is added for the base model but not for the
+instruction tuned model. But here is still an issue with the `--jinja` flag.
+
+### Issue with `--jinja` flag
+Even with the workaround in place the following output is generated when the
+`--jinja` flag is used with the instruction tuned model:
+```console
+(venv) $ build/bin/llama-cli -m models/gemma-3-270m-it.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt
+...
+
+main: prompt: 'Test'
+main: number of tokens in prompt = 10
+     2 -> '<bos>'
+   105 -> '<start_of_turn>'
+  2364 -> 'user'
+   107 -> '
+'
+  3694 -> 'Test'
+   106 -> '<end_of_turn>'
+   107 -> '
+'
+   105 -> '<start_of_turn>'
+  4368 -> 'model'
+   107 -> '
+'
+```
+Before the workaround there where two `<bos>` tokens in the prompt.
+
+```console
+(venv) $ gdb --args build/bin/llama-cli -m models/gemma-3-270m-it.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt
+(gdb) br main.cpp:153
+(gdb) r
+Thread 1 "llama-cli" hit Breakpoint 1, main (argc=10, argv=0x7fffffffd5f8) at /home/danbev/work/ai/llama.cpp/tools/main/main.cpp:153
+warning: Source file is more recent than executable.
+153	    auto chat_templates = common_chat_templates_init(model, params.chat_template);
+
+```
+```c++
+common_chat_templates_ptr common_chat_templates_init(
+    const struct llama_model * model,
+    const std::string & chat_template_override,
+    const std::string & bos_token_override,
+    const std::string & eos_token_override)
+{
+    std::string default_template_src;
+    std::string template_tool_use_src;
+
+    bool has_explicit_template = !chat_template_override.empty();
+    if (chat_template_override.empty()) {
+        GGML_ASSERT(model != nullptr);
+        const auto * str = llama_model_chat_template(model, /* name */ nullptr);
+```
+So this is getting the chat template from the model.
+```console
+(gdb) set print elements 0
+(gdb) p (char*) str
+$5 = 0x55555672ae50 "{{ bos_token }}\n{%- if messages[0]['role'] == 'system' -%}\n    {%- if messages[0]['content'] is string -%}\n        {%- set first_user_prefix = messages[0]['content'] + '\n\n' -%}\n    {%- else -%}\n        {%- set first_user_prefix = messages[0]['content'][0]['text'] + '\n\n' -%}\n    {%- endif -%}\n    {%- set loop_messages = messages[1:] -%}\n{%- else -%}\n    {%- set first_user_prefix = \"\" -%}\n    {%- set loop_messages = messages -%}\n{%- endif -%}\n{%- for message in loop_messages -%}\n    {%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}\n        {{ raise_exception(\"Conversation roles must alternate user/assistant/user/assistant/...\") }}\n    {%- endif -%}\n    {%- if (message['role'] == 'assistant') -%}\n        {%- set role = \"model\" -%}\n    {%- else -%}\n        {%- set role = message['role'] -%}\n    {%- endif -%}\n    {{ '<start_of_turn>' + role + '\n' + (first_user_prefix if loop.first else \"\") }}\n    {%- if message['content'] is string -%}\n        {{ message['content'] | trim }}\n    {%- elif message['content'] is iterable -%}\n        {%- for item in message['content'] -%}\n", ' ' <repeats 12 times>, "{%- if item['type'] == 'image' -%}\n", ' ' <repeats 16 times>, "{{ '<start_of_image>' }}\n", ' ' <repeats 12 times>, "{%- elif item['type'] == 'text' -%}\n", ' ' <repeats 16 times>, "{{ item['text'] | trim }}\n", ' ' <repeats 12 times>, "{%- endif -%}\n        {%- endfor -%}\n    {%- else -%}\n        {{ raise_exception(\"Invalid content type\") }}\n    {%- endif -%}\n    {{ '<end_of_turn>\n' }}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n    {{'<start_of_turn>model\n'}}\n{%- endif -%}\n"
+```
+Notice that this has the `bos_token` is in chat template which is as it should
+be. It should be in control of over the `bos_token`. The problem we had before
+was that because the model had `add_bos_token` set to `true`, it would also
+insert a `<bos>` token at the start of the prompt, resultin in the two `<bos>`
+tokens.
+
