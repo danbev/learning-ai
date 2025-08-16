@@ -3,12 +3,12 @@ For models that support chat most often (perhaps always) provide a chat template
 with the model. Different models are trained with different types of chat
 interaction and using templates allows client program to interact with the model
 in a way that is compatible with the model. So if a different model is later
-used the the client program should not have to be changed as long as there is
+used then the client program should not have to be changed as long as there is
 a chat template for the new model.
 
 So chat templates are only about input to the LLM, taking the input from the
 client program transforming the input into a format that matches a format that
-the model in question was trained on. If the client program later want to use a
+the model in question was trained on. If the client program later wants to use a
 different model only the chat template needs to be updated to match the new
 model but the rest of the client code can stay the same?
 
@@ -149,20 +149,82 @@ see that it contains the following chat template in its tokenizer_config.json:
     {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' }}
 {%- endif %}
 ```
+
 Lets take a look at how this works with `llama-cli`:
+```console
+(venv) $ gdb --args build/bin/llama-cli -m ~/Downloads/mistralai_Mistral-Small-3.2-24B-Instruct-2506-IQ2_XXS.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt -t 1 --no-warmup
+(gdb) br main.cpp:153
+Breakpoint 1 at 0x83391: file /home/danbev/work/ai/llama.cpp/tools/main/main.cpp, line 153.
+```
+
+```c++
+int main(int argc, char ** argv) {
+    ...
+
+    std::vector<common_chat_msg> chat_msgs;
+```
+And a `common_chat_msg` looks like this:
+```console
+(gdb) ptype common_chat_msg
+type = struct common_chat_msg {
+    std::string role;
+    std::string content;
+    std::vector<common_chat_msg_content_part> content_parts;
+    std::vector<common_chat_tool_call> tool_calls;
+    std::string reasoning_content;
+    std::string tool_name;
+    std::string tool_call_id;
+
+    bool empty(void) const;
+    void ensure_tool_call_ids_set(std::vector<std::string> &,
+        const std::function<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >()> &);
+    bool operator==(const common_chat_msg &) const;
+    bool operator!=(const common_chat_msg &) const;
+}
+```
+So we can have multiple chat messages and I'm thinking that there are for different
+things like perhaps one for the system prompt, one for the user and one for the
+assistant (something like that).
+
+The next chat template related code is the following:
 ```c++
     const llama_vocab * vocab = llama_model_get_vocab(model);
-    auto chat_templates = common_chat_templates_from_model(model, params.chat_template);
+    auto chat_templates = common_chat_templates_init(model, params.chat_template);
 ```
 ```c++
-common_chat_templates common_chat_templates_from_model(const struct llama_model * model, const std::string & chat_template_override)
+common_chat_templates_ptr common_chat_templates_init(
+    const struct llama_model * model,
+    const std::string & chat_template_override,
+    const std::string & bos_token_override,
+    const std::string & eos_token_override)
 {
     std::string default_template_src;
     std::string template_tool_use_src;
 
     bool has_explicit_template = !chat_template_override.empty();
+```
+So we can see that we have strings for a default template and one for too usage.
+And `has_explicit_template` is set to true if we pass in a template from 
+`params.chat_template`. TODO: I wonder if this is important with regards to the
+bos token and eos tokens and how they are handled.
+In this case the arguments to this function are (including the default parameters
+that we did not pass):
+```console
+(gdb) s
+common_chat_templates_init (model=0x555555db0b20,
+                            chat_template_override="",
+                            bos_token_override="",
+                            eos_token_override="")
+    at /home/danbev/work/ai/llama.cpp/common/chat.cpp:530
+```
+
+Next, since we did not pass in a `chat_template_override` we will will try to
+load one from the model:
+```c++
     if (chat_template_override.empty()) {
-        auto str = llama_model_chat_template(model, /* name */ nullptr);
+        GGML_ASSERT(model != nullptr);
+        const auto * str = llama_model_chat_template(model, /* name */ nullptr);
+
         if (str) {
             default_template_src = str;
             has_explicit_template = true;
@@ -173,8 +235,84 @@ common_chat_templates common_chat_templates_from_model(const struct llama_model 
             has_explicit_template = true;
         }
     } else {
+        default_template_src = chat_template_override;
+    }
 ```
-This will call `llama_model_chat_template` which looks like this:
+We are passing in `nullptr` as the name so this will look up the value for the
+key (from `llama-arch.cpp`):
+```c++
+    `{ LLM_KV_TOKENIZER_CHAT_TEMPLATE,        "tokenizer.chat_template"                 },
+```
+```c++
+const char * llama_model_chat_template(const llama_model * model, const char * name) {
+    const auto key = name ? LLM_KV(model->arch, name)(LLM_KV_TOKENIZER_CHAT_TEMPLATE)
+        : LLM_KV(model->arch)(LLM_KV_TOKENIZER_CHAT_TEMPLATE);
+    const auto & it = model->gguf_kv.find(key);
+
+    if (it == model->gguf_kv.end()) {
+        // one-off fix for very popular models (so we are not flooded with issues)
+        // do not extend this list unless absolutely necessary
+        // Mistral-Small-2503 does not have built-in chat template
+        llama_vocab_pre_type pre_type = model->vocab.get_pre_type();
+        if (!name && pre_type == LLAMA_VOCAB_PRE_TYPE_TEKKEN && model->layers.size() == 40) {
+            return "mistral-v7-tekken";
+        }
+
+        return nullptr;
+    }
+
+    return it->second.c_str();
+}
+```
+The string returned from this will be:
+```console
+(gdb) p str
+$3 = 0x555555db3680 "{%- set today = strftime_now(\"%Y-%m-%d\") %}\n{%- set default_system_message = \"You are Mistral Small 3, a Large Language Model (LLM) created by Mistral AI, a French startup headquartered in Paris.\\nYou"...
+
+To print out the complete string do:
+(gdb) set print elements 0
+(gdb) p str
+```
+So since we have a template we will set this as the `default_template_src`, and
+this will also set `has_explicit_template` to true.
+Following that we have and notice that we are doing the same thing but this
+time passing in a name of the template; `tool_use`:
+```c++
+        str = llama_model_chat_template(model, /* name */ "tool_use");
+        if (str) {
+            template_tool_use_src = str;
+            has_explicit_template = true;
+        }
+```
+So there might be a default template and or a named template for tool use, in
+both cases the is counted as an explicit template. In this session there is
+not tool use template.
+
+Following that there is a check if the `default_template_src` is empty or if it
+the source is simply the string 'chatml':
+```c++
+    if (default_template_src.empty() || default_template_src == "chatml") {
+        if (!template_tool_use_src.empty()) {
+            default_template_src = template_tool_use_src;
+        } else {
+            default_template_src = CHATML_TEMPLATE_SRC;
+        }
+    }
+```
+```c++
+    // TODO @ngxson : this is a temporary hack to prevent chat template from throwing an error
+    // Ref: https://github.com/ggml-org/llama.cpp/pull/15230#issuecomment-3173959633
+    if (default_template_src.find("<|channel|>") != std::string::npos
+            // search for the error message and patch it
+            && default_template_src.find("in message.content or") != std::string::npos) {
+        string_replace_all(default_template_src,
+            "{%- if \"<|channel|>analysis<|message|>\" in message.content or \"<|channel|>final<|message|>\" in message.content %}",
+            "{%- if false %}");
+    }
+```
+
+_wip_
+
 ```c++
 const char * llama_model_chat_template(const struct llama_model * model, const char * name) {
     const auto key = name ? LLM_KV(model->arch, name)(LLM_KV_TOKENIZER_CHAT_TEMPLATE_N)
