@@ -322,3 +322,6 @@ index dc776f59e..04379201e 100644
                  prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
 
 ```
+The actual fix for this turned out to be different but related. More details
+can be found in the pull request:
+https://github.com/ggml-org/llama.cpp/pull/15326
