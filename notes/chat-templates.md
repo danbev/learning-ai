@@ -299,6 +299,7 @@ the source is simply the string 'chatml':
         }
     }
 ```
+Next we have the following check:
 ```c++
     // TODO @ngxson : this is a temporary hack to prevent chat template from throwing an error
     // Ref: https://github.com/ggml-org/llama.cpp/pull/15230#issuecomment-3173959633
@@ -308,6 +309,216 @@ the source is simply the string 'chatml':
         string_replace_all(default_template_src,
             "{%- if \"<|channel|>analysis<|message|>\" in message.content or \"<|channel|>final<|message|>\" in message.content %}",
             "{%- if false %}");
+    }
+```
+So if the the current `default_template_src` contains the string
+`<|channel|>` and also the string `in message.content or` then it will replace
+with `{%- if false %}`.
+TOOD: readup on on gpt-oss channel tags and chat template in general.
+
+Folloing that we have:
+```c++
+    std::string token_bos = bos_token_override;
+    std::string token_eos = eos_token_override;
+    bool add_bos = false;
+    bool add_eos = false;
+```
+And recall that the bos and eos overrides come from default parameters of which
+are "" for this session. And then we can also see that `add_bos` and `add_eos`
+are set to false. 
+```c++
+    if (model) {
+        const auto * vocab = llama_model_get_vocab(model);
+        const auto get_token = [&](llama_token token, const char * name, const char * jinja_variable_name) {
+            if (token == LLAMA_TOKEN_NULL) {
+                if (default_template_src.find(jinja_variable_name) != std::string::npos
+                    || template_tool_use_src.find(jinja_variable_name) != std::string::npos) {
+                    LOG_WRN("common_chat_templates_init: warning: vocab does not have a %s token, jinja template won't work as intended.\n", name);
+                }
+                return std::string();
+            }
+            return common_token_to_piece(vocab, token, true);
+        };
+```
+So we have a lambda `get_token` which will take a token id, and name of the token
+and a jinja variables name. Notice that this will first check that the variable
+is used in the template and log a warning if that is not the case and return
+an empty string.
+And it will then call `common_token_to_piece` which will convert the token to
+a `piece` of text representing the token. 
+```c++
+std::string common_token_to_piece(
+          const struct llama_vocab * vocab,
+                       llama_token   token,
+                       bool          special = true);
+```
+So the `get_token` lambda will get the string representation of the token it
+passes into it. Perhaps a name like `token_to_string` or `token_to_text` would
+have been more descriptive.
+
+And notice that this will call `llama_token_to_piece` and pass in 0 as the left
+strip argument.
+
+Next, we use that lambda to get with the string representation of the of the
+bos and eos tokens:
+```c++
+        token_bos = get_token(llama_vocab_bos(vocab), "BOS", "bos_token");
+        token_eos = get_token(llama_vocab_eos(vocab), "EOS", "eos_token");
+```
+```console
+(gdb) p token_bos
+$9 = "<s>"
+(gdb) p token_eos
+$10 = "</s>"
+```
+The we get the `add_bos` and `add_eos` fiels from the model vocabulary:
+```c++
+        add_bos = llama_vocab_get_add_bos(vocab);
+        add_eos = llama_vocab_get_add_eos(vocab);
+    }
+```
+```console
+(gdb) p add_bos
+$13 = true
+(gdb) p add_eos
+$14 = false
+```
+After that we create a unique pointer to a `common_chat_templates` and calling
+the default constructor:
+```c++
+    common_chat_templates_ptr tmpls(new common_chat_templates());
+```
+This is what the struct looks like:
+```c++
+typedef minja::chat_template common_chat_template;
+
+struct common_chat_templates {
+    bool add_bos;
+    bool add_eos;
+    bool has_explicit_template; // Model had builtin template or template overridde was specified.
+    std::unique_ptr<common_chat_template> template_default; // always set (defaults to chatml)
+    std::unique_ptr<common_chat_template> template_tool_use;
+};
+```
+Notice that `common_chat_template` is a typedef for `minja::chat_template`. Minja
+is a header only minimal implementation of Jinja2. Notice that this contains more
+than one template, hence the plural `common_chat_templates`.
+
+Then we set the fields on the the allocated struct:
+```c++
+    tmpls->has_explicit_template = has_explicit_template;
+    tmpls->add_bos = add_bos;
+    tmpls->add_eos = add_eos;
+```
+And then we try to create a `chat_template` from the `default_template_src`, and
+passing in the string representations for bos and eos:
+```c++
+    try {
+        tmpls->template_default = std::make_unique<minja::chat_template>(default_template_src, token_bos, token_eos);
+    } catch (const std::exception & e) {
+        LOG_ERR("%s: failed to parse chat template (defaulting to chatml): %s \n", __func__, e.what());
+        tmpls->template_default = std::make_unique<minja::chat_template>(CHATML_TEMPLATE_SRC, token_bos, token_eos);
+    }
+```
+In `vendor/minja/chat-template.hpp` we have the following constructor:
+```c++
+    chat_template(const std::string & source, const std::string & bos_token, const std::string & eos_token)
+        : source_(source), bos_token_(bos_token), eos_token_(eos_token)
+    {
+```
+And the same is then done for the tool use template. After that the function
+returns the unique pointer tmpls. And this will return us back into main.cpp.
+
+The next template related code is the following:
+```c++
+    // auto enable conversation mode if chat template is available
+    const bool has_chat_template = common_chat_templates_was_explicit(chat_templates.get());
+    if (params.conversation_mode == COMMON_CONVERSATION_MODE_AUTO) {
+        if (has_chat_template) {
+            LOG_INF("%s: chat template is available, enabling conversation mode (disable it with -no-cnv)\n", __func__);
+            params.conversation_mode = COMMON_CONVERSATION_MODE_ENABLED;
+        } else {
+            params.conversation_mode = COMMON_CONVERSATION_MODE_DISABLED;
+        }
+    }
+```
+So if the model has a chat template and the conversation mode is set to
+`COMMON_CONVERSATION_MODE_AUTO` then the conversation mode will be set to
+`COMMON_CONVERSATION_MODE_ENABLED`. The second check is needed as the model
+might have only had a tool usage template.
+
+Next, we have another check:
+```c++
+    // in case user force-activate conversation mode (via -cnv) without proper chat template, we show a warning
+    if (params.conversation_mode && !has_chat_template) {
+        LOG_WRN("%s: chat template is not available or is not supported. This may cause the model to output suboptimal responses\n", __func__);
+    }
+```
+
+After that we have another lambda, this one takes a role and content and binds
+the chat messages vector and the chat templates pointer:
+```c++
+    auto chat_add_and_format = [&chat_msgs, &chat_templates](
+        const std::string & role, const std::string & content) {
+
+        common_chat_msg new_msg;
+        new_msg.role = role;
+        new_msg.content = content;
+
+        auto formatted = common_chat_format_single(chat_templates.get(), chat_msgs, new_msg, role == "user", g_params->use_jinja);
+        chat_msgs.push_back(new_msg);
+        LOG_DBG("formatted: '%s'\n", formatted.c_str());
+        return formatted;
+    };
+```
+I'll go through this lambda in more detail later when we see how it is used.
+```c++
+    std::string prompt;
+    {
+        if (params.conversation_mode && params.enable_chat_template) {
+            if (!params.system_prompt.empty()) {
+                // format the system prompt (will use template default if empty)
+                chat_add_and_format("system", params.system_prompt);
+            }
+```
+If a system prompt had been passed in using `--system-prompt/sys` then that
+string would have been passed to the lambda `chat_add_and_format` including
+the role of `system`.
+
+
+
+```c++
+
+            if (!params.prompt.empty()) {
+                // format and append the user prompt
+                chat_add_and_format("user", params.prompt);
+            } else {
+                waiting_for_first_input = true;
+            }
+
+            if (!params.system_prompt.empty() || !params.prompt.empty()) {
+                common_chat_templates_inputs inputs;
+                inputs.use_jinja = g_params->use_jinja;
+                inputs.messages = chat_msgs;
+                inputs.add_generation_prompt = !params.prompt.empty();
+
+                prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
+            }
+        } else {
+            // otherwise use the prompt as is
+            prompt = params.prompt;
+        }
+
+        if (params.interactive_first || !prompt.empty() || session_tokens.empty()) {
+            LOG_DBG("tokenize the prompt\n");
+            embd_inp = common_tokenize(ctx, prompt, true, true);
+        } else {
+            LOG_DBG("use session tokens\n");
+            embd_inp = session_tokens;
+        }
+
+        LOG_DBG("prompt: \"%s\"\n", prompt.c_str());
+        LOG_DBG("tokens: %s\n", string_from(ctx, embd_inp).c_str());
     }
 ```
 
