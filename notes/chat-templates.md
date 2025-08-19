@@ -152,7 +152,7 @@ see that it contains the following chat template in its tokenizer_config.json:
 
 Lets take a look at how this works with `llama-cli`:
 ```console
-(venv) $ gdb --args build/bin/llama-cli -m ~/Downloads/mistralai_Mistral-Small-3.2-24B-Instruct-2506-IQ2_XXS.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt -t 1 --no-warmup
+(venv) $ gdb --args build/bin/llama-cli -m ~/Downloads/mistralai_Mistral-Small-3.2-24B-Instruct-2506-IQ2_XXS.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt -t 1 --no-warmup --system-prompt "You are a helpful assistent that answers in a sarcastic way"
 (gdb) br main.cpp:153
 Breakpoint 1 at 0x83391: file /home/danbev/work/ai/llama.cpp/tools/main/main.cpp, line 153.
 ```
@@ -485,41 +485,255 @@ If a system prompt had been passed in using `--system-prompt/sys` then that
 string would have been passed to the lambda `chat_add_and_format` including
 the role of `system`.
 
-
-
+But we do have a user prompt (specified using `--prompt/p`):
 ```c++
-
             if (!params.prompt.empty()) {
                 // format and append the user prompt
                 chat_add_and_format("user", params.prompt);
             } else {
                 waiting_for_first_input = true;
             }
+```
+So we will be calling the lambda `chat_add_and_format` with the role of "user",
+and the prompt which is simply `Test` in this case:
+```c++
+    auto chat_add_and_format = [&chat_msgs, &chat_templates](const std::string & role, const std::string & content) {
+        common_chat_msg new_msg;
+        new_msg.role = role;
+        new_msg.content = content;
 
-            if (!params.system_prompt.empty() || !params.prompt.empty()) {
-                common_chat_templates_inputs inputs;
-                inputs.use_jinja = g_params->use_jinja;
-                inputs.messages = chat_msgs;
-                inputs.add_generation_prompt = !params.prompt.empty();
+        auto formatted = common_chat_format_single(chat_templates.get(),
+                                                   chat_msgs, new_msg,
+                                                   role == "user",
+                                                   g_params->use_jinja);
+        chat_msgs.push_back(new_msg);
+        LOG_DBG("formatted: '%s'\n", formatted.c_str());
+        return formatted;
+    };
+```
+First a new `common_chat_msg` is created:
+```console
+(gdb) p new_msg
+$4 = {role = "", content = "", content_parts = std::vector of length 0, capacity 0,
+  tool_calls = std::vector of length 0, capacity 0, reasoning_content = "", tool_name = "", tool_call_id = ""}
+```
+```c++
+std::string common_chat_format_single(
+        const struct common_chat_templates * tmpls,
+        const std::vector<common_chat_msg> & past_msg,
+        const common_chat_msg & new_msg,
+        bool add_ass,   // add assistent as opposed to user role I think.
+        bool use_jinja) {
 
-                prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
-            }
-        } else {
-            // otherwise use the prompt as is
-            prompt = params.prompt;
-        }
-
-        if (params.interactive_first || !prompt.empty() || session_tokens.empty()) {
-            LOG_DBG("tokenize the prompt\n");
-            embd_inp = common_tokenize(ctx, prompt, true, true);
-        } else {
-            LOG_DBG("use session tokens\n");
-            embd_inp = session_tokens;
-        }
-
-        LOG_DBG("prompt: \"%s\"\n", prompt.c_str());
-        LOG_DBG("tokens: %s\n", string_from(ctx, embd_inp).c_str());
+    common_chat_templates_inputs inputs;
+    inputs.use_jinja = use_jinja;
+    inputs.add_bos = tmpls->add_bos;
+    inputs.add_eos = tmpls->add_eos;
+```
+First the inputs are set. Hmm, I think I'd like to add a system message to see
+how this is handled.
+```c++
+    std::string fmt_past_msg;
+    if (!past_msg.empty()) {
+        inputs.messages = past_msg;
+        inputs.add_generation_prompt = false;
+        fmt_past_msg = common_chat_templates_apply(tmpls, inputs).prompt;
     }
+    std::ostringstream ss;
+    // if the past_msg ends with a newline, we must preserve it in the formatted version
+    if (add_ass && !fmt_past_msg.empty() && fmt_past_msg.back() == '\n') {
+        ss << "\n";
+    };
+    // format chat with new_msg
+    inputs.messages.push_back(new_msg);
+    inputs.add_generation_prompt = add_ass;
+    auto fmt_new_msg = common_chat_templates_apply(tmpls, inputs).prompt;
+    // get the diff part
+    ss << fmt_new_msg.substr(fmt_past_msg.size(), fmt_new_msg.size() - fmt_past_msg.size());
+    return ss.str();
+}
+```
+And the more interesting case will be after the system message has been processed
+and the user message is processed.
+```console
+(gdb) p fmt_past_msg
+$20 = "[SYSTEM_PROMPT]You are a helpful assistent that answers in a sarcastic way[/SYSTEM_PROMPT]"
+
+(gdb) p fmt_new_msg
+$21 = "[SYSTEM_PROMPT]You are a helpful assistent that answers in a sarcastic way[/SYSTEM_PROMPT][INST]Test[/INST]"
+```
+And notice that at the end we get the substring:
+```console
+(gdb) p fmt_new_msg.substr(fmt_past_msg.size(), fmt_new_msg.size() - fmt_past_msg.size())
+$22 = "[INST]Test[/INST]"
+```
+
+So the entire prompt will be:
+```console
+(gdb) p prompt
+$29 = "[SYSTEM_PROMPT]You are a helpful assistent that answers in a sarcastic way[/SYSTEM_PROMPT][INST]Test[/INST]"
+```
+Which amounts to 19 tokens and this is what will be sent for inference/decoding
+the first time.
+
+During an interactive session when we type a new message, for example:
+```console
+<bos><start_of_turn>user
+Test<end_of_turn>
+<start_of_turn>model
+[New Thread 0x7fffb23b0000 (LWP 169710)]
+[New Thread 0x7fffb0bff000 (LWP 169711)]
+[New Thread 0x7fff9fe09000 (LWP 169712)]
+Okay, I'm ready! I'm eager to test. Please tell me what you'd like me to test. I'm here to help!
+<end_of_turn>
+
+> What is the Capital of Sweden?
+```
+This will "land" us in main.cpp:
+```c++
+                bool another_line = true;
+                do {
+                    another_line = console::readline(line, params.multiline_input);
+                    buffer += line;
+                } while (another_line);
+                ...
+
+                    bool format_chat = params.conversation_mode && params.enable_chat_template;
+                    std::string user_inp = format_chat
+                        ? chat_add_and_format("user", std::move(buffer))
+                        : std::move(buffer);
+```
+And in our case `format_chat` is true so a user message will be formatted
+using the template:
+```console
+(gdb) p user_inp
+$3 = "\n<start_of_turn>user\nWhat is the Capital of Sweden?<end_of_turn>\n<start_of_turn>model\n"
+```
+
+And this will end up in `common_chat_format_single`. Now, all past messages
+in a conversation are stored in `past_msg`, for example we might have the
+following:
+```console
+(gdb) p past_msg
+$4 = std::vector of length 2, capacity 2 = {{role = "user", content = "Test", content_parts = std::vector of length 0, capacity 0,
+    tool_calls = std::vector of length 0, capacity 0, reasoning_content = "", tool_name = "", tool_call_id = ""}, {
+    role = "assistant",
+    content = "assistant<|channel|>analysis<|message|>The user just typed \"Test\". They might be testing the system. Likely we respond with something indicating we received the test. Maybe a friendly acknowledgement.<|end|><|start|>assistant<|channel|>final<|message|>Got it! How can I assist you today?", content_parts = std::vector of length 0, capacity 0,
+    tool_calls = std::vector of length 0, capacity 0, reasoning_content = "", tool_name = "", tool_call_id = ""}}
+```
+And our new message is:
+```console
+(gdb) p new_msg
+$5 = (const common_chat_msg &) @0x7fffffffb3a0: {role = "user", content = "What is the capitlal of Sweden?", 
+  content_parts = std::vector of length 0, capacity 0, tool_calls = std::vector of length 0, capacity 0, reasoning_content = "", 
+  tool_name = "", tool_call_id = ""}
+```
+
+```c++
+std::string common_chat_format_single(
+        const struct common_chat_templates * tmpls,
+        const std::vector<common_chat_msg> & past_msg,
+        const common_chat_msg & new_msg,
+        bool add_ass,
+        bool use_jinja) {
+
+    common_chat_templates_inputs inputs;
+    inputs.use_jinja = use_jinja;
+    inputs.add_bos = tmpls->add_bos;
+    inputs.add_eos = tmpls->add_eos;
+
+    std::string fmt_past_msg;
+    if (!past_msg.empty()) {
+        inputs.messages = past_msg;
+        inputs.add_generation_prompt = false;
+        fmt_past_msg = common_chat_templates_apply(tmpls, inputs).prompt;
+    }
+```
+So this is passing in the past messages into template engine and it will return
+the processed templates as a string. Notice that we are setting `add_generation_prompt`
+to false.
+We can inspect the template using:
+```console
+(gdb) call (void)printf("%s", tmpls->template_default->source_.c_str())
+...
+       {%- elif loop.last and not add_generation_prompt %}
+            {#- Only render the CoT if the final turn is an assistant turn and add_generation_prompt is false #}
+            {#- This is a situation that should only occur in training, never in inference. #}
+            {%- if "thinking" in message %}
+                {{- "<|start|>assistant<|channel|>analysis<|message|>" + message.thinking + "<|end|>" }}
+            {%- endif %}
+
+            {#- <|return|> indicates the end of generation, but <|end|> does not #}
+            {#- <|return|> should never be an input to the model, but we include it as the final token #}
+            {#- when training, so the model learns to emit it. #}
+            {{- "<|start|>assistant<|channel|>final<|message|>" + message.content + "<|return|>" }}
+```
+And if we were to set `add_generation_prompt` to true then the template would
+add the following:
+```console
+{#- Generation prompt #}                                                        
+{%- if add_generation_prompt -%}                                                
+<|start|>assistant
+```
+So we can't just set `add_generation_prompt` to true here as that will also 
+cause the substring operation to fail.
+
+We could force this different for gpt-oss doing something like this:
+```console
+(gdb) p fmt_new_msg.substr(fmt_past_msg.size() -3, fmt_new_msg.size() - fmt_past_msg.size())
+$12 = "<|start|>user<|message|>What is the capitlal of Sweden?<|end|><|start|>assist"
+```
+This is only to show the issue and I don't mean to suggest that this is fix in
+any way.
+
+Lets just make sure how the formatted string that is returned is actually used
+and if this really matters at all:
+```c++
+                    std::string user_inp = format_chat
+                        ? chat_add_and_format("user", std::move(buffer))
+                        : std::move(buffer);
+                    const auto line_pfx = common_tokenize(ctx, params.input_prefix, false, true);
+                    const auto line_inp = common_tokenize(ctx, user_inp,            false, format_chat);
+                    const auto line_sfx = common_tokenize(ctx, params.input_suffix, false, true);
+```
+```console
+(gdb) p user_inp
+$13 = "tart|>user<|message|>What is the capitlal of Sweden?<|end|><|start|>assistant"
+(gdb) p line_inp
+$14 = std::vector of length 17, capacity 77 = {83, 497, 91, 29, 1428, 200008, 4827, 382, 290, 41415, 46006, 328, 42009, 30, 200007,
+  200006, 173781}
+```
+So lets set user_inp to the correct value and then tokenize it:
+```console
+(gdb) call (char*)strcpy((char*)user_inp.data(), "<|start|>user<|message|>What is the capital of Sweden?<|end|><|start|>assistant")
+$17 = 0x555570d68e40 "<|start|>user<|message|>What is the capital of Sweden?<|end|><|start|>assistant"
+(gdb) p line_inp
+$19 = std::vector of length 13, capacity 76 = {200006, 1428, 200008, 4827, 382, 290, 9029, 328, 42009, 30, 200007, 200006, 105782}
+```
+So we have the following difference in tokens:
+```console
+vector of length 17 {83    ,  497,     91,   29, 1428, 200008, 4827, 382,   290, 41415,  46006,    328,  42009, 30, 200007, 200006, 173781}
+vector of length 13 {200006, 1428, 200008, 4827,  382,    290, 9029, 328, 42009,    30, 200007, 200006, 105782}
+```
+So we will be sending more tokens to the model than we need to and 20006 is a
+special token and it might not be optimal for the model.
+
+
+```c++
+    std::ostringstream ss;
+    // if the past_msg ends with a newline, we must preserve it in the formatted version
+    if (add_ass && !fmt_past_msg.empty() && fmt_past_msg.back() == '\n') {
+        ss << "\n";
+    };
+    // format chat with new_msg
+    inputs.messages.push_back(new_msg);
+    inputs.add_generation_prompt = add_ass;
+    auto fmt_new_msg = common_chat_templates_apply(tmpls, inputs).prompt;
+    // get the diff part
+    ss << fmt_new_msg.substr(fmt_past_msg.size(), fmt_new_msg.size() - fmt_past_msg.size());
+    return ss.str();
+}
+
 ```
 
 _wip_
