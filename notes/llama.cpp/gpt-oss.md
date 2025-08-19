@@ -9,7 +9,7 @@ $ git clone https://huggingface.co/openai/gpt-oss-20b
 
 Then use the `convert_hf_to_gguf.py` script to convert the model:
 ```console
-(venv) $ python convert_hf_to_gguf.py /home/danbev/work/ai/models/gpt-oss-20b --outfile models/gpt-oss-20b.gguf
+(venv) $ python convert_hf_to_gguf.py ~/work/ai/models/gpt-oss-20b --outfile ~/work/ai/models/converted/gpt-oss-20b.gguf --outtype bf16
 ...
 INFO:gguf.gguf_writer:Writing the following files:
 INFO:gguf.gguf_writer:gpt-oss-20b.gguf: n_tensors = 459, total_size = 13.8G
@@ -248,4 +248,171 @@ This is the same table we saw above but with the values doubled:
 ```
 If floats were used for the lookup table, this would mean slower indexing and
 and cost more space. So 
+
+
+### chat template issue
+Chat template diff logic causes incomplete tokenization with GPT-OSS model due
+to <|return|> vs <|end|> inconsistency".
+
+This issue can be reprocuced using `gpt-oss-20b.gguf` model:
+```console
+> What is the capital of Sweden?
+main: number of tokens in prompt = 17
+    83 -> 't'
+   497 -> 'art'
+    91 -> '|'
+    29 -> '>'
+  1428 -> 'user'
+200008 -> '<|message|>'
+    54 -> 'W'
+  4827 -> 'What'
+   382 -> ' is'
+   290 -> ' the'
+  9029 -> ' capital'
+   328 -> ' of'
+ 42009 -> ' Sweden'
+    30 -> '?'
+200007 -> '<|end|>'
+200006 -> '<|start|>'
+173781 -> 'assistant'
+<|channel|>analysis<|message|>User asks: "What is the capital of Sweden?" Answer: Stockholm. Provide concise.<|end|><|start|>assistant<|channel|>final<|message|>The capital of Sweden is **Stockholm**.<|return|>
+
+> 
+```
+It looks like the start token is getting "cut off" here.
+
+```console
+$ gdb --args build/bin/llama-cli -m ~/work/ai/models/converted/gpt-oss-20b.gguf -c 0 -fa --jinja -p "Test" --verbose-prompt -ngl 15 --no-warmup -sp
+```
+
+So when we enter a prompt and press enter this will break out this loop in main.cpp:
+```c++
+                std::string line;
+                bool another_line = true;
+                do {
+                    another_line = console::readline(line, params.multiline_input);
+                    buffer += line;
+                } while (another_line);
+                ...
+
+                    bool format_chat = params.conversation_mode && params.enable_chat_template;
+                    std::string user_inp = format_chat
+                        ? chat_add_and_format("user", std::move(buffer))
+                        : std::move(buffer);
+```
+And this will call the the `chat_add_and_format` lambda:
+```c++
+    auto chat_add_and_format = [&chat_msgs, &chat_templates](const std::string & role, const std::string & content) {
+        common_chat_msg new_msg;
+        new_msg.role = role;
+        new_msg.content = content;
+        auto formatted = common_chat_format_single(chat_templates.get(), chat_msgs, new_msg, role == "user", g_params->use_jinja);
+        chat_msgs.push_back(new_msg);
+        LOG_DBG("formatted: '%s'\n", formatted.c_str());
+        return formatted;
+    };
+```
+Which will call into the `common_chat_format_single` function:
+```c++
+std::string common_chat_format_single(
+        const struct common_chat_templates * tmpls,
+        const std::vector<common_chat_msg> & past_msg,
+        const common_chat_msg & new_msg,
+        bool add_ass,
+        bool use_jinja) {
+
+    common_chat_templates_inputs inputs;
+    inputs.use_jinja = use_jinja;
+    inputs.add_bos = tmpls->add_bos;
+    inputs.add_eos = tmpls->add_eos;
+
+    std::string fmt_past_msg;
+    if (!past_msg.empty()) {
+        inputs.messages = past_msg;
+        inputs.add_generation_prompt = false;
+        fmt_past_msg = common_chat_templates_apply(tmpls, inputs).prompt;
+    }
+    std::ostringstream ss;
+    // if the past_msg ends with a newline, we must preserve it in the formatted version
+    if (add_ass && !fmt_past_msg.empty() && fmt_past_msg.back() == '\n') {
+        ss << "\n";
+    };
+    // format chat with new_msg
+    inputs.messages.push_back(new_msg);
+    inputs.add_generation_prompt = add_ass;
+    auto fmt_new_msg = common_chat_templates_apply(tmpls, inputs).prompt;
+    // get the diff part
+    ss << fmt_new_msg.substr(fmt_past_msg.size(), fmt_new_msg.size() - fmt_past_msg.size());
+    return ss.str();
+}
+```
+Inspecting the `fmt_past_msg` we have:
+```console
+(gdb) p fmt_past_msg
+$23 = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-08-19\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>user<|message|>Test<|end|><|start|>assistant<|channel|>final<|message|>assistant<|channel|>analysis<|message|>The user says \"Test\". Probably they want to test the chat. We should respond with something acknowledging. Maybe a simple \"Hello! How can I help you?\" Or ask what they want. We'll respond appropriately.<|end|><|start|>assistant<|channel|>final<|message|>Got it! How can I help you today?<|return|>"
+ [        ]
+     ↑
+```
+Notice that the last token is `<|return|>` here.
+
+And the `fmt_new_msg` is:
+```console
+$24 = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-08-19\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>user<|message|>Test<|end|><|start|>assistant<|channel|>final<|message|>assistant<|channel|>analysis<|message|>The user says \"Test\". Probably they want to test the chat. We should respond with something acknowledging. Maybe a simple \"Hello! How can I help you?\" Or ask what they want. We'll respond appropriately.<|end|><|start|>assistant<|channel|>final<|message|>Got it! How can I help you today?<|end|><|start|>user<|message|>What is the capital of Sweden?<|end|><|start|>assistant"
+ [     ]
+    ↑
+```
+Notice that the token `<|return|>` has been replaced with `<|end|>`.
+
+The tempalte engine will iterate through all the messages and when it comes to
+the following statement it will be executed since `add_generation_prompt` was
+set to false above:
+```console
+{%- elif loop.last and not add_generation_prompt %}
+    {{- "<|start|>assistant<|channel|>final<|message|>" + message.content + "<|return|>" }}
+```
+So this will produce a string that ends with <|return|> (and not <|end|>). And
+later when we try to get the substring of the new message it will start at the
+wrong position because the template replaced <|return|> with <|end|> in the same
+location, causing the substring to begin mid-token in <|start|>
+
+```console
+(gdb) p fmt_new_msg.substr(fmt_past_msg.size(), fmt_new_msg.size() - fmt_past_msg.size())
+$25 = "tart|>user<|message|>What is the capital of Sweden?<|end|><|start|>assistant"
+```
+So what is is happening is that the the substring is failing becuase of this:
+```console
+(gdb) p fmt_new_msg[fmt_past_msg.size()]
+$33 = (__gnu_cxx::__alloc_traits<std::allocator<char>, char>::value_type &) @0x55555bab415d: 116 't'
+```
+
+Print the default template:
+```console
+(gdb) call (void)printf("%s", tmpls->template_default->source_.c_str())
+    ...
+        {%- elif loop.last and not add_generation_prompt %}
+            {#- Only render the CoT if the final turn is an assistant turn and add_generation_prompt is false #}
+            {#- This is a situation that should only occur in training, never in inference. #}
+            {%- if "thinking" in message %}
+                {{- "<|start|>assistant<|channel|>analysis<|message|>" + message.thinking + "<|end|>" }}
+            {%- endif %}
+            {#- <|return|> indicates the end of generation, but <|end|> does not #}
+            {#- <|return|> should never be an input to the model, but we include it as the final token #}
+            {#- when training, so the model learns to emit it. #}
+            {{- "<|start|>assistant<|channel|>final<|message|>" + message.content + "<|return|>" }}
+        {%- else %}
+            {#- CoT is dropped during all previous turns, so we never render it for inference #}
+            {{- "<|start|>assistant<|channel|>final<|message|>" + message.content + "<|end|>" }}
+            {%- set last_tool_call.name = none %}
+        {%- endif %}
+    ...
+```
+
+```console
+(gdb) p inputs.add_generation_prompt = true
+$2 = true
+(gdb) p common_chat_templates_apply(tmpls, inputs).prompt
+$3 = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-08-19\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>user<|message|>Test<|end|><|start|>assistant<|channel|>final<|message|>assistant<|channel|>analysis<|message|>User says \"Test\". They likely want a test response. Maybe they are testing the model. So respond with something acknowledging the test. Could be \"Hello! This is a test response.\" Probably just confirm.<|end|><|start|>assistant<|channel|>final<|message|>Hello! I’m here and ready to help. How can I assist you today?<|end|><|start|>assistant"
+(gdb) p common_chat_templates_apply(tmpls, inputs).prompt.size()
+$4 = 714
+```
 
