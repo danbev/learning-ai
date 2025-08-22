@@ -76,3 +76,19 @@ version: 6242 (4b80a93ed)
 built with cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0 for x86_64-linux-gnu
 ggml version: 0.9.0-dev-dirty
 ```
+
+### Current synchronization
+Currently the ggml code in llama.cpp is synced back to ggml I think, I've not
+looked into the details but this section will look into this incase it can
+shed some light on the version management.
+In `llama.cpp/scripts` we have the following files:
+```console
+(venv) $ ls sync-ggml*
+sync-ggml-am.sh  sync-ggml.last  sync-ggml.sh
+```
+It looks like `sync-ggml-am.sh` (am for ammend perhaps?) is the script that is
+used to sync ggml into llama.cpp. It reads `syng-ggml.last` to see the last
+commit that was synced.
+
+And there are also similar scripts in ggml for syncing ggml from llama.cpp or
+whisper.cpp into ggml.
