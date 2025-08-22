@@ -1,5 +1,5 @@
 DAWN_DIR = $(HOME)/work/webgpu/dawn
-DAWN_BUILD_DIR = ${DAWN_DIR}/out/Debug
+DAWN_BUILD_DIR = ${DAWN_DIR}/install/Release
 
 configure-dawn:
 	cd ${DAWN_DIR} && cmake -B build -GNinja \
@@ -18,11 +18,7 @@ build-dawn: configure
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -g
 
-DAWN_LIBS = $(DAWN_BUILD_DIR)/src/dawn/native/libdawn_native.a \
-            $(DAWN_BUILD_DIR)/src/dawn/libdawn_proc.a \
-            $(DAWN_BUILD_DIR)/src/dawn/common/libdawn_common.a
-
-INCLUDES = -I$(DAWN_BUILD_DIR)/gen/include -I$(DAWN_DIR)/include
+INCLUDES = -I$(DAWN_BUILD_DIR)/include
 
 SRC_DIR = src
 BUILD_DIR = bin
@@ -31,26 +27,26 @@ TARGET = $(BUILD_DIR)/matrix-mul
 SRC = $(SRC_DIR)/matrix-mul.cpp
 OBJ = $(BUILD_DIR)/matrix-mul.o
 
-all: $(TARGET)
+all: $(TARGET) | $(BUILD_DIR)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(TARGET): $(OBJ)
-	$(CXX) -L/home/danbev/work/webgpu/dawn/out/Debug/src/dawn/native/  $(OBJ) -Wl,--whole-archive -lwebgpu_dawn -Wl,--no-whole-archive $(DAWN_LIBS) -o $(TARGET)
+$(TARGET): $(OBJ) | $(BUILD_DIR)
+	$(CXX) -L${DAWN_BUILD_DIR}/lib  $(OBJ) -lwebgpu_dawn -o $(TARGET)
 
 $(BUILD_DIR)/%.o: $(SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-bin/list-adapters: src/list-adapters.cpp
-	$(CXX) -L${DAWN_BUILD_DIR}/src/dawn/native \
-	-Wl,--whole-archive -ldawn_native -lwebgpu_dawn -ldawn_platform -ldawn_common -ldawn_proc -Wl,--no-whole-archive \
-	-L/home/danbev/work/webgpu/dawn/out/Debug/src/dawn/common \
-	-L/home/danbev/work/webgpu/dawn/out/Debug/src/dawn/platform \
-	-L/home/danbev/work/webgpu/dawn/out/Debug/src/dawn/ \
-	-ldawn_proc -ldawn_common -ldawn_platform -lwebgpu_dawn -ldawn_native \
-	$(CXXFLAGS) $(INCLUDES) \
-	$< -o $@
+list-adapters: src/list-adapters.cpp | $(BUILD_DIR)
+	$(CXX) -L${DAWN_BUILD_DIR}/lib -ldl \
+		$(CXXFLAGS) $(INCLUDES) \
+		$< -o ${BUILD_DIR}/$@ -lwebgpu_dawn
+
+run-list-adapters: src/list-adapters.cpp
+	env LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
+		VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+		bin/list-adapters
 
 clean:
 	rm -rf $(BUILD_DIR)
