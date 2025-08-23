@@ -22,7 +22,6 @@ int main() {
 
     std::cout << "WebGPU instance created successfully!" << std::endl;
     
-    wgpu::RequestAdapterOptions options = {};
     wgpu::Adapter adapter;
     
     auto callback = [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter result, const char * message) {
@@ -36,9 +35,11 @@ int main() {
     };
     
     std::cout << "Requesting adapter..." << std::endl;
-    
+
+    using wgpu::CallbackMode;
+    wgpu::RequestAdapterOptions options = {};
     // This will request an adapter, and the callback may be called anytime, (AllowSpontaneous)
-    wgpu::Future future = instance.RequestAdapter(&options, wgpu::CallbackMode::AllowSpontaneous, callback);
+    wgpu::Future future = instance.RequestAdapter(&options, CallbackMode::AllowSpontaneous, callback);
 
     // Block/await forever for result.
     instance.WaitAny(future, UINT64_MAX);
