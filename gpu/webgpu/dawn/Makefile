@@ -16,7 +16,7 @@ build-dawn: configure
 .PHONY: configure build
 
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -g
+CXXFLAGS = -std=c++20 -Wall -Wextra -g
 
 INCLUDES = -I$(DAWN_BUILD_DIR)/include
 
@@ -43,10 +43,20 @@ list-adapters: src/list-adapters.cpp | $(BUILD_DIR)
 		$(CXXFLAGS) $(INCLUDES) \
 		$< -o ${BUILD_DIR}/$@ -lwebgpu_dawn
 
-run-list-adapters: src/list-adapters.cpp
+run-list-adapters: list-adapters
 	env LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
 		VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
-		bin/list-adapters
+		${BUILD_DIR}/list-adapters
+
+features: src/features.cpp | $(BUILD_DIR)
+	$(CXX) -L${DAWN_BUILD_DIR}/lib -ldl \
+		$(CXXFLAGS) $(INCLUDES) \
+		$< -o ${BUILD_DIR}/$@ -lwebgpu_dawn
+
+run-features: features
+	env LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
+		VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+		${BUILD_DIR}/features
 
 clean:
 	rm -rf $(BUILD_DIR)
