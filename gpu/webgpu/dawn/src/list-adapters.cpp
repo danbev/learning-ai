@@ -52,11 +52,17 @@ int main() {
     
     // Get adapter limits and info like ggml does
     wgpu::Limits limits{};
-    adapter.GetLimits(&limits);
+    if (!adapter.GetLimits(&limits)) {
+        std::cerr << "Failed to get adapter limits!" << std::endl;
+        return 1;
+    }
     std::cout << "Adapter limits retrieved successfully!" << std::endl;
     
     wgpu::AdapterInfo info{};
-    adapter.GetInfo(&info);
+    if (!adapter.GetInfo(&info)) {
+        std::cerr << "Failed to get adapter info!" << std::endl;
+        return 2;
+    }
     
     std::cout << "Adapter Information:" << std::endl;
     if (info.vendor.data && info.vendor.length > 0) {
