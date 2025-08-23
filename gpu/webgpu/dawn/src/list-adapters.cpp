@@ -6,7 +6,14 @@ int main() {
     std::cout << "Attempting to create WebGPU instance..." << std::endl;
     
     wgpu::InstanceDescriptor instanceDescriptor{};
-    
+
+    // This is an array of required features for the instanceDescriptor above.
+    wgpu::InstanceFeatureName requiredFeatures[] = {
+        wgpu::InstanceFeatureName::TimedWaitAny
+    };
+    instanceDescriptor.requiredFeatureCount = 1;  // requiring 1 feature
+    instanceDescriptor.requiredFeatures = requiredFeatures;
+
     wgpu::Instance instance = wgpu::CreateInstance(&instanceDescriptor);
     if (instance == nullptr) {
         std::cerr << "Instance creation failed!" << std::endl;
@@ -33,6 +40,7 @@ int main() {
     
     wgpu::Future future = instance.RequestAdapter(&options, wgpu::CallbackMode::AllowSpontaneous, callback, userdata);
     
+    // Block forever for result.
     instance.WaitAny(future, UINT64_MAX);
     
     if (adapter == nullptr) {
