@@ -197,3 +197,7 @@ Basic WebGPU: ✓ WORKING
 Your WebGPU setup is functional, just missing F16 support.
 make: *** [Makefile:57: run-features] Error 1
 ```
+The issue seems to be that there are tests that are failing in Dawn and this
+is why it is disabled. I tried forcing the feature and it seems to work for me
+at least I can get llama.cpp up and running. Which is pretty much all I want
+at this point so I can learn more about WebGPU.
