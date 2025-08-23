@@ -60,9 +60,9 @@ int main() {
     // Test ShaderF16 by trying to create a device with it
     std::cout << "\nTesting ShaderF16 support..." << std::endl;
     
-    wgpu::FeatureName requiredFeatures[] = { wgpu::FeatureName::ShaderF16 };
+    wgpu::FeatureName requiredFeatures[] = { wgpu::FeatureName::ShaderF16, wgpu::FeatureName::ImplicitDeviceSynchronization };
     wgpu::DeviceDescriptor deviceDesc{};
-    deviceDesc.requiredFeatureCount = 1;
+    deviceDesc.requiredFeatureCount = 2;
     deviceDesc.requiredFeatures = requiredFeatures;
     deviceDesc.label = "ShaderF16 Test Device";
     
