@@ -25,22 +25,22 @@ int main() {
     wgpu::RequestAdapterOptions options = {};
     wgpu::Adapter adapter;
     
-    auto callback = [](wgpu::RequestAdapterStatus status, wgpu::Adapter result, const char* message, void* userdata) {
+    auto callback = [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter result, const char * message) {
         if (status != wgpu::RequestAdapterStatus::Success) {
-            std::cerr << "Failed to get an adapter: " << (message ? message : "Unknown error") << std::endl;
+            std::cerr << "Failed to get an adapter: " <<
+            (message ? message : "Unknown error") << std::endl;
             return;
         }
-        *static_cast<wgpu::Adapter*>(userdata) = std::move(result);
+        adapter = std::move(result);
         std::cout << "Adapter found successfully!" << std::endl;
     };
     
     std::cout << "Requesting adapter..." << std::endl;
     
-    void* userdata = &adapter;
-    
-    wgpu::Future future = instance.RequestAdapter(&options, wgpu::CallbackMode::AllowSpontaneous, callback, userdata);
-    
-    // Block forever for result.
+    // This will request an adapter, and the callback may be called anytime, (AllowSpontaneous)
+    wgpu::Future future = instance.RequestAdapter(&options, wgpu::CallbackMode::AllowSpontaneous, callback);
+
+    // Block/await forever for result.
     instance.WaitAny(future, UINT64_MAX);
     
     if (adapter == nullptr) {

@@ -44,7 +44,7 @@ list-adapters: src/list-adapters.cpp | $(BUILD_DIR)
 		$< -o ${BUILD_DIR}/$@ -lwebgpu_dawn
 
 run-list-adapters: list-adapters
-	env LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
+	LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib DYLD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
 		VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
 		${BUILD_DIR}/list-adapters
 
@@ -54,7 +54,7 @@ features: src/features.cpp | $(BUILD_DIR)
 		$< -o ${BUILD_DIR}/$@ -lwebgpu_dawn
 
 run-features: features
-	env LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
+	LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib DYLD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
 		VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
 		${BUILD_DIR}/features
 
