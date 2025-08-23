@@ -42,9 +42,19 @@ but nothing is installed to the specified install directory. What I needed to do
 to get this working was add `DWAN_BUILD_MONOLITHIC_LIBRARY=SHARED` to get anything
 copied to the install directory:
 ```console
-$ cmake -S . -B out/Release -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED -DDAWN_FETCH_DEPENDENCIES=ON -DDAWN_ENABLE_INSTALL=ON -DDAWN_USE_BUILT_DXC=ON -DCMAKE_BUILD_TYPE=Release
-$ cmake --build out/Release -j8
-$ cmake --install out/Release --prefix install/Release
+#!/bin/bash
+
+set -e
+
+cmake -S . -B out/Release -DDAWN_BUILD_MONOLITHIC_LIBRARY=SHARED \
+    -DDAWN_FETCH_DEPENDENCIES=ON \
+    -DDAWN_ENABLE_INSTALL=ON \
+    -DDAWN_USE_BUILT_DXC=ON \
+    -DCMAKE_BUILD_TYPE=Release
+
+cmake --build out/Release -j8
+
+cmake --install out/Release --prefix install/Release
 ```
 
 ### Timeout waits are not supported
