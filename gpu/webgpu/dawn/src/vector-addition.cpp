@@ -4,9 +4,9 @@
 #include <vector>
 
 const char* shader_code = R"(
-@group(0) @binding(0) var<storage, read> input_a: array<f32>;
-@group(0) @binding(1) var<storage, read> input_b: array<f32>;
-@group(0) @binding(2) var<storage, read_write> output: array<f32>;
+@group(3) @binding(0) var<storage, read> input_a: array<f32>;
+@group(3) @binding(1) var<storage, read> input_b: array<f32>;
+@group(3) @binding(2) var<storage, read_write> output: array<f32>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -172,8 +172,8 @@ private:
     }
     
 public:
-    std::vector<float> compute(const std::vector<float>& dataA, const std::vector<float>& dataB) {
-        if (dataA.size() != dataB.size() || dataA.size() != data_size) {
+    std::vector<float> compute(const std::vector<float>& a, const std::vector<float>& b) {
+        if (a.size() != b.size() || a.size() != data_size) {
             throw std::runtime_error("Data size mismatch");
         }
         
@@ -181,39 +181,42 @@ public:
         
         // Create buffers
         wgpu::BufferDescriptor buffer_desc_a;
+        buffer_desc_a.label = "Input Buffer A";
         buffer_desc_a.size = buffer_size;
         buffer_desc_a.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
-        buffer_desc_a.label = "Input Buffer A";
         wgpu::Buffer buffer_a = device.CreateBuffer(&buffer_desc_a);
         
         wgpu::BufferDescriptor buffer_desc_b;
+        buffer_desc_b.label = "Input Buffer B";
         buffer_desc_b.size = buffer_size;
         buffer_desc_b.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
-        buffer_desc_b.label = "Input Buffer B";
         wgpu::Buffer buffer_b = device.CreateBuffer(&buffer_desc_b);
         
         wgpu::BufferDescriptor buffer_desc_out;
-        buffer_desc_out.size = buffer_size;
-        buffer_desc_out.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
         buffer_desc_out.label = "Output Buffer";
+        buffer_desc_out.size = buffer_size;
+        // Notice that the GPU can write but the CPU cannot directly read this buffer.
+        buffer_desc_out.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc;
         wgpu::Buffer buffer_output = device.CreateBuffer(&buffer_desc_out);
         
         // Staging buffer (for reading results back)
         wgpu::BufferDescriptor staging_desc;
+        staging_desc.label = "GPU->CPU staging buffer";
         staging_desc.size = buffer_size;
+        // This is used to copy from GPU storage to CPU memory.
         staging_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
-        staging_desc.label = "Staging Buffer";
         wgpu::Buffer staging_buffer = device.CreateBuffer(&staging_desc);
         
         std::cout << "Buffers created" << std::endl;
         
-        // Upload data to GPU
-        device.GetQueue().WriteBuffer(buffer_a, 0, dataA.data(), buffer_size);
-        device.GetQueue().WriteBuffer(buffer_b, 0, dataB.data(), buffer_size);
+        // Write a's data to GPU.
+        device.GetQueue().WriteBuffer(buffer_a, 0, a.data(), buffer_size);
+        // Write b's data to GPU.
+        device.GetQueue().WriteBuffer(buffer_b, 0, b.data(), buffer_size);
         std::cout << "Data uploaded to GPU buffers" << std::endl;
         
         // Use the pipeline's auto-generated bind group layout
-        wgpu::BindGroupLayout bind_group_layout = pipeline.GetBindGroupLayout(0);
+        wgpu::BindGroupLayout bind_group_layout = pipeline.GetBindGroupLayout(3);
         
         // Create bind group using the pipeline's layout
         std::vector<wgpu::BindGroupEntry> bind_entries(3);
@@ -258,7 +261,7 @@ public:
         
         // Set pipeline and bind group
         computePass.SetPipeline(pipeline);
-        computePass.SetBindGroup(0, bind_group);
+        computePass.SetBindGroup(3, bind_group);
         
         // Dispatch compute shader
         uint32_t workgroups = (data_size + 63) / 64;
