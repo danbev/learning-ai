@@ -13,6 +13,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = gid.x;
 
     // Bounds check to ensure we don't access out of bounds
+    // Thread 0:   output[0]   = input_a[0] + input_b[0]
+    // Thread 1:   output[1]   = input_a[l] + input_b[1]
+    // ...
+    // Thread 999: output[999] = input_a[999] + input_b[999]
+    // Thread 1000-1023: Exit early due to bounds check:
     if (index >= arrayLength(&output)) {
         return;
     }
@@ -67,6 +72,11 @@ public:
         std::cout << "WebGPU instance created with TimedWaitAny" << std::endl;
         
         wgpu::RequestAdapterOptions adapter_opts = {};
+        adapter_opts.powerPreference = wgpu::PowerPreference::HighPerformance; // For a descrete GPU
+        adapter_opts.forceFallbackAdapter = false; // Don't force fallback adapter
+        adapter_opts.featureLevel = wgpu::FeatureLevel::Compatibility;
+        //adapter_opts.backendType  = wgpu::BackendType::Metal;
+
         auto adapterCallback = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, const char* message) {
             if (status != wgpu::RequestAdapterStatus::Success) {
                 std::cerr << "Failed to get adapter: " << (message ? message : "Unknown error") << std::endl;
