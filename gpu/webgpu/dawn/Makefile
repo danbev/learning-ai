@@ -64,7 +64,7 @@ vector-addition: src/vector-addition.cpp | $(BUILD_DIR)
 		$< -o ${BUILD_DIR}/$@ -lwebgpu_dawn
 
 run-vector-addition: vector-addition
-	LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib DYLD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib \
+	LD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib DYLD_LIBRARY_PATH=${DAWN_BUILD_DIR}/lib DAWN_DEBUG_BREAK_ON_ERROR=1 \
 		VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
 		${BUILD_DIR}/vector-addition
 
