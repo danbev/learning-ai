@@ -67,13 +67,13 @@ public:
         std::cout << "WebGPU instance created with TimedWaitAny" << std::endl;
         
         wgpu::RequestAdapterOptions adapter_opts = {};
-        auto adapterCallback = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter result, const char* message) {
+        auto adapterCallback = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, const char* message) {
             if (status != wgpu::RequestAdapterStatus::Success) {
                 std::cerr << "Failed to get adapter: " << (message ? message : "Unknown error") << std::endl;
                 return;
             }
-            adapter = std::move(result);
-            std::cout << "✅ Adapter acquired" << std::endl;
+            this->adapter = std::move(adapter);
+            std::cout << "Adapter acquired" << std::endl;
         };
         
         wgpu::Future future = instance.RequestAdapter(&adapter_opts, wgpu::CallbackMode::AllowSpontaneous, adapterCallback);
@@ -101,7 +101,7 @@ public:
                 return;
             }
             device = std::move(result);
-            std::cout << "✅ Device acquired" << std::endl;
+            std::cout << "Device acquired" << std::endl;
         };
 
         device_desc.SetUncapturedErrorCallback(webgpuErrorCallback, this);
@@ -195,12 +195,12 @@ public:
         staging_desc.label = "Staging Buffer";
         wgpu::Buffer staging_buffer = device.CreateBuffer(&staging_desc);
         
-        std::cout << "✅ Buffers created" << std::endl;
+        std::cout << "Buffers created" << std::endl;
         
         // Upload data to GPU
         device.GetQueue().WriteBuffer(buffer_a, 0, dataA.data(), buffer_size);
         device.GetQueue().WriteBuffer(buffer_b, 0, dataB.data(), buffer_size);
-        std::cout << "✅ Data uploaded to GPU buffers" << std::endl;
+        std::cout << "Data uploaded to GPU buffers" << std::endl;
         
         // Use the pipeline's auto-generated bind group layout
         wgpu::BindGroupLayout bind_group_layout = pipeline.GetBindGroupLayout(0);
@@ -234,7 +234,7 @@ public:
             std::cerr << "Failed to create bind group" << std::endl;
             throw std::runtime_error("Bind group creation failed");
         }
-        std::cout << "✅ Bind group created with pipeline layout" << std::endl;
+        std::cout << "Bind group created with pipeline layout" << std::endl;
         
         // Create command encoder
         wgpu::CommandEncoderDescriptor encoderDesc;
@@ -265,7 +265,7 @@ public:
         cmdBufferDesc.label = "Vector Addition Commands";
         wgpu::CommandBuffer commands = encoder.Finish(&cmdBufferDesc);
         device.GetQueue().Submit(1, &commands);
-        std::cout << "✅ Commands submitted to GPU" << std::endl;
+        std::cout << "Commands submitted to GPU" << std::endl;
         
         wgpu::QueueWorkDoneStatus work_done_status = wgpu::QueueWorkDoneStatus::Success; // Initialize to Success
         bool work_done = false;
@@ -273,7 +273,7 @@ public:
         auto work_done_callback = [&](wgpu::QueueWorkDoneStatus status, const char* message) {
             work_done_status = status;
             work_done = true;
-            std::cout << "✅ GPU work completed with status: " << static_cast<int>(status);
+            std::cout << "GPU work completed with status: " << static_cast<int>(status);
             if (message) {
                 std::cout << ", message: " << message;
             }
@@ -304,7 +304,7 @@ public:
             if (status != wgpu::MapAsyncStatus::Success) {
                 std::cerr << "Failed to map buffer: " << (message ? message : "Unknown error") << std::endl;
             } else {
-                std::cout << "✅ Buffer mapped successfully" << std::endl;
+                std::cout << "Buffer mapped successfully" << std::endl;
             }
         };
         
@@ -320,7 +320,7 @@ public:
         const float* mapped_data = static_cast<const float*>(staging_buffer.GetConstMappedRange());
         if (mapped_data) {
             std::copy(mapped_data, mapped_data + data_size, results.begin());
-            std::cout << "✅ Data copied from GPU buffer" << std::endl;
+            std::cout << "Data copied from GPU buffer" << std::endl;
         } else {
             std::cerr << "Failed to get mapped range" << std::endl;
         }
