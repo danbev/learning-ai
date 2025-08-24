@@ -1,6 +1,7 @@
+#include <webgpu/webgpu_cpp.h>
+
 #include <iostream>
 #include <vector>
-#include <webgpu/webgpu_cpp.h>
 
 const char* shader_code = R"(
 @group(0) @binding(0) var<storage, read> inputA: array<f32>;
@@ -32,7 +33,6 @@ public:
     vector_addition(size_t size) : data_size(size) {}
     
     bool initialize() {
-        // 1. Create WebGPU instance with TimedWaitAny
         wgpu::InstanceDescriptor instance_desc = {};
         wgpu::InstanceFeatureName required_features[] = {
             wgpu::InstanceFeatureName::TimedWaitAny
@@ -47,7 +47,6 @@ public:
         }
         std::cout << "✅ WebGPU instance created with TimedWaitAny" << std::endl;
         
-        // 2. Request adapter
         wgpu::RequestAdapterOptions adapter_opts = {};
         auto adapterCallback = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter result, const char* message) {
             if (status != wgpu::RequestAdapterStatus::Success) {
@@ -70,7 +69,6 @@ public:
             return false;
         }
         
-        // 3. Request device
         wgpu::DeviceDescriptor device_desc = {};
         auto deviceCallback = [&](wgpu::RequestDeviceStatus status, wgpu::Device result, const char* message) {
             if (status != wgpu::RequestDeviceStatus::Success) {
@@ -98,7 +96,6 @@ public:
              std::cerr << "🔥 WebGPU Error (" << static_cast<int>(reason) << "): " << std::string(message) << std::endl;
         });
 
-        // 4. Create compute pipeline
         if (!create_pipeline()) {
             return false;
         }
@@ -108,7 +105,7 @@ public:
     
 private:
     bool create_pipeline() {
-        // Create shader module
+
         wgpu::ShaderSourceWGSL shader_source;
         shader_source.code = shader_code;
         
@@ -181,7 +178,7 @@ public:
         device.GetQueue().WriteBuffer(buffer_b, 0, dataB.data(), buffer_size);
         std::cout << "✅ Data uploaded to GPU buffers" << std::endl;
         
-        // Use the pipeline's auto-generated bind group layout instead of creating our own
+        // Use the pipeline's auto-generated bind group layout
         wgpu::BindGroupLayout bind_group_layout = pipeline.GetBindGroupLayout(0);
         
         // Create bind group using the pipeline's layout
@@ -246,7 +243,6 @@ public:
         device.GetQueue().Submit(1, &commands);
         std::cout << "✅ Commands submitted to GPU" << std::endl;
         
-        // CRITICAL: Wait for GPU to finish processing
         wgpu::QueueWorkDoneStatus work_done_status = wgpu::QueueWorkDoneStatus::Success; // Initialize to Success
         bool work_done = false;
         
@@ -260,7 +256,8 @@ public:
             std::cout << std::endl;
         };
         
-        wgpu::Future work_done_future = device.GetQueue().OnSubmittedWorkDone(wgpu::CallbackMode::AllowSpontaneous, work_done_callback);
+        using wgpu::CallbackMode;
+        wgpu::Future work_done_future = device.GetQueue().OnSubmittedWorkDone(CallbackMode::AllowSpontaneous, work_done_callback);
         auto work_wait_status = instance.WaitAny(work_done_future, UINT64_MAX);
         
         if (work_wait_status != wgpu::WaitStatus::Success) {
@@ -313,11 +310,8 @@ public:
 int main() {
     std::cout << "WebGPU Vector Addition Example\n" << std::endl;
     
-    // Test data
     const size_t data_size = 1000;
     std::vector<float> input_a(data_size), input_b(data_size);
-    
-    // Fill with test data
     for (size_t i = 0; i < data_size; i++) {
         input_a[i] = static_cast<float>(i);
         input_b[i] = static_cast<float>(i * 2);
@@ -335,10 +329,8 @@ int main() {
     
     std::cout << "\nComputing vector addition on GPU..." << std::endl;
     
-    // Compute on GPU
     std::vector<float> results = vector_add.compute(input_a, input_b);
     
-    // Verify results
     std::cout << "\nVerifying results..." << std::endl;
     std::cout << "First few results: " << results[0] << ", " << results[1] << ", " << results[2] << std::endl;
     
