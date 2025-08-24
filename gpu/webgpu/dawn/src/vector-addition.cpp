@@ -254,7 +254,7 @@ public:
         encoderDesc.label = "Vector Addition Command Encoder";
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder(&encoderDesc);
         
-        // Begin compute pass
+        // Begin compute pass (to record compute operations, nothing is executed yet)
         wgpu::ComputePassDescriptor passDesc;
         passDesc.label = "Vector Addition Compute Pass";
         wgpu::ComputePassEncoder computePass = encoder.BeginComputePass(&passDesc);
@@ -273,10 +273,10 @@ public:
         // Copy result to staging buffer
         encoder.CopyBufferToBuffer(buffer_output, 0, staging_buffer, 0, buffer_size);
         
-        // Submit commands
-        wgpu::CommandBufferDescriptor cmdBufferDesc;
-        cmdBufferDesc.label = "Vector Addition Commands";
-        wgpu::CommandBuffer commands = encoder.Finish(&cmdBufferDesc);
+        // This is what actually sends the commands to the GPU for execution.
+        wgpu::CommandBufferDescriptor cmd_buffer_desc;
+        cmd_buffer_desc.label = "Vector Addition Commands";
+        wgpu::CommandBuffer commands = encoder.Finish(&cmd_buffer_desc);
         device.GetQueue().Submit(1, &commands);
         std::cout << "Commands submitted to GPU" << std::endl;
         
@@ -375,18 +375,18 @@ int main() {
     for (size_t i = 0; i < std::min(data_size, size_t(10)); i++) {
         float expected = input_a[i] + input_b[i];
         if (std::abs(results[i] - expected) > 1e-5f) {
-            std::cerr << "❌ Mismatch at index " << i << ": got " << results[i] 
+            std::cerr << "Mismatch at index " << i << ": got " << results[i] 
                       << ", expected " << expected << std::endl;
             success = false;
         } else {
-            std::cout << "✅ Index " << i << ": " << input_a[i] << " + " << input_b[i] << " = " << results[i] << std::endl;
+            std::cout << "Index " << i << ": " << input_a[i] << " + " << input_b[i] << " = " << results[i] << std::endl;
         }
     }
     
     if (success) {
-        std::cout << "\n🎉 All checked results correct!" << std::endl;
+        std::cout << "\nAll checked results correct!" << std::endl;
     } else {
-        std::cout << "\n❌ Results verification failed!" << std::endl;
+        std::cout << "\nResults verification failed!" << std::endl;
     }
     
     return success ? 0 : 1;
