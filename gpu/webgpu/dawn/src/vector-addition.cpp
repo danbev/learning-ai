@@ -4,30 +4,49 @@
 #include <vector>
 
 const char* shader_code = R"(
-@group(0) @binding(0) var<storage, read> inputA: array<f32>;
-@group(0) @binding(1) var<storage, read> inputB: array<f32>;
+@group(0) @binding(0) var<storage, read> input_a: array<f32>;
+@group(0) @binding(1) var<storage, read> input_b: array<f32>;
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = gid.x;
+
+    // Bounds check to ensure we don't access out of bounds
     if (index >= arrayLength(&output)) {
         return;
     }
     
-    // Simple vector addition: output[i] = inputA[i] + inputB[i]
-    output[index] = inputA[index] + inputB[index];
+    output[index] = input_a[index] + input_b[index];
 }
 )";
 
 class vector_addition {
 private:
+    // WebGPU entry point, creates and manages everything else.
     wgpu::Instance instance;
+    // An adapter represents a specifc GPU implementation on the system. Help to identifty
+    // the hardware and its capabilities. Can execute anything on a GPU but can get information about it.
     wgpu::Adapter adapter;
+    // The actual connection to the GPU device (interface for transitting works)
     wgpu::Device device;
+    // Compute pipeline for executing the vector addition shader
     wgpu::ComputePipeline pipeline;
+
+    // WebGPU System
+    // ├── Instance (WebGPU runtime )
+    //     ├── Adapter (GPU #1 - Intel integrated)
+    //     │   └── Device (connection to Intel GPU)
+    //     └── Adapter (GPU #2 - NVIDIA discrete)  
+    //         └── Device (connection to NVIDIA GPU)
     
     size_t data_size;
+
+    static void webgpuErrorCallback(const wgpu::Device& device, wgpu::ErrorType reason,
+                                   wgpu::StringView message, vector_addition* instance) {
+        std::cerr << "[WebGPU Error] (" << static_cast<int>(reason) << "): " << std::string(message) << std::endl;
+        std::terminate();
+    }
     
 public:
     vector_addition(size_t size) : data_size(size) {}
@@ -45,7 +64,7 @@ public:
             std::cerr << "Failed to create WebGPU instance" << std::endl;
             return false;
         }
-        std::cout << "✅ WebGPU instance created with TimedWaitAny" << std::endl;
+        std::cout << "WebGPU instance created with TimedWaitAny" << std::endl;
         
         wgpu::RequestAdapterOptions adapter_opts = {};
         auto adapterCallback = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter result, const char* message) {
@@ -70,6 +89,12 @@ public:
         }
         
         wgpu::DeviceDescriptor device_desc = {};
+         // Initialize device
+        std::vector<wgpu::FeatureName> dev_features = { wgpu::FeatureName::ShaderF16,
+                                                        wgpu::FeatureName::ImplicitDeviceSynchronization };
+        device_desc.requiredFeatures     = dev_features.data();
+        device_desc.requiredFeatureCount = dev_features.size();
+
         auto deviceCallback = [&](wgpu::RequestDeviceStatus status, wgpu::Device result, const char* message) {
             if (status != wgpu::RequestDeviceStatus::Success) {
                 std::cerr << "Failed to get device: " << (message ? message : "Unknown error") << std::endl;
@@ -78,23 +103,22 @@ public:
             device = std::move(result);
             std::cout << "✅ Device acquired" << std::endl;
         };
+
+        device_desc.SetUncapturedErrorCallback(webgpuErrorCallback, this);
         
+        // Notice that we use the adapter to get a device.
         wgpu::Future deviceFuture = adapter.RequestDevice(&device_desc, wgpu::CallbackMode::AllowSpontaneous, deviceCallback);
         auto device_wait_status = instance.WaitAny(deviceFuture, UINT64_MAX);
         if (device_wait_status != wgpu::WaitStatus::Success) {
             std::cerr << "Failed to wait for device: " << static_cast<int>(device_wait_status) << std::endl;
             return false;
         }
-        
+
         if (!device) {
             std::cerr << "No device found" << std::endl;
             return false;
         }
         
-        device_desc.SetUncapturedErrorCallback(
-            [](const wgpu::Device & device, wgpu::ErrorType reason, wgpu::StringView message) {
-             std::cerr << "🔥 WebGPU Error (" << static_cast<int>(reason) << "): " << std::string(message) << std::endl;
-        });
 
         if (!create_pipeline()) {
             return false;
