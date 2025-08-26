@@ -70,7 +70,7 @@ INFO:gguf-dump:* Loading: /home/danbev/Downloads/gemma-3-27b-it-q4_0.gguf
      15:       5376 |  5376,     1,     1,     1 | F32     | blk.0.post_ffw_norm.weight
 ```
 When we quantize the model using `llama-quantize` there is the option to specify
-the data type of the token embedding weights using `--token-embedding-typ`:
+the data type of the token embedding weights using `--token-embedding-type`:
 ```console
 (venv) $ ./build/bin/llama-quantize --help
   ...
@@ -232,7 +232,182 @@ The difference in between this and the previous model is that the token embeddin
 -rw-rw-r-- 1 danbev danbev 17G Aug 25 20:05 /home/danbev/Downloads/gemma-3-27b-it-q4_0.gguf
 ```
 
-It is not clear to me why Q8_0 is chosen and not Q4_0, but it might be that we
-want to keep the precision of the token embeddings higher than the rest of the
-model. And recall that this is specifically for QAT models.
+The default when quantizing to Q4_0 is to actually Q6_K. And while this is
+smaller in size having Q8_0 is practically full quanlity with little larger
+size. But size is not the only consideration, Q8_0 works with shapes divisable
+by 32 while Q6_K works with shapes divisable by 256. Q6_K also requires more
+compute to unpack which might not be great for performance.
+So for QAT Q4_0 models we should quantize to Q4_0 and then specify Q8_0 for
+both the token embeddings and the output layer.
 
+
+So here is how to think of this: the moment you touch a quantized weight, you
+have to unpack/dequantize it before the math can happen.
+
+Lets say we have the prompt “Dan loves ice cream”):
+
+* Token → embedding lookup (input side)
+You take each token id and look up one row from the token embedding matrix.
+If that embedding matrix is stored as Q8_0 or Q6_K, the kernel unpacks/dequantizes
+that row to real numbers.
+
+Q8_0: rows are stored in blocks of 32 int8 values + scale. Easy, fast to unpack.
+Q6_K: rows are packed into 256-value superblocks with 6-bit values. More
+      bit-twiddling to unpack; slower per row.
+
+Every matmul with quantized weights does the same trick: it reads quantized
+blocks and dequantizes on the fly while multiplying with the current activations.
+(So the “unpack cost” exists wherever the format is used, not just embeddings.)
+
+* Logits (output side, tied embeddings)
+If the model reuses the same embedding matrix as the output projection (common
+known as “tied weights”), you now multiply the final hidden state by embedding
+to get logits for the entire vocab.
+
+This touches every row of that matrix per token step. If that matrix is Q6_K,
+you pay the heavier unpack cost for thousands of rows, which can really hurt
+throughput at larger batch sizes. If it’s Q8_0, the unpack is cheaper and
+typically faster overall.
+
+For example, lets take the embeddings look up:
+```c++
+// input embeddings with optional lora
+ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
+    const int64_t n_embd = hparams.n_embd;
+
+    auto inp = std::make_unique<llm_graph_input_embd>();
+
+    ggml_tensor * cur = nullptr;
+
+    if (ubatch.token) {
+        inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, ubatch.n_tokens);
+        //cb(inp->tokens, "inp_tokens", -1);
+        ggml_set_input(inp->tokens);
+        res->t_tokens = inp->tokens;
+
+        cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+
+        // apply lora for embedding tokens if needed
+        for (const auto & lora : *loras) {
+            llama_adapter_lora_weight * lw = lora.first->get_weight(tok_embd);
+            if (lw == nullptr) {
+                continue;
+            }
+
+            const float adapter_scale = lora.second;
+            const float scale = lw->get_scale(lora.first->alpha, adapter_scale);
+
+            ggml_tensor * inpL_delta = ggml_scale(ctx0, ggml_mul_mat(
+                        ctx0, lw->b, // non-transposed lora_b
+                        ggml_get_rows(ctx0, lw->a, inp->tokens)
+                        ), scale);
+
+            cur = ggml_add(ctx0, cur, inpL_delta);
+        }
+    } else {
+        inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, ubatch.n_tokens);
+        ggml_set_input(inp->embd);
+
+        cur = inp->embd;
+    }
+
+    // For Granite architecture
+    if (hparams.f_embedding_scale != 0.0f) {
+        cur = ggml_scale(ctx0, cur, hparams.f_embedding_scale);
+    }
+
+    cb(cur, "inp_embd", -1);
+
+    res->add_input(std::move(inp));
+
+    return cur;
+}
+```
+And if we look at `ggml_get_rows` which is just returning a tensor operation
+but if we look into the cpu implementation of `ggml_get_rows`:
+```c++
+void ggml_compute_forward_get_rows(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    switch (src0->type) {
+        case GGML_TYPE_Q4_0:
+        case GGML_TYPE_Q4_1:
+        case GGML_TYPE_Q5_0:
+        case GGML_TYPE_Q5_1:
+        case GGML_TYPE_Q8_0:
+        case GGML_TYPE_Q8_1:
+        case GGML_TYPE_MXFP4:
+        case GGML_TYPE_Q2_K:
+        case GGML_TYPE_Q3_K:
+        case GGML_TYPE_Q4_K:
+        case GGML_TYPE_Q5_K:
+        case GGML_TYPE_Q6_K:
+        case GGML_TYPE_TQ1_0:
+        case GGML_TYPE_TQ2_0:
+        case GGML_TYPE_IQ2_XXS:
+        case GGML_TYPE_IQ2_XS:
+        case GGML_TYPE_IQ3_XXS:
+        case GGML_TYPE_IQ1_S:
+        case GGML_TYPE_IQ1_M:
+        case GGML_TYPE_IQ4_NL:
+        case GGML_TYPE_IQ4_XS:
+        case GGML_TYPE_IQ3_S:
+        case GGML_TYPE_IQ2_S:
+            {
+                ggml_compute_forward_get_rows_q(params, dst);
+            } break;
+```
+```c++
+static void ggml_compute_forward_get_rows_q(
+        const ggml_compute_params * params,
+              ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+
+    GGML_TENSOR_BINARY_OP_LOCALS
+
+    const int64_t nc = ne00;
+    const int64_t nr = ggml_nelements(src1);
+
+    const ggml_type type = src0->type;
+    ggml_to_float_t const dequantize_row_q = ggml_get_type_traits(type)->to_float;
+
+    assert(ne0  == nc);
+    assert(ne02 == ne11);
+    assert(nb00 == ggml_type_size(type));
+    assert(ggml_nrows(dst) == nr);
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    // rows per thread
+    const int dr = (nr + nth - 1)/nth;
+
+    // row range for this thread
+    const int ir0 = dr*ith;
+    const int ir1 = MIN(ir0 + dr, nr);
+
+    for (int64_t i = ir0; i < ir1; ++i) {
+        const int64_t i12 = i/(ne11*ne10);
+        const int64_t i11 = (i - i12*ne11*ne10)/ne10;
+        const int64_t i10 = (i - i12*ne11*ne10 - i11*ne10);
+        const int64_t i01 = *(int32_t *) ((char *) src1->data + i10*nb10 + i11*nb11 + i12*nb12);
+
+        GGML_ASSERT(i01 >= 0 && i01 < ne01);
+
+        dequantize_row_q(
+                (const void *) ((char *) src0->data + i01*nb01 + i11*nb02 + i12*nb03),
+                     (float *) ((char *)  dst->data + i10*nb1  + i11*nb2  + i12*nb3), nc);
+    }
+}
+```
+And there we can find the dequantization function for the specific quantization.
+This loop runs once per token being looked up. Each iteration calls the
+quantization-specific dequantization function to convert one row from quantized
+format to float32. For tied weights during output projection, this same pattern
+runs for every row in the vocabulary (262K+ times), which is where the Q8_0 vs
+Q6_K performance difference becomes significant.
