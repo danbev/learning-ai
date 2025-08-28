@@ -127,13 +127,6 @@ And this is called linear quantization. The offset is the zero point which is
 zero_point = round(q_min - (r_min / scale))
 ```
 
-### Notation
-In this document and in ggml there is the following names/notation:
-
-* QI is the quantized value
-* QK is the number of bits used for quantization
-* QR is the ratio of the quantized value and the number for which it is a quantization(?)
-
 ### `ggml_half`
 This typedef is defined in `ggml/src/ggml-common.h`:
 ```c
