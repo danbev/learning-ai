@@ -13,14 +13,18 @@ static const VkLayerInstanceCreateInfo* find_link_info(const VkInstanceCreateInf
     while (chain) {
         if (chain->sType == VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO &&
             chain->function == VK_LAYER_LINK_INFO) {
-            return chain; // This has pfnNextGetInstanceProcAddr
+            return chain;
         }
-        chain = (const VkLayerInstanceCreateInfo*)chain->pNext;
+        // Extract next layer's function pointer from pNext chain
+        chain = (const VkLayerInstanceCreateInfo*) chain->pNext;
     }
 
     return NULL;
 }
 
+/*
+ * This is the intercept function for vkCreateInstance.
+ */
 VKAPI_ATTR VkResult VKAPI_CALL simple_vkCreateInstance(const VkInstanceCreateInfo* create_info,
     const VkAllocationCallbacks* allocator,
     VkInstance* instance) {
@@ -32,6 +36,7 @@ VKAPI_ATTR VkResult VKAPI_CALL simple_vkCreateInstance(const VkInstanceCreateInf
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
+    // gipa stands for GetInstanceProcAddr
     g_next_gipa = link_info->u.pLayerInfo->pfnNextGetInstanceProcAddr;
 
     g_next_CreateInstance = (PFN_vkCreateInstance) g_next_gipa(NULL, "vkCreateInstance");
@@ -41,6 +46,7 @@ VKAPI_ATTR VkResult VKAPI_CALL simple_vkCreateInstance(const VkInstanceCreateInf
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
+    // Call the real vkCreateInstance (or the next layer's)
     VkResult result = g_next_CreateInstance(create_info, allocator, instance);
 
     if (result == VK_SUCCESS) {
@@ -63,7 +69,12 @@ VKAPI_ATTR void VKAPI_CALL simple_vkDestroyInstance( VkInstance instance, const 
     }
 }
 
-VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL simple_vkGetInstanceProcAddr( VkInstance instance, const char* name) {
+/*
+ * When an application calls vkCreateInstance, the loader will call
+ * vkGetInstanceProcAddr(NULL, "vkCreateInstance") and this allows a layer
+ * implementation to intercept that call and return its own function pointer.
+ */
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL simple_vkGetInstanceProcAddr(VkInstance instance, const char* name) {
     if (strcmp(name, "vkCreateInstance") == 0)
         return (PFN_vkVoidFunction)simple_vkCreateInstance;
     if (strcmp(name, "vkDestroyInstance") == 0)
@@ -74,6 +85,12 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL simple_vkGetInstanceProcAddr( VkInstanc
     return g_next_gipa ? g_next_gipa(instance, name) : NULL;
 }
 
+/*
+ * When the Vulkan loader reads simple_layer.json, it will load the shared object
+ * into memory and after that call this function. This will provide the loader
+ * with the version that this layer supports and also notice that it will get
+ * the entrypoint, which is the vkGetInstanceProcAddr function for this layer.
+ */ 
 VKAPI_ATTR VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* negotiation) {
     printf("[SIMPLE_LAYER] Negotiating layer interface\n");
     if (!negotiation || negotiation->sType != LAYER_NEGOTIATE_INTERFACE_STRUCT)

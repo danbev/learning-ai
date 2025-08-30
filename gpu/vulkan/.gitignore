@@ -2,3 +2,4 @@ list-dev
 shader.spv
 simple
 simple-shader.spv
+libsimple_layer.so
