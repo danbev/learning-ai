@@ -21,9 +21,19 @@ shader: src/shader.frag
 list-dev: src/list-dev.c
 	gcc $(CFLAGS) -o $@ $< $(LDFLAGS)
 
+simple-layer: src/simple-layer.c
+	g++ -g -shared -fPIC -o libsimple_layer.so $< $(LDFLAGS)
+
+# export VK_INSTANCE_LAYERS=VK_LAYER_SIMPLE_example
+simple-layer-install: simple-layer
+	sudo cp src/simple-layer.json /usr/share/vulkan/explicit_layer.d/
+	@echo "Now set the following environment variables:"
+	@echo "export VK_INSTANCE_LAYERS=VK_LAYER_SIMPLE_example"
+	@echo "export LD_LIBRARY_PATH=$(PWD):\$$LD_LIBRARY_PATH"
+
 .PHONY: ctags
 ctags: 
 	ctags -R  ~/work/ai/vulkan/1.3.283.0/x86_64/include/ .
 
 clean:
-	@rm -f simple simple-shader shader list-dev
+	@rm -f simple simple-shader shader list-dev simple-layer.so

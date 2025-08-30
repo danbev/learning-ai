@@ -1,0 +1,14 @@
+{
+    "file_format_version": "1.2.0",
+    "layer": {
+        "name": "VK_LAYER_SIMPLE_example",
+        "type": "GLOBAL",
+        "library_path": "/home/danbev/work/ai/learning-ai/gpu/vulkan/libsimple_layer.so",
+        "api_version": "1.3.0",
+        "implementation_version": "1",
+        "description": "Simple example layer that logs instance creation/destruction",
+        "platforms": ["LINUX", "WINDOWS", "MACOS"],
+        "instance_extensions": [],
+        "device_extensions": []
+    }
+}
