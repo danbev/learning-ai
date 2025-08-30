@@ -53,6 +53,8 @@ int main() {
 
         uint32_t layer_ext_count;
         vkEnumerateInstanceExtensionProperties(layers[i].layerName, &layer_ext_count, NULL);
+        printf("  '%s' provides %d extensions:\n", layers[i].layerName, layer_ext_count);
+
         if (layer_ext_count == 0) {
             continue;
         }
@@ -62,7 +64,6 @@ int main() {
         VkExtensionProperties* layer_extensions = malloc(sizeof(VkExtensionProperties) * layer_ext_count);
         vkEnumerateInstanceExtensionProperties(layers[i].layerName, &layer_ext_count, layer_extensions);
 
-        printf("  '%s' provides %d extensions:\n", layers[i].layerName, layer_ext_count);
         for (uint32_t j = 0; j < layer_ext_count; j++) {
             printf("    %s\n", layer_extensions[j].extensionName);
         }
