@@ -42,10 +42,10 @@ int main() {
     vkEnumerateInstanceLayerProperties(&layer_count, NULL);
     printf("Found %d layers:\n", layer_count);
 
-    // Allocate array for layers (note: VkLayerProperties, not VkExtensionProperties)
+    // Notice that this is a different from the VkExtensionProperties struct
+    // which was something I did not notice initially.
     VkLayerProperties* layers = malloc(sizeof(VkLayerProperties) * layer_count);
 
-    // Actually enumerate the layers
     vkEnumerateInstanceLayerProperties(&layer_count, layers);
 
     // Now iterate through layers
@@ -57,6 +57,8 @@ int main() {
             continue;
         }
 
+        // But now also notice that this is the same struct used for the device
+        // extensions properties (is easy to mix up when new to Vulkan)
         VkExtensionProperties* layer_extensions = malloc(sizeof(VkExtensionProperties) * layer_ext_count);
         vkEnumerateInstanceExtensionProperties(layers[i].layerName, &layer_ext_count, layer_extensions);
 
