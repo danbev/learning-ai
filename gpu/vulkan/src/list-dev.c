@@ -26,6 +26,50 @@ VkInstance createInstance() {
 }
 
 int main() {
+    // List ICD extensions by first getting the count
+    uint32_t icd_ext_count;
+    vkEnumerateInstanceExtensionProperties(NULL, &icd_ext_count, NULL);
+    printf("Found %d instance extensions:\n", icd_ext_count);
+
+    VkExtensionProperties* icd_extensions = malloc(sizeof(VkExtensionProperties) * icd_ext_count);
+    vkEnumerateInstanceExtensionProperties(NULL, &icd_ext_count, icd_extensions);
+    for (uint32_t i = 0; i < icd_ext_count; i++) {
+        printf("ICD Extension %d: %s\n", i, icd_extensions[i].extensionName);
+    }
+
+    // List Layer extensions
+    uint32_t layer_count;
+    vkEnumerateInstanceLayerProperties(&layer_count, NULL);
+    printf("Found %d layers:\n", layer_count);
+
+    // Allocate array for layers (note: VkLayerProperties, not VkExtensionProperties)
+    VkLayerProperties* layers = malloc(sizeof(VkLayerProperties) * layer_count);
+
+    // Actually enumerate the layers
+    vkEnumerateInstanceLayerProperties(&layer_count, layers);
+
+    // Now iterate through layers
+    for (uint32_t i = 0; i < layer_count; i++) {
+
+        uint32_t layer_ext_count;
+        vkEnumerateInstanceExtensionProperties(layers[i].layerName, &layer_ext_count, NULL);
+        if (layer_ext_count == 0) {
+            continue;
+        }
+
+        VkExtensionProperties* layer_extensions = malloc(sizeof(VkExtensionProperties) * layer_ext_count);
+        vkEnumerateInstanceExtensionProperties(layers[i].layerName, &layer_ext_count, layer_extensions);
+
+        printf("  '%s' provides %d extensions:\n", layers[i].layerName, layer_ext_count);
+        for (uint32_t j = 0; j < layer_ext_count; j++) {
+            printf("    %s\n", layer_extensions[j].extensionName);
+        }
+        free(layer_extensions);
+        printf("\n");
+    }
+
+    free(layers);
+
     VkInstance instance = createInstance();
 
     uint32_t deviceCount = 0;
