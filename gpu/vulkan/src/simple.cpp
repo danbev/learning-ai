@@ -39,6 +39,24 @@ VkInstance createInstance() {
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
+    // Recall that we enable the layer using:
+    // VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+    // This layer provides extensions including VK_EXT_validation_features.
+    // The default for that extension if so set validate_best_practices to false.
+    // So we have to explicitly enable it here, overriding the layers default
+    // configuration.
+    VkValidationFeatureEnableEXT enabledFeatures[] = {
+        VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+    };
+    VkValidationFeaturesEXT validationFeatures = {};
+    validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    validationFeatures.pNext = NULL;
+    validationFeatures.enabledValidationFeatureCount = 1;
+    validationFeatures.pEnabledValidationFeatures = enabledFeatures;
+    validationFeatures.disabledValidationFeatureCount = 0;
+    validationFeatures.pDisabledValidationFeatures = NULL;
+    createInfo.pNext = &validationFeatures;
+
     // This is an opaque pointer a Vulkan object
     VkInstance instance;
     if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
@@ -339,9 +357,6 @@ int main() {
             0.0f, 0.0f, 2.0f, 0.0f,
             0.0f, 0.0f, 0.0f, 2.0f
         };
-
-        //glm::mat4 matrixA = glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        //glm::mat4 matrixB = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 2.0f));
 
         std::cout << "Copying matrices to GPU memory..." << std::endl;
         void* data;
