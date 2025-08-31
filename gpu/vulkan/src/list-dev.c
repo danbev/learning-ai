@@ -48,8 +48,9 @@ int main() {
     for (uint32_t i = 0; i < icd_ext_count; i++) {
         printf("ICD Extension %d: %s\n", i, icd_extensions[i].extensionName);
     }
+    printf("\n");
 
-    // List Layer extensions
+    // List Layer extensions and notice that this time we are using `InstanceLayer`.
     uint32_t layer_count;
     if(vkEnumerateInstanceLayerProperties(&layer_count, NULL) != VK_SUCCESS) {
         printf("Failed to get the number of layers\n");
@@ -81,7 +82,8 @@ int main() {
         }
 
         // But now also notice that this is the same struct used for the device
-        // extensions properties (is easy to mix up when new to Vulkan)
+        // extensions properties (is easy to mix up/get confused when new to
+        // Vulkan like I am).
         VkExtensionProperties* layer_extensions = malloc(sizeof(VkExtensionProperties) * layer_ext_count);
         if(vkEnumerateInstanceExtensionProperties(layers[i].layerName, &layer_ext_count, layer_extensions) != VK_SUCCESS) {
             printf("Failed to get the extensions for layer %s\n", layers[i].layerName);
@@ -125,6 +127,14 @@ int main() {
         printf("Device %d: %s\n", i, deviceProperties.deviceName);
         printf("Device ID: %d\n", deviceProperties.deviceID);
         printf("Vendor ID: %d\n", deviceProperties.vendorID);
+        printf("Device Type: ");
+        switch(deviceProperties.deviceType) {
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: printf("Integrated GPU"); break;
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: printf("Discrete GPU"); break;
+            case VK_PHYSICAL_DEVICE_TYPE_CPU: printf("CPU/Software"); break;
+            default: printf("Other (%d)", deviceProperties.deviceType); break;
+        }
+        printf("\n");
         printf("\n");
     }
 
