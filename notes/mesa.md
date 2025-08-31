@@ -98,3 +98,26 @@ selectable devices:
   GPU 1: 8086:46a6 "Intel(R) Graphics (ADL GT2)" integrated GPU 0000:00:02.0
   GPU 2: 10005:0 "llvmpipe (LLVM 19.1.1, 256 bits)" CPU 0000:00:00.0
 ```
+
+### llvmpipe
+This is a software implementation/driver that runs on the CPU. The name comes
+from LLVM + "pipe" (referring to the graphics pipeline). It was originally built
+for OpenGL but got extended with "lavapipe" for Vulkan support.
+
+* Uses multiple CPU threads to simulate GPU parallelism
+* Breaks work into tiles/blocks that run on different CPU cores
+* Each "GPU thread" in your compute shader becomes actual CPU thread execution
+
+It uses LLVM to compile shaders to optimized x86/x64 machine code at runtime.
+Your SPIR-V compute shaders get:
+```
+SPIR-V bytecode → LLVM IR → JIT compiled x86 code → Runs on CPU cores
+```
+```
+Your compute shader: "run this kernel on 1024 threads"
+↓
+LLVM: "compile this kernel to x86 code"
+↓
+CPU: "spawn 16 threads, each handles 64 iterations of the kernel"
+```
+
