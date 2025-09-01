@@ -88,13 +88,15 @@ memory.
 
 
 The registers on the SMs are per GPU thread which is not the case for a CPU
-where the registers are per CPU core.
-Every core in an SM has a register file, which is a collection of registers
-used exclusively by that core. The term register "file" has always confused me
-but in computing "file" has older roots, where it was used to describe a
-collection of related data. In early computing, a "file" could refer to a
-collection of data cards, for example. So a register file is a collection of
-registers which are memory locations on the chip itself.
+where the registers are per CPU core. Every core in an SM has a register file,
+which is a collection of registers used exclusively by that core. The term
+register "file" has always confused me but in computing "file" has older roots,
+where it was used to describe a collection of related data. In early computing,
+a "file" could refer to a collection of data cards, for example. So a register
+file is a collection of registers which are memory locations on the chip itself.
+
+There are about 255 registers per thread on modern GPUs and they are typically
+32 bits registers.
 
 Threads are executed by GPU cores and they execute the kernel. Just a note about
 the name "kernel" as the first thing I thought about was the linux kernel or
@@ -131,6 +133,106 @@ threads within those blocks.
 
 The cores are what actually do the work and execute the threads. Each core can
 execute one thread at a time.
+
+There is shared memory within a thread block/workgroup which is much faster than
+global memory (~10-20 cycles). The size of this is memory is limited and typically
+around 48-164 KB per block. This needs to be explicitely managed by the programmer.
+Global memory is the slowest memory on the GPU and is typically around 400-600 cycles.
+
+
+
+So, we have something like this:
+```
+Registers    : 32 bit, ~1 cycle access time, ~255 registers per thread, 255*32 bits = ~8160 bytes
+Shared memory: ~10-20 cycles access time, ~48-164 KB per block
+Global memory: ~400-600 cycles access time, ~GBs in size
+```
+
+Now, lets say that we want to multiply a 4096x4096 matrix. One row will be:
+```
+row size: 4096 elements * 4 bytes/element = 16,384 bytes = 16 KB
+```
+And one thread will need to access one row and one column to compute one element of
+the result matrix. So one row and one column will be:
+```
+one row = 16 KB
+one column = 16 KB
+Total: 32 KB
+```
+And we cannot fit 32 KB into the threads registers which can be around 1KB.
+So instead of one thread handling one complete dot product, using one row and
+one column to compute one output result, threads in a block can cooperate and compute
+a `tile` of the output matrix.
+
+So we have our input row and column in global memory:
+```
+row   : 16 KB 4096 elements
+column: 16 KB 4096 elements
+```
+And lets say we have a block of 256 threads (16x16=256). And each thread will compute a 16x16 tile
+of the input matrices (lets call them A an B), which results in a 16x16 tile of the output matrix C.
+```
+16x16 A tile = 1KB (16x16*4 bytes/element = 1024)
+16x16 B tile = 1KB (16x16*4 bytes/element = 1024)
+Total: 2KB in shared memory.
+
+Each thread will get:
+- 16 elements (64 bytes) from tile A in shared memory
+- 16 elements (64 bytes) from tile B in shared memory
+```
+So each thread will need to load 64 + 64 = 128 bytes from shared memory to its registers. Then the
+thread will compute the dot product of these two 16 element vectors to produce one output element
+which will be stored in an accumulator register. So thread one will have the output for the first
+element in its accumulator register, thread two will have the output for the second element
+and so on. And each thread writes this output to global memory directly which out having to go
+through shared memory.
+
+We know from above that 32 KB will not fit into a thread's registers so this will instead be loaded
+into the shared memory which can fit 2 KB without any problems.
+
+Each thread's registers will hold:
+```
+1 accumulator for its output bits   : 4 bytes (32 bits so this fits in one register).
+Temporary values for the computation: ~16 bytes
+Total per thread: ~20 bytes (not problem to fit within the ~1KB register size)
+```
+So we will have 256 threads that will run in parallel to compute the output for this matrix
+multiplication operation. ALL 256 threads do this `simultaneously`:
+```
+For k = 0 to 4096 step 16  (because 4096/256 = 16 iterations):
+  
+  // So the following is processing 0-15
+  Thread(0, 0) loads A[tile_row=0, tile_col=0, k_offset] → shared_A[0,0]
+  Thread(0, 1) loads A[tile_row=0, tile_col=1, k_offset] → shared_A[0,1]  
+  Thread(1, 0) loads A[tile_row=1, tile_col=0, k_offset] → shared_A[1,0]
+  ...
+  Thread(15, 15) loads A[tile_row=15, tile_col=15, k_offset] → shared_A[15,15]
+  
+  Thread(0, 0) loads B[k_offset, tile_col=0] → shared_B[0,0]
+  Thread(0, 1) loads B[k_offset, tile_col=1] → shared_B[0,1]
+  ...
+  
+  __syncthreads()  // Barrier: wait for ALL threads to finish loading
+  
+  // PARALLEL: All 256 threads compute simultaneously  
+  Thread(0, 0) computes: shared_A[0,:] dot shared_B[:,0] → accumulator(0,0)
+  Thread(0, 1) computes: shared_A[0,:] dot shared_B[:,1] → accumulator(0,1)
+  Thread(1, 0) computes: shared_A[1,:] dot shared_B[:,0] → accumulator(1,0)
+  ...
+  Thread(15, 15) computes: shared_A[15,:] dot shared_B[:,15] → accumulator(15,15)
+```
+
+### GPU Terminology
+```
+Metal              CUDA              Vulkan/WebGPU
+─────────────────────────────────────────────────────
+Thread             Thread            Invocation  
+Threadgroup        Thread Block      Workgroup
+Grid               Grid              Dispatch
+SIMD-group         Warp              Subgroup (32 threads on M3)
+```
+
+_wip_
 
 ```
 +-------------------------------------+
