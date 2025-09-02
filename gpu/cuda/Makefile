@@ -25,13 +25,13 @@ graphs: src/graphs.cu
 	nvcc -lnppc -o $@ $<
 
 matrix-mul: src/matrix-mul.cu
-	nvcc -lnppc -g -o $@ $<
-
-matrix-mul-shared-mem: src/matrix-mul-shared-mem.cu
 	nvcc -lnppc -G -g -o $@ $<
 
-debug-matrix-mul-shared: matrix-mul-shared-mem
-	cuda-gdb matrix-mul-shared-mem
+matrix-mul-tiled: src/matrix-mul-tiled.cu
+	nvcc -lnppc -G -g -o $@ $<
+
+debug-matrix-tiled: matrix-mul-tiled
+	cuda-gdb matrix-mul-tiled
 
 dump-array-add: array-add
 	cuobjdump $<
@@ -43,4 +43,4 @@ array-add-ptx:
 
 .PHONY: clean
 clean:
-	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add
+	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add matrix-mul

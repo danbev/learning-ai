@@ -6,3 +6,5 @@ wmma
 streams
 graphs
 array-add.ptx
+matrix-mul
+matrix-mul-tiled
