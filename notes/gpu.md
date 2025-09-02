@@ -88,62 +88,128 @@ memory.
 
 
 The registers on the SMs are per GPU thread which is not the case for a CPU
-where the registers are per CPU core. Every core in an SM has a register file,
-which is a collection of registers used exclusively by that core. The term
-register "file" has always confused me but in computing "file" has older roots,
-where it was used to describe a collection of related data. In early computing,
-a "file" could refer to a collection of data cards, for example. So a register
-file is a collection of registers which are memory locations on the chip itself.
+where the registers are per CPU core. Every core/processing unit in an SM has a
+register file, which is a collection of registers used exclusively by that core.
+The term register "file" has always confused me but in computing "file" has
+older roots, where it was used to describe a collection of related data. In early
+computing, a "file" could refer to a collection of data cards, for example. So
+a register file is a collection of registers which are memory locations on the
+chip itself.
 
 There are about 255 registers per thread on modern GPUs and they are typically
 32 bits registers.
 
-Threads are executed by GPU cores and they execute the kernel. Just a note about
-the name "kernel" as the first thing I thought about was the linux kernel or
-something like that. In this case I think it comes from that what we want
-executed is a small portion of our program, a part of it that we want to
-optimize (and which can benefit from parallelization). So this is the "kernel",
-it is the "core" computation unit of our program, or the "essential" part that
-is being computed.
+Threads are executed by GPU cores/compute units, and they execute the kernel.
+Just a note about the name "kernel" as the first thing I thought about was the
+linux kernel or something like that. In this case I think it comes from that
+what we want executed is a small portion of our program, a part of it that we
+want to optimize (and which can benefit from parallelization). So this is the
+"kernel", it is the "core" computation unit of our program, or the "essential"
+part that is being computed.
 
 Each thread has its own program counter, registers, stack and local memory (off
-chip so is slower than registers). But individual threads are not the unit of
-execution on the cores, instead something called a warp is the unit of
-execution. A warp is a collection of 32 threads that execute the same
-instruction in a SIMD fashion. So all the threads in a warp execute the same
-instruction at the same time, but on different data. 
+chip so is slower than registers). Each computation unit has 32 ALUs which
+can execute 32 threads simultaneously. So the smallest unit of execution is not
+an individual threads but instead 32 threads at once is the smallest unit of
+execution. 
 
-A block is a group of threads that execute the same kernel and can communicate
-with each other via shared memory. This means that a block is specific to an
-SM as the shared memory is per SM.
+This is actually more important that it might seem at first. Each computation
+unit on a GPU has 32 ALUs which means that it can execute 32 threads at the same
+time.
 
-A grid is a collection of blocks that execute the same kernel. This grid is
-distributed across the SMs of the GPU. So while an individual block is specific
-to an SM, other blocks in the same grid can be on other SMs.
-
-Each SM can execute multiple blocks at the same time. And each SM has multiple
-/many cores, and each of these cores can execute one or more threads at the
-same time.
-
-We specify the number of blocks, which is the same thing as the size of the
-grid, when we create the kernel. The GPUs scheduler will then distribute the
-blocks across the available SMs. So each block is assigned to an SM and the SM
-is responsible for executing the blocks  assigned to it, managing the warps and
-threads within those blocks.
-
-The cores are what actually do the work and execute the threads. Each core can
-execute one thread at a time.
-
-There is shared memory within a thread block/workgroup which is much faster than
-global memory (~10-20 cycles). The size of this is memory is limited and typically
-around 48-164 KB per block. This needs to be explicitely managed by the programmer.
-Global memory is the slowest memory on the GPU and is typically around 400-600 cycles.
-
-
-
-So, we have something like this:
 ```
-Registers    : 32 bit, ~1 cycle access time, ~255 registers per thread, 255*32 bits = ~8160 bytes
+Compute Unit Architecture:
+┌─────────────────────────────────────────────────────┐
+│ Compute Unit (256 threads max)                      │
+│                                                     │
+│ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐     │
+│ │SIMD Group 0 │ │SIMD Group 1 │ │SIMD Group 7 │     │
+│ │(32 threads) │ │(32 threads) │ │(32 threads) │     │
+│ └─────────────┘ └─────────────┘ └─────────────┘     │
+│        │               │               │            │
+│        ▼               ▼               ▼            │
+│ ┌─────────────────────────────────────────────────┐ │
+│ │        32 ALUs (Arithmetic Logic Units)         │ │
+│ │     (Shared by SIMD groups via time-slicing)    │ │
+│ └─────────────────────────────────────────────────┘ │
+│                                                     │
+│ ┌─────────────────────────────────────────────────┐ │
+│ │         Shared Memory (32KB)                    │ │
+│ │        (Shared by ALL 256 threads)              │ │
+│ └─────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
+```
+So we have 8 SIMD groups of 32 threads each, giving a total of 256 threads.
+
+And there are 32 ALUs are what execute all the operations, computations, memory
+loads/stores etc. And we can have 32 instructions executed in one cycle!
+Examples of operations that the ALUs execute:
+- Arithmetic         : add, multiply, fma operations
+- Memory loads       : from global memory → registers
+- Memory stores      : from registers → global memory
+- Address calculation: computing memory offsets
+- Control flow       : branch decisions, loop counters
+- Atomic operations  : atomic_add, compare_and_swap
+
+In CUDA these 32 threads that execute the same instruction are called a warp.
+So all the threads in a warp execute the same instruction at the same time, but
+on different data.
+```
+32 Physical ALUs → 32 threads minimum execution unit → "Warp/SIMD-group"
+```
+We can't efficiently use fewer than 32 threads (ALUs sit idle) and we can't
+execute more the 32 threads simulationsly either (needs time slicing).
+Now, not all GPUS have 32 ALUs, some have 16 and some have 64:
+```
+NVIDIA RTX 4090: 32 ALUs → 32-thread warps
+AMD RX 7900    : 64 ALUs → 64-thread wavefronts  
+Apple M3       : 32 ALUs → 32-thread SIMD-groups
+Intel Arc      : 16 ALUs → 16-thread subgroups
+```
+
+So we have a compute using which can have up to 256 threads. Each thread has
+its own 64 registers, but they are all from the same register file/memory, so
+we have 256 * 64 = 16,384 registers in total, and the register size would then
+be 65,536:
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │     Physical Register File (e.g., 65,536 regs)   │   │
+│  │  ┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐│   │
+│  │  │ Reg0 ││ Reg1 ││ Reg2 ││ Reg3 ││ Reg4 ││ Reg5 ││   │
+│  │  └──────┘└──────┘└──────┘└──────┘└──────┘└──────┘│   │
+│  │  │  ...thousands more registers...               │   │
+│  └──────────────────────────────────────────────────┘   │
+│           ▲                                  ▲          │
+│           │                                  │          │
+│  ┌─────────────┐                    ┌─────────────┐     │
+│  │   32 ALUs   │                    │  Register   │     │
+│  │             │◄──────────────────►│  Crossbar   │     │
+│  │ ALU0  ALU1  │                    │   Switch    │     │
+│  │ ALU2  ALU3  │                    │             │     │
+│  │    ...      │                    │             │     │
+│  └─────────────┘                    └─────────────┘     │
+└─────────────────────────────────────────────────────────┘
+```
+Recall that each thread is executing the same instructions, but the registers
+each thread uses are unique to that thread. So if we have an assembly load
+instruction that uses a register like `R1`, then each thread will use its own
+register.
+
+8 SIMD groups of 32 threads each = 256 total threads, but only 1 SIMD group uses
+the 32 ALUs at any given cycle:
+```
+Cycle 1: SIMD Group 0 (threads 0-31)    → all 32 ALUs busy
+Cycle 2: SIMD Group 1 (threads 32-63)   → all 32 ALUs busy
+Cycle 3: SIMD Group 2 (threads 64-95)   → all 32 ALUs busy
+...
+Cycle 8: SIMD Group 7 (threads 224-255) → all 32 ALUs busy
+Cycle 9: Back to SIMD Group 0...
+```
+
+```
+Registers    : 32 bit, ~1 cycle access time, 64 registers per thread
 Shared memory: ~10-20 cycles access time, ~48-164 KB per block
 Global memory: ~400-600 cycles access time, ~GBs in size
 ```
@@ -152,25 +218,26 @@ Now, lets say that we want to multiply a 4096x4096 matrix. One row will be:
 ```
 row size: 4096 elements * 4 bytes/element = 16,384 bytes = 16 KB
 ```
-And one thread will need to access one row and one column to compute one element of
-the result matrix. So one row and one column will be:
+And one thread will need to access one row and one column to compute one element
+of the result matrix. So one row and one column will be:
 ```
-one row = 16 KB
-one column = 16 KB
-Total: 32 KB
+one row    = 16 KB (4096 elements per for, and each 4 bytes/element)
+one column = 16 KB (4096 elements per for, and each 4 bytes/element)
+Total      = 32 KB
 ```
-And we cannot fit 32 KB into the threads registers which can be around 1KB.
+We can't fit 32 KB into the threads registers which can be around 1KB.
 So instead of one thread handling one complete dot product, using one row and
-one column to compute one output result, threads in a block can cooperate and compute
-a `tile` of the output matrix.
+one column to compute one output result, threads in a block can cooperate and
+compute a `tile` of the output matrix.
 
 So we have our input row and column in global memory:
 ```
 row   : 16 KB 4096 elements
 column: 16 KB 4096 elements
 ```
-And lets say we have a block of 256 threads (16x16=256). And each thread will compute a 16x16 tile
-of the input matrices (lets call them A an B), which results in a 16x16 tile of the output matrix C.
+And lets say our compute unit has 256 threads (16x16=256). And each thread will
+compute a 16x16 tile of the input matrices (lets call them A an B), which
+results in a 16x16 tile of the output matrix C.
 ```
 16x16 A tile = 1KB (16x16*4 bytes/element = 1024)
 16x16 B tile = 1KB (16x16*4 bytes/element = 1024)
@@ -180,15 +247,17 @@ Each thread will get:
 - 16 elements (64 bytes) from tile A in shared memory
 - 16 elements (64 bytes) from tile B in shared memory
 ```
-So each thread will need to load 64 + 64 = 128 bytes from shared memory to its registers. Then the
-thread will compute the dot product of these two 16 element vectors to produce one output element
-which will be stored in an accumulator register. So thread one will have the output for the first
-element in its accumulator register, thread two will have the output for the second element
-and so on. And each thread writes this output to global memory directly which out having to go
-through shared memory.
+So each thread will need to load `64 + 64 = 128 bytes` from shared memory to its
+registers. Then the thread will compute the dot product of these two 16 element
+vectors to produce one output element which will be stored in an accumulator
+register. So thread one will have the output for the first element in its
+accumulator register, thread two will have the output for the second element
+and so on. And each thread writes this output to global memory directly which
+out having to go through shared memory.
 
-We know from above that 32 KB will not fit into a thread's registers so this will instead be loaded
-into the shared memory which can fit 2 KB without any problems.
+We know from above that 32 KB will not fit into a thread's registers so this
+will instead be loaded into the shared memory which can fit 2 KB without any
+problems.
 
 Each thread's registers will hold:
 ```
@@ -196,8 +265,8 @@ Each thread's registers will hold:
 Temporary values for the computation: ~16 bytes
 Total per thread: ~20 bytes (not problem to fit within the ~1KB register size)
 ```
-So we will have 256 threads that will run in parallel to compute the output for this matrix
-multiplication operation. ALL 256 threads do this `simultaneously`:
+So we will have 256 threads that will run in parallel to compute the output for
+this matrix multiplication operation. ALL 256 threads do this `simultaneously`:
 ```
 For k = 0 to 4096 step 16  (because 4096/256 = 16 iterations):
   
@@ -220,6 +289,250 @@ For k = 0 to 4096 step 16  (because 4096/256 = 16 iterations):
   Thread(1, 0) computes: shared_A[1,:] dot shared_B[:,0] → accumulator(1,0)
   ...
   Thread(15, 15) computes: shared_A[15,:] dot shared_B[:,15] → accumulator(15,15)
+```
+
+Now, lets take a broader look a the compute unit/streaming multiprocessor:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Compute Unit                             │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │        Instruction Cache & Fetch Unit                │   │
+│  │     (Fetches instructions for all threads)           │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                            │                                │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │           Warp Scheduler                             │   │
+│  │    (Decides which SIMD group executes next)          │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                            │                                │
+│  ┌─────────────┐  ┌──────────┐  ┌─────────────────────────┐ │
+│  │    32x      │  │    4x    │  │    Register File        │ │
+│  │   ALUs      │  │   SFUs   │  │    (65,536 regs)        │ │
+│  │             │  │          │  │                         │ │
+│  │ • Int/FP    │  │ • sin()  │  │                         │ │
+│  │ • Logic     │  │ • cos()  │  │                         │ │
+│  │ • Compare   │  │ • log()  │  │                         │ │
+│  │ • FMA       │  │ • exp()  │  │                         │ │
+│  └─────────────┘  │ • sqrt() │  └─────────────────────────┘ │
+│                   │ • rsqrt()│                              │
+│                   │ • rcp()  │                              │
+│                   └──────────┘                              │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │               Shared Memory                          │   │
+│  │        (32-48KB, user-managed cache)                 │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │                L1 Cache                              │   │
+│  │         (128-256KB, automatic caching)               │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                            │                                │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              Load/Store Units                        │   │
+│  │        (Handle memory transactions)                  │   │
+│  └──────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Memory Subsystem                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │  L2 Cache   │  │ Texture     │  │   Global Memory     │  │
+│  │ (4-8MB)     │  │ Cache       │  │    (VRAM/RAM)       │  │
+│  │ (shared)    │  │             │  │                     │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Special Function Units (SFUs)
+Fast approximate math operations (1-2 cycles):
+* Transcendental functions: sin, cos, tan
+* Exponentials: exp, exp2, log, log2
+* Square roots: sqrt, rsqrt (reciprocal square root)
+* Reciprocals: rcp (1/x)
+* Some integer operations: __clz (count leading zeros)
+
+Without SFUs sin(x) would take ~20 ALU instructions → 20 cycles per thread.
+With SFUs sin(x) takes 1 SFU instruction → 8 cycles for 32 threads (80x speedup
+for transcendental math!).
+
+### Scheduler
+Each cycle, the scheduler asks:
+1. Which warps are ready to execute? (not waiting for memory/barriers)
+2. What instruction does each ready warp need next?
+3. Which execution units are available this cycle?
+4. Assign ready warp → available execution unit
+
+Now since all 32 threads execute the same instruction at the same time, each
+thread does not have an instruction pointer register, but instead the warp/schduler
+has this:
+```
+Warp State (stored in scheduler):
+┌─────────────────────────────────────────────────────────┐
+│ Warp 0:                                                 │
+│ ├─ Program Counter (PC): 0x2040                         │
+│ ├─ Active Mask: 11111111111111111111111111111111        │
+│ ├─ State: READY/WAITING/STALLED                         │
+│ └─ Next Instruction: ADD R1, R2, R3                     │
+├─────────────────────────────────────────────────────────┤
+│ Warp 1:                                                 │
+│ ├─ Program Counter (PC): 0x2044                         │
+│ ├─ Active Mask: 11111111111111111111111111111111        │
+│ ├─ State: WAITING (for memory)                          │
+│ └─ Next Instruction: LD R4, [global_addr]               │
+└─────────────────────────────────────────────────────────┘
+```
+All instructions are stored in the instruction cache which is what each warps
+program counter points to (the next instruction to execute for that warp.
+```
+┌─────────────────────────────────────────────────────────┐
+│                 Compute Unit                            │
+│                                                         │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │            Instruction Cache                        │ │
+│ │        (Stores compiled kernel code)                │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                           ▲                             │
+│                           │                             │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │              Warp Scheduler                         │ │
+│ │                                                     │ │
+│ │ Warp 0: PC=0x2040 → fetch instruction at 0x2040     │ │
+│ │ Warp 1: PC=0x2044 → fetch instruction at 0x2044     │ │
+│ │ Warp 2: PC=0x2048 → fetch instruction at 0x2048     │ │
+│ │ ...                                                 │ │
+│ │                                                     │ │
+│ │ Decision: Execute Warp 0 this cycle                 │ │
+│ └─────────────────────────────────────────────────────┘ │
+│                           │                             │
+│                           ▼                             │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │                32 ALUs                              │ │
+│ │ Execute "ADD R1, R2, R3" on all 32 threads          │ │
+│ └─────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+So this allows the scheduler to inspect the next instruction for a warp and
+determine if is should run now or if it should wait. For example if the next
+instruction is a memory load and the data is not yet available then the warp
+will be put into a waiting state until the data arrives. This is important
+because memory loads can take hundreds of cycles to complete, and we don't want
+to waste cycles waiting for memory loads to complete.
+The warp manages state something like this:
+```c++
+struct WarpState {
+    uint32_t program_counter;      // Where this warp is in the code
+    uint32_t active_mask;          // Which of the 32 threads are active  
+    enum WarpStatus status;        // READY/WAITING/STALLED
+    uint32_t wait_cycles;          // How long waiting for memory/barrier
+    uint32_t last_instruction;     // For dependency tracking
+};
+
+WarpState warp_states[MAX_WARPS_PER_SM];  // Scheduler's state table
+```
+So the scheduler would have an array of these warp states. And for each warp
+state that is in the READY state select one to execute based on some criteria
+like round robin or prefer warps with instructions that matches available units
+like SFUs or ALUs.
+
+```
+Warp States:
+┌─────────────┐    instruction     ┌─────────────┐
+│   Ready     │ ─────────────────► │  Executing  │
+│             │                    │             │
+└─────────────┘                    └─────────────┘
+       ▲                                  │
+       │                                  │ 
+       │ data arrives                     │ memory request/
+       │                                  │ barrier sync
+       │                                  ▼
+┌─────────────┐                    ┌─────────────┐
+│   Stalled   │ ◄───────────────── │   Waiting   │
+│             │    timeout/retry   │             │  
+└─────────────┘                    └─────────────┘
+```
+```
+Cycle 1: Warp 0 issues memory load → goes to "Waiting" state
+Cycle 2: Warp 1 executes arithmetic → uses ALUs
+Cycle 3: Warp 2 executes arithmetic → uses ALUs
+...
+Cycle 300: Warp 0's memory load completes → back to "Ready" state
+Cycle 301: Warp 0 executes next instruction → uses ALUs
+```
+
+### Load/Store Units (LSUs)
+This is a speciallized hardware component that handles all memory operations.
+* address calculations
+* cache access
+* alignment handling
+* atomic operations
+* coalescing memory accesses from multiple threads (instead of performing individual
+  memory operations for each thread, LSUs combine them into fewer, larger operations to
+  one memory transaction which is more efficient).
+
+Example of coalescing:
+```
+32 threads request memory:
+Thread 0: address 0x1000
+Thread 1: address 0x1004
+Thread 2: address 0x1008
+...
+Thread 31: address 0x107C
+
+LSU detects pattern sequential addresses, 4-byte aligned
+→ Coalesces into ONE 128-byte transaction (0x1000-0x107F)
+→ Single memory request instead of 32!
+
+Bad pattern:
+Thread 0: address 0x1000
+Thread 1: address 0x2000  ← Far apart!
+Thread 2: address 0x3000
+...
+→ LSU must issue 32 separate transactions
+→ 32x slower memory access
+```
+Example of instructions that are handled by the LSUs:
+```
+float value = input[id];           // Load
+output[id] = result;               // Store
+atomicAdd(&counter, 1);            // Atomic (special LSU operation)
+texture2D(tex, u, v);              // Texture load (specialized LSU)
+
+// Shared memory access:
+shared_data[tid] = value;          // Still uses LSU (different path)
+```
+
+### Grid, Block, Warp, Thread
+When we launch a kernel in CUDA we use kernel launch configuration syntax, for
+example:
+```c++
+op_clamp_kernel<<<num_blocks, CUDA_CLAMP_BLOCK_SIZE, 0   , stream>>>(x, dst, min, max, k);
+//             <<<grid_dim  ,  block_dim           ,shmem, stream>>>
+```
+```
+Grid (num_blocks = 4):
+┌─────────────────────────────────────────────────────────────┐
+│  Block 0      Block 1      Block 2      Block 3             │
+│ ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐          │
+│ │256 thds │  │256 thds │  │256 thds │  │256 thds │          │
+│ │8 warps  │  │8 warps  │  │8 warps  │  │8 warps  │          │
+│ └─────────┘  └─────────┘  └─────────┘  └─────────┘          │
+└─────────────────────────────────────────────────────────────┘
+```
+So each warp has 32 threads, remember that the smallest unit of execution, and
+32*8=256 threads per block. And we have 4 blocks in this case so we have
+256*4=1024 threads in total.
+
+```c++
+const int i = blockDim.x * blockIdx.x + threadIdx.x;
+                 256       0,1,2,3       0..255
+
+Block 0: i = 256 * 0 + threadIdx.x = 0-255    (elements 0-255)
+Block 1: i = 256 * 1 + threadIdx.x = 256-511  (elements 256-511)
+Block 2: i = 256 * 2 + threadIdx.x = 512-767  (elements 512-767)
+Block 3: i = 256 * 3 + threadIdx.x = 768-1023 (elements 768-1023)
 ```
 
 ### GPU Terminology
@@ -1224,3 +1537,31 @@ nvcc --version
 ```console
 apt list --installed
 ```
+
+>>>>> Put this is some appropratate place later or delete it:
+A block is a group of threads that execute the same kernel and can communicate
+with each other via shared memory. This means that a block is specific to an
+SM as the shared memory is per SM.
+
+A grid is a collection of blocks that execute the same kernel. This grid is
+distributed across the SMs of the GPU. So while an individual block is specific
+to an SM, other blocks in the same grid can be on other SMs.
+
+Each SM can execute multiple blocks at the same time. And each SM has multiple
+/many cores, and each of these cores can execute one or more threads at the
+same time.
+
+We specify the number of blocks, which is the same thing as the size of the
+grid, when we create the kernel. The GPUs scheduler will then distribute the
+blocks across the available SMs. So each block is assigned to an SM and the SM
+is responsible for executing the blocks  assigned to it, managing the warps and
+threads within those blocks.
+
+The cores are what actually do the work and execute the threads. Each core can
+execute one thread at a time.
+
+There is shared memory within a thread block/workgroup which is much faster than
+global memory (~10-20 cycles). The size of this is memory is limited and typically
+around 48-164 KB per block. This needs to be explicitely managed by the programmer.
+Global memory is the slowest memory on the GPU and is typically around 400-600 cycles.
+<<<<<
