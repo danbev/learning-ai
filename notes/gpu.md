@@ -96,7 +96,7 @@ computing, a "file" could refer to a collection of data cards, for example. So
 a register file is a collection of registers which are memory locations on the
 chip itself.
 
-There are about 255 registers per thread on modern GPUs and they are typically
+There are about 64 registers per thread on modern GPUs and they are typically
 32 bits registers.
 
 Threads are executed by GPU cores/compute units, and they execute the kernel.
@@ -107,11 +107,9 @@ want to optimize (and which can benefit from parallelization). So this is the
 "kernel", it is the "core" computation unit of our program, or the "essential"
 part that is being computed.
 
-Each thread has its own program counter, registers, stack and local memory (off
-chip so is slower than registers). Each computation unit has 32 ALUs which
-can execute 32 threads simultaneously. So the smallest unit of execution is not
-an individual threads but instead 32 threads at once is the smallest unit of
-execution. 
+Each computation unit has 32 ALUs which can execute 32 threads simultaneously.
+So the smallest unit of execution is not an individual threads but instead 32
+threads at once is the smallest unit of execution. 
 
 This is actually more important that it might seem at first. Each computation
 unit on a GPU has 32 ALUs which means that it can execute 32 threads at the same
@@ -143,6 +141,7 @@ So we have 8 SIMD groups of 32 threads each, giving a total of 256 threads.
 
 And there are 32 ALUs are what execute all the operations, computations, memory
 loads/stores etc. And we can have 32 instructions executed in one cycle!
+
 Examples of operations that the ALUs execute:
 - Arithmetic         : add, multiply, fma operations
 - Memory loads       : from global memory → registers
@@ -214,38 +213,73 @@ Shared memory: ~10-20 cycles access time, ~48-164 KB per block
 Global memory: ~400-600 cycles access time, ~GBs in size
 ```
 
-Now, lets say that we want to multiply a 4096x4096 matrix. One row will be:
+Now, lets say that we want to multiply a 4096x4096 matrix. 
+```
+               Matrix A
+                 4096                      datatype: float (4 bytes)
+     +--------------------------------+
+     |                                |
+     |                                |
+     |                                |
+     |                                |
+     |                                |  4096
+     |                                |
+     |                                |
+     |                                |
+     |                                |
+     |                                |
+     +--------------------------------+
+
+Total: 4096x4096 elements * 4 bytes/element = 67,108,864 bytes = 64 MB 
+```
+One row will be:
 ```
 row size: 4096 elements * 4 bytes/element = 16,384 bytes = 16 KB
 ```
 And one thread will need to access one row and one column to compute one element
 of the result matrix. So one row and one column will be:
 ```
-one row    = 16 KB (4096 elements per for, and each 4 bytes/element)
-one column = 16 KB (4096 elements per for, and each 4 bytes/element)
+one row    = 16 KB (4096 elements per row, and each 4 bytes/element)
+one column = 16 KB (4096 elements per column, and each 4 bytes/element)
 Total      = 32 KB
 ```
-We can't fit 32 KB into the threads registers which can be around 1KB.
+We can't fit 32 KB into the threads register's which can be around 1KB.
+
 So instead of one thread handling one complete dot product, using one row and
 one column to compute one output result, threads in a block can cooperate and
 compute a `tile` of the output matrix.
+We can take a small tile of the input matrix at a time, for example a 16x16 tile:
+```
+        16       4096                      datatype: float (4 bytes)
+     +-------+------------------------+
+ 16  |       |                        |
+     |       |                        |
+     +-------+                        |
+     |                                |
+     |                                |  4096
+     |                                |
+     |                                |
+     |                                |
+     |                                |
+     |                                |
+     +--------------------------------+
+```
+So we store this tile tile in `shared memory`:
+```
+16×16 A tile = 1KB (shared by ALL 256 threads)
+16×16 B tile = 1KB (shared by ALL 256 threads)
+Total in shared memory: 2KB
+```
 
-So we have our input row and column in global memory:
+And each each thread will only holds a small slice of this in its registers:
 ```
-row   : 16 KB 4096 elements
-column: 16 KB 4096 elements
-```
-And lets say our compute unit has 256 threads (16x16=256). And each thread will
-compute a 16x16 tile of the input matrices (lets call them A an B), which
-results in a 16x16 tile of the output matrix C.
-```
-16x16 A tile = 1KB (16x16*4 bytes/element = 1024)
-16x16 B tile = 1KB (16x16*4 bytes/element = 1024)
-Total: 2KB in shared memory.
+16 elements from A tile = 64 bytes (one row from shared A tile)
+16 elements from B tile = 64 bytes (one column from shared B tile)
+Total: 128 bytes in registers for row and column
 
-Each thread will get:
-- 16 elements (64 bytes) from tile A in shared memory
-- 16 elements (64 bytes) from tile B in shared memory
+1 accumulator = 4 bytes
+Temporary values = ~16 bytes
+Total per thread: ~148 bytes (fits comfortably in ~1KB register space)
 ```
 So each thread will need to load `64 + 64 = 128 bytes` from shared memory to its
 registers. Then the thread will compute the dot product of these two 16 element
@@ -255,20 +289,10 @@ accumulator register, thread two will have the output for the second element
 and so on. And each thread writes this output to global memory directly which
 out having to go through shared memory.
 
-We know from above that 32 KB will not fit into a thread's registers so this
-will instead be loaded into the shared memory which can fit 2 KB without any
-problems.
-
-Each thread's registers will hold:
-```
-1 accumulator for its output bits   : 4 bytes (32 bits so this fits in one register).
-Temporary values for the computation: ~16 bytes
-Total per thread: ~20 bytes (not problem to fit within the ~1KB register size)
-```
 So we will have 256 threads that will run in parallel to compute the output for
-this matrix multiplication operation. ALL 256 threads do this `simultaneously`:
+this matrix multiplication operation. ALL 256 threads do this `simultaneously`.
 ```
-For k = 0 to 4096 step 16  (because 4096/256 = 16 iterations):
+For k = 0 to 4096 step 16  (because 4096/16 = 256 iterations):
   
   // So the following is processing 0-15
   Thread(0, 0) loads A[tile_row=0, tile_col=0, k_offset] → shared_A[0,0]
