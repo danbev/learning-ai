@@ -1180,3 +1180,290 @@ Perhaps the grammer should be conditioned on the json_schama:
             llama_params["grammar_triggers"] = grammar_triggers;
         }
 ```
+
+### llama-server
+```console
+$ gdb --args build/bin/llama-server -m ~/work/ai/models/converted/gpt-oss-20b.gguf -c 0 -fa --verbose-prompt -ngl 15 --no-warmup -sp --reasoning-format none --verbose -t 1 --threads-http 1 --jinja
+```
+The chat templates are initialized in  `load_model`:
+```c++
+    chat_templates = common_chat_templates_init(model, params_base.chat_template);
+```
+And this is the same function as llama-cli called which we went through above.
+```c++
+        try {
+            common_chat_format_example(chat_templates.get(), params.use_jinja, params.default_template_kwargs);
+        } catch (const std::exception & e) {
+            SRV_WRN("%s: Chat template parsing error: %s\n", __func__, e.what());
+            SRV_WRN("%s: The chat template that comes with this model is not yet supported, falling back to chatml. This may cause the model to output suboptimal responses\n", __func__);
+            chat_templates = common_chat_templates_init(model, "chatml");
+        }
+```
+
+```c++
+std::string common_chat_format_example(const struct common_chat_templates * tmpls, bool use_jinja, const std::map<std::string, std::string> & chat_template_kwargs) {
+    common_chat_templates_inputs inputs;
+    inputs.use_jinja = use_jinja;
+    inputs.add_bos = tmpls->add_bos;
+    inputs.add_eos = tmpls->add_eos;
+    inputs.chat_template_kwargs = chat_template_kwargs;
+    auto add_simple_msg = [&](auto role, auto content) {
+        common_chat_msg msg;
+        msg.role = role;
+        msg.content = content;
+        inputs.messages.push_back(msg);
+    };
+    add_simple_msg("system",    "You are a helpful assistant");
+    add_simple_msg("user",      "Hello");
+    add_simple_msg("assistant", "Hi there");
+    add_simple_msg("user",      "How are you?");
+    return common_chat_templates_apply(tmpls, inputs).prompt;
+}
+```
+So this is building up the inputs to pass to a template. We can see that it is
+setting up the system message for a chat assistant. So all of the messages are
+added to the messages vector in inputs and the will be applied by the template
+engine.
+And `common_chat_templates_apply` is something we've also seen before:
+```c++
+common_chat_params common_chat_templates_apply(
+    const struct common_chat_templates * tmpls,
+    const struct common_chat_templates_inputs & inputs)
+{
+    GGML_ASSERT(tmpls != nullptr);
+    return inputs.use_jinja
+        ? common_chat_templates_apply_jinja(tmpls, inputs)
+        : common_chat_templates_apply_legacy(tmpls, inputs);
+}
+```
+
+Later in `server_context::init` we have:
+```c++
+        oai_parser_opt = {
+            /* use_jinja             */ params_base.use_jinja,
+            /* prefill_assistant     */ params_base.prefill_assistant,
+            /* reasoning_format      */ params_base.reasoning_format,
+            /* chat_template_kwargs  */ params_base.default_template_kwargs,
+            /* common_chat_templates */ chat_templates.get(),
+            /* allow_image           */ mctx ? mtmd_support_vision(mctx) : false,
+            /* allow_audio           */ mctx ? mtmd_support_audio (mctx) : false,
+            /* enable_thinking       */ params_base.reasoning_budget != 0,
+        };
+```
+Notice that the chat template is being passed set here.
+
+This is later used in `handle_chat_completions`:
+```c++
+    const auto handle_chat_completions = [&ctx_server, &handle_completions_impl](const httplib::Request & req, httplib::Response & res) {
+        LOG_DBG("request: %s\n", req.body.c_str());
+
+        auto body = json::parse(req.body);
+        std::vector<raw_buffer> files;
+        json data = oaicompat_chat_params_parse(
+            body,
+            ctx_server.oai_parser_opt,
+            files);
+
+        handle_completions_impl(
+            SERVER_TASK_TYPE_COMPLETION,
+            data,
+            files,
+            req.is_connection_closed,
+            res,
+            OAICOMPAT_TYPE_CHAT);
+    };
+```
+In `oaicompat_chat_params_parse` we can see that the chat template inputs are
+set:
+```c++
+static json oaicompat_chat_params_parse(
+    json & body, /* openai api json semantics */
+    const oaicompat_parser_options & opt,
+    std::vector<raw_buffer> & out_files)
+{
+    ...
+    common_chat_templates_inputs inputs;
+    inputs.messages              = common_chat_msgs_parse_oaicompat(messages);
+    inputs.tools                 = common_chat_tools_parse_oaicompat(tools);
+    inputs.tool_choice           = common_chat_tool_choice_parse_oaicompat(tool_choice);
+    inputs.json_schema           = json_schema.is_null() ? "" : json_schema.dump();
+    inputs.grammar               = grammar;
+    inputs.use_jinja             = opt.use_jinja;
+    inputs.parallel_tool_calls   = json_value(body, "parallel_tool_calls", false);
+    inputs.add_generation_prompt = json_value(body, "add_generation_prompt", true);
+    inputs.reasoning_format      = opt.reasoning_format;
+    inputs.enable_thinking       = opt.enable_thinking;
+    ...
+    // Apply chat template to the list of messages
+    auto chat_params = common_chat_templates_apply(opt.tmpls, inputs);
+
+    /* Append assistant prefilled message */
+    if (prefill_assistant_message) {
+        if (!last_message.content_parts.empty()) {
+            for (auto & p : last_message.content_parts) {
+                chat_params.prompt += p.text;
+            }
+        } else {
+            chat_params.prompt += last_message.content;
+        }
+    }
+
+    llama_params["chat_format"]      = static_cast<int>(chat_params.format);
+    llama_params["prompt"]           = chat_params.prompt;
+```
+Notice that this function returns a json object. And that the output of the
+template engine is set as the `prompt` attribute in the json object.
+
+Now, lets first inspect the `body`:
+```console
+(gdb) pjson body
+{
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant."
+        },
+        {
+            "role": "user",
+            "content": "What is the capital of Sweden?"
+        }
+    ],
+    "stream": true,
+    "cache_prompt": true,
+    "reasoning_format": "none",
+    "samplers": "edkypmxt",
+    "temperature": 0.8,
+    "dynatemp_range": 0,
+    "dynatemp_exponent": 1,
+    "top_k": 42,
+    "top_p": 0.8,
+    "min_p": 0.05,
+    "typical_p": 1,
+    "xtc_probability": 0,
+    "xtc_threshold": 0.1,
+    "repeat_last_n": 64,
+    "repeat_penalty": 1,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "dry_multiplier": 0,
+    "dry_base": 1.75,
+    "dry_allowed_length": 2,
+    "dry_penalty_last_n": -1,
+    "max_tokens": -1,
+    "timings_per_token": true
+}
+```
+Notice that the system prompt is taken from the web UI and the settings page so
+this can be changed by the user.
+
+And this is calling `common_chat_templates_apply` which we have seen before.
+
+Inspecting the prompt after the template has been applied we can see:
+```console
+(gdb) p chat_params.prompt
+$11 = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-08-20\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant.\n\n<|end|><|start|>user<|message|>What is the capital of Sweden?<|end|><|start|>assistant"
+```
+Notice that this does not have the issue that `llama-cli` has/had with regards
+to the `<|start|>` token.
+
+The returned json from this function will look like this:
+```console
+(gdb) pjson llama_params
+{
+    "stop": [],
+    "chat_format": 12,
+    "prompt": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-08-20\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|><|start|>developer<|message|># Instructions\n\nYou are a helpful assistant.\n\n<|end|><|start|>user<|message|>What is the capital of Sweden?<|end|><|start|>assistant",
+    "grammar_lazy": false,
+    "grammar_triggers": [],
+    "preserved_tokens": [
+        "<|channel|>",
+        "<|constrain|>",
+        "<|message|>",
+        "<|start|>",
+        "<|end|>"
+    ],
+    "thinking_forced_open": false,
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant."
+        },
+        {
+            "role": "user",
+            "content": "What is the capital of Sweden?"
+        }
+    ],
+    "stream": true,
+    "cache_prompt": true,
+    "reasoning_format": "none",
+    "samplers": "edkypmxt",
+    "temperature": 0.8,
+    "dynatemp_range": 0,
+    "dynatemp_exponent": 1,
+    "top_k": 42,
+    "top_p": 0.8,
+    "min_p": 0.05,
+    "typical_p": 1,
+    "xtc_probability": 0,
+    "xtc_threshold": 0.1,
+    "repeat_last_n": 64,
+    "repeat_penalty": 1,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "dry_multiplier": 0,
+    "dry_base": 1.75,
+    "dry_allowed_length": 2,
+    "dry_penalty_last_n": -1,
+    "max_tokens": -1,
+    "timings_per_token": true
+}
+```
+This will be returned to server.cpp, `handle_chat_completions `:
+```c++
+        json data = oaicompat_chat_params_parse(
+            body,
+            ctx_server.oai_parser_opt,
+            files);
+
+        handle_completions_impl(
+            SERVER_TASK_TYPE_COMPLETION,
+            data,
+            files,
+            req.is_connection_closed,
+            res,
+            OAICOMPAT_TYPE_CHAT);
+```
+```c++
+    const auto handle_completions_impl = [&ctx_server, &res_error, &res_ok](
+            server_task_type type,
+            json & data,
+            const std::vector<raw_buffer> & files,
+            const std::function<bool()> & is_connection_closed,
+            httplib::Response & res,
+            oaicompat_type oaicompat) -> void {
+
+    ...
+    try {
+            std::vector<server_task> tasks;
+
+            const auto & prompt = data.at("prompt");
+
+            if (oaicompat && has_mtmd) {
+                ...
+            } else {
+                auto tokenized_prompts = tokenize_input_prompts(ctx_server.vocab, prompt, true, true);
+                for (auto & p : tokenized_prompts) {
+                    auto tmp = server_tokens(p, ctx_server.mctx != nullptr);
+                    inputs.push_back(std::move(tmp));
+                }
+            }
+```
+```console
+(gdb) p tokenized_prompts
+$16 = std::vector of length 1, capacity 1 = {std::vector of length 87, capacity 416 = {200006, 17360, 200008, 3575, 553, 17554,
+    162016, 11, 261, 4410, 6439, 2359, 22203, 656, 7788, 17527, 558, 87447, 100594, 25, 220, 1323, 19, 12, 3218, 198, 6576, 3521,
+    25, 220, 1323, 20, 12, 3062, 12, 455, 279, 30377, 289, 25, 14093, 279, 2, 13888, 18403, 25, 8450, 11, 49159, 11, 1721, 13,
+    21030, 2804, 413, 7360, 395, 1753, 3176, 13, 200007, 200006, 77944, 200008, 2, 68406, 279, 3575, 553, 261, 10297, 29186, 364,
+    200007, 200006, 1428, 200008, 4827, 382, 290, 9029, 328, 42009, 30, 200007, 200006, 173781}}
+```
+
