@@ -528,3 +528,288 @@ static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t r
         features.push_back({ "REPACK", "1" });
     #endif
 ```
+
+But returning to the `ggml_backend_cpu_get_extra_buffer_types` this is my first
+time coming across this extra buffer type concept.
+
+### Extra buffer type
+So in `ggml/src/ggml-cpu/ggml-cpu.cpp` we have:
+
+```c++
+std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_types() {
+    static std::vector<ggml_backend_buffer_type_t> bufts = []() {
+        std::vector<ggml_backend_buffer_type_t> bufts;
+
+#if defined(__AMX_INT8__) && defined(__AVX512VNNI__)
+        if (ggml_backend_amx_buffer_type()) {
+            bufts.push_back(ggml_backend_amx_buffer_type());
+        }
+#endif
+
+#ifdef GGML_USE_CPU_KLEIDIAI
+        if (ggml_backend_cpu_kleidiai_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_kleidiai_buffer_type());
+        }
+#endif
+
+#ifdef GGML_USE_CPU_REPACK
+        if (ggml_backend_cpu_repack_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_repack_buffer_type());
+        }
+#endif
+
+        return bufts;
+    }();
+
+    return bufts;
+}
+
+static ggml_backend_buffer_type_t * ggml_backend_cpu_device_get_extra_buffers_type(ggml_backend_dev_t device) {
+
+    static std::vector<ggml_backend_buffer_type_t> extra_bufts = [] {
+        std::vector<ggml_backend_buffer_type_t> bufts = ggml_backend_cpu_get_extra_buffer_types();
+        bufts.push_back(nullptr);
+        return bufts;
+    }();
+
+    return extra_bufts.data();
+
+    GGML_UNUSED(device);
+}
+```
+Now, `extra_bufts` is a static vector, and it is initalized using a
+immediately-invoked lambda expression (IIFE) (notice the ()). This will call
+`ggml_backend_cpu_get_extra_buffer_types` where depending on the macros that
+have been defined at compile time it will add the corresponding buffer types.
+Then a `nullptr` is added to the end of the vector to enable iterating over
+the vector until a `nullptr` is found.
+
+To understand when this is called we have to take a look in `src/llama.cpp`:
+```c++
+static int llama_model_load(const std::string & fname, std::vector<std::string> & splits, llama_model & model, llama_model_params & params) {
+    ...
+        if (!model.load_tensors(ml)) {
+            return -2;
+        }
+```
+
+Which calls into `src/llama-model.cpp`:
+```c++
+bool llama_model::load_tensors(llama_model_loader & ml) {
+    const auto & split_mode   = params.split_mode;
+    const auto & n_gpu_layers = params.n_gpu_layers;
+    const auto & use_mlock    = params.use_mlock;
+    const auto & tensor_split = params.tensor_split;
+
+    const int n_layer = hparams.n_layer;
+
+    const bool use_mmap_buffer = true;
+
+    LLAMA_LOG_INFO("%s: loading model tensors, this can take a while... (mmap = %s)\n", __func__, ml.use_mmap ? "true" : "false");
+
+    // build a list of buffer types for the CPU and GPU devices
+    pimpl->cpu_buft_list = make_cpu_buft_list(devices, params.use_extra_bufts);
+```
+And this in turn calls `make_cpu_buft_list`, and notice that this is passing
+`use_extra_bufts` which is set from the command line parameter
+```c++
+    add_opt(common_arg(
+        {"-nr", "--no-repack"},
+        "disable weight repacking",
+        [](common_params & params) {
+            params.no_extra_bufts = true;
+        }
+    ).set_env("LLAMA_ARG_NO_REPACK"));
+```
+This is later set using:
+```c++
+    mparams.use_extra_bufts = !params.no_extra_bufts;
+```
+So lets look at `make_cpu_buft_list`:
+```c++
+static buft_list_t make_cpu_buft_list(const std::vector<ggml_backend_dev_t> & devices, bool use_extra_bufts) {
+    buft_list_t buft_list;
+    ...
+
+    // add extra buffer types
+    if (use_extra_bufts) {
+        auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        if (cpu_dev == nullptr) {
+            throw std::runtime_error(format("%s: no CPU backend found", __func__));
+        }
+
+        auto * cpu_reg = ggml_backend_dev_backend_reg(cpu_dev);
+
+        auto ggml_backend_dev_get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
+            ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_dev_get_extra_bufts");
+
+        if (ggml_backend_dev_get_extra_bufts_fn) {
+            ggml_backend_buffer_type_t * extra_bufts = ggml_backend_dev_get_extra_bufts_fn(cpu_dev);
+            while (extra_bufts && *extra_bufts) {
+                buft_list.emplace_back(cpu_dev, *extra_bufts);
+                ++extra_bufts;
+            }
+        }
+    }
+```
+Now, notice that `ggml_backend_reg_get_proc_address` takes a backend registry and
+a string name and returns a void pointer:
+```c++
+void * ggml_backend_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
+    GGML_ASSERT(reg);
+    if (!reg->iface.get_proc_address) {
+        return NULL;
+    }
+    return reg->iface.get_proc_address(reg, name);
+}
+```
+And if the interface of this backend registry has a `get_proc_address` function
+then it will be called.
+We can see that the passed in name is checked against a number of strings and
+that they all set and return function pointers:
+```c++
+static void * ggml_backend_cpu_get_proc_address(ggml_backend_reg_t reg, const char * name) {
+    if (strcmp(name, "ggml_backend_set_n_threads") == 0) {
+        ggml_backend_set_n_threads_t fct = ggml_backend_cpu_set_n_threads;
+        return (void *)fct;
+    }
+    if (strcmp(name, "ggml_backend_dev_get_extra_bufts") == 0) {
+        ggml_backend_dev_get_extra_bufts_t fct = ggml_backend_cpu_device_get_extra_buffers_type;
+        return (void *)fct;
+    }
+    ...
+
+    return NULL;
+
+    GGML_UNUSED(reg);
+}
+```
+So in the case we are interested this will return the function pointer to
+`ggml_backend_cpu_device_get_extra_buffers_type`.
+```c++
+static ggml_backend_buffer_type_t * ggml_backend_cpu_device_get_extra_buffers_type(ggml_backend_dev_t device) {
+    static std::vector<ggml_backend_buffer_type_t> extra_bufts = [] {
+        std::vector<ggml_backend_buffer_type_t> bufts = ggml_backend_cpu_get_extra_buffer_types();
+        bufts.push_back(nullptr);
+        return bufts;
+    }();
+
+    return extra_bufts.data();
+
+    GGML_UNUSED(device);
+}
+
+std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_types() {
+    static std::vector<ggml_backend_buffer_type_t> bufts = []() {
+        std::vector<ggml_backend_buffer_type_t> bufts;
+        ...
+
+#ifdef GGML_USE_CPU_REPACK
+        if (ggml_backend_cpu_repack_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_repack_buffer_type());
+        }
+#endif
+
+        return bufts;
+    }();
+
+    return bufts;
+}
+```
+So this will then return to:
+```c++
+        auto ggml_backend_dev_get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
+            ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_dev_get_extra_bufts");
+
+--->    if (ggml_backend_dev_get_extra_bufts_fn) {
+            ggml_backend_buffer_type_t * extra_bufts = ggml_backend_dev_get_extra_bufts_fn(cpu_dev);
+
+            while (extra_bufts && *extra_bufts) {
+                buft_list.emplace_back(cpu_dev, *extra_bufts);
+                ++extra_bufts;
+            }
+        }
+```
+So the function pointer is checked and then called using `cpu_dev` as argument.
+```console
+(gdb) p extra_bufts
+$5 = std::vector of length 2, capacity 2 = {
+  0x7ffff5fdc3e0 <ggml_backend_cpu_repack_buffer_type()::ggml_backend_cpu_buffer_type_repack>, 0x0}
+
+(gdb) p *extra_bufts[0]
+$7 = {iface = {get_name = 0x7ffff5eb55a9 <ggml_backend_cpu_repack_buffer_type_get_name(ggml_backend_buffer_type_t)>, 
+    alloc_buffer = 0x7ffff5eb55be <ggml_backend_cpu_repack_buffer_type_alloc_buffer(ggml_backend_buffer_type_t, size_t)>, 
+    get_alignment = 0x7ffff5eb5643 <ggml_backend_cpu_repack_buffer_type_get_alignment(ggml_backend_buffer_type_t)>, 
+    get_max_size = 0x0, get_alloc_size = 0x0, is_host = 0x0}, 
+  device = 0x7ffff5fdc2c0 <ggml_backend_cpu_reg_get_device(ggml_backend_reg*, unsigned long)::ggml_backend_cpu_device>, 
+  context = 0x555555dc93c0}
+```
+The function returs a pointer to the first entry (and that is the reasons for
+adding the nullptr at the end of the vector) so they can be iterated over:
+```c++
+            while (extra_bufts && *extra_bufts) {
+                buft_list.emplace_back(cpu_dev, *extra_bufts);
+                ++extra_bufts;
+            }
+```
+This will then be added to the `buft_list` which is of type:
+```c++
+using buft_list_t = std::vector<std::pair<ggml_backend_dev_t, ggml_backend_buffer_type_t>>;
+```
+So using emplace back we add a pair of the cpu device and the buffer type.
+
+So the `buft_list` will now contain the repack buffer type. But when will it
+be used?  
+When a tensor is created in `llama_model::load_tensors` for example, for
+GEMMA3 we have:
+```c++
+
+            case LLM_ARCH_GEMMA3:
+            ```
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+
+```
+In the `create_tensor` lambda we have:
+```c++
+auto create_tensor = [&](const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) -> ggml_tensor * {
+    ...
+            if (!buft) {
+                buft = select_weight_buft(hparams, t_meta, op, *buft_list);
+                if (!buft) {
+                    throw std::runtime_error(format("failed to find a compatible buffer type for tensor %s", tn.str().c_str()));
+                }
+            }
+    ...
+}
+
+static ggml_backend_buffer_type_t select_weight_buft(const llama_hparams & hparams, ggml_tensor * tensor, ggml_op op, const buft_list_t & buft_list) {
+    GGML_ASSERT(!buft_list.empty());
+    for (const auto & cur : buft_list) {
+        ggml_backend_dev_t cur_dev = cur.first;
+        ggml_backend_buffer_type_t cur_buft = cur.second;
+        if (weight_buft_supported(hparams, tensor, op, cur_buft, cur_dev)) {
+            return cur_buft;
+        }
+    }
+
+    return nullptr;
+}
+
+// checks if the weight tensor can be used with the specified buffer type and device
+static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w, ggml_op op, ggml_backend_buffer_type_t buft, ggml_backend_dev_t dev) {
+   ...
+
+    w->buffer = ggml_backend_buft_alloc_buffer(buft, 0);
+    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor);
+    ...
+    return op_supported;
+}
+```
+```c++
+bool ggml_backend_dev_supports_op(ggml_backend_dev_t device, const struct ggml_tensor * op) {
+    GGML_ASSERT(device);
+    return device->iface.supports_op(device, op);
+}
+```
+
