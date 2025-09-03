@@ -2,11 +2,7 @@
 This is a feature that is specific to the CPU backend and is about data layout
 and how to optimize the layout for matrix operations.
 
-In ggml/CMakeLists.txt we have the following option:
-```console
-option(GGML_CPU_REPACK       "ggml: use runtime weight conversion of Q4_0 to Q4_X_X" ON)
-```
-
+### What is repack?
 So [quantization](quantization.md) time rearrangement makes sure that within
 a block the values are spaced so that values in a column can be loaded together
 in one simd operation. Repacking allows us to something similar but for
@@ -186,6 +182,7 @@ requires 8-bits and not 4. And there is the choice of packing 4 of these blocks
 or 8 together.
 
 
+### macros
 ```c++
 GGML_CPU_NATIVE_IMPL(ggml_quantize_mat_q8_0_4x4)
 ````
@@ -205,7 +202,7 @@ How this works is that if the symbol `ggml_quantize_mat_q8_0_4x4` is not defined
 then the compiler will set the symbol to point to
 `ggml_quantize_mat_q8_0_4x4_generic`.
 
-
+### ggml_quantize_mat_q8_0_4x4_generic
 ```c++
 void ggml_quantize_mat_q8_0_4x4_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
 ```
@@ -246,7 +243,7 @@ Here `srcv` is a 2D array that will hold the values for each of the 4 rows and
 id is the array that will hold the deltas/scale factors for each of the 4 rows.
 
 Following that we will iterate over each block, and for each block we have to
-calculate the delta (scale factor), actually this is the inverse os the scale
+calculate the delta (scale factor), actually this is the inverse of the scale
 factor (1.0f / d) to avoid division, and do to that we need to find the maxium
 value in the block. And since we are extracting values from x these are also
 stored in `srcv` which can then be used in the next loop where we calculate
@@ -275,8 +272,8 @@ srcv[2][0-31] = [f20 f21 f22 f23 f24 f25 f26 f27 ... f48 f49 f50 f51]
 srcv[3][0-31] = [f30 f31 f32 f33 f34 f35 f36 f37 ... f58 f59 f60 f61]
 ```
 
-Next, we have the actual "re-packing" part of the current block, here we iterate from
-0 to QK8_0*4 (128).
+Next, we have the actual "re-packing" part of the current block, here we iterate
+from 0 to QK8_0*4 (128).
 
 ```c++
         for (int j = 0; j < QK8_0 * 4; j++) {
@@ -476,4 +473,58 @@ __m128i final_sum = _mm_add_epi32(sum01, sum23);
 
 // Store result: [c0, c1, c2, c3]
 _mm_storeu_si128((__m128i*)result, final_sum);
+```
+
+### Usage in ggml
+In ggml/CMakeLists.txt we have the following option:
+```console
+option(GGML_CPU_REPACK       "ggml: use runtime weight conversion of Q4_0 to Q4_X_X" ON)
+```
+And in `ggml/src/ggml-cpu/CMakeLists.txt` we have:
+```console
+    if (GGML_CPU_REPACK)
+        target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_REPACK)
+    endif()
+```
+And if we look where the macro `GGML_USE_CPU_REPACK` is used we find it in
+`ggml-cpu.cpp`:
+```c++
+std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_types() {
+    static std::vector<ggml_backend_buffer_type_t> bufts = []() {
+        std::vector<ggml_backend_buffer_type_t> bufts;
+
+#if defined(__AMX_INT8__) && defined(__AVX512VNNI__)
+        if (ggml_backend_amx_buffer_type()) {
+            bufts.push_back(ggml_backend_amx_buffer_type());
+        }
+#endif
+
+#ifdef GGML_USE_CPU_KLEIDIAI
+        if (ggml_backend_cpu_kleidiai_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_kleidiai_buffer_type());
+        }
+#endif
+
+#ifdef GGML_USE_CPU_REPACK
+        if (ggml_backend_cpu_repack_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_repack_buffer_type());
+        }
+#endif
+
+        return bufts;
+    }();
+
+    return bufts;
+}
+```
+And it is also used in :
+```c++
+static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t reg) {
+    static std::vector<ggml_backend_feature> features = []() {
+        ggml_cpu_init();
+
+        ...
+    #ifdef GGML_USE_CPU_REPACK
+        features.push_back({ "REPACK", "1" });
+    #endif
 ```
