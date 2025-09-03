@@ -360,6 +360,7 @@ void ggml_compute_forward_get_rows(
                 ggml_compute_forward_get_rows_q(params, dst);
             } break;
 ```
+We can find this is `/work/ai/llama.cpp/ggml/src/ggml-cpu/ops.cpp`:
 ```c++
 static void ggml_compute_forward_get_rows_q(
         const ggml_compute_params * params,
@@ -411,3 +412,49 @@ quantization-specific dequantization function to convert one row from quantized
 format to float32. For tied weights during output projection, this same pattern
 runs for every row in the vocabulary (262K+ times), which is where the Q8_0 vs
 Q6_K performance difference becomes significant.
+And notice that `dequantize_row_q` is taken/gotten from the type trait:
+```c++
+ggml_to_float_t const dequantize_row_q = ggml_get_type_traits(type)->to_float;
+```
+So we can look in `ggml.c` to find the type trait for the type in question,
+for example Q4_0:
+```c++
+    [GGML_TYPE_Q4_0] = {
+        .type_name                = "q4_0",
+        .blck_size                = QK4_0,
+        .type_size                = sizeof(block_q4_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_q4_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q4_0_ref,
+    },
+```
+And we can see that `to_float` is `dequantize_row_q4_0` which is defined in
+`ggml/src/ggml-quants.c`:
+```c++
+void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK4_0;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        const float d = GGML_FP16_TO_FP32(x[i].d);
+
+        for (int j = 0; j < qk/2; ++j) {
+            const int x0 = (x[i].qs[j] & 0x0F) - 8;
+            const int x1 = (x[i].qs[j] >>   4) - 8;
+
+            y[i*qk + j + 0   ] = x0*d;
+            y[i*qk + j + qk/2] = x1*d;
+        }
+    }
+}
+```
+And this should hopefully be familiar as this is what we say earlier in this
+document.
+
+```
+Input: "Dan loves ice cream" (5 tokens) → 5 embedding lookups
+Output: Generate next token → 262,144 dequantizations (entire vocab)
+```
