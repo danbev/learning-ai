@@ -3,6 +3,11 @@ This is a feature that is specific to the CPU backend and is about data layout
 and how to optimize the layout for matrix operations.
 
 ### What is repack?
+Repack optimization reorganizes quantized data layout to enable efficient SIMD
+operations during matrix multiplication. Instead of processing one block at a
+time, it interleaves multiple blocks so that corresponding elements can be loaded
+together in a single SIMD instruction.
+
 So [quantization](quantization.md) time rearrangement makes sure that within
 a block the values are spaced so that values in a column can be loaded together
 in one simd operation. Repacking allows us to something similar but for
