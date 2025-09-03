@@ -1,33 +1,16 @@
 ## Repack
-So [quantization](quantiztion.md) time rearrangement makes sure that within
+This is a feature that is specific to the CPU backend and is about data layout
+and how to optimize the layout for matrix operations.
+
+In ggml/CMakeLists.txt we have the following option:
+```console
+option(GGML_CPU_REPACK       "ggml: use runtime weight conversion of Q4_0 to Q4_X_X" ON)
+```
+
+So [quantization](quantization.md) time rearrangement makes sure that within
 a block the values are spaced so that values in a column can be loaded together
-in one simd operation. And repacking allows us to something similar but for
-multiple blocks.
-
-So the quantization rearrangement looks something like this:
-```
-Original matrix layout:
-Row 0: [w00, w01, w02, w03, w04, w05, ...]
-Row 1: [w10, w11, w12, w13, w14, w15, ...]
-Row 2: [w20, w21, w22, w23, w24, w25, ...]
-Row 3: [w30, w31, w32, w33, w34, w35, ...]
-
-After quantization rearrangement:
-Block: [w00, w10, w20, w30,  w01, w11, w21, w31,  w02, w12, w22, w32, ...]
-        └─── column 0 ────┘  └─── column 1 ────┘  └─── column 2 ────┘
-```
-And the 
-```
-Before repacking (4 separate blocks):
-Block0: [col0_weights, col1_weights, col2_weights, ...]
-Block1: [col0_weights, col1_weights, col2_weights, ...]
-Block2: [col0_weights, col1_weights, col2_weights, ...]
-Block3: [col0_weights, col1_weights, col2_weights, ...]
-
-After repacking:
-SuperBlock: [Block0_col0, Block1_col0, Block2_col0, Block3_col0,
-             Block0_col1, Block1_col1, Block2_col1, Block3_col1, ...]
-```
+in one simd operation. Repacking allows us to something similar but for
+multiple blocks which would otherwise be layed out one after another.
 
 Lets say we have 4 quantized blocks and each one contains a delta (scale factor)
 and 16 quantized values:
@@ -37,7 +20,7 @@ Block1: delta=1.8, quants=[17,18,19,20, 21,22,23,24, 25,26,27,28, 29,30,31,32]
 Block2: delta=3.1, quants=[33,34,35,36, 37,38,39,40, 41,42,43,44, 45,46,47,48]
 Block3: delta=2.2, quants=[49,50,51,52, 53,54,55,56, 57,58,59,60, 61,62,63,64]
 ```
-Repacked:
+After repacking these block they would look like this:
 ```
 Deltas: [2.5, 1.8, 3.1, 2.2]
 
@@ -111,6 +94,7 @@ store them using 4 bits each (nibble):
 So `QK4_0 32` means that we can store 32 quantized values in a `block_q4_0`.
 So each original float32 value becomes a 4-bit integer.
 
+### block_q4_0x4
 In repack `block_q4_0x4` means we take 4 separate `block_q4_0` blocks like the
 one above which gives use 4 scale/delta values, and 4*32 = 128 quantized values.
 
@@ -151,8 +135,8 @@ it will only generate:
         return QK4_0;
     }
 ```
-If we did not to specify constexpr the other branches might be in the compiled
-and not eliminated completely. Though modern compilers will probably optimize
+If we did not to specify constexpr the other branches might be in the compilation
+unit and not eliminated completely. Though modern compilers will probably optimize
 this anyway using constexpr, it is still a good practice to signal the intent.
 
 So for our case this will return `QK4_0` which is 32.
@@ -178,7 +162,7 @@ We can also combine more than 4 block by specifying:
 ```c++
 using block_q4_0x8 = block<4, 8>;
 ```
-So this is still using 4 bits per quantized value but we are going to combine
+So this is still using 4 bits per quantized value, but we are going to combine
 8 `block_q4_0` blocks together which gives us 8 delta/scale values and
 32*8=256 `uint8_t` quantized values.
 
