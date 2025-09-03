@@ -61,7 +61,7 @@ above example.
 ### Parallel Thread Execution (PTX)
 When you compile CUDA code with nvcc, the device code doesn't immediately get
 translated to machine code. Instead, it first gets compiled to this intermediate
-PTX format. The abstraction allows CUDA code to be compiled and then later
+PTX format. This abstraction allows CUDA code to be compiled and then later
 be translated into the binary code of a specific GPU.
 
 ```console
@@ -244,7 +244,7 @@ that you'd transfer them back to the host's memory.
 A stream in CUDA is a sequence of commands that execute in order. It is like a
 queue of commands that are executed one after the other. Now, what I've been 
 doing in my examples is just using synchronous commands, like `cudaMemcpy` and
-and not specifying a stream when calling a kernel. When we call a function
+not specifying a stream when calling a kernel. When we call a function
 like `cudaMemcpy` this is a synchronous operation, the host program will not
 progress (it will block) until the entire memory transfer is complete.
 When we call `cudaMemcpy` this function is added to the default CUDA stream. The
