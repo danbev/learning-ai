@@ -260,7 +260,7 @@ void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_REST
 }
 ```
 So this function takes in a pointer to float `x`, a pointer to `block_q4_0` which
-is `y`, and `k` which is the size of x. This has be be divisable by 32.
+is `y`, and `k` which is the size of x. This has to be divisable by 32.
 We calculate the number of blocks `nb` and then iterate over them. For each
 block we calculate the absolute max and the max value that block (32 value).
 
@@ -272,17 +272,17 @@ After the first loop we use max value to compute the delta/scale value:
 So each float32 (single precision) value is going to be represented with 4 bits.
 The `block_q4_0` stores its members as `uint8_t` which is 1 byte (8 bits) and
 unsigned so it can only store positive values.
-That gives as a range of [0-15] (0000b-1111b) which is 16 values. 
+That gives as a range of `[0-15] (0000b-1111b)` which is 16 values. 
 
-But notice that the code above is using -8 as the denominator and this is creating
-a range of [-8, 7]. Why do this? With this range 0 is always maps to the center
-of our quantization range and using [0-15] range might not, it depends on the
-actual values.
+But notice that the code above is using `-8` as the denominator and this is
+creating a range of `[-8, 7]`. Why do this? With this range 0 is always maps to
+the center of our quantization range and using [0-15] range might not, it
+depends on the actual values.
 
-Also notice that this is using the inverse delta `id` which is done so that
-division can be avoided and instead just a multiplication operation performed
-instead. The "real" delta/scale is the only thing stored in the block as that
-is what is required for dequantization.
+Also notice that this is using the _inverse delta_ `id` which is done so that
+division can be avoided and instead just a multiplication operation performed.
+The "real" delta/scale, `d`, is the only thing stored in the block as that is
+what is required for dequantization.
 
 And notice that in the following how the scaled values are extracted from the
 input array `x`:
@@ -294,7 +294,7 @@ input array `x`:
 ```
 So this is accessing values from the input array in pairs, {0, 15}, {1, 16},
 {2, 17}, ..., {15, 31}. This will cause the quantized values to be stored
-in way something like this:
+something like this:
 ```console
 x 
   [f0, f1, f2, f3, f4, f5, f6, f7, f8, f0, f10, f11, f12, f13, f14, f15, f16, f17... f31]
@@ -307,8 +307,8 @@ qa  [f0, f16]
      ...
     [f15, f31]
 ```
-Notice that in the low bits we have the first quantized values, and in the high
-bits we have the second quantized values.
+Notice that in the low bits we have the first quantized values, from f0...f15,
+and in the high bits we have the second quantized values, from f16...f31.
 
 So a single 16-byte load holds all 32 4-bit codes: the first 16 in the low
 nibbles and the second 16 in the high nibbles.
@@ -320,9 +320,9 @@ for (int i = 0; i < 16; i++) {
     lo[i] = qs[i] & 0x0F;
 }
 ```
-To get the low values that is.
+To get the low (lo) values that is.
 
-The advantage of this packing though is that it allows efficient processing using
+The advantage of the packing though, is that it allows efficient processing using
 SIMD instructions we can now do the following:
 ```console
 __m128i v   = _mm_loadu_si128((const __m128i*)qs);      // loads qs[0..15]
@@ -431,20 +431,30 @@ void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRI
     const int nb = k / qk;
 
     for (int i = 0; i < nb; i++) {
+        // Extract the scale for each block
         const float d = GGML_FP16_TO_FP32(x[i].d);
 
+        // Since qk/2 = 16, as j goes from 0 to 15:
         for (int j = 0; j < qk/2; ++j) {
-            // First we extract the lower bits:
+            // First we extract the lower bits. Recall that in the quantization
+            // process we added 8.5 for rounding which mapped the range from [-8,7]
+            // to [0,15] for storage. We are now going to subtract 8 to get from
+            // the [0, 15] range back to [-8, 7] range.
             const int x0 = (x[i].qs[j] & 0x0F) - 8;
             // And then the upper bits:
             const int x1 = (x[i].qs[j] >>   4) - 8;
 
-            y[i*qk + j + 0   ] = x0*d; // scale back to float32 value
-            y[i*qk + j + qk/2] = x1*d; // scale back to float32 value
+            y[i*qk + j + 0   ] = x0*d; // scale back to float32 value. Positions 0, 1, 2, ..., 15
+            // And notice that we are here placing the upper bits in the second
+            // half of the output array. This is related to how we packed the
+            // values for optimizing vector operations (SIMD)
+            y[i*qk + j + qk/2] = x1*d; // scale back to float32 value. Positions 16, 17, 18, ..., 31
         }
     }
 }
 ```
+So `x` will be our quantized blocks, and `y` the output flaot array, and `k` the
+total number of float values to reconstruct.
 
 
 ### ggml quantization type traits
@@ -2043,3 +2053,49 @@ Or a little more compact:
 (int) 2
 ```
 And we only process 4 elements so this will simply skip the last 0 trit.
+
+## IQ (Interger Quantization?)
+So we have see that Q4_0 uses 4 bits per weight (bpw), and these quantization methods
+use much lower bpw:
+* block_iq2_xxs: ~ 2.06 bpw
+* iq2_xs:  ~ 2.31 bpw
+* iq2_s:   ~ 2.56 bpw
+* iq2_m:   ~ 2.81 bpw
+
+
+```c++
+#define QK_K 256
+
+typedef struct {
+    ggml_half d;
+    uint16_t qs[QK_K/8];
+} block_iq2_xxs;
+```
+So we have 32 elements in `qs` and each element is 2 bytes so this is 64 bytes.
+```c++
+void dequantize_row_iq2_xxs(const block_iq2_xxs * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_K == 0);
+    const int64_t nb = k / QK_K;
+
+    uint32_t aux32[2];
+    const uint8_t * aux8 = (const uint8_t *)aux32;
+
+    for (int i = 0; i < nb; i++) {
+
+        const float d = GGML_FP16_TO_FP32(x[i].d);
+
+        for (int ib32 = 0; ib32 < QK_K/32; ++ib32) {
+            memcpy(aux32, x[i].qs + 4*ib32, 2*sizeof(uint32_t));
+            const float db = d * (0.5f + (aux32[1] >> 28)) * 0.25f;
+            for (int l = 0; l < 4; ++l) {
+                const uint8_t * grid = (const uint8_t *)(iq2xxs_grid + aux8[l]);
+                const uint8_t  signs = ksigns_iq2xs[(aux32[1] >> 7*l) & 127];
+                for (int j = 0; j < 8; ++j) {
+                    y[j] = db * grid[j] * (signs & kmask_iq2xs[j] ? -1.f : 1.f);
+                }
+                y += 8;
+            }
+        }
+    }
+}
+```
