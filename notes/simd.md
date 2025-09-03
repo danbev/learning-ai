@@ -115,11 +115,14 @@ Data types:
 * __m256d    256-bit register 4 doubles
 * __m256i    256-bit register 8 integers
 
-In the function names `ps` stands for packed single precision (floats 32-bits),
-`pd` stands for packed double precision (doubles 64-bits), `epi` stands for
-extended packed integer, `si` stands for scalar integer, `sd` stands for scalar
-double, `ss` stands for scalar single, `epi8` stands for extended packed
-integer 8-bit.
+In the function names 
+* `ps` stands for packed single precision (floats 32-bits)
+* `pd` stands for packed double precision (doubles 64-bits)
+* `epi` stands for extended packed integer
+* `si` stands for scalar integer
+* `sd` stands for scalar double
+* `ss` stands for scalar single
+* `epi8` stands for extended packed integer 8-bit.
 
 ### maskload
 The idea here is that one might have a data type that does not fill a complete
