@@ -323,7 +323,7 @@ for (int i = 0; i < 16; i++) {
 To get the low (lo) values that is.
 
 The advantage of the packing though, is that it allows efficient processing using
-SIMD instructions we can now do the following:
+SIMD instructions, so we can now do the following:
 ```console
 __m128i v   = _mm_loadu_si128((const __m128i*)qs);      // loads qs[0..15]
 __m128i msk = _mm_set1_epi8(0x0F);                      // mask = 0x0F repeated in all bytes
@@ -331,6 +331,22 @@ __m128i lo  = _mm_and_si128(v, msk);
 ```
 This does the same things as our c code above but for all 16 bytes in `v` get
 masked in parallel — no loop needed, no single-value restriction.
+
+There is nothing stopping us from storing the values in sequence order instead
+but this would mean that when we want to extract the low and high values we
+would have to do something like:
+```console
+__m128i packed = _mm_loadu_si128(qs);           // Load first 16 bytes
+__m128i low = _mm_and_si128(packed, 0x0F);      // Gets [f0,f2,f4,f6,f8,f10,f12,f14]
+__m128i high = _mm_srli_epi64(_mm_and_si128(packed, 0xF0), 4); // Gets [f1,f3,f5,f7,f9,f11,f13,f15]
+```
+Now you need additional shuffling to get contiguous sequences. The mask `0x0F`
+extracts the low 4 nibbles from each byte. This would produce:
+```
+low  = [f0,f2,f4,f6,f8,f10,f12,f14]
+high = [f1,f3,f5,f7,f9,f11,f13,f15]
+```
+So we would need additional shuffling to get these into a contiguous sequence.
 
 And example of can be found in [packing.cpp](../fundamentals/simd/src/packing.cpp)
 
