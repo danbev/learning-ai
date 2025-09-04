@@ -301,27 +301,6 @@ also the qs arrays is of size 32 and not 16 because each quantized values now
 requires 8-bits and not 4. And there is the choice of packing 4 of these blocks
 or 8 together.
 
-
-### macros
-```c++
-GGML_CPU_NATIVE_IMPL(ggml_quantize_mat_q8_0_4x4)
-````
-This macro can be found in `ggml-cpu-impl.h`:
-```c++
-#define GGML_CPU_NATIVE_IMPL(name) GGML_WEAK_ALIAS(name, name ## _generic)
-```
-And if we look at the GCC version of `GGML_WEAK_ALIAS` we find:
-```c++
-# define GGML_WEAK_ALIAS(name, alias) GGML_DO_PRAGMA(weak name = alias) // NOLINT
-```
-So the above will expand to:
-```c++
-#pragma weak ggml_quantize_mat_q8_0_4x4 = ggml_quantize_mat_q8_0_4x4_generic
-```
-How this works is that if the symbol `ggml_quantize_mat_q8_0_4x4` is not defined
-then the compiler will set the symbol to point to
-`ggml_quantize_mat_q8_0_4x4_generic`.
-
 ### ggml_quantize_mat_q8_0_4x4_generic
 ```c++
 void ggml_quantize_mat_q8_0_4x4_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
@@ -399,99 +378,6 @@ Next, we have the actual "re-packing" part of the current block:
     }
 }
 ```
-```
-int src_offset = (j / (4 * blck_size_interleave)) * blck_size_interleave;
-int src_offset = (j / (4 * 4                   )) * 4;
-
-j = 0  -> (0  / 16) * 4 = 0 * 4 = 0
-j = 1  -> (1  / 16) * 4 = 0 * 4 = 0
-j = 2  -> (2  / 16) * 4 = 0 * 4 = 0
-...
-j = 15 -> (15 / 16) * 4 = 0 * 4 = 0
-j = 16 -> (16 / 16) * 4 = 1 * 4 = 4
-j = 17 -> (17 / 16) * 4 = 1 * 4 = 4
-j = 18 -> (18 / 16) * 4 = 1 * 4 = 4
-...
-j = 31 -> (31 / 16) * 4 = 1 * 4 = 4
-j = 32 -> (32 / 16) * 4 = 2 * 4 = 8
-j = 33 -> (33 / 16) * 4 = 2 * 4 = 8
-...
-j = 47 -> (47 / 16) * 4 = 2 * 4 = 8
-j = 48 -> (48 / 16) * 4 = 3 * 4 = 12
-j = 49 -> (49 / 16) * 4 = 3 * 4 = 12
-...
-j = 63 -> (63 / 16) * 4 = 3 * 4 = 12
-j = 64 -> (64 / 16) * 4 = 4 * 4 = 16
-j = 65 -> (65 / 16) * 4 = 4 * 4 = 16
-...
-j = 79 -> (79 / 16) * 4 = 4 * 4 = 16
-j = 80 -> (80 / 16) * 4 = 5 * 4 = 20
-j = 81 -> (81 / 16) * 4 = 5 * 4 = 20
-...
-j = 95 -> (95 / 16) * 4 = 5 * 4 = 20
-j = 96 -> (96 / 16) * 4 = 6 * 4 = 24
-j = 97 -> (97 / 16) * 4 = 6 * 4 = 24
-j = 98 -> (98 / 16) * 4 = 6 * 4 = 24
-...
-j = 111 -> (111 / 16) * 4 = 6 * 4 = 24
-j = 112 -> (112 / 16) * 4 = 7 * 4 = 28
-j = 113 -> (113 / 16) * 4 = 7 * 4 = 28
-...
-j = 127 -> (127 / 16) * 4 = 7 * 4 = 28
-```
-So this will give us 8 groups of 16 values.
-
-And notice that this is added to as well:
-```
-src_offset += (j % blck_size_interleave);
-
-0 % 4 = 0
-1 % 4 = 1
-2 % 4 = 2
-3 % 4 = 3
-4 % 4 = 0
-5 % 4 = 1
-6 % 4 = 2
-7 % 4 = 3
-8 % 4 = 0
-...
-```
-
-Then we have the source id which is the row of the `srcv` array
-that we are currently working with:
-```c++
-int src_id = (j % (4 * blck_size_interleave)) / blck_size_interleave;
-int src_id = (0 % (4 *                    4)) / 4
-
-j =  0  -> (0 % 16) / 4 =  0 / 4 = 0
-j =  1  -> (1 % 16) / 4 =  1 / 4 = 0
-j =  2  -> (2 % 16) / 4 =  2 / 4 = 0
-j =  3  -> (3 % 16) / 4 =  3 / 4 = 0
-j =  4  -> (4 % 16) / 4 =  4 / 4 = 1
-j =  5  -> (5 % 16) / 4 =  5 / 4 = 1
-j =  6  -> (6 % 16) / 4 =  6 / 4 = 1
-j =  7  -> (7 % 16) / 4 =  7 / 4 = 1
-j =  8  -> (8 % 16) / 4 =  8 / 4 = 2
-j =  9  -> (9 % 16) / 4 =  9 / 4 = 2
-j = 10 -> (10 % 16) / 4 = 10 / 4 = 2
-j = 11 -> (11 % 16) / 4 = 11 / 4 = 2
-j = 12 -> (12 % 16) / 4 = 12 / 4 = 3
-j = 13 -> (13 % 16) / 4 = 13 / 4 = 3
-j = 14 -> (14 % 16) / 4 = 14 / 4 = 3
-j = 15 -> (15 % 16) / 4 = 15 / 4 = 3
-j = 16 -> (16 % 16) / 4 =  0 / 4 = 0
-j = 17 -> (17 % 16) / 4 =  1 / 4 = 0
-j = 18 -> (18 % 16) / 4 =  2 / 4 = 0
-j = 19 -> (19 % 16) / 4 =  3 / 4 = 0
-j = 20 -> (20 % 16) / 4 =  4 / 4 = 1
-j = 21 -> (21 % 16) / 4 =  5 / 4 = 1
-j = 22 -> (22 % 16) / 4 =  6 / 4 = 1
-j = 23 -> (23 % 16) / 4 =  7 / 4 = 1
-j = 24 -> (24 % 16) / 4 =  8 / 4 = 2
-j = 25 -> (25 % 16) / 4 =  9 / 4 = 2
-j = 26 -> (26 % 16) / 4 = 10 / 4 = 2
-...
-```
 
 ```
        src_offset 
@@ -558,36 +444,8 @@ y[0].qs[124-127] = [f70, f71, f72, f73] <- eighth 4 values from fourth row
 So we for y[0] it will have 64 entries and each group of 4 are 8-bit quantized
 values for float32 values.
 
-For a SIMD matrix operations this is ideel:
-```c++
-__m128i b0 = _mm_set1_epi32(vector[0]);  // [b0, b0, b0, b0] (as 32-bit)
-__m128i b1 = _mm_set1_epi32(vector[1]);  // [b1, b1, b1, b1]
-__m128i b2 = _mm_set1_epi32(vector[2]);  // [b2, b2, b2, b2]
-__m128i b3 = _mm_set1_epi32(vector[3]);  // [b3, b3, b3, b3]
-
-// Load matrix columns (each load gets one element from each row)
-__m128i col0 = _mm_loadu_si128((__m128i*)&interleaved_matrix[0]);   // [a00,a10,a20,a30]
-__m128i col1 = _mm_loadu_si128((__m128i*)&interleaved_matrix[4]);   // [a01,a11,a21,a31]
-__m128i col2 = _mm_loadu_si128((__m128i*)&interleaved_matrix[8]);   // [a02,a12,a22,a32]
-__m128i col3 = _mm_loadu_si128((__m128i*)&interleaved_matrix[12]);  // [a03,a13,a23,a33]
-
-// Multiply and accumulate (4 dot products in parallel)
-__m128i prod0 = _mm_mullo_epi32(col0, b0);  // [a00×b0, a10×b0, a20×b0, a30×b0]
-__m128i prod1 = _mm_mullo_epi32(col1, b1);  // [a01×b1, a11×b1, a21×b1, a31×b1]
-__m128i prod2 = _mm_mullo_epi32(col2, b2);  // [a02×b2, a12×b2, a22×b2, a32×b2]
-__m128i prod3 = _mm_mullo_epi32(col3, b3);  // [a03×b3, a13×b3, a23×b3, a33×b3]
-
-// Sum up all products
-__m128i sum01 = _mm_add_epi32(prod0, prod1);
-__m128i sum23 = _mm_add_epi32(prod2, prod3);
-__m128i final_sum = _mm_add_epi32(sum01, sum23);
-
-// Store result: [c0, c1, c2, c3]
-_mm_storeu_si128((__m128i*)result, final_sum);
-```
-
 ### Usage in ggml
-In ggml/CMakeLists.txt we have the following option:
+In `ggml/CMakeLists.txt` we have the following option:
 ```console
 option(GGML_CPU_REPACK       "ggml: use runtime weight conversion of Q4_0 to Q4_X_X" ON)
 ```
@@ -628,7 +486,7 @@ std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_type
     return bufts;
 }
 ```
-And it is also used in :
+And it is also used in:
 ```c++
 static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t reg) {
     static std::vector<ggml_backend_feature> features = []() {
@@ -640,14 +498,14 @@ static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t r
     #endif
 ```
 
-But returning to the `ggml_backend_cpu_get_extra_buffer_types` this is my first
+But returning to the `ggml_backend_cpu_get_extra_buffer_types`, this is my first
 time coming across this extra buffer type concept.
 
 ### Extra buffer type
-So in `ggml/src/ggml-cpu/ggml-cpu.cpp` we have:
-
+So, in `ggml/src/ggml-cpu/ggml-cpu.cpp` we have:
 ```c++
 std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_types() {
+
     static std::vector<ggml_backend_buffer_type_t> bufts = []() {
         std::vector<ggml_backend_buffer_type_t> bufts;
 
@@ -670,11 +528,51 @@ std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_type
 #endif
 
         return bufts;
-    }();
+    }(); // IIFE - Immediately Invoked Function Expression
 
     return bufts;
 }
+```
+So in our case this this will call `ggml_backend_cpu_repack_buffer_type`:
+```c++
+ggml_backend_buffer_type_t ggml_backend_cpu_repack_buffer_type(void) {
+    static struct ggml_backend_buffer_type ggml_backend_cpu_buffer_type_repack = {
+        /* .iface    = */ {
+                           /* .get_name         = */ ggml_backend_cpu_repack_buffer_type_get_name,
+                           /* .alloc_buffer     = */ ggml_backend_cpu_repack_buffer_type_alloc_buffer,
+                           /* .get_alignment    = */ ggml_backend_cpu_repack_buffer_type_get_alignment,
+                           /* .get_max_size     = */ nullptr,  // defaults to SIZE_MAX
+                           /* .get_alloc_size   = */ nullptr,  // defaults to ggml_nbytes
+                           /* .is_host          = */ nullptr,
+                           },
+        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_cpu_reg(), 0),
+        /* .context = */ new ggml::cpu::repack::extra_buffer_type(),
+    };
 
+    return &ggml_backend_cpu_buffer_type_repack;
+}
+```
+Notice that the context will be set to a new instance of
+`ggml::cpu::repack::extra_buffer_type`:
+```
+class extra_buffer_type : ggml::cpu::extra_buffer_type {
+
+}
+```
+The declaration for `extra_buffer_type` can be found in `ggml/src/ggml-cpu/traits.h`:
+```c++
+class extra_buffer_type {
+  public:
+    virtual ~extra_buffer_type();
+    virtual bool            supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) = 0;
+    virtual tensor_traits * get_tensor_traits(const struct ggml_tensor * op)                   = 0;
+};
+```
+So repack is a specific backend cpu buffer type with a context that implements
+the `extra_buffer_type` interface.
+
+This above function is called by:
+```c++
 static ggml_backend_buffer_type_t * ggml_backend_cpu_device_get_extra_buffers_type(ggml_backend_dev_t device) {
 
     static std::vector<ggml_backend_buffer_type_t> extra_bufts = [] {
@@ -764,7 +662,8 @@ static buft_list_t make_cpu_buft_list(const std::vector<ggml_backend_dev_t> & de
     }
 ```
 Now, notice that `ggml_backend_reg_get_proc_address` takes a backend registry and
-a string name and returns a void pointer:
+a string name, and in this case "ggml_backend_dev_get_extra_bufts" is passed in
+as the name, and returns a void pointer:
 ```c++
 void * ggml_backend_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
     GGML_ASSERT(reg);
@@ -774,10 +673,11 @@ void * ggml_backend_reg_get_proc_address(ggml_backend_reg_t reg, const char * na
     return reg->iface.get_proc_address(reg, name);
 }
 ```
-And if the interface of this backend registry has a `get_proc_address` function
+So if the interface of this backend registry has a `get_proc_address` function
 then it will be called.
+
 We can see that the passed in name is checked against a number of strings and
-that they all set and return function pointers:
+that they all set and return function pointers if there is a match:
 ```c++
 static void * ggml_backend_cpu_get_proc_address(ggml_backend_reg_t reg, const char * name) {
     if (strcmp(name, "ggml_backend_set_n_threads") == 0) {
@@ -793,38 +693,6 @@ static void * ggml_backend_cpu_get_proc_address(ggml_backend_reg_t reg, const ch
     return NULL;
 
     GGML_UNUSED(reg);
-}
-```
-So in the case we are interested this will return the function pointer to
-`ggml_backend_cpu_device_get_extra_buffers_type`.
-```c++
-static ggml_backend_buffer_type_t * ggml_backend_cpu_device_get_extra_buffers_type(ggml_backend_dev_t device) {
-    static std::vector<ggml_backend_buffer_type_t> extra_bufts = [] {
-        std::vector<ggml_backend_buffer_type_t> bufts = ggml_backend_cpu_get_extra_buffer_types();
-        bufts.push_back(nullptr);
-        return bufts;
-    }();
-
-    return extra_bufts.data();
-
-    GGML_UNUSED(device);
-}
-
-std::vector<ggml_backend_buffer_type_t> & ggml_backend_cpu_get_extra_buffer_types() {
-    static std::vector<ggml_backend_buffer_type_t> bufts = []() {
-        std::vector<ggml_backend_buffer_type_t> bufts;
-        ...
-
-#ifdef GGML_USE_CPU_REPACK
-        if (ggml_backend_cpu_repack_buffer_type()) {
-            bufts.push_back(ggml_backend_cpu_repack_buffer_type());
-        }
-#endif
-
-        return bufts;
-    }();
-
-    return bufts;
 }
 ```
 So this will then return to:
@@ -855,7 +723,7 @@ $7 = {iface = {get_name = 0x7ffff5eb55a9 <ggml_backend_cpu_repack_buffer_type_ge
   device = 0x7ffff5fdc2c0 <ggml_backend_cpu_reg_get_device(ggml_backend_reg*, unsigned long)::ggml_backend_cpu_device>, 
   context = 0x555555dc93c0}
 ```
-The function returs a pointer to the first entry (and that is the reasons for
+The function returns a pointer to the first entry (and that is the reasons for
 adding the nullptr at the end of the vector) so they can be iterated over:
 ```c++
             while (extra_bufts && *extra_bufts) {
@@ -867,7 +735,7 @@ This will then be added to the `buft_list` which is of type:
 ```c++
 using buft_list_t = std::vector<std::pair<ggml_backend_dev_t, ggml_backend_buffer_type_t>>;
 ```
-So using emplace back we add a pair of the cpu device and the buffer type.
+So using emplace back we add a std::pair of the cpu device and the buffer type.
 
 So the `buft_list` will now contain the repack buffer type. But when will it
 be used?  
@@ -982,4 +850,6 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
         }
         return false;
     }
+```
+_wip_
 
