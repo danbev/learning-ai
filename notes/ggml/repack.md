@@ -3,15 +3,80 @@ This is a feature that is specific to the CPU backend and is about data layout
 and how to optimize the layout for matrix operations.
 
 ### What is repack?
-Repack optimization reorganizes quantized data layout to enable efficient SIMD
+Repack is an optimization reorganizes quantized data layout to enable efficient SIMD
 operations during matrix multiplication. Instead of processing one block at a
 time, it interleaves multiple blocks so that corresponding elements can be loaded
 together in a single SIMD instruction.
 
-So [quantization](quantization.md) time rearrangement makes sure that within
+So the [quantization](quantization.md) rearrangement makes sure that within
 a block the values are spaced so that values in a column can be loaded together
-in one simd operation. Repacking allows us to something similar but for
-multiple blocks which would otherwise be layed out one after another.
+in one SIMD operation.
+
+So bare in mind that a single block_q4_0 represents a 1D array of 32 quantized
+values that came from the original 32 float32 values.
+```
+Original data: [f0, f1, f2, f3, ..., f30, f31]  (32 float values)
+                ↓ quantization
+block_q4_0: {
+  d = scale_factor,
+  qs[16] = [packed nibbles representing all 32 values]
+}
+```
+The block is always 32 values in a row, regardless of the original tensor
+dimensions the float values came from.
+
+Now, lets say we have a 4x64 matrix (4 rows, 64 columns):
+```
+Original Matrix:
+
+Row 0: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,                       ...,  62,  63]
+Row 1: [64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,             ..., 126, 127]
+Row 2: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, ..., 190, 191]
+Row 3: [192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, ..., 254, 255]
+```
+This will get divided into blocks of 32 consecutive values:
+```
+Block 0: Row 0, positions 0-31  → [0, 1, 2, 3, 4, 5, 6, 7,                 ..., 30, 31]
+Block 1: Row 0, positions 32-63 → [32, 33, 34, 35, 36, 37, 38, 39,         ..., 62, 63]
+
+Block 2: Row 1, positions 0-31  → [64, 65, 66, 67, 68, 69, 70, 71,         ..., 94, 95]
+Block 3: Row 1, positions 32-63 → [96, 97, 98, 99, 100, 101, 102, 103,     ..., 126, 127]
+
+Block 4: Row 2, positions 0-31  → [128, 129, 130, 131, 132, 133, 134, 135, ..., 158, 159]
+Block 5: Row 2, positions 32-63 → [160, 161, 162, 163, 164, 165, 166, 167, ..., 190, 191]
+
+Block 6: Row 3, positions 0-31  → [192, 193, 194, 195, 196, 197, 198, 199, ..., 222, 223]
+Block 7: Row 3, positions 32-63 → [224, 225, 226, 227, 228, 229, 230, 231, ..., 254, 255]
+
+```
+So without packing, lets say we have the following matrix vector multiplication:
+```
+Row 0: [  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11, ...,  62,  63] [x₀]
+Row 1: [ 64,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75, ..., 126, 127] [x₁]
+Row 2: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, ..., 190, 191] [x₂]
+Row 3: [192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, ..., 254, 255] [x₃]
+                                                                                   ...
+                                                                                   [x₆₄]
+result[0] = A[0][0] * x₀ + A[0][1] * x₁ + ... + A[0][63] * x₆₃
+result[1] = A[1][0] * x₀ + A[1][1] * x₁ + ... + A[1][63] * x₆₃
+result[2] = A[2][0] * x₀ + A[2][1] * x₁ + ... + A[2][63] * x₆₃
+result[3] = A[3][0] * x₀ + A[3][1] * x₁ + ... + A[3][63] * x₆₃
+```
+
+Repacked array positions:
+```
+[0-3]:   [0, 64, 128, 192]     // First element from each row
+[4-7]:   [1, 65, 129, 193]     // Second element from each row
+[8-11]:  [2, 66, 130, 194]     // Third element from each row
+[12-15]: [3, 67, 131, 195]     // Fourth element from each row
+[16-19]: [4, 68, 132, 196]     // Fifth element from each row
+[20-23]: [5, 69, 133, 197]     // Sixth element from each row
+[24-27]: [6, 70, 134, 198]     // Seventh element from each row
+[28-31]: [7, 71, 135, 199]     // Eighth element from each row
+[32-35]: [8, 72, 136, 200]     // Ninth element from each row
+...
+[124-127]: [31, 95, 159, 223]  // Last element from each block
+```
 
 Lets say we have 4 quantized blocks and each one contains a delta (scale factor)
 and 16 quantized values:
@@ -36,10 +101,60 @@ the CPU would have to load block0[0], block1[0], block2[0], block3[0] which woul
 result in cache misses and more memory accesses which leads to performance
 degradation.
 
-By repacking the data, we can load all 4 elements by loading one SIMD register
-(128 bits) = [Block0_chunk0, Block1_chunk0, Block2_chunk0, Block3_chunk0].
+Just to clarify something and this might just be me and my mental model of
+matrix multiplication, but I always think of matrix multiplication as the rows
+in matrix A being functions, and the columns in matrix B being the arguments.
+And I think of passing the input vector down through each row calling the
+function. And there is nothing wrong with that way of thinking about it. But
+for efficiency in practice we should also think about the other way:
 ```
-load xmm0, [repacked_addr]   # Gets chunk from all 4 blocks at once
+Function wise approch:
+[2 4] [2] = [2*2 + 4*3] = [4  + 12] = [16]
+[5 6] [3]   [5*2 + 6*3]   [10 + 18]   [28]
+
+Column wise approach:
+[2 4] [2] = 2 [2] + 3[4] = [4]  + [12] = [16]
+[5 6] [3]     [5]    [6]   [10]   [18]   [28]
+```
+
+Compute each dot product separately:
+```c++
+for (int row = 0; row < 4; row++) {
+    result[row] = 0;
+    for (int col = 0; col < 64; col++) {
+        result[row] += matrix[row][col] * vector[col];
+    }
+}
+```
+But with the repacked data we can compute all 4 dot products in parallel.
+This will be the column wise approach as mentioned above, so imaging something
+like this:
+```
+  result[0] += matrix[0][j] * vector[j]
+  result[1] += matrix[1][j] * vector[j] 
+  result[2] += matrix[2][j] * vector[j]
+  result[3] += matrix[3][j] * vector[j]
+```
+But instead of separate operations we can group them together:
+```c++
+__m128 results = _mm_setzero_ps(); // [result[0], result[1], result[2], result[3]]
+
+for (int col = 0; col < 64; col++) {
+    __m128i four_matrix_values = _mm_loadu_si128(&repacked_data[col*4]);
+    // Loads [matrix[0][col], matrix[1][col], matrix[2][col], matrix[3][col]]
+
+    __m128 broadcast_vector = _mm_set1_ps(vector[col]);
+    // Creates [vector[col], vector[col], vector[col], vector[col]], because vector[j] is the same for all 4 rows
+
+    __m128 products = _mm_mul_ps(four_matrix_values, broadcast_vector);
+    // Computes [matrix[0][col] *vector[col],
+    //           matrix[1][col] *vector[col],
+    //           matrix[2][col] *vector[col],
+    //           matrix[3][col] *vector[col]]
+
+    results = _mm_add_ps(results, products);
+    // Accumulates into [result[0], result[1], result[2], result[3]]
+}
 ```
 
 So, lets take `QK4_0` as an example just to understand this better:
@@ -97,7 +212,7 @@ So each original float32 value becomes a 4-bit integer.
 
 ### block_q4_0x4
 In repack `block_q4_0x4` means we take 4 separate `block_q4_0` blocks like the
-one above which gives use 4 scale/delta values, and 4*32 = 128 quantized values.
+one above which gives us 4 scale/delta values, and 4*32 = 128 quantized values.
 
 This is declared with a using statement:
 ```c++
@@ -107,7 +222,7 @@ using block_q4_0x4 = block<4, 4>;
                               ↑
                               Number of of blocks to combine (4 in this case)
 ```
-And block is defined as follows:
+And a block is defined as follows:
 ```c++
 template <int K, int N> struct block {
     ggml_half d[N];
@@ -115,7 +230,7 @@ template <int K, int N> struct block {
 };
 ```
 Again, `K` is the bit width of the quantization (4 bits in this case) and `N`
-is the number of blocks to combine (4 in this case).
+is the number of blocks to combine (also 4 in this case).
 And notice that this is using `QK_0<K>()`:
 ```c++
 template <int K> constexpr int QK_0() {
@@ -221,17 +336,18 @@ pointer. k is the width (number of columns) of the matrix.
 So `k` is the number of columns and it has to be a multiple of `QK8_0` which is
 32. So it could be 32, 64, 96, 128, etc. `nb` is number of blocks per row. 
 
-For example, lets say k=32:
+For example, lets say k=64:
 ```
 Input matrix (4 rows × k columns):
 
 x = [
-  Row 0: [f00 f01 f02 f03 f04 f05 f06 f07 ... f28 f29 f30 f31]  (32 floats)
-  Row 1: [f10 f11 f12 f13 f14 f15 f16 f17 ... f38 f39 f40 f41]  (32 floats)
-  Row 2: [f20 f21 f22 f23 f24 f25 f26 f27 ... f48 f49 f50 f51]  (32 floats)
-  Row 3: [f30 f31 f32 f33 f34 f35 f36 f37 ... f58 f59 f60 f61]  (32 floats)
+  Row 0: [00 f01 f02 f03 f04 f05 f06 f07 ... f60 f61 f62 f63]  (64 floats)
+  Row 1: [00 f01 f02 f03 f04 f05 f06 f07 ... f60 f61 f62 f63]  (64 floats)
+  Row 2: [00 f01 f02 f03 f04 f05 f06 f07 ... f60 f61 f62 f63]  (64 floats)
+  Row 3: [00 f01 f02 f03 f04 f05 f06 f07 ... f60 f61 f62 f63]  (64 floats)
 ]
-total size: 4 rows * 32 columns * sizeof(float) = 4 * 32 * 4 = 512 bytes
+Total elements: 4 rows * 64 columns = 256 floats
+total size: 256 * sizeof(float) = 1024 bytes
 ```
 
 Next, `vy` is casted to `block_q8_0x4` pointer:
@@ -245,14 +361,12 @@ Next, `vy` is casted to `block_q8_0x4` pointer:
     float id[4];
 ```
 Here `srcv` is a 2D array that will hold the values for each of the 4 rows and
-id is the array that will hold the deltas/scale factors for each of the 4 rows.
+`id` is the array that will hold the deltas/scale factors for each of the 4 rows.
 
 Following that we will iterate over each block, and for each block we have to
 calculate the delta (scale factor), actually this is the inverse of the scale
 factor (1.0f / d) to avoid division, and do to that we need to find the maxium
-value in the block. And since we are extracting values from x these are also
-stored in `srcv` which can then be used in the next loop where we calculate
-the actual quantized values.
+value in the block. 
 ```c++
     for (int i = 0; i < nb; i++) {
         for (int row_iter = 0; row_iter < 4; row_iter++) {
@@ -269,17 +383,10 @@ the actual quantized values.
             y[i].d[row_iter] = GGML_FP32_TO_FP16(d);
         }
 ```
-So `srcv` will be filled in the above loop with something like this:
-```
-srcv[0][0-31] = [f00 f01 f02 f03 f04 f05 f06 f07 ... f28 f29 f30 f31]
-srcv[1][0-31] = [f10 f11 f12 f13 f14 f15 f16 f17 ... f38 f39 f40 f41]
-srcv[2][0-31] = [f20 f21 f22 f23 f24 f25 f26 f27 ... f48 f49 f50 f51]
-srcv[3][0-31] = [f30 f31 f32 f33 f34 f35 f36 f37 ... f58 f59 f60 f61]
-```
+Now, `srvc` is taking the 1d input array and populating the 2d array `srcv` so
+that each row can be index using `srcv[row_iter][j]`.
 
-Next, we have the actual "re-packing" part of the current block, here we iterate
-from 0 to QK8_0*4 (128).
-
+Next, we have the actual "re-packing" part of the current block:
 ```c++
         for (int j = 0; j < QK8_0 * 4; j++) {
             int src_offset = (j / (4 * blck_size_interleave)) * blck_size_interleave;
@@ -291,7 +398,6 @@ from 0 to QK8_0*4 (128).
         }
     }
 }
-GGML_CPU_NATIVE_IMPL(ggml_quantize_mat_q8_0_4x4)
 ```
 ```
 int src_offset = (j / (4 * blck_size_interleave)) * blck_size_interleave;
@@ -452,7 +558,7 @@ y[0].qs[124-127] = [f70, f71, f72, f73] <- eighth 4 values from fourth row
 So we for y[0] it will have 64 entries and each group of 4 are 8-bit quantized
 values for float32 values.
 
-For a simd matrix operations this is ideel:
+For a SIMD matrix operations this is ideel:
 ```c++
 __m128i b0 = _mm_set1_epi32(vector[0]);  // [b0, b0, b0, b0] (as 32-bit)
 __m128i b1 = _mm_set1_epi32(vector[1]);  // [b1, b1, b1, b1]
@@ -817,4 +923,63 @@ bool ggml_backend_dev_supports_op(ggml_backend_dev_t device, const struct ggml_t
     return device->iface.supports_op(device, op);
 }
 ```
+```c++
+static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) {
+    const struct ggml_tensor * src0 = op->src[0];
+    const struct ggml_tensor * src1 = op->src[1];
+
+    if (op->op == GGML_OP_NONE || op->op == GGML_OP_RESHAPE || op->op == GGML_OP_VIEW || op->op == GGML_OP_PERMUTE || op->op == GGML_OP_TRANSPOSE) {
+        return true;
+    }
+
+    // check extra buffer types
+    // note: only the first sources are checked for extra buffer types to reduce overhead, increase if necessary
+    for (int i = 0; i < 4; i++) {
+        if (op->src[i] && op->src[i]->buffer && ggml_backend_cpu_is_extra_buffer_type(op->src[i]->buffer->buft)) {
+            auto * buf_extra = (ggml::cpu::extra_buffer_type *) op->src[i]->buffer->buft->context;
+            return buf_extra->supports_op(dev, op);
+        }
+    }
+```
+This will call into `ggml/src/ggml-cpu/repack.cpp`:
+```c++
+namespace ggml::cpu::repack {
+
+class extra_buffer_type : ggml::cpu::extra_buffer_type {
+
+    bool supports_op(ggml_backend_dev_t, const struct ggml_tensor * op) override {
+        if (    op->op == GGML_OP_MUL_MAT &&
+                op->src[0]->buffer &&
+                (ggml_n_dims(op->src[0]) == 2) &&
+                op->src[0]->buffer->buft == ggml_backend_cpu_repack_buffer_type() &&
+                ggml_repack_get_optimal_repack_type(op->src[0])
+                ) {
+            if (op->src[1]->buffer && !ggml_backend_buft_is_host(op->src[1]->buffer->buft)) {
+                return false;
+            }
+            if (op->src[1]->type == GGML_TYPE_F32) {
+                return true;
+            }
+            //if (op->src[1]->type == GGML_TYPE_Q8_0) {
+            //    return true;
+            //}
+            // may be possible if Q8_0 packed...
+        } else if (op->op == GGML_OP_MUL_MAT_ID
+                && op->src[0]->buffer
+                && (ggml_n_dims(op->src[0]) == 3)
+                && op->src[0]->buffer->buft == ggml_backend_cpu_repack_buffer_type()
+                && ggml_repack_get_optimal_repack_type(op->src[0])
+                ) {
+            if (op->src[1]->buffer && !ggml_backend_buft_is_host(op->src[1]->buffer->buft)) {
+                return false;
+            }
+            if (op->src[1]->type == GGML_TYPE_F32) {
+                return true;
+            }
+            //if (op->src[1]->type == GGML_TYPE_Q8_0) {
+            //    return true;
+            //}
+        }
+        return false;
+    }
 
