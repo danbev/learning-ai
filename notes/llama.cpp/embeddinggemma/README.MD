@@ -18,25 +18,13 @@ And then produce the embeddings on the kv-cache-fix-swa branch:
 ```
 
 ```console
-$ tail converted-model-kv-fix-output.txt converted-model-master-output.txt original-model-output.txt
-==> converted-model-kv-fix-output.txt <==
-embedding 530: -0.945007  0.803382 -0.191294  ...  1.387448 -1.333874  0.637110
-embedding 531: -1.757166  0.210851  0.340471  ...  2.249267 -0.892162  0.145052
-embedding 532: -0.143790  1.629396 -1.210387  ... -1.926077 -5.181782  1.892621
-embedding 533: -0.761957 -0.437432 -0.574391  ...  0.916270 -0.056626 -0.044712
-embedding 534: -8.569762  3.575454 -3.283160  ... -5.691900 -3.884746  1.290939
-
-Embeddings size: 410880
-Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
-Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
-Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
-
+(venv) $ tail converted-model-master-output.txt original-model-output.txt
 ==> converted-model-master-output.txt <==
-embedding 530: -0.936975  0.735835 -0.166969  ...  1.642935 -1.072979  0.832203
-embedding 531: -2.060557  0.003230  0.225303  ...  2.659825 -0.516793  0.710358
-embedding 532: -0.048221  1.902493 -1.562916  ... -2.104920 -5.607339  1.913462
-embedding 533: -0.875762 -0.494703 -0.560324  ...  0.883945  0.006376  0.086154
-embedding 534: -8.583373  3.699894 -4.216038  ... -5.364049 -4.334474  1.325724
+embedding 530: -0.944624  0.804364 -0.191277  ...  1.387934 -1.334470  0.637015
+embedding 531: -1.756230  0.209820  0.338830  ...  2.255193 -0.897826  0.146861
+embedding 532: -0.143266  1.629679 -1.210484  ... -1.927280 -5.181623  1.894408
+embedding 533: -0.762078 -0.437814 -0.574705  ...  0.916314 -0.056354 -0.044370
+embedding 534: -8.561273  3.575560 -3.278111  ... -5.694864 -3.885843  1.288128
 
 Embeddings size: 410880
 Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
