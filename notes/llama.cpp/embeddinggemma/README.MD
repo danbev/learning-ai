@@ -436,4 +436,79 @@ huggingface and perhaps it has an old implementation.
 ```console
 $ pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
 ```
+And trying to run that will produce this error:
+```console
+(venv) $ make embedding-run-original-model PROMPTS_FILE=small.txt 
+Modified sliding window: 512 -> 8
+Model class: <class 'transformers.models.gemma3.modeling_gemma3.Gemma3TextModel'>
+Model's sliding_window: 8
+     2 -> '<bos>'
+  9259 -> 'Hello'
+  1902 -> '▁world'
+  2613 -> '▁something'
+  1663 -> '▁else'
+     1 -> '<eos>'
+Traceback (most recent call last):
+  File "/home/danbev/work/ai/llama.cpp/examples/model-conversion/./scripts/embedding/run-original-model.py", line 90, in <module>
+    outputs = model(**encoded)
+              ^^^^^^^^^^^^^^^^
+  File "/home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages/transformers/utils/generic.py", line 1079, in wrapper
+    outputs = func(self, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages/transformers/models/gemma3/modeling_gemma3.py", line 555, in forward
+    "full_attention": create_causal_mask(**mask_kwargs),
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages/transformers/masking_utils.py", line 812, in create_causal_mask
+    raise ValueError("Using `or_mask_function` or `and_mask_function` arguments require torch>=2.6")
+ValueError: Using `or_mask_function` or `and_mask_function` arguments require torch>=2.6
+make: *** [Makefile:121: embedding-run-original-model] Error 1
+```
+So let upgrate pytorch:
+```console
+$ pip install torch==2.6.0
+```
+
+And running with this version the output is:
+```console
+(venv) $ make embedding-run-original-model PROMPTS_FILE=small.txt
+Modified sliding window: 512 -> 8
+Model class: <class 'transformers.models.gemma3.modeling_gemma3.Gemma3TextModel'>
+Model's sliding_window: 8
+     2 -> '<bos>'
+  9259 -> 'Hello'
+  1902 -> '▁world'
+  2613 -> '▁something'
+  1663 -> '▁else'
+     1 -> '<eos>'
+Hidden states shape: torch.Size([1, 6, 768])
+All embeddings shape: (6, 768)
+Embedding dimension: 768
+
+embedding 0:  2.710024 -2.705342 -2.352060  ...  1.065063  0.977578  0.710636
+embedding 1:  2.956601 -1.359099 -1.932275  ...  0.539208  0.852095 -2.668386
+embedding 2:  2.137398  0.987929  2.309458  ...  0.849524 -3.789407 -1.269739
+embedding 3:  0.647859 -0.163835  0.550380  ... -0.888664  0.209898  0.132741
+embedding 4: -4.077771 -6.125317  0.509602  ...  6.976178 -1.242871  2.407804
+embedding 5:  0.085943  3.774835 -1.416385  ... -1.497456 -2.533030 -1.415170
+
+Total values: 4608 (6 tokens × 768 dimensions)
+
+Saved bin embeddings to: data/pytorch-embeddinggemma-300M-embeddings.bin
+Saved txt embeddings to: data/pytorch-embeddinggemma-300M-embeddings.txt
+```
+And to compare with the output from our converted model:
+```
+embedding 0:  2.710024 -2.705342 -2.352060  ...  1.065063  0.977578  0.710636 
+embedding 1:  2.956601 -1.359099 -1.932275  ...  0.539208  0.852095 -2.668386 
+embedding 2:  2.137398  0.987929  2.309458  ...  0.849524 -3.789407 -1.269739 
+embedding 3:  0.647859 -0.163835  0.550380  ... -0.888664  0.209898  0.132741 
+embedding 4: -4.077771 -6.125317  0.509602  ...  6.976178 -1.242871  2.407804 
+embedding 5:  0.085943  3.774835 -1.416385  ... -1.497456 -2.533030 -1.415170 
+```
 _wip_
