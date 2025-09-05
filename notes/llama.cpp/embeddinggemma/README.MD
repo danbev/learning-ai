@@ -289,3 +289,151 @@ embedding 358: -0.413006 -0.043046 -0.966153  ...  2.073784  0.892381 -0.669618
 embedding 359:  8.359043 -2.163706  1.226942  ...  9.276937  2.098100 -0.105900 
 embedding 360:  0.126373 -0.057128 -0.466475  ...  0.847704  0.096397  0.068322 
 ```
+
+So these look much more similar and there is now sliding window attention in
+effect here. But when we have sliding window attention we do have an issue.
+
+
+So perhaps we can simplify this a bit. Lets set the sliding window to say 8
+and pass in a small sequence, say 
+
+```console
+(venv) $ make embedding-run-converted-model PROMPTS_FILE=small.txt
+...
+
+Input prompt: "Hello world"
+Tokenized prompt (4 tokens): <bos>Hello world<eos>
+output_reserve: reallocating output buffer from size 1.00 MiB to 4.01 MiB
+print_mask: === Attention mask ===
+print_mask: n_swa : 8, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+print_mask: === Attention mask ===
+print_mask: n_swa : 8, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+Embedding dimension: 768
+
+embedding 0:  5.455087  0.000816 -4.336220  ... -0.844402  1.848774  2.493284
+embedding 1:  1.845338 -1.204715 -1.719462  ...  3.425535 -0.171521 -3.412422
+embedding 2:  2.196092  0.070246  2.673058  ...  3.277176 -3.908677 -1.083458
+embedding 3:  1.150332  5.396164 -2.062721  ... -0.585352 -2.658022 -0.727415
+
+Embeddings size: 3072
+Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
+Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
+Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
+
+```
+```console
+(venv) $ make embedding-run-original-model PROMPTS_FILE=small.txt
+Modified sliding window: 512 -> 8
+Importing unreleased model module: transformers.models.tinygemma.modular_tinygemma
+Model class: <class 'transformers.models.tinygemma.modular_tinygemma.TinyGemmaModel'>
+Model's sliding_window: 8
+     2 -> '<bos>'
+  9259 -> 'Hello'
+  1902 -> '▁world'
+     1 -> '<eos>'
+Hidden states shape: torch.Size([1, 4, 768])
+All embeddings shape: (4, 768)
+Embedding dimension: 768
+
+embedding 0:  5.452815  0.000916 -4.332937  ... -0.841584  1.848118  2.494220
+embedding 1:  1.847258 -1.203779 -1.719193  ...  3.424226 -0.171834 -3.415397
+embedding 2:  2.198046  0.070656  2.672585  ...  3.270103 -3.907986 -1.084595
+embedding 3:  1.151672  5.395107 -2.060828  ... -0.583885 -2.657149 -0.725247
+
+Total values: 3072 (4 tokens × 768 dimensions)
+
+Saved bin embeddings to: data/pytorch-embeddinggemma-300M-embeddings.bin
+Saved txt embeddings to: data/pytorch-embeddinggemma-300M-embeddings.txt
+```
+So lets try a file is need to attend to more that just the sliding window:
+```console
+Input prompt: "Hello world something else"
+Tokenized prompt (6 tokens): <bos>Hello world something else<eos>
+output_reserve: reallocating output buffer from size 1.00 MiB to 6.02 MiB
+print_mask: === Attention mask ===
+print_mask: n_swa : 8, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+print_mask: === Attention mask ===
+print_mask: n_swa : 8, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+     0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  ∞ 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+Embedding dimension: 768
+
+embedding 0:  2.602333 -2.891751 -2.315634  ...  1.318493  0.897715  0.594985 
+embedding 1:  3.037957 -1.379041 -1.898681  ...  1.015764  0.901451 -2.756655 
+embedding 2:  1.966860  0.872657  2.299456  ...  0.977531 -3.802025 -1.013076 
+embedding 3:  0.623389 -0.068921  0.715790  ... -1.001790  0.278366  0.092580 
+embedding 4: -4.308455 -6.309823  0.564038  ...  6.871315 -1.384741  2.358924 
+embedding 5:  0.319055  3.211755 -1.416538  ... -0.784961 -2.840520 -1.978701
+```
+So here we have 6 tokens in our sequence, and our sliding window is 8, and half
+of that is 4. And this looks correct, token 0 can attend to 4 tokens (in front
+of it), token 1 can attend to one token behind and 4 tokens ahead and so on.
+
+And we can run the same using the original model so see the output of this:
+```console
+(venv) $ make embedding-run-original-model PROMPTS_FILE=small.txt 
+Modified sliding window: 512 -> 8
+Importing unreleased model module: transformers.models.tinygemma.modular_tinygemma
+Model class: <class 'transformers.models.tinygemma.modular_tinygemma.TinyGemmaModel'>
+Model's sliding_window: 8
+     2 -> '<bos>'
+  9259 -> 'Hello'
+  1902 -> '▁world'
+  2613 -> '▁something'
+  1663 -> '▁else'
+     1 -> '<eos>'
+Hidden states shape: torch.Size([1, 6, 768])
+All embeddings shape: (6, 768)
+Embedding dimension: 768
+
+embedding 0:  2.710024 -2.705342 -2.352060  ...  1.065063  0.977578  0.710636 
+embedding 1:  2.956601 -1.359099 -1.932275  ...  0.539208  0.852095 -2.668386 
+embedding 2:  2.137398  0.987929  2.309458  ...  0.849524 -3.789407 -1.269739 
+embedding 3:  0.647859 -0.163835  0.550380  ... -0.888664  0.209898  0.132741 
+embedding 4: -4.077771 -6.125317  0.509602  ...  6.976178 -1.242871  2.407804 
+embedding 5:  0.085943  3.774835 -1.416385  ... -1.497456 -2.533030 -1.415170 
+
+Total values: 4608 (6 tokens × 768 dimensions)
+```
+Now, this differ quit bit similar to what we say before.
+
+Hmm, one thing that stuck me is that I've been using the transformer from
+huggingface and perhaps it has an old implementation.
+```console
+$ pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
+```
+_wip_
