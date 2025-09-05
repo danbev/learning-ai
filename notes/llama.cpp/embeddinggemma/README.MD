@@ -1,5 +1,6 @@
 ### EmbeddingGemma swa issue
 
+### Input larger than 512 token
 First run the original model with the [swa-prompt.txt](swq-prompt.txt) input file
 to get a token count over 512:
 ```console
@@ -58,3 +59,47 @@ The output files are in the current directory.
 
 I'm working on adding this flag to be able to verify the logits with a specified
 input flag like is used above.
+
+
+### Input less than 512 token
+The following test are using [swa-prompt-under-512.txt)(swa-prompt-under-512.txt)
+to see if there is a difference when the number of tokens is less than 512 (356)
+
+Original model:
+```console
+(venv) $ make embedding-run-original-model PROMPTS_FILE=swa-prompt-under-512.txt.txt > original-model-output-under-512.txt
+
+```
+
+Master:
+```console
+(venv) $ make embedding-run-converted-model PROMPTS_FILE=swa-prompt-under-512.txt > converted-model-master-output-under-512.txt
+```
+
+```console
+$ tail original-model-output-under-512.txt converted-model-master-output-under-512.txt 
+==> original-model-output-under-512.txt <==
+embedding 351: -0.307814  0.251984 -0.204665  ...  0.462497 -0.357251 -0.015757 
+embedding 352: -0.207327  0.763141  0.052609  ...  0.298611 -0.558192 -0.340493 
+embedding 353: -0.359861 -0.441878  0.046225  ...  0.995378  0.165687  0.499921 
+embedding 354: -1.128285 -0.173786 -0.570532  ...  0.975698 -0.199959 -0.122429 
+embedding 355: -3.124373  2.904656 -5.487446  ... -1.106131 -5.366333 -3.785431 
+
+Total values: 273408 (356 tokens × 768 dimensions)
+
+Saved bin embeddings to: data/pytorch-embeddinggemma-300M-embeddings.bin
+Saved txt embeddings to: data/pytorch-embeddinggemma-300M-embeddings.txt
+
+==> converted-model-master-output-under-512.txt <==
+embedding 351: -0.207553  0.188554 -0.158823  ...  0.369807 -0.218508 -0.139167 
+embedding 352: -0.434097  0.543417 -0.111845  ...  0.391635 -0.270442 -0.071264 
+embedding 353: -0.328975 -0.360527 -0.061640  ...  0.965943  0.186761  0.414118 
+embedding 354: -1.070517 -0.242786 -0.518397  ...  0.945989 -0.057610 -0.047675 
+embedding 355: -3.859072  5.318798 -4.914835  ... -1.686410 -4.154724 -3.939769 
+
+Embeddings size: 273408
+Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
+Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
+Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
+
+```
