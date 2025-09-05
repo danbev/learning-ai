@@ -63,7 +63,7 @@ input flag like is used above.
 
 ### Input less than 512 token
 The following test are using [swa-prompt-under-512.txt)(swa-prompt-under-512.txt)
-to see if there is a difference when the number of tokens is less than 512 (356)
+to see if there is a difference when the number of tokens is less than 512 (249)
 
 Original model:
 ```console
@@ -77,27 +77,27 @@ Master:
 ```
 
 ```console
-$ tail original-model-output-under-512.txt converted-model-master-output-under-512.txt 
+$ tail original-model-output-under-512.txt converted-model-master-output-under-512.txt
 ==> original-model-output-under-512.txt <==
-embedding 351: -0.307814  0.251984 -0.204665  ...  0.462497 -0.357251 -0.015757 
-embedding 352: -0.207327  0.763141  0.052609  ...  0.298611 -0.558192 -0.340493 
-embedding 353: -0.359861 -0.441878  0.046225  ...  0.995378  0.165687  0.499921 
-embedding 354: -1.128285 -0.173786 -0.570532  ...  0.975698 -0.199959 -0.122429 
-embedding 355: -3.124373  2.904656 -5.487446  ... -1.106131 -5.366333 -3.785431 
+embedding 244:  2.863687  0.176305  0.046322  ...  0.493868 -0.927739  1.291054 
+embedding 245: -0.852267 -0.424254 -0.266554  ...  0.129614 -1.941182  1.067332 
+embedding 246:  1.064751 -1.604648  1.176383  ... -0.564188 -0.539131 -0.577689 
+embedding 247: -1.464473  0.062398 -0.680420  ...  1.064425 -0.160460 -0.136243 
+embedding 248: -1.870404  2.138104 -3.586237  ...  0.000269 -5.451051 -2.179724 
 
-Total values: 273408 (356 tokens × 768 dimensions)
+Total values: 191232 (249 tokens × 768 dimensions)
 
 Saved bin embeddings to: data/pytorch-embeddinggemma-300M-embeddings.bin
 Saved txt embeddings to: data/pytorch-embeddinggemma-300M-embeddings.txt
 
 ==> converted-model-master-output-under-512.txt <==
-embedding 351: -0.207553  0.188554 -0.158823  ...  0.369807 -0.218508 -0.139167 
-embedding 352: -0.434097  0.543417 -0.111845  ...  0.391635 -0.270442 -0.071264 
-embedding 353: -0.328975 -0.360527 -0.061640  ...  0.965943  0.186761  0.414118 
-embedding 354: -1.070517 -0.242786 -0.518397  ...  0.945989 -0.057610 -0.047675 
-embedding 355: -3.859072  5.318798 -4.914835  ... -1.686410 -4.154724 -3.939769 
+embedding 244:  2.859944  0.179061  0.043167  ...  0.500611 -0.925673  1.287761 
+embedding 245: -0.852439 -0.423924 -0.268251  ...  0.132087 -1.938597  1.064528 
+embedding 246:  1.061418 -1.599676  1.170533  ... -0.560962 -0.538622 -0.573997 
+embedding 247: -1.462280  0.060194 -0.679344  ...  1.063302 -0.164439 -0.134073 
+embedding 248: -1.869754  2.117375 -3.581502  ... -0.004962 -5.455530 -2.189540 
 
-Embeddings size: 273408
+Embeddings size: 191232
 Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
 Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
 Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
