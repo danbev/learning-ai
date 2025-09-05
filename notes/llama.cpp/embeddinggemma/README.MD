@@ -105,6 +105,12 @@ Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
 
 So if we have a prompt that stays under `n_swa/2`, so 512/2=256 in our case
 the logits are very close. But for logits larger than 256, there is a difference.
+So when we have an input prompt that is under 256, for example the one I'm using
+for testing is 248 token. And the similarity is great. This because it all the
+tokens are within the sliding window and there is really no sliding going on?
+So every token can attend to every other token, so this is like bi-directional
+attention.
+
 
 ### SWA mask
 I've tried to inspect the swa mask by printing it out. First I set the `n_swa`
@@ -228,4 +234,56 @@ $7 = 10000
 
 (gdb) p hparams.rope_freq_scale_train_swa 
 $9 = 1
+```
+
+### setting n_swa = 1024 in both model
+Lets try setting n_swa to 1024 in our model and the original model.
+
+So the original model should looks like the following (from [original-model-output-1024.txt](original-model-output-1024.txt)):
+```console
+embedding 340:  2.214964 -0.614099 -0.635387  ... -0.030148 -0.151567  0.021538 
+embedding 341:  1.634534 -0.008599 -0.363462  ...  0.439301 -0.032693  0.372896 
+embedding 342: -0.639432 -0.373834 -0.564425  ...  0.980423 -0.120268 -0.251030 
+embedding 343: -0.656197 -0.133294 -0.325613  ...  0.520328 -0.382065 -0.411596 
+embedding 344:  0.640330 -0.313765 -0.263950  ...  0.455049 -0.335423 -0.063616 
+embedding 345: -0.107409 -0.167236 -0.479765  ...  0.828804 -0.226719 -0.110937 
+embedding 346: -0.629435  0.095102  0.116739  ...  0.321456 -0.228771  0.112080 
+embedding 347: -0.134847  0.666895  0.008453  ... -2.546186  0.498469 -1.361205 
+embedding 348:  0.087949 -0.068500 -0.291025  ... -0.129099  0.245765 -0.425569 
+embedding 349: -0.383739 -0.111206 -0.199367  ...  0.887945 -0.140507  0.145907 
+embedding 350: -0.053519 -0.133043 -0.103100  ...  0.328254 -0.180183 -0.033386 
+embedding 351: -0.411276  0.187741 -0.063503  ...  0.042519 -0.225569  0.165346 
+embedding 352: -0.256238  0.454921 -0.249787  ...  0.309935 -0.408935 -0.124169 
+embedding 353: -0.251312 -0.436394 -0.232022  ...  0.804492  0.045657  0.363653 
+embedding 354: -2.163234 -0.948659  0.971037  ... -0.778741  0.412524 -1.186021 
+embedding 355: -3.311509 -0.366520 -0.380377  ... -1.327883  0.039494 -0.128165 
+embedding 356:  1.053928 -0.483520 -1.378280  ...  1.329656  0.639379 -1.259318 
+embedding 357: -2.012952 -0.251373  0.046241  ... -0.813937  0.238929 -1.238851 
+embedding 358: -0.248367 -0.016308 -0.833480  ...  1.942992  0.907128 -0.521933 
+embedding 359:  7.540615 -1.853240  1.010493  ...  8.538274  2.236461 -0.134622 
+embedding 360:  0.083363 -0.058258 -0.436443  ...  0.825905  0.153373  0.106944 
+```
+And the converted model looks like this (from [converted-model-master-output-1024.txt](converted-model-master-output-1024.txt)):
+```console
+embedding 340:  2.246778 -0.617790 -0.673785  ... -0.083672 -0.167500 -0.009376 
+embedding 341:  1.683687  0.020123 -0.376886  ...  0.449750 -0.056429  0.348307 
+embedding 342: -0.568065 -0.351469 -0.581153  ...  0.965628 -0.146497 -0.252182 
+embedding 343: -0.666167 -0.075676 -0.344300  ...  0.595100 -0.424227 -0.446320 
+embedding 344:  0.638782 -0.290845 -0.294437  ...  0.467957 -0.371361 -0.073126 
+embedding 345: -0.097467 -0.124055 -0.548983  ...  0.887290 -0.281495 -0.151419 
+embedding 346: -0.656509  0.147394  0.093707  ...  0.375859 -0.246319  0.121204 
+embedding 347: -0.218146  0.688305  0.001589  ... -2.613571  0.509729 -1.320524 
+embedding 348:  0.150503 -0.129391 -0.291536  ... -0.362988  0.237815 -0.555755 
+embedding 349: -0.377941 -0.078474 -0.259160  ...  0.945410 -0.176689  0.132735 
+embedding 350: -0.047789 -0.131796 -0.141364  ...  0.326248 -0.233070 -0.061239 
+embedding 351: -0.450649  0.236492 -0.060060  ...  0.076549 -0.233217  0.181921 
+embedding 352: -0.190285  0.434373 -0.275959  ...  0.368673 -0.384268 -0.080436 
+embedding 353: -0.225914 -0.422998 -0.253155  ...  0.819276 -0.007636  0.365536 
+embedding 354: -2.125682 -0.941128  0.682295  ... -0.327854  0.453828 -1.147384 
+embedding 355: -4.042728 -0.881110 -0.202684  ... -1.665129 -0.299086  0.231134 
+embedding 356:  1.014242 -0.347617 -1.464311  ...  1.280106  0.581784 -1.410935 
+embedding 357: -1.836371 -0.364177  0.017972  ... -0.425835  0.448169 -1.271394 
+embedding 358: -0.272829  0.062766 -0.909661  ...  1.988533  0.891771 -0.566438 
+embedding 359:  8.238274 -2.066273  1.058972  ...  9.283712  2.344737 -0.101076 
+embedding 360:  0.091512 -0.011800 -0.462481  ...  0.782526  0.136517  0.114141 
 ```
