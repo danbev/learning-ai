@@ -101,5 +101,131 @@ Embeddings size: 191232
 Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
 Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
 Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
+```
 
+So if we have a prompt that stays under `n_swa/2`, so 512/2=256 in our case
+the logits are very close. But for logits larger than 256, there is a difference.
+
+### SWA mask
+I've tried to inspect the swa mask by printing it out. First I set the `n_swa`
+to 10 to be able to see the mask:
+```c++
+        case LLM_ARCH_GEMMA_EMBEDDING:
+            {
+                hparams.swa_type = LLAMA_SWA_TYPE_SYMMETRIC;
+                hparams.set_swa_pattern(6);
+
+                hparams.causal_attn = false; // embeddings do not use causal attention
+                hparams.rope_freq_base_train_swa  = 10000.0f;
+                hparams.rope_freq_scale_train_swa = 1.0f;
+
+                ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,    hparams.n_swa);
+                hparams.n_swa = 10;
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+                ml.get_key(LLM_KV_POOLING_TYPE,                hparams.pooling_type);
+
+                switch (hparams.n_layer) {
+                    case 24: type = LLM_TYPE_0_3B; break;
+                    default: type = LLM_TYPE_UNKNOWN;
+                }
+                hparams.f_attention_scale = 1.0f / std::sqrt(float(hparams.n_embd_head_k));
+
+            } break;
+```
+
+```console
+print_mask: === Attention mask ===
+print_mask: n_swa : 10, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  6  ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  7  ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  8  ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞
+  9  ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞
+ 10  ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞
+ 11  ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞
+ 12  ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞ ∞
+ 13  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0 ∞
+ 14  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0 0
+ 15  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0 0
+ 16  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0 0
+ 17  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 0
+ 18  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0
+ 19  ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0
+```
+This will of course produce incorrect logits as tokens can now only attend to
+a +- 5 token window instead of +- 256, but the mask itself looks alright.
+
+### swa_layers
+The swa_layers are set like this:
+```c++
+    hparams.swa_type = LLAMA_SWA_TYPE_SYMMETRIC;
+    hparams.set_swa_pattern(6);
+```
+And the result is:
+```console
+(gdb) p hparams.swa_layers 
+$3 = {
+  _M_elems = {true, true, true, true, true, false,
+	            True, true, true, true, true, false,
+							true, true, true, true, true, false,
+							true, true, true, true, true, false <repeats 489 times>}
+
+(gdb) p hparams.swa_type
+$4 = LLAMA_SWA_TYPE_SYMMETRIC
+```
+And the original model has:
+```
+  "layer_types": [
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "full_attention"
+  ],
+```
+
+### rope
+train:
+```console
+(gdb) p hparams.rope_freq_base_train
+$5 = 1000000
+
+(gdb) p hparams.rope_freq_scale_train
+$6 = 1
+```
+swa:
+```console
+(gdb) p hparams.rope_freq_base_train_swa
+$7 = 10000
+
+(gdb) p hparams.rope_freq_scale_train_swa 
+$9 = 1
 ```
