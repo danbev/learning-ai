@@ -480,6 +480,8 @@ So these look much more similar and there is now sliding window attention in
 effect here. But when we have sliding window attention we do have an issue.
 
 
+### Comparing swa masks with transformers
+
 So perhaps we can simplify this a bit. Lets set the sliding window to say 6
 and pass in a small sequence:
 
