@@ -529,14 +529,15 @@ protobuf>=4.21.0,<5.0.0
 ```
 So my thinking was that nothing would be needed to be updated as anyone
 installing these would get a new version of the transformers library.
-This was released in:
+This was released in:  
 https://github.com/huggingface/transformers/releases/tag/v4.56.0-Embedding-Gemma-preview
 
-Interestingly if we look at the last commit we find:
+Interestingly if we look at the last commit we find:  
 https://github.com/huggingface/transformers/commit/60b68e304cf4b6569b0660a13b558b929d4b0e77
 
-And there was a swa fix which might be related to this issue and show be looked
-into: https://github.com/huggingface/transformers/pull/40700
+There was a swa fix which might be related to this issue and show be looked
+into:  
+https://github.com/huggingface/transformers/pull/40700
 
 So because I've been using the older development version, and also the possibility
 that there was an issue with swa in the transformers library (the preview that
