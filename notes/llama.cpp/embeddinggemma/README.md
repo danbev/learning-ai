@@ -207,6 +207,25 @@ llama.cpp embeddings:
 ```
 The full output can be found in [logits-verification.txt](logits-verification.txt).
 
+### Using SWA 2048
+```console
+(venv) $ make embedding-verify-logits PROMPTS_FILE=swa-prompt.txt > logits-verification-swa-2048.txt
+```
+Interestingly I notice the following in the output:
+```console
+(venv) $ head logits-verification-swa-2048.txt 
+Modified sliding window: 257 -> 2048
+Using unreleased model: None
+Model class: <class 'transformers.models.gemma3.modeling_gemma3.Gemma3TextModel'>
+Model file: transformers.models.gemma3.modeling_gemma3
+Model's sliding_window: 2048
+     2 -> '<bos>'
+   818 -> 'The'
+  3495 -> '▁concept'
+   529 -> '▁of'
+ 16477 -> '▁artificial'
+```
+
 ### Input less than 512 token
 The following test are using [swa-prompt-under-512.txt)(swa-prompt-under-512.txt)
 to see if there is a difference when the number of tokens is less than 512 (249)
