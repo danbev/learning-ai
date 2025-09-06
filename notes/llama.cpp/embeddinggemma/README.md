@@ -1,6 +1,131 @@
 ### EmbeddingGemma swa issue
+This page documents an issue we found in EmbeddingGemma, or at least an issue
+I was having locally when verifying the converted model.
+
+## transformers version
+During development I has using a copy of the transformers python package to get
+started quickly as there was an issue with getting access to an internal git
+repository. The was a zipped development version of the transformers library.
+
+Now, I made a mistake and forgot that I had this installed. I had looked at
+the requirements file that the convert_hf_to_gguf.py file uses and it looks like
+this:
+```
+mistral-common>=1.8.3
+
+-r ./requirements-convert_legacy_llama.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch~=2.6.0; platform_machine != "s390x"
+
+# torch s390x packages can only be found from nightly builds
+--extra-index-url https://download.pytorch.org/whl/nightly
+torch>=0.0.0.dev0; platform_machine == "s390x"
+```
+And requirements-convert_legacy_llama.txt contains:
+```
+numpy~=1.26.4
+sentencepiece~=0.2.0
+transformers>=4.45.1,<5.0.0
+gguf>=0.1.0
+protobuf>=4.21.0,<5.0.0
+```
+So my thinking was that nothing would be needed to be updated as anyone
+installing these would get a new version of the transformers library.
+This was released in:  
+https://github.com/huggingface/transformers/releases/tag/v4.56.0-Embedding-Gemma-preview
+
+Interestingly if we look at the last commit we find:  
+https://github.com/huggingface/transformers/commit/60b68e304cf4b6569b0660a13b558b929d4b0e77
+
+There was a swa fix which might be related to this issue and show be looked
+into:  
+https://github.com/huggingface/transformers/pull/40700
+
+So because I've been using the older development version, and also the possibility
+that there was an issue with swa in the transformers library (the preview that
+I was using (the above was commited 12 hours ago as of this writing) this might
+explain why I was seen these strange results locally.
+
+I created a new virtual environment on my machine just now using the following
+command:
+```console
+$ rm -rf venv
+$ python3.11 -m venv venv
+$ source venv/bin/activate
+(venv) $ pip install -r requirements/requirements-convert_hf_to_gguf.txt 
+(venv) pip list
+Package                   Version
+------------------------- ---------
+annotated-types           0.7.0
+attrs                     25.3.0
+certifi                   2025.8.3
+charset-normalizer        3.4.3
+filelock                  3.19.1
+fsspec                    2025.9.0
+gguf                      0.17.1
+hf-xet                    1.1.9
+huggingface-hub           0.34.4
+idna                      3.10
+Jinja2                    3.1.6
+jsonschema                4.25.1
+jsonschema-specifications 2025.4.1
+MarkupSafe                3.0.2
+mistral_common            1.8.4
+mpmath                    1.3.0
+networkx                  3.5
+numpy                     1.26.4
+packaging                 25.0
+pillow                    11.3.0
+pip                       24.0
+protobuf                  4.25.8
+pycountry                 24.6.1
+pydantic                  2.11.7
+pydantic_core             2.33.2
+pydantic-extra-types      2.10.5
+PyYAML                    6.0.2
+referencing               0.36.2
+regex                     2025.9.1
+requests                  2.32.5
+rpds-py                   0.27.1
+safetensors               0.6.2
+sentencepiece             0.2.1
+setuptools                65.5.0
+sympy                     1.14.0
+tiktoken                  0.11.0
+tokenizers                0.22.0
+torch                     2.4.1+cpu
+tqdm                      4.67.1
+transformers              4.56.1
+typing_extensions         4.15.0
+typing-inspection         0.4.1
+urllib3                   2.5.0
+```
+So this will install transformers `4.56.1`, but EmbeddingGemma is a prerelease
+and has to be installed using:
+```console
+(venv) pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
+(venv) $ pip show transformers
+Name: transformers
+Version: 4.57.0.dev0
+Summary: State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow
+Home-page: https://github.com/huggingface/transformers
+Author: The Hugging Face team (past and future) with the help of all our contributors (https://github.com/huggingface/transformers/graphs/contributors)
+Author-email: transformers@huggingface.co
+License: Apache 2.0 License
+Location: /home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages
+Requires: filelock, huggingface-hub, numpy, packaging, pyyaml, regex, requests, safetensors, tokenizers, tqdm
+Required-by:
+```
+
+I'll open a pull request with these changes to the requirements file with
+comments. On thing is that the update to PyTorch 2.6.0 might cause some conflicts
+and will have to be sorted out.
 
 ### Input larger than 512 token
+> 📝 **Note:** The following section has been updated to use the latest
+> transformers library as noted in the above section. To see prior results
+> please look at the git history.
+
 First run the original model with the [swa-prompt.txt](swq-prompt.txt) input file
 to get a token count over 512:
 ```console
@@ -12,19 +137,14 @@ Then produce embedding on the current master branch:
 (venv) $ make embedding-run-converted-model PROMPTS_FILE=swa-prompt.txt > converted-model-master-output.txt
 ```
 
-And then produce the embeddings on the kv-cache-fix-swa branch:
-```console
-(venv) $ make embedding-run-converted-model PROMPTS_FILE=swa-prompt.txt > converted-model-kv-fix-output.txt
-```
-
 ```console
 (venv) $ tail converted-model-master-output.txt original-model-output.txt
 ==> converted-model-master-output.txt <==
-embedding 530: -0.944624  0.804364 -0.191277  ...  1.387934 -1.334470  0.637015
-embedding 531: -1.756230  0.209820  0.338830  ...  2.255193 -0.897826  0.146861
-embedding 532: -0.143266  1.629679 -1.210484  ... -1.927280 -5.181623  1.894408
-embedding 533: -0.762078 -0.437814 -0.574705  ...  0.916314 -0.056354 -0.044370
-embedding 534: -8.561273  3.575560 -3.278111  ... -5.694864 -3.885843  1.288128
+embedding 530: -0.965656  1.360220 -0.225509  ...  1.683851 -1.329391  0.542756 
+embedding 531: -2.035386  0.115241 -0.230382  ...  1.338015  0.129662  1.469703 
+embedding 532: -0.303681  2.391175 -1.541024  ... -2.994880 -6.738236  2.204681 
+embedding 533: -0.821824 -0.314456 -0.656939  ...  0.839123 -0.251856 -0.216256 
+embedding 534: -6.953124  2.524179 -3.556372  ... -4.228094 -3.763176  1.713115 
 
 Embeddings size: 410880
 Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
@@ -32,11 +152,11 @@ Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
 Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
 
 ==> original-model-output.txt <==
-embedding 530: -1.365641  0.854506 -0.680635  ...  1.614876 -2.079262  0.673541
-embedding 531: -0.652792  0.009626  0.425143  ...  0.120669  0.411146 -0.113556
-embedding 532:  0.159455  1.898330 -1.388069  ... -2.024029 -5.794567  1.947388
-embedding 533: -0.911882 -0.336220 -0.675046  ...  0.990344  0.070253  0.037242
-embedding 534: -6.582545  3.765546 -4.170909  ... -4.495653 -3.551418 -0.431231
+embedding 530: -0.951152  0.802068 -0.194350  ...  1.389915 -1.336990  0.639491 
+embedding 531: -1.751817  0.208292  0.334419  ...  2.287567 -0.925609  0.149234 
+embedding 532: -0.135422  1.639212 -1.219069  ... -1.935322 -5.207577  1.899551 
+embedding 533: -0.760476 -0.438013 -0.575233  ...  0.915491 -0.058301 -0.046302 
+embedding 534: -8.571507  3.587008 -3.270368  ... -5.668627 -3.859073  1.273620 
 
 Total values: 410880 (535 tokens × 768 dimensions)
 
@@ -500,117 +620,3 @@ embedding 4: -4.077771 -6.125317  0.509602  ...  6.976178 -1.242871  2.407804
 embedding 5:  0.085943  3.774835 -1.416385  ... -1.497456 -2.533030 -1.415170 
 ```
 
-## transformers version
-During development I has using a copy of the transformers python package to get
-started quickly as there was an issue with getting access to an internal git
-repository. The was a zipped development version of the transformers library.
-
-Now, I made a mistake and forgot that I had this installed. I had looked at
-the requirements file that the convert_hf_to_gguf.py file uses and it looks like
-this:
-```
-mistral-common>=1.8.3
-
--r ./requirements-convert_legacy_llama.txt
---extra-index-url https://download.pytorch.org/whl/cpu
-torch~=2.6.0; platform_machine != "s390x"
-
-# torch s390x packages can only be found from nightly builds
---extra-index-url https://download.pytorch.org/whl/nightly
-torch>=0.0.0.dev0; platform_machine == "s390x"
-```
-And requirements-convert_legacy_llama.txt contains:
-```
-numpy~=1.26.4
-sentencepiece~=0.2.0
-transformers>=4.45.1,<5.0.0
-gguf>=0.1.0
-protobuf>=4.21.0,<5.0.0
-```
-So my thinking was that nothing would be needed to be updated as anyone
-installing these would get a new version of the transformers library.
-This was released in:  
-https://github.com/huggingface/transformers/releases/tag/v4.56.0-Embedding-Gemma-preview
-
-Interestingly if we look at the last commit we find:  
-https://github.com/huggingface/transformers/commit/60b68e304cf4b6569b0660a13b558b929d4b0e77
-
-There was a swa fix which might be related to this issue and show be looked
-into:  
-https://github.com/huggingface/transformers/pull/40700
-
-So because I've been using the older development version, and also the possibility
-that there was an issue with swa in the transformers library (the preview that
-I was using (the above was commited 12 hours ago as of this writing) this might
-explain why I was seen these strange results locally.
-
-I created a new virtual environment on my machine just now using the following
-command:
-```console
-$ rm -rf venv
-$ python3.11 -m venv venv
-$ source venv/bin/activate
-(venv) $ pip install -r requirements/requirements-convert_hf_to_gguf.txt 
-(venv) pip list
-Package                   Version
-------------------------- ---------
-annotated-types           0.7.0
-attrs                     25.3.0
-certifi                   2025.8.3
-charset-normalizer        3.4.3
-filelock                  3.19.1
-fsspec                    2025.9.0
-gguf                      0.17.1
-hf-xet                    1.1.9
-huggingface-hub           0.34.4
-idna                      3.10
-Jinja2                    3.1.6
-jsonschema                4.25.1
-jsonschema-specifications 2025.4.1
-MarkupSafe                3.0.2
-mistral_common            1.8.4
-mpmath                    1.3.0
-networkx                  3.5
-numpy                     1.26.4
-packaging                 25.0
-pillow                    11.3.0
-pip                       24.0
-protobuf                  4.25.8
-pycountry                 24.6.1
-pydantic                  2.11.7
-pydantic_core             2.33.2
-pydantic-extra-types      2.10.5
-PyYAML                    6.0.2
-referencing               0.36.2
-regex                     2025.9.1
-requests                  2.32.5
-rpds-py                   0.27.1
-safetensors               0.6.2
-sentencepiece             0.2.1
-setuptools                65.5.0
-sympy                     1.14.0
-tiktoken                  0.11.0
-tokenizers                0.22.0
-torch                     2.4.1+cpu
-tqdm                      4.67.1
-transformers              4.56.1
-typing_extensions         4.15.0
-typing-inspection         0.4.1
-urllib3                   2.5.0
-```
-So this will install transformers `4.56.1`, but EmbeddingGemma is a prerelease
-and has to be installed using:
-```console
-(venv) pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
-(venv) $ pip show transformers
-Name: transformers
-Version: 4.57.0.dev0
-Summary: State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow
-Home-page: https://github.com/huggingface/transformers
-Author: The Hugging Face team (past and future) with the help of all our contributors (https://github.com/huggingface/transformers/graphs/contributors)
-Author-email: transformers@huggingface.co
-License: Apache 2.0 License
-Location: /home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages
-Requires: filelock, huggingface-hub, numpy, packaging, pyyaml, regex, requests, safetensors, tokenizers, tqdm
-Required-by:
-```
