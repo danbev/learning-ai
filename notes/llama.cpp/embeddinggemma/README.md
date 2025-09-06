@@ -480,73 +480,165 @@ So these look much more similar and there is now sliding window attention in
 effect here. But when we have sliding window attention we do have an issue.
 
 
-So perhaps we can simplify this a bit. Lets set the sliding window to say 8
-and pass in a small sequence, say 
+So perhaps we can simplify this a bit. Lets set the sliding window to say 6
+and pass in a small sequence:
 
 ```console
 (venv) $ make embedding-run-converted-model PROMPTS_FILE=small.txt
 ...
-
-Input prompt: "Hello world"
-Tokenized prompt (4 tokens): <bos>Hello world<eos>
-output_reserve: reallocating output buffer from size 1.00 MiB to 4.01 MiB
+Input prompt: "Which planet is known as the Red Planet?"
+Tokenized prompt (11 tokens): <bos>Which planet is known as the Red Planet?<eos>
+output_reserve: reallocating output buffer from size 1.00 MiB to 11.03 MiB
 print_mask: === Attention mask ===
-print_mask: n_swa : 8, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  6  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  7  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  8  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  9  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+ 10  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+print_mask: === Attention mask ===
+print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
 print_mask: '0' = can attend, '∞' = masked
 print_mask: Rows = query tokens, Columns = key/value tokens
 
       0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
   0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  1  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  2  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  3  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-print_mask: === Attention mask ===
-print_mask: n_swa : 8, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
-print_mask: '0' = can attend, '∞' = masked
-print_mask: Rows = query tokens, Columns = key/value tokens
-
-      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
-  0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  1  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  2  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  3  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  6  ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  7  ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  8  ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  9  ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+ 10  ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
 Embedding dimension: 768
 
-embedding 0:  5.455087  0.000816 -4.336220  ... -0.844402  1.848774  2.493284
-embedding 1:  1.845338 -1.204715 -1.719462  ...  3.425535 -0.171521 -3.412422
-embedding 2:  2.196092  0.070246  2.673058  ...  3.277176 -3.908677 -1.083458
-embedding 3:  1.150332  5.396164 -2.062721  ... -0.585352 -2.658022 -0.727415
-
-Embeddings size: 3072
-Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
-Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
-Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
-
+embedding 0:  2.059559  2.318194 -1.411105  ... -0.787523 -0.218433  1.265910 
+embedding 1: -1.726951 -0.802273  1.146937  ... -0.987142  0.446975 -0.152091 
+embedding 2: -0.475775  0.721849 -1.177293  ... -0.617393 -1.896554 -0.878471 
+embedding 3: -0.793247 -0.715338  0.158374  ... -0.664873 -0.686496 -0.362771 
+embedding 4:  1.404825 -0.427954 -1.264170  ...  0.384742 -0.827241 -0.944257 
+embedding 5: -0.088393 -0.564507 -0.049671  ...  0.723249 -0.172043  0.198801 
+embedding 6: -1.928240  0.620383  0.298354  ...  0.394134 -0.452891  0.239224 
+embedding 7: -3.681863 -3.136335  1.776549  ... -9.316843  2.508976  0.707935 
+embedding 8:  1.404182  0.476730 -0.165926  ...  0.395325 -1.094332 -0.887429 
+embedding 9: -0.266009 -3.047898  1.758015  ... -0.431742  2.205648 -1.889754 
+embedding 10: -0.462513  2.652958 -0.623698  ...  1.057660 -2.112471 -1.306123
 ```
+To visualize the mask in transformers we first need to clone the repo:
+```console
+(venv) $ git clone git@github.com:huggingface/transformers.git
+(venv) $ cd transformers
+(venv) $ pip install -e .
+```
+Then we add the printing of the mask in `modeling_gemma3.py`:
+```console
+$ git diff
+diff --git a/src/transformers/models/gemma3/modeling_gemma3.py b/src/transformers/models/gemma3/modeling_gemma3.py
+index d2ba04298d..89ecb52a0a 100644
+--- a/src/transformers/models/gemma3/modeling_gemma3.py
++++ b/src/transformers/models/gemma3/modeling_gemma3.py
+@@ -555,6 +555,8 @@ class Gemma3TextModel(Gemma3PreTrainedModel):
+                 "full_attention": create_causal_mask(**mask_kwargs),
+                 "sliding_attention": create_sliding_window_causal_mask(**sliding_mask_kwargs),
+             }
++            from transformers.masking_utils import tensor_to_mask_visual
++            print(tensor_to_mask_visual(causal_mask_mapping["sliding_attention"][0][0], grid_size=(30, 50)))
+
+         # embed positions
+         hidden_states = inputs_embeds
+```
+
 ```console
 (venv) $ make embedding-run-original-model PROMPTS_FILE=small.txt
-Modified sliding window: 512 -> 8
-Importing unreleased model module: transformers.models.tinygemma.modular_tinygemma
-Model class: <class 'transformers.models.tinygemma.modular_tinygemma.TinyGemmaModel'>
-Model's sliding_window: 8
+Modified sliding window: 512 -> 6
+Using unreleased model: None
+Model class: <class 'transformers.models.gemma3.modeling_gemma3.Gemma3TextModel'>
+Model file: transformers.models.gemma3.modeling_gemma3
+Model's sliding_window: 6
      2 -> '<bos>'
-  9259 -> 'Hello'
-  1902 -> '▁world'
+ 24249 -> 'Which'
+ 13401 -> '▁planet'
+   563 -> '▁is'
+  3224 -> '▁known'
+   618 -> '▁as'
+   506 -> '▁the'
+  4855 -> '▁Red'
+ 38342 -> '▁Planet'
+236881 -> '?'
      1 -> '<eos>'
-Hidden states shape: torch.Size([1, 4, 768])
-All embeddings shape: (4, 768)
+🀙🀙🀙🀙🀆🀆🀆🀆🀆🀆🀆
+🀙🀙🀙🀙🀙🀆🀆🀆🀆🀆🀆
+🀙🀙🀙🀙🀙🀙🀆🀆🀆🀆🀆
+🀙🀙🀙🀙🀙🀙🀙🀆🀆🀆🀆
+🀙🀙🀙🀙🀙🀙🀙🀙🀆🀆🀆
+🀙🀙🀙🀙🀙🀙🀙🀙🀙🀆🀆
+🀆🀙🀙🀙🀙🀙🀙🀙🀙🀙🀆
+🀆🀆🀙🀙🀙🀙🀙🀙🀙🀙🀙
+🀆🀆🀆🀙🀙🀙🀙🀙🀙🀙🀙
+🀆🀆🀆🀆🀙🀙🀙🀙🀙🀙🀙
+🀆🀆🀆🀆🀆🀙🀙🀙🀙🀙🀙
+Hidden states shape: torch.Size([1, 11, 768])
+All embeddings shape: (11, 768)
 Embedding dimension: 768
 
-embedding 0:  5.452815  0.000916 -4.332937  ... -0.841584  1.848118  2.494220
-embedding 1:  1.847258 -1.203779 -1.719193  ...  3.424226 -0.171834 -3.415397
-embedding 2:  2.198046  0.070656  2.672585  ...  3.270103 -3.907986 -1.084595
-embedding 3:  1.151672  5.395107 -2.060828  ... -0.583885 -2.657149 -0.725247
+embedding 0:  1.852479  2.278579 -1.399672  ... -0.868850  0.128775  1.163651
+embedding 1: -1.783188 -0.789693  1.162982  ... -0.867609  0.346942 -0.057842
+embedding 2: -0.115827  0.859096 -0.805346  ... -0.352525 -1.655916 -0.791396
+embedding 3: -0.851912 -0.679230  0.012643  ... -0.637014 -0.664123 -0.606966
+embedding 4:  0.627282 -0.026492 -2.292385  ...  0.153339 -1.051767 -1.041380
+embedding 5: -1.110619  0.830399  0.568994  ... -0.125356 -0.008002  0.023205
+embedding 6: -1.683385  0.482369  0.378439  ...  0.021804 -0.414762  0.176607
+embedding 7: -4.531939 -3.586287  1.585973  ... -10.601041  2.521750  0.775239
+embedding 8:  1.558994  0.495676  0.337419  ...  0.585594 -0.838154 -0.809764
+embedding 9:  1.801445 -3.642905  1.861348  ... -0.203017  2.688000 -1.089822
+embedding 10: -0.670791  3.021325 -0.776704  ...  1.235336 -1.902855 -1.526714
 
-Total values: 3072 (4 tokens × 768 dimensions)
-
-Saved bin embeddings to: data/pytorch-embeddinggemma-300M-embeddings.bin
-Saved txt embeddings to: data/pytorch-embeddinggemma-300M-embeddings.txt
+Total values: 8448 (11 tokens × 768 dimensions)
 ```
+```
+     0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+  0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  6  ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  7  ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  8  ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  9  ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+ 10  ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+Embedding dimension: 768
+
+embedding 0:  2.059559  2.318194 -1.411105  ... -0.787523 -0.218433  1.265910 
+embedding 1: -1.726951 -0.802273  1.146937  ... -0.987142  0.446975 -0.152091 
+embedding 2: -0.475775  0.721849 -1.177293  ... -0.617393 -1.896554 -0.878471 
+embedding 3: -0.793247 -0.715338  0.158374  ... -0.664873 -0.686496 -0.362771 
+embedding 4:  1.404825 -0.427954 -1.264170  ...  0.384742 -0.827241 -0.944257 
+embedding 5: -0.088393 -0.564507 -0.049671  ...  0.723249 -0.172043  0.198801 
+embedding 6: -1.928240  0.620383  0.298354  ...  0.394134 -0.452891  0.239224 
+embedding 7: -3.681863 -3.136335  1.776549  ... -9.316843  2.508976  0.707935 
+embedding 8:  1.404182  0.476730 -0.165926  ...  0.395325 -1.094332 -0.887429 
+embedding 9: -0.266009 -3.047898  1.758015  ... -0.431742  2.205648 -1.889754 
+embedding 10: -0.462513  2.652958 -0.623698  ...  1.057660 -2.112471 -1.306123
+```
+_wip_
+
+
+
 So lets try a file is need to attend to more that just the sliding window:
 ```console
 Input prompt: "Hello world something else"
