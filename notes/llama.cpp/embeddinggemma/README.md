@@ -170,6 +170,42 @@ The output files are in the current directory.
 I'm working on adding this flag to be able to verify the logits with a specified
 input flag like is used above.
 
+A verification of the model can be run using:
+```console
+(venv) $ make embedding-verify-logits PROMPTS_FILE=swa-prompt.txt > logits-verification.txt
+...
+Loading model and tokenizer using AutoTokenizer: /home/danbev/work/ai/models/google/embeddinggemma-300M
+n_tokens: 535
+hidden_size: 768
+pytorch embeddings:
+[[-8.947923 11.567783 -3.949262 ... -7.488617 -4.011277  2.478082]
+ [-1.131508 -0.050106  1.165388 ...  1.794341 -0.744414 -0.473869]
+ [10.904386  0.457004  4.71285  ... -1.76934  -7.356499  3.377463]
+ ...
+ [-0.135422  1.639212 -1.219069 ... -1.935322 -5.207577  1.899551]
+ [-0.760476 -0.438013 -0.575233 ...  0.915491 -0.058301 -0.046302]
+ [-8.571507  3.587008 -3.270368 ... -5.668627 -3.859073  1.27362 ]]
+llama.cpp embeddings:
+[[-8.334854 10.894479 -4.177649 ... -9.079329 -4.938675  3.068214]
+ [-2.335905 -0.645409  0.542473 ... -0.507136  0.170196  0.688234]
+ [10.627003  0.560137  4.376873 ... -1.795107 -7.426371  3.062254]
+ ...
+ [-0.303681  2.391175 -1.541024 ... -2.99488  -6.738236  2.204681]
+ [-0.821824 -0.314456 -0.656939 ...  0.839123 -0.251856 -0.216256]
+ [-6.953124  2.524179 -3.556372 ... -4.228094 -3.763176  1.713115]]
+
+...
+4. Similarity Matrix Differences:
+   Max difference: 0.9131
+   Mean difference: 0.0350
+   RMS difference: 0.0669
+
+ === SUMMARY ===
+ Average cross-model similarity: 0.9663
+ Similarity matrix RMS difference: 0.0669
+ ✅ EXCELLENT: Models are highly similar
+```
+The full output can be found in [logits-verification.txt](logits-verification.txt).
 
 ### Input less than 512 token
 The following test are using [swa-prompt-under-512.txt)(swa-prompt-under-512.txt)
