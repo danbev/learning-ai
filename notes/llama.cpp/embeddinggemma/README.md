@@ -499,4 +499,117 @@ embedding 3:  0.647859 -0.163835  0.550380  ... -0.888664  0.209898  0.132741
 embedding 4: -4.077771 -6.125317  0.509602  ...  6.976178 -1.242871  2.407804 
 embedding 5:  0.085943  3.774835 -1.416385  ... -1.497456 -2.533030 -1.415170 
 ```
-_wip_
+
+## transformers version
+During development I has using a copy of the transformers python package to get
+started quickly as there was an issue with getting access to an internal git
+repository. The was a zipped development version of the transformers library.
+
+Now, I made a mistake and forgot that I had this installed. I had looked at
+the requirements file that the convert_hf_to_gguf.py file uses and it looks like
+this:
+```
+mistral-common>=1.8.3
+
+-r ./requirements-convert_legacy_llama.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch~=2.6.0; platform_machine != "s390x"
+
+# torch s390x packages can only be found from nightly builds
+--extra-index-url https://download.pytorch.org/whl/nightly
+torch>=0.0.0.dev0; platform_machine == "s390x"
+```
+And requirements-convert_legacy_llama.txt contains:
+```
+numpy~=1.26.4
+sentencepiece~=0.2.0
+transformers>=4.45.1,<5.0.0
+gguf>=0.1.0
+protobuf>=4.21.0,<5.0.0
+```
+So my thinking was that nothing would be needed to be updated as anyone
+installing these would get a new version of the transformers library.
+This was released in:
+https://github.com/huggingface/transformers/releases/tag/v4.56.0-Embedding-Gemma-preview
+
+Interestingly if we look at the last commit we find:
+https://github.com/huggingface/transformers/commit/60b68e304cf4b6569b0660a13b558b929d4b0e77
+
+And there was a swa fix which might be related to this issue and show be looked
+into: https://github.com/huggingface/transformers/pull/40700
+
+So because I've been using the older development version, and also the possibility
+that there was an issue with swa in the transformers library (the preview that
+I was using (the above was commited 12 hours ago as of this writing) this might
+explain why I was seen these strange results locally.
+
+I created a new virtual environment on my machine just now using the following
+command:
+```console
+$ rm -rf venv
+$ python3.11 -m venv venv
+$ source venv/bin/activate
+(venv) $ pip install -r requirements/requirements-convert_hf_to_gguf.txt 
+(venv) pip list
+Package                   Version
+------------------------- ---------
+annotated-types           0.7.0
+attrs                     25.3.0
+certifi                   2025.8.3
+charset-normalizer        3.4.3
+filelock                  3.19.1
+fsspec                    2025.9.0
+gguf                      0.17.1
+hf-xet                    1.1.9
+huggingface-hub           0.34.4
+idna                      3.10
+Jinja2                    3.1.6
+jsonschema                4.25.1
+jsonschema-specifications 2025.4.1
+MarkupSafe                3.0.2
+mistral_common            1.8.4
+mpmath                    1.3.0
+networkx                  3.5
+numpy                     1.26.4
+packaging                 25.0
+pillow                    11.3.0
+pip                       24.0
+protobuf                  4.25.8
+pycountry                 24.6.1
+pydantic                  2.11.7
+pydantic_core             2.33.2
+pydantic-extra-types      2.10.5
+PyYAML                    6.0.2
+referencing               0.36.2
+regex                     2025.9.1
+requests                  2.32.5
+rpds-py                   0.27.1
+safetensors               0.6.2
+sentencepiece             0.2.1
+setuptools                65.5.0
+sympy                     1.14.0
+tiktoken                  0.11.0
+tokenizers                0.22.0
+torch                     2.4.1+cpu
+tqdm                      4.67.1
+transformers              4.56.1
+typing_extensions         4.15.0
+typing-inspection         0.4.1
+urllib3                   2.5.0
+```
+So this will install transformers `4.56.1`, but EmbeddingGemma is a prerelease
+and has to be installed using:
+```console
+(venv) pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
+(venv) $ pip show transformers
+Name: transformers
+Version: 4.57.0.dev0
+Summary: State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow
+Home-page: https://github.com/huggingface/transformers
+Author: The Hugging Face team (past and future) with the help of all our contributors (https://github.com/huggingface/transformers/graphs/contributors)
+Author-email: transformers@huggingface.co
+License: Apache 2.0 License
+Location: /home/danbev/work/ai/llama.cpp/venv/lib/python3.11/site-packages
+Requires: filelock, huggingface-hub, numpy, packaging, pyyaml, regex, requests, safetensors, tokenizers, tqdm
+Required-by:
+```
