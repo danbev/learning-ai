@@ -41,7 +41,7 @@ designed to do a lot of work with a small amount of power.
 |    +---------------------------+  |
 |    |                           |  |
 |    |      CUDA Cores /         |  |
-|    |      Processing Units     |  |
+|    |      Processing Units (SP)|  |
 |    |                           |  |
 |    |  [Registers (per core)]   |  |
 |    +---------------------------+  |
@@ -86,6 +86,8 @@ memory.
 
 5) Finally, the results are copied back to the host's main memory.
 
+TODO: figure out a better order of introducing the warp schdulers and registers
+and execution process. I'm kind of jumping around a bit here as I've learned more.
 
 The registers on the SMs are per GPU thread which is not the case for a CPU
 where the registers are per CPU core. Every core/processing unit in an SM has a
@@ -97,7 +99,35 @@ a register file is a collection of registers which are memory locations on the
 chip itself.
 
 There are about 64 registers per thread on modern GPUs and they are typically
-32 bits registers.
+32 bits registers. So each SM has a huge register file (e.g., 65,536 32-bit
+registers), much more than a CPU core which is interesting.
+Now, I though that the reason for this was that GPUs have big register files
+because there are lots of threads and that seemed to make sense. But if we look
+at the number the have way more register/memory than a CPU, like 50000x more.
+
+The reason for this is that these registers are resident. There is no thread
+context switching that occurs when a different warp is executed. Instead the
+registers stay set (resident) and can be used again when the same warp is
+executed again. When a warp get created it gets permanent allocation of
+registers for its lifetime.
+
+```console
+Warp 0:
+├── Program Counter: 0x1A4C (stored in warp scheduler)
+├── Registers R0-R31: Allocated in register file [0-1023]
+├── Predicate registers: For conditional execution
+├── Status flags: Ready/Stalled/Memory_pending
+└── Active mask: Which threads are active
+
+Warp 1:
+├── Program Counter: 0x2B8F
+├── Registers R0-R31: Allocated in register file [1024-2047]
+├── Predicate registers
+├── Status flags
+└── Active mask
+
+... (up to 64 warps)
+```
 
 Threads are executed by GPU cores/compute units, and they execute the kernel.
 Just a note about the name "kernel" as the first thing I thought about was the
@@ -114,6 +144,35 @@ threads at once is the smallest unit of execution.
 This is actually more important that it might seem at first. Each computation
 unit on a GPU has 32 ALUs which means that it can execute 32 threads at the same
 time.
+If we think about how a thread executes on a CPU, it has its own program counter,
+stack, and its own registers. It executes instructions one at a time, and a loop
+could be implemented something like this :
+```console
+loop_start:
+    ; loop body instructions
+    add k, 1
+    cmp k, 4
+    jl loop_start    ; conditional jump backward
+```
+This no problem and it can jump as it wants.
+
+But this is not how the execution works on a GPU. Instead, we have something
+similar to the following:
+```console
+; GPU execution - ALL threads execute the same instruction
+instruction_0:  load a_val from A[row*4 + k]   ; All 32 threads, different addresses
+instruction_1:  load b_val from B[k*4 + col]   ; All 32 threads, different addresses  
+instruction_2:  fma result, a_val, b_val       ; All 32 threads, same operation
+instruction_3:  add k, 1                       ; All 32 threads, same increment
+instruction_4:  cmp k, 4                       ; All 32 threads, same comparison
+instruction_5:  branch_if_less instruction_0   ; All 32 threads take same branch
+```
+There is no program counter per thread, that is instead per warp and is managed
+by the warp scheduler. Each SM has an instruction cache which stores the compiled
+CUDA kernel code (PTX->SASS machine code). The size of this instruction cache is
+typically 32-128KB. This is what is meant by "lock step" execution, all 32
+threads in a warp execute the same instruction at the same time, but on
+different data.
 
 ```
 Compute Unit Architecture:
