@@ -1107,3 +1107,56 @@ Similarity matrix RMS difference: 0.0066
 ## Tasks/actions
 * Create a pull request for the swa handling in llama.cpp.
 * Re-convert the EmbeddingGemma models and upload them to huggingface.
+
+### SWA Implementation differences
+Current branch that tries to follow Huggingface transformers:
+```console
+print_mask: === Attention mask ===
+print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+     0 1 2 3 4 5 6 7 8 910111213141516171819
+  0  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  6  ∞ 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  7  ∞ ∞ 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  8  ∞ ∞ ∞ 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  9  ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+ 10  ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+```
+Master version:
+```console
+print_mask: === Attention mask ===
+print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+     0 1 2 3 4 5 6 7 8 910111213141516171819
+  0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  4  ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  5  ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  6  ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  7  ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  8  ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+  9  ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+ 10  ∞ ∞ ∞ ∞ ∞ ∞ ∞ 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
+```
+The difference here is that master creates a half-window on each side of the
+token (3 positions back + self + 3 positions forward = 7 total max)
+
+Whereas in transformers it creates a full window on each side of the token.
+(5 positions back + self + 5 positions forward = 11 total max)
+
+I'm not sure it if there is any "correct" way of doing this and I can't say that
+the version on master is wrong, but that it is different from the huggingface
+transformers implementation. My gut instinct, which I think I mentioned above,
+was that the sliding window is the total number of tokens that can be attended
+to including itself.
