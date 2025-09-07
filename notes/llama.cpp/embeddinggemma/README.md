@@ -483,7 +483,8 @@ effect here. But when we have sliding window attention we do have an issue.
 ### Comparing swa masks with transformers
 
 So perhaps we can simplify this a bit. Lets set the sliding window to say 6
-and pass in a small sequence:
+and pass in a small sequence. So a token should be able to attend to a maxium
+of 6 tokens, including itself.
 
 ```console
 (venv) $ make embedding-run-converted-model PROMPTS_FILE=small.txt
@@ -496,24 +497,7 @@ print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
 print_mask: '0' = can attend, '∞' = masked
 print_mask: Rows = query tokens, Columns = key/value tokens
 
-      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
-  0  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  1  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  2  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  3  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  4  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  5  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  6  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  7  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  8  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-  9  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
- 10  0 0 0 0 0 0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
-print_mask: === Attention mask ===
-print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
-print_mask: '0' = can attend, '∞' = masked
-print_mask: Rows = query tokens, Columns = key/value tokens
-
-      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+     0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
   0  0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
   1  0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
   2  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞ ∞
@@ -539,6 +523,7 @@ embedding 8:  1.404182  0.476730 -0.165926  ...  0.395325 -1.094332 -0.887429
 embedding 9: -0.266009 -3.047898  1.758015  ... -0.431742  2.205648 -1.889754 
 embedding 10: -0.462513  2.652958 -0.623698  ...  1.057660 -2.112471 -1.306123
 ```
+
 To visualize the mask in transformers we first need to clone the repo:
 ```console
 (venv) $ git clone git@github.com:huggingface/transformers.git
@@ -636,6 +621,29 @@ embedding 7: -3.681863 -3.136335  1.776549  ... -9.316843  2.508976  0.707935
 embedding 8:  1.404182  0.476730 -0.165926  ...  0.395325 -1.094332 -0.887429 
 embedding 9: -0.266009 -3.047898  1.758015  ... -0.431742  2.205648 -1.889754 
 embedding 10: -0.462513  2.652958 -0.623698  ...  1.057660 -2.112471 -1.306123
+```
+So there is definitely a difference here!
+
+Looking at the huggingface code I noticed:
+```python
+        if use_bidirectional_attention:
+            self.sliding_window = (self.sliding_window // 2) + 1  # due to fa we set exclusive bounds
+```
+This something that is missing from llama.cpp.
+
+And then they also have this function to create the mask:
+```python
+def _bidirectional_window_overlay(sliding_window: int) -> Callable[[int, int, int, int], bool]:
+    """
+    Enables a bidirectional mask within the sliding window.
+    """
+
+    def inner_mask(batch_idx: int, head_idx: int, q_idx: int, kv_idx: int) -> bool:
+        """A token can attend to any other token if their absolute distance is within
+        the (exclusive) sliding window size (distance < sliding_window)."""
+        return abs(q_idx - kv_idx) < sliding_window
+
+    return inner_mask
 ```
 _wip_
 
@@ -792,3 +800,310 @@ embedding 4: -4.077771 -6.125317  0.509602  ...  6.976178 -1.242871  2.407804
 embedding 5:  0.085943  3.774835 -1.416385  ... -1.497456 -2.533030 -1.415170 
 ```
 
+### Transformers swa handling
+When we call the config from pretrained like the following:
+```python
+config = AutoConfig.from_pretrained(model_path)
+```
+This will call the constructor
+```python
+class Gemma3TextConfig(PretrainedConfig):
+    r"""
+    ...
+            sliding_window (`int`, *optional*, defaults to 4096):
+            In Gemma3Text, every other layer uses sliding window attention. This is the size of the sliding window.
+    ...
+      def __init__(
+        ...
+        sliding_window=4096,
+        ...
+        self.use_bidirectional_attention = use_bidirectional_attention
+        if use_bidirectional_attention:
+            self.sliding_window = (self.sliding_window // 2) + 1  # due to fa we set exclusive bounds
+    ):
+```
+Now, in the above examples we are overriding the sliding window size, but this
+happens after the above constructor is called:
+```python
+    config.sliding_window = 6
+```
+
+And in `src/transformers/models/gemma3/modeling_gemma3.py` we have
+```python
+def _bidirectional_window_overlay(sliding_window: int) -> Callable[[int, int, int, int], bool]:
+    """
+    Enables a bidirectional mask within the sliding window.
+    """
+
+    def inner_mask(batch_idx: int, head_idx: int, q_idx: int, kv_idx: int) -> bool:
+        """A token can attend to any other token if their absolute distance is within
+        the (exclusive) sliding window size (distance < sliding_window)."""
+        return abs(q_idx - kv_idx) < sliding_window
+
+    return inner_mask
+```
+This function is called later in the forward method:
+```python
+class Gemma3TextModel(Gemma3PreTrainedModel):
+    config: Gemma3TextConfig
+    ...
+    def forward(
+         ...
+            if self.config.use_bidirectional_attention:
+                mask_kwargs["or_mask_function"] = lambda *args: torch.tensor(True, dtype=torch.bool)
+                sliding_mask_kwargs["or_mask_function"] = _bidirectional_window_overlay(self.config.sliding_window)
+
+            # Create the masks
+            causal_mask_mapping = {
+                "full_attention": create_causal_mask(**mask_kwargs),
+                "sliding_attention": create_sliding_window_causal_mask(**sliding_mask_kwargs),
+            }
+```
+And `_bidirectional_window_overlay` looks like this:
+```python
+def _bidirectional_window_overlay(sliding_window: int) -> Callable[[int, int, int, int], bool]:
+    """
+    Enables a bidirectional mask within the sliding window.
+    """
+
+    def inner_mask(batch_idx: int, head_idx: int, q_idx: int, kv_idx: int) -> bool:
+        """A token can attend to any other token if their absolute distance is within
+        the (exclusive) sliding window size (distance < sliding_window)."""
+        return abs(q_idx - kv_idx) < sliding_window
+
+    return inner_mask
+```
+So looking at the output he have (modified slightly):
+```console
+Bidirectional sliding_window: 257
+Modified sliding window: 257 -> 6
+   0 1 2 3 4 5 6 7 8 9 10
+0  🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆 🀆 🀆 🀆
+1  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆 🀆 🀆
+2  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆 🀆
+3  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆
+4  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆
+5  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+6  🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+7  🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+8  🀆 🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+9  🀆 🀆 🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+10 🀆 🀆 🀆 🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙
+```
+With a slinding window of 6 my understading is that at most 6 tokens can be
+attended to, including the current token. My view was that window size is the
+total number of tokens that can be attended to, including the current token.
+This is what is used in signal processing and perhaps why I got this wrong.
+
+But that is not the case here, here the sliding window is a radius/distance.
+The maximum tokens that can be attended to are:
+```
+5 tokens behind + itself + 5 tokens in front
+```
+This is used in a number of models like Mistral 7B.
+
+Changing our mask to something like the following:
+```c++
+bool llama_hparams::is_masked_swa(uint32_t n_swa, llama_swa_type swa_type, llama_pos p0, llama_pos p1) {
+    assert(p0 >= 0 && p1 >= 0);
+    ...
+
+        case LLAMA_SWA_TYPE_SYMMETRIC:
+            {
+                // Maximum distance for the sliding window. A token can attend to
+                // tokens within distance < n_swa.
+                // This creates a bidirectional window of up to:
+                // (n_swa-1) tokens behind + itself + (n_swa-1) tokens ahead.
+                const int32_t pos_diff = std::abs(p1 - p0);
+                if (pos_diff >= (int32_t) n_swa) {
+                    return true;
+                }
+            } break;
+```
+Will produce the following mask:
+```console
+print_mask: === Attention mask ===
+print_mask: n_swa : 6, n_kv: 256, swq_type: LLAMA_SWA_TYPE_SYMMETRIC
+print_mask: '0' = can attend, '∞' = masked
+print_mask: Rows = query tokens, Columns = key/value tokens
+
+     0 1 2 3 4 5 6 7 8 910
+  0  0 0 0 0 0 0 ∞ ∞ ∞ ∞ ∞
+  1  0 0 0 0 0 0 0 ∞ ∞ ∞ ∞
+  2  0 0 0 0 0 0 0 0 ∞ ∞ ∞
+  3  0 0 0 0 0 0 0 0 0 ∞ ∞
+  4  0 0 0 0 0 0 0 0 0 0 ∞
+  5  0 0 0 0 0 0 0 0 0 0 0
+  6  ∞ 0 0 0 0 0 0 0 0 0 0
+  7  ∞ ∞ 0 0 0 0 0 0 0 0 0
+  8  ∞ ∞ ∞ 0 0 0 0 0 0 0 0
+  9  ∞ ∞ ∞ ∞ 0 0 0 0 0 0 0
+ 10  ∞ ∞ ∞ ∞ ∞ 0 0 0 0 0 0
+```
+Lets compare the masks:
+```
+   0 1 2 3 4 5 6 7 8 9 10
+0  🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆 🀆 🀆 🀆
+1  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆 🀆 🀆
+2  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆 🀆
+3  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆 🀆
+4  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀆
+5  🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+6  🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+7  🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+8  🀆 🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+9  🀆 🀆 🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙 🀙
+10 🀆 🀆 🀆 🀆 🀆 🀙 🀙 🀙 🀙 🀙 🀙
+
+```
+And lets also compare the logits:
+```console
+llama.cpp:
+embedding 0:  1.057626  0.779318 -2.067055  ... -0.823594  0.537719  1.771006
+embedding 1: -0.932398 -0.602657  1.401601  ... -0.904815  0.830285 -0.248217
+embedding 2: -0.947008  0.330516 -0.653709  ... -0.688292 -1.390777 -0.437387
+embedding 3:  0.300542 -0.523544 -0.902458  ... -0.884023 -0.990203 -0.392328
+embedding 4: -0.263947 -0.262021 -2.297513  ... -0.409624 -1.431929 -1.443441
+embedding 5: -0.883717  0.662368  0.366152  ... -0.146606 -0.162320  0.051372
+embedding 6: -1.794388  0.285232  0.561416  ...  0.546506 -0.405254  0.385572
+embedding 7: -4.821460 -3.579261  1.705268  ... -11.178187  2.592826  0.930480
+embedding 8:  1.117605  0.240919  0.116437  ...  0.206538 -0.710578 -0.517325
+embedding 9:  2.016895 -3.012289  1.872841  ...  0.098720  2.431273 -1.297841
+embedding 10: -0.570650  3.280050 -0.860319  ...  1.260446 -1.896592 -1.447213
+
+original:
+embedding 0:  1.059192  0.778600 -2.064106  ... -0.823203  0.534111  1.768322 
+embedding 1: -0.929568 -0.601626  1.401748  ... -0.903391  0.829059 -0.248118 
+embedding 2: -0.948361  0.331407 -0.653583  ... -0.690000 -1.389436 -0.437653 
+embedding 3:  0.299405 -0.524898 -0.900871  ... -0.884065 -0.989626 -0.393969 
+embedding 4: -0.262111 -0.262266 -2.296826  ... -0.406954 -1.430353 -1.444464 
+embedding 5: -0.884707  0.662130  0.365965  ... -0.146569 -0.162079  0.050857 
+embedding 6: -1.795485  0.284948  0.561523  ...  0.545699 -0.404501  0.385648 
+embedding 7: -4.816286 -3.577797  1.705820  ... -11.173139  2.591049  0.931983 
+embedding 8:  1.118885  0.240239  0.115091  ...  0.205845 -0.708566 -0.519378 
+embedding 9:  2.013869 -3.007250  1.872411  ...  0.099089  2.432571 -1.295785 
+embedding 10: -0.574068  3.282009 -0.860466  ...  1.258093 -1.895927 -1.447132 
+```
+How should we handle this in llama.cpp:
+```python
+        if use_bidirectional_attention:
+            self.sliding_window = (self.sliding_window // 2) + 1  # due to fa we set exclusive bounds
+```
+Should we do this in `llama_model::load_hparams:
+```c++
+                ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,    hparams.n_swa);
+                hparams.n_swa = (hparams.n_swa / 2) + 1;
+```
+
+But there is one more issue and that is that the model conversion for
+EmbeddingGemma will also run the python constructor above and adjust the
+sliding window before is is set in the .gguf model file:
+```console
+(venv) $ ./convert-embeddinggemma-models.sh
+Using original models from: /home/danbev/work/ai/models/google
+~/work/ai/llama.cpp/examples/model-conversion ~/work/ai/llama.cpp
+~/work/ai/models/google/embeddinggemma-300M ~/work/ai/llama.cpp/examples/model-conversion ~/work/ai/llama.cpp
+Already up to date.
+~/work/ai/llama.cpp/examples/model-conversion ~/work/ai/llama.cpp
+Model path: /home/danbev/work/ai/models/google/embeddinggemma-300M
+Model name: embeddinggemma-300M
+Data  type: f16
+Converted model path:: ../../models/embeddinggemma-300M.gguf
+INFO:hf-to-gguf:Loading model: embeddinggemma-300M
+Bidirectional before adjusting sliding_window: 512
+Bidirectional after sliding_window: 257
+INFO:hf-to-gguf:Model architecture: Gemma3TextModel
+Bidirectional before adjusting sliding_window: 512
+Bidirectional after sliding_window: 257
+INFO:gguf.gguf_writer:gguf: This GGUF file is for Little Endian only
+INFO:hf-to-gguf:Exporting model...
+INFO:hf-to-gguf:gguf: loading model part 'model.safetensors'
+...
+```
+This means that the value in the .gguf will be 257 and not 512 as one might
+expect. So I guess we can just read the hparams.n_swa value and not adjust it
+after all. But this will require a re-conversion of the model and upload them
+as this is a change:
+```console
+(venv) $ gguf-dump ~/.cache/llama.cpp/ggml-org_embeddinggemma-300M-GGUF_embeddinggemma-300M-Q8_0.gguf
+INFO:gguf-dump:* Loading: /home/danbev/.cache/llama.cpp/ggml-org_embeddinggemma-300M-GGUF_embeddinggemma-300M-Q8_0.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+* Dumping 37 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 314
+      3: UINT64     |        1 | GGUF.kv_count = 34
+      4: STRING     |        1 | general.architecture = 'gemma-embedding'
+      5: STRING     |        1 | general.type = 'model'
+      6: STRING     |        1 | general.name = 'Embeddinggemma 300M'
+      7: STRING     |        1 | general.basename = 'embeddinggemma'
+      8: STRING     |        1 | general.size_label = '300M'
+      9: STRING     |        1 | general.license = 'gemma'
+      ...
+     20: UINT32     |        1 | gemma-embedding.attention.sliding_window = 512
+ ```
+
+So lets remove the explicit setting of the sliding window and re-run with a
+larger file to see how it looks now:
+```console
+(venv) $ make embedding-run-original-model PROMPTS_FILE=swa-prompt.txt > original-model-output.txt
+(venv) $ make embedding-run-converted-model PROMPTS_FILE=swa-prompt.txt > converted-model-master-output.txt
+(venv) $ tail converted-model-master-output.txt original-model-output.txt
+==> converted-model-master-output.txt <==
+embedding 530: -0.944624  0.804364 -0.191277  ...  1.387934 -1.334470  0.637015 
+embedding 531: -1.756230  0.209820  0.338830  ...  2.255193 -0.897826  0.146861 
+embedding 532: -0.143266  1.629679 -1.210484  ... -1.927280 -5.181623  1.894408 
+embedding 533: -0.762078 -0.437814 -0.574705  ...  0.916314 -0.056354 -0.044370 
+embedding 534: -8.561273  3.575560 -3.278111  ... -5.694864 -3.885843  1.288128 
+
+Embeddings size: 410880
+Saving logits to data/llamacpp-embeddinggemma-300M-embeddings.bin
+Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.bin
+Logits saved to data/llamacpp-embeddinggemma-300M-embeddings.txt
+
+==> original-model-output.txt <==
+embedding 530: -0.951152  0.802068 -0.194350  ...  1.389915 -1.336990  0.639491 
+embedding 531: -1.751817  0.208292  0.334419  ...  2.287567 -0.925609  0.149234 
+embedding 532: -0.135422  1.639212 -1.219069  ... -1.935322 -5.207577  1.899551 
+embedding 533: -0.760476 -0.438013 -0.575233  ...  0.915491 -0.058301 -0.046302 
+embedding 534: -8.571507  3.587008 -3.270368  ... -5.668627 -3.859073  1.273620 
+
+Total values: 410880 (535 tokens × 768 dimensions)
+
+Saved bin embeddings to: data/pytorch-embeddinggemma-300M-embeddings.bin
+Saved txt embeddings to: data/pytorch-embeddinggemma-300M-embeddings.txt
+```
+And lets also verify the logits:
+```console
+(venv) $ make embedding-verify-logits PROMPTS_FILE=swa-prompt.txt > logits-verification.txt
+
+pytorch embeddings:
+[[-8.947923 11.567783 -3.949262 ... -7.488617 -4.011277  2.478082]
+ [-1.131508 -0.050106  1.165388 ...  1.794341 -0.744414 -0.473869]
+ [10.904386  0.457004  4.71285  ... -1.76934  -7.356499  3.377463]
+ ...
+ [-0.135422  1.639212 -1.219069 ... -1.935322 -5.207577  1.899551]
+ [-0.760476 -0.438013 -0.575233 ...  0.915491 -0.058301 -0.046302]
+ [-8.571507  3.587008 -3.270368 ... -5.668627 -3.859073  1.27362 ]]
+llama.cpp embeddings:
+[[-8.981375 11.598135 -3.923808 ... -7.434143 -4.090384  2.443361]
+ [-1.141261 -0.083721  1.109276 ...  1.792922 -0.777981 -0.443575]
+ [11.023716  0.443073  4.726609 ... -1.864482 -7.523345  3.379219]
+ ...
+ [-0.143266  1.629679 -1.210484 ... -1.92728  -5.181623  1.894408]
+ [-0.762078 -0.437814 -0.574705 ...  0.916314 -0.056354 -0.04437 ]
+ [-8.561273  3.57556  -3.278111 ... -5.694864 -3.885843  1.288128]]
+ ...
+4. Similarity Matrix Differences:
+   Max difference: 0.1718
+   Mean difference: 0.0017
+   RMS difference: 0.0066
+
+=== SUMMARY ===
+Average cross-model similarity: 0.9998
+Similarity matrix RMS difference: 0.0066
+✅ EXCELLENT: Models are highly similar
+```
+
+## Tasks/actions
+* Create a pull request for the swa handling in llama.cpp.
+* Re-convert the EmbeddingGemma models and upload them to huggingface.

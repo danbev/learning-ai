@@ -1,3 +1,37 @@
+../../models/embeddinggemma-300M.gguf
+[  0%] Built target build_info
+[ 14%] Built target ggml-base
+[ 35%] Built target ggml-cpu
+[ 35%] Built target ggml
+[ 75%] Built target llama
+[ 96%] Built target common
+[100%] Built target llama-logits
+SWA window size : 257
+Model name: embeddinggemma-300M
+Input prompt: "The concept of artificial intelligence has evolved dramatically over the past several decades, transforming from science fiction fantasies into practical applications that permeate nearly every aspect of modern life. From the early days of Alan Turing's theoretical frameworks and the Dartmouth Conference of 1956, which formally established AI as a field of study, to today's sophisticated machine learning models and neural networks, the journey has been marked by periods of intense optimism, challenging winters, and remarkable breakthroughs.
+
+Machine learning, a subset of artificial intelligence, focuses on the development of algorithms and statistical models that enable computer systems to improve their performance on specific tasks through experience, without being explicitly programmed for every possible scenario. This approach has revolutionized how we process information, make predictions, and automate complex decision-making processes across industries ranging from healthcare and finance to transportation and entertainment.
+
+Deep learning, which utilizes artificial neural networks with multiple layers, has emerged as one of the most powerful techniques in modern AI. These networks, inspired by the structure and function of biological neural networks in the human brain, can learn hierarchical representations of data, enabling them to tackle increasingly complex problems such as image recognition, natural language processing, speech synthesis, and game playing at levels that often exceed human performance.
+
+The transformer architecture, introduced in the groundbreaking paper "Attention Is All You Need," has fundamentally changed the landscape of natural language processing and has become the foundation for large language models like GPT, BERT, and their successors. This architecture's ability to process sequences in parallel and capture long-range dependencies has made it possible to train models on vast amounts of text data, resulting in systems that can generate human-like text, translate between languages, answer questions, write code, and perform various other language-related tasks with remarkable proficiency.
+
+However, the development and deployment of AI systems also raise important ethical considerations and challenges. Issues such as algorithmic bias, privacy concerns, job displacement, the environmental impact of training large models, and the potential for misuse of AI technologies require careful consideration and responsible development practices. The AI community continues to work on developing frameworks for ethical AI, ensuring fairness and transparency in AI systems, and creating governance structures that can guide the responsible advancement of these powerful technologies.
+
+Looking toward the future, artificial intelligence promises to continue transforming our world in unprecedented ways, with potential applications in areas such as personalized medicine, climate change mitigation, scientific discovery, education, and space exploration. As we stand on the brink of even more advanced AI capabilities, the importance of thoughtful development, inclusive participation in AI governance, and maintaining human agency in an AI-augmented world becomes increasingly critical for ensuring that these technologies benefit all of humanity."
+Tokenized prompt (535 tokens): <bos>The concept of artificial intelligence has evolved dramatically over the past several decades, transforming from science fiction fantasies into practical applications that permeate nearly every aspect of modern life. From the early days of Alan Turing's theoretical frameworks and the Dartmouth Conference of 1956, which formally established AI as a field of study, to today's sophisticated machine learning models and neural networks, the journey has been marked by periods of intense optimism, challenging winters, and remarkable breakthroughs.
+
+Machine learning, a subset of artificial intelligence, focuses on the development of algorithms and statistical models that enable computer systems to improve their performance on specific tasks through experience, without being explicitly programmed for every possible scenario. This approach has revolutionized how we process information, make predictions, and automate complex decision-making processes across industries ranging from healthcare and finance to transportation and entertainment.
+
+Deep learning, which utilizes artificial neural networks with multiple layers, has emerged as one of the most powerful techniques in modern AI. These networks, inspired by the structure and function of biological neural networks in the human brain, can learn hierarchical representations of data, enabling them to tackle increasingly complex problems such as image recognition, natural language processing, speech synthesis, and game playing at levels that often exceed human performance.
+
+The transformer architecture, introduced in the groundbreaking paper "Attention Is All You Need," has fundamentally changed the landscape of natural language processing and has become the foundation for large language models like GPT, BERT, and their successors. This architecture's ability to process sequences in parallel and capture long-range dependencies has made it possible to train models on vast amounts of text data, resulting in systems that can generate human-like text, translate between languages, answer questions, write code, and perform various other language-related tasks with remarkable proficiency.
+
+However, the development and deployment of AI systems also raise important ethical considerations and challenges. Issues such as algorithmic bias, privacy concerns, job displacement, the environmental impact of training large models, and the potential for misuse of AI technologies require careful consideration and responsible development practices. The AI community continues to work on developing frameworks for ethical AI, ensuring fairness and transparency in AI systems, and creating governance structures that can guide the responsible advancement of these powerful technologies.
+
+Looking toward the future, artificial intelligence promises to continue transforming our world in unprecedented ways, with potential applications in areas such as personalized medicine, climate change mitigation, scientific discovery, education, and space exploration. As we stand on the brink of even more advanced AI capabilities, the importance of thoughtful development, inclusive participation in AI governance, and maintaining human agency in an AI-augmented world becomes increasingly critical for ensuring that these technologies benefit all of humanity.<eos>
+Embedding dimension: 768
+
 embedding 0: -8.981375 11.598135 -3.923808  ... -7.434143 -4.090384  2.443361 
 embedding 1: -1.141261 -0.083721  1.109276  ...  1.792922 -0.777981 -0.443575 
 embedding 2: 11.023716  0.443073  4.726609  ... -1.864482 -7.523345  3.379219 
