@@ -486,6 +486,74 @@ So perhaps we can simplify this a bit. Lets set the sliding window to say 6
 and pass in a small sequence. So a token should be able to attend to a maxium
 of 6 tokens, including itself.
 
+We can add the following to print out the mask in `llama-kv-cache.cpp`:
+```console
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index ae35f7420..599c87b00 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1153,6 +1153,36 @@ void llama_kv_cache::set_input_k_shift(ggml_tensor * dst) const {
+     }
+ }
+
++static void print_mask(float * data, int64_t n_tokens, int64_t n_kv, int64_t n_swa, llama_swa_type swa_type) {
++    LLAMA_LOG_DEBUG("%s: === Attention mask ===\n", __func__);
++    const char * swa_type_str = (swa_type == LLAMA_SWA_TYPE_NONE) ? "LLAMA_SWA_TYPE_NONE" :
++                          (swa_type == LLAMA_SWA_TYPE_STANDARD) ? "LLAMA_SWA_TYPE_STANDARD" :
++                          (swa_type == LLAMA_SWA_TYPE_CHUNKED) ? "LLAMA_SWA_TYPE_CHUNKED" :
++                          (swa_type == LLAMA_SWA_TYPE_SYMMETRIC) ? "LLAMA_SWA_TYPE_SYMMETRIC" : "unknown";
++    LLAMA_LOG_DEBUG("%s: n_swa : %d, n_kv: %d, swq_type: %s\n", __func__, (int)n_swa, (int)n_kv, swa_type_str);
++    LLAMA_LOG_DEBUG("%s: '0' = can attend, '∞' = masked\n", __func__);
++    LLAMA_LOG_DEBUG("%s: Rows = query tokens, Columns = key/value tokens\n\n", __func__);
++
++    LLAMA_LOG_DEBUG("    ");
++    for (int j = 0; j < std::min((int64_t)20, n_kv); ++j) {
++        LLAMA_LOG_DEBUG("%2d", j);
++    }
++    LLAMA_LOG_DEBUG("\n");
++
++    for (int i = 0; i < std::min((int64_t)20, n_tokens); ++i) {
++        LLAMA_LOG_DEBUG(" %2d ", i);
++        for (int j = 0; j < std::min((int64_t)20, n_kv); ++j) {
++            float val = data[i * n_kv + j];
++            if (val == -INFINITY) {
++                LLAMA_LOG_DEBUG(" ∞");
++            } else {
++                LLAMA_LOG_DEBUG(" 0");
++            }
++        }
++        LLAMA_LOG_DEBUG("\n");
++    }
++}
++
+ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
+     const uint32_t n_tokens = ubatch->n_tokens;
+
+@@ -1223,6 +1253,7 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
+             }
+         }
+     }
++    print_mask(data, n_tokens, n_kv, hparams.n_swa, hparams.swa_type);
+ }
+```
+And then set the value of `hparams.n_swa = 6;` in `llama-model-gemma.cpp`.
+```console
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 1813f06d7..0e21e08ff 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1152,6 +1152,8 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+                 hparams.rope_freq_scale_train_swa = 1.0f;
+ 
+                 ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,    hparams.n_swa);
++                printf("SWA window size : %u\n", hparams.n_swa);
++                hparams.n_swa = 6;
+                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+                 ml.get_key(LLM_KV_POOLING_TYPE,                hparams.pooling_type);
+ 
+```
+Running the converted model (this will also build llama.cpp so there is no
+need to build it separately):
 ```console
 (venv) $ make embedding-run-converted-model PROMPTS_FILE=small.txt
 ...
