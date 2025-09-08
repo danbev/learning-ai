@@ -1160,3 +1160,25 @@ the version on master is wrong, but that it is different from the huggingface
 transformers implementation. My gut instinct, which I think I mentioned above,
 was that the sliding window is the total number of tokens that can be attended
 to including itself.
+
+### Conclusion
+We believe that the current implementation in master is correct and don't see
+that any changes to the llama.cpp implementation are needed. But there is an
+issue with the conversion since it uses the transformers constructor which will
+adjust the sliding window size. This adjusted value will be stored in the .gguf
+file:
+```console
+(venv) $ gguf-dump models/embeddinggemma-300M.gguf 
+INFO:gguf-dump:* Loading: models/embeddinggemma-300M.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+* Dumping 37 key/value pair(s)
+     ...
+     21: UINT32     |        1 | gemma-embedding.attention.sliding_window = 257
+     ...
+```
+This different from the `sliding_window` value in the huggingface config:
+```console
+  "sliding_window": 512,
+```
+
+* Should we set the explicitly in the `convert_hf_to_gguf.py` script to avoid this?
