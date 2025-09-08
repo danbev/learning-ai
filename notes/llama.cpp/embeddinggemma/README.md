@@ -1163,10 +1163,11 @@ to including itself.
 
 ### Conclusion
 We believe that the current implementation in master is correct and don't see
-that any changes to the llama.cpp implementation are needed. But there is an
-issue with the conversion since it uses the transformers constructor which will
-adjust the sliding window size. This adjusted value will be stored in the .gguf
-file:
+that any changes to the llama.cpp implementation are needed.
+
+But there is an issue with the conversion since it uses the transformers
+constructor which will adjust the sliding window size. This adjusted value will
+be stored in the .gguf file:
 ```console
 (venv) $ gguf-dump models/embeddinggemma-300M.gguf 
 INFO:gguf-dump:* Loading: models/embeddinggemma-300M.gguf
