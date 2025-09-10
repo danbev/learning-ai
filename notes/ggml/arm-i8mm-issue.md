@@ -75,7 +75,9 @@ Notice that it fails to detect i8mm support, but it also detects MATMUL_INT8 sup
   [23/107] Building CXX object src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ops.cpp.o
   ninja: build stopped: subcommand failed.
 ```
-Notice tha the `+noi8mm` flag is present in the compile command:
+
+### Troubleshooting locally
+Notice that the `+noi8mm` flag is present in the compile command:
 ```console
   -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -mcpu=native+dotprod+noi8mm+nosve+nosme -MD -MT
 ```
@@ -238,19 +240,21 @@ Thread model: posix
 InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
  "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" "-cc1" "-triple" "arm64-apple-macosx15.0.0" "-Wundef-prefix=TARGET_OS_" "-Wdeprecated-objc-isa-usage" "-Werror=deprecated-objc-isa-usage" "-Werror=implicit-function-declaration" "-emit-obj" "-disable-free" "-clear-ast-before-backend" "-disable-llvm-verifier" "-discard-value-names" "-main-file-name" "null" "-mrelocation-model" "pic" "-pic-level" "2" "-mframe-pointer=non-leaf" "-fno-strict-return" "-ffp-contract=on" "-fno-rounding-math" "-funwind-tables=1" "-fobjc-msgsend-selector-stubs" "-target-sdk-version=15.5" "-fvisibility-inlines-hidden-static-local-var" "-fdefine-target-os-macros" "-fno-assume-unique-vtables" "-fno-modulemap-allow-subdirectory-search" "-target-cpu" "apple-m3" "-target-feature" "+zcm" "-target-feature" "+zcz" "-target-feature" "+v8.6a" "-target-feature" "+aes" "-target-feature" "+bf16" "-target-feature" "+complxnum" "-target-feature" "+crc" "-target-feature" "+dotprod" "-target-feature" "+fp-armv8" "-target-feature" "+fp16fml" "-target-feature" "+fpac" "-target-feature" "+fullfp16" "-target-feature" "+hcx" "-target-feature" "-i8mm" "-target-feature" "+jsconv" "-target-feature" "+lse" "-target-feature" "+neon" "-target-feature" "+pauth" "-target-feature" "+perfmon" "-target-feature" "+ras" "-target-feature" "+rcpc" "-target-feature" "+rdm" "-target-feature" "+sha2" "-target-feature" "+sha3" "-target-feature" "+ssbs" "-target-abi" "darwinpcs" "-debugger-tuning=lldb" "-fdebug-compilation-dir=/Users/danbev/work/ai/ggml" "-target-linker-version" "1167.5" "-fcoverage-compilation-dir=/Users/danbev/work/ai/ggml" "-resource-dir" "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17" "-isysroot" "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" "-I/usr/local/include" "-internal-isystem" "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/local/include" "-internal-isystem" "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/include" "-internal-externc-isystem" "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include" "-internal-externc-isystem" "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include" "-Wno-reorder-init-list" "-Wno-implicit-int-float-conversion" "-Wno-c99-designator" "-Wno-final-dtor-non-final-class" "-Wno-extra-semi-stmt" "-Wno-misleading-indentation" "-Wno-quoted-include-in-framework-header" "-Wno-implicit-fallthrough" "-Wno-enum-enum-conversion" "-Wno-enum-float-conversion" "-Wno-elaborated-enum-base" "-Wno-reserved-identifier" "-Wno-gnu-folding-constant" "-ferror-limit" "19" "-stack-protector" "1" "-fstack-check" "-mdarwin-stkchk-strong-link" "-fblocks" "-fencode-extended-block-signature" "-fregister-global-dtors-with-atexit" "-fgnuc-version=4.2.1" "-fskip-odr-check-in-gmf" "-fmax-type-align=16" "-fcommon" "-fcolor-diagnostics" "-clang-vendor-feature=+disableNonDependentMemberExprInCurrentInstantiation" "-fno-odr-hash-protocols" "-clang-vendor-feature=+enableAggressiveVLAFolding" "-clang-vendor-feature=+revert09abecef7bbf" "-clang-vendor-feature=+thisNoAlignAttr" "-clang-vendor-feature=+thisNoNullAttr" "-clang-vendor-feature=+disableAtImportPrivateFrameworkInImplementationError" "-D__GCC_HAVE_DWARF2_CFI_ASM=1" "-o" "null.o" "-x" "c" "/dev/null"
  ```
- This has `-i8mm` disabled.
+This has `-i8mm` disabled.
 
- So in cmake it can't detect i8mm support but it is still enabled the MATMUL_INT8 feature which is causing the
- compilation failure.
+So in cmake it can't detect i8mm support but it is still enabled the MATMUL_INT8 feature which is causing the
+compilation failure.
  
- So the above was running on my local machine and forcig i8mm to be disabled. I've added a debug job to the
- CI server:
- ```console
+### Troubleshooting on CI
+So the above was running on my local machine and forcig i8mm to be disabled.
+I've added a debug job to the CI server:
+```console
     - name: Debug
       run: |
         /usr/bin/clang -### -mcpu=native+dotprod+noi8mm+nosve+nosme -c -x c /dev/null
         sysctl -a | grep hw.optional.arm.
 ```
+
 To see what it actually supports:
 ```console
 /usr/bin/clang -### -mcpu=native+dotprod+noi8mm+nosve+nosme -c -x c /dev/null
@@ -261,6 +265,7 @@ Target: arm64-apple-darwin24.5.0
 Thread model: posix
 InstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
  "/Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" "-cc1" "-triple" "arm64-apple-macosx15.0.0" "-Wundef-prefix=TARGET_OS_" "-Wdeprecated-objc-isa-usage" "-Werror=deprecated-objc-isa-usage" "-Werror=implicit-function-declaration" "-emit-obj" "-disable-free" "-clear-ast-before-backend" "-disable-llvm-verifier" "-discard-value-names" "-main-file-name" "null" "-mrelocation-model" "pic" "-pic-level" "2" "-mframe-pointer=non-leaf" "-fno-strict-return" "-ffp-contract=on" "-fno-rounding-math" "-funwind-tables=1" "-fobjc-msgsend-selector-stubs" "-target-sdk-version=15.5" "-fvisibility-inlines-hidden-static-local-var" "-fdefine-target-os-macros" "-fno-assume-unique-vtables" "-fno-modulemap-allow-subdirectory-search" "-target-cpu" "apple-m3" "-target-feature" "+zcm" "-target-feature" "+zcz" "-target-feature" "+v8.6a" "-target-feature" "+aes" "-target-feature" "+bf16" "-target-feature" "+complxnum" "-target-feature" "+crc" "-target-feature" "+dotprod" "-target-feature" "+
+
 hw.optional.arm.FEAT_CRC32: 1
 hw.optional.arm.FEAT_FlagM: 1
 hw.optional.arm.FEAT_FlagM2: 1
@@ -798,8 +803,8 @@ And the following is the output of `ARM_FEATURE`:
 #define __unsafe_unretained
 #define __weak __attribute__((objc_gc(weak)))
 ```
-So it seems like the the machine does not support i8mm but the compiler is still enabling the `MATMUL_INT8`
-feature. On way might be to check for this situation:
+So it seems like the CI runner does not support `i8mm` but the compiler is still
+enabling the `MATMUL_INT8` feature. One way might be to check for this situation:
 ```cmake
                 # Check if __ARM_FEATURE_MATMUL_INT8 is enabled but machine doesn't support i8mm
                 string(FIND "${ARM_FEATURE}" "__ARM_FEATURE_MATMUL_INT8 1" matmul_int8_pos)
