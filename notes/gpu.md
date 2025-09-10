@@ -64,6 +64,368 @@ And it looks like this GPU has 46 SMs which would give 128 cores per SM(
 I've read that the L1 Cache, on-chip SRAM, for my card is 128 KB (per SM).
 128 * 46 = 5888 KB = 5.75 MB. So the L1 Cache is 5.75 MB in total for my card.
 
+### CUDA example
+I'm going to take a bottom up approach to explain how my CUDA GPU works. I hope
+this will make the most sense without getting confused with the higher level
+concepts and teminology.
+
+So lets take a very basic matric multiplication example, the one that will be
+used for this section is [matrix-mul](../gpu/cuda/src/matrix-mul.cu).
+It is going to perform the following operation:
+```
+     Matrix A:          Matrix B:             Matrix C:
+   0    1   2   3     0    1   2   3          0   1  2   3
+  +---+---+---+---+  +---+---+---+---+      +---+---+---+---+
+0 |a00|a01|a02|a03|  |b00|b01|b02|b03|      |c00|c01|c02|c03|
+  +---+---+---+---+  +---+---+---+---+      +---+---+---+---+
+1 |a10|a11|a12|a13|  |b10|b11|b12|b13|      |c10|c11|c12|c13|
+  +---+---+---+---+  +---+---+---+---+  =   +---+---+---+---+
+2 |a20|a21|a22|a23|  |b20|b21|b22|b23|      |c20|c21|c22|c23|
+  +---+---+---+---+  +---+---+---+---+      +---+---+---+---+
+3 |a30|a31|a32|a33|  |b30|b31|b32|b33|      |c30|c31|c32|c33|
+  +---+---+---+---+  +---+---+---+---+      +---+---+---+---+
+4 |a40|a41|a42|a43|                         |c40|c41|c42|c43|
+  +---+---+---+---+                         +---+---+---+---+
+5 |a50|a51|a52|a53|                         |c50|c51|c52|c53|
+  +---+---+---+---+                         +---+---+---+---+
+6 |a60|a61|a62|a63|                         |c60|c61|c62|c63|
+  +---+---+---+---+                         +---+---+---+---+
+7 |a70|a71|a72|a73|                         |c70|c71|c72|c73|
+  +---+---+---+---+                         +---+---+---+---+
+  Total: 32 elements  Total: 16 elements    Total: 32 elements
+```
+Now, each element of the output matrix is the dot product of one row in matrix A
+with one column of matrix B. For example lets look at `c11`, this the second
+row in matrix A and the second column in matrix B:
+```
+  +---+---+---+---+  +---+
+1 |a10|a11|a12|a13|  |b01|
+  +---+---+---+---+  +---+
+                     |b11|
+                     +---+
+                     |b21|
+                     +---+
+                     |b31|
+                     +---+
+```
+I know this seems very basic but I want to refer back to this example later on.
+Notice that we have 32 elements in the output matrix, and that to compute the
+result for one element we need to read 4 elements from matrix A and 4 elements
+matrix B. So we will have 32 threads running in parallel.
+
+So our kernel looks like this:
+```c++
+__global__ void matrix_mul(float* A, float* B, float* C) {
+    int tid = threadIdx.x;  // 0 to 31
+
+    int row = tid / 4;
+    int col = tid % 4;
+
+    float result = 0.0f; // local variable is stored in a register
+    float a_val, b_val;
+
+    // This loop computes one element of the output matrix C.
+    for (int k = 0; k < 4; k++) {
+        a_val = A[row * 4 + k]; // Global memory read by all threads
+        b_val = B[k * 4 + col]; // Global memory read by all threads
+
+        result += a_val * b_val;
+    }
+    C[row * 4 + col] = result; // Global memory write
+}
+```
+So this will execute on 32 processing units/cores in parallel. Each thread will
+have a different thread id. We get the row and column using:
+```
+0  row = 0/4 = 0, col = 0%4 = 0   a0 . b0 = c00
+1  row = 1/4 = 0, col = 1%4 = 1   a0 . b1 = c01
+2  row = 2/4 = 0, col = 2%4 = 2   a0 . b2 = c02
+3  row = 3/4 = 0, col = 3%4 = 3   a0 . b3 = c03
+
+4  row = 4/4 = 1, col = 4%4 = 0   a1 . b0 = c10
+5  row = 5/4 = 1, col = 5%4 = 1   a1 . b1 = c11
+6  row = 6/4 = 1, col = 6%4 = 2   a1 . b2 = c12
+7  row = 7/4 = 1, col = 7%4 = 3   a1 . b3 = c13
+
+8  row = 8/4 = 2, col = 8%4 = 0   a2 . b0 = c20
+9  row = 9/4 = 2, col = 9%4 = 1   a2 . b1 = c21
+10 row =10/4 = 2, col =10%4 = 2   a2 . b2 = c22
+11 row =11/4 = 2, col =11%4 = 3   a2 . b3 = c23
+
+12 row =12/4 = 3, col =12%4 = 0   a3 . b0 = c30
+13 row =13/4 = 3, col =13%4 = 1   a3 . b1 = c31
+14 row =14/4 = 3, col =14%4 = 2   a3 . b2 = c32
+15 row =15/4 = 3, col =15%4 = 3   a3 . b3 = c33
+
+16 row =16/4 = 4, col =16%4 = 0   a4 . b0 = c40
+17 row =17/4 = 4, col =17%4 = 1   a4 . b1 = c41
+18 row =18/4 = 4, col =18%4 = 2   a4 . b2 = c42
+19 row =19/4 = 4, col =19%4 = 3   a4 . b3 = c43
+
+20 row =20/4 = 5, col =20%4 = 0   a5 . b0 = c50
+21 row =21/4 = 5, col =21%4 = 1   a5 . b1 = c51
+22 row =22/4 = 5, col =22%4 = 2   a5 . b2 = c52
+23 row =23/4 = 5, col =23%4 = 3   a5 . b3 = c53
+
+24 row =24/4 = 6, col =24%4 = 0   a6 . b0 = c60
+25 row =25/4 = 6, col =25%4 = 1   a6 . b1 = c61
+26 row =26/4 = 6, col =26%4 = 2   a6 . b2 = c62
+27 row =27/4 = 6, col =27%4 = 3   a6 . b3 = c63
+
+28 row =28/4 = 7, col =28%4 = 0   a7 . b0 = c70
+29 row =29/4 = 7, col =29%4 = 1   a7 . b1 = c71
+30 row =30/4 = 7, col =30%4 = 2   a7 . b2 = c72
+31 row =31/4 = 7, col =31%4 = 3   a7 . b3 = c73
+```
+Notice that each thread contains the same for loop, but that it reads from
+from different global memory addresses (A and B are in global memory but more
+on this later). And the memory layout it a flat array in row-major order:
+```
+      0    1    2    3    4    5    6    7    8   9    10   11   12   13   14   15   16   17   18   19   20   21   22   23   24   25   26   27   28   29   30   31
+A = [a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33, a40, a41, a42, a43, a50, a51, a52, a53, a60, a61, a62, a63, a70, a71, a72, a73]
+      0    1    2    3    4    5    6    7    8   9    10   11   12   13   14   15
+B = [b00, b01, b02, b03, b10, b11, b12, b13, b20, b21, b22, b23, b30, b31, b32, b33]
+```
+So any of the 32 threads, will index into A using the thread id times the column
+stride which is 4 in this case.
+Lets take thread 10 which will access, row 2 and column 2:
+```
+    for (int k = 0; k < 4; k++) {
+        a_val = A[row * 4 + k]; // Global memory read by all threads
+        b_val = B[k * 4 + col]; // Global memory read by all threads
+    }
+k = 0, A[2 * 4 + 0] = A[8]  = a20
+k = 1, A[2 * 4 + 1] = A[9]  = a21
+k = 2, A[2 * 4 + 2] = A[10] = a22
+k = 3, A[2 * 4 + 3] = A[15] = a23
+
+k = 0, B[0 * 4 + 2] = B[2]  = b02
+k = 1, B[1 * 4 + 2] = B[6]  = b12
+k = 2, B[2 * 4 + 2] = B[10] = b22
+k = 3, B[3 * 4 + 2] = B[14] = b32
+
+  +---+---+---+---+  +---+
+  |a20|a21|a22|a23|  |b02|
+  +---+---+---+---+  +---+
+                     |b12|
+                     +---+
+                     |b22|
+                     +---+
+                     |b32|
+                     +---+
+```
+```console
+$ cuda-gdb matrix-mul
+NVIDIA (R) cuda-gdb 12.6
+Reading symbols from matrix-mul...
+(cuda-gdb) br matrix-mul.cu:13
+Breakpoint 1 at 0xb367: file src/matrix-mul.cu, line 20.
+(cuda-gdb) r
+Starting program: /home/danbev/work/ai/learning-ai/gpu/cuda/matrix-mul
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+Matrix A:
+ 1.0  2.0  3.0  4.0
+ 5.0  6.0  7.0  8.0
+ 9.0 10.0 11.0 12.0
+13.0 14.0 15.0 16.0
+
+Matrix B:
+ 1.0  2.0  3.0  4.0
+ 5.0  6.0  7.0  8.0
+ 9.0 10.0 11.0 12.0
+13.0 14.0 15.0 16.0
+[Switching focus to CUDA kernel 0, grid 1, block (0,0,0), thread (0,0,0), device 0, sm 0, warp 0, lane 0]
+
+CUDA thread hit Breakpoint 1, matrix_mul<<<(1,1,1),(32,1,1)>>> (A=0x7fffd7e00000, B=0x7fffd7e00200, C=0x7fffd7e00400)
+    at src/matrix-mul.cu:13
+13	    for (int k = 0; k < 4; k++) {
+```
+Now, lets switch to thread 10:
+```console
+(cuda-gdb) cuda lane 10
+[Switching focus to CUDA kernel 0, grid 1, block (0,0,0), thread (10,0,0), device 0, sm 0, warp 0, lane 10]
+13	    for (int k = 0; k < 4; k++) {
+```
+And we can verify that our row and col are correct:
+```
+(cuda-gdb) p row
+$3 = 2
+(cuda-gdb) p col
+$4 = 2
+```
+And lets see what gt
+```
+$5 = 8
+(cuda-gdb) p A[8]
+$6 = 9
+(cuda-gdb) p k * 4 + col
+$7 = 2
+(cuda-gdb) p B[2]
+$8 = 3
+```
+And this matches our expectations from above. If we inspect all the thread/lanes
+we can see the following:
+```console
+(cuda-gdb) info cuda lanes
+  Ln  State         PC         ThreadIdx Exception Device 0 SM 0 Warp 0
+   0 active 0x00007fffdb259fd0   (0,0,0)    None
+   1 active 0x00007fffdb259fd0   (1,0,0)    None
+   2 active 0x00007fffdb259fd0   (2,0,0)    None
+   3 active 0x00007fffdb259fd0   (3,0,0)    None
+   4 active 0x00007fffdb259fd0   (4,0,0)    None
+   5 active 0x00007fffdb259fd0   (5,0,0)    None
+   6 active 0x00007fffdb259fd0   (6,0,0)    None
+   7 active 0x00007fffdb259fd0   (7,0,0)    None
+   8 active 0x00007fffdb259fd0   (8,0,0)    None
+   9 active 0x00007fffdb259fd0   (9,0,0)    None
+* 10 active 0x00007fffdb259fd0  (10,0,0)    None
+  11 active 0x00007fffdb259fd0  (11,0,0)    None
+  12 active 0x00007fffdb259fd0  (12,0,0)    None
+  13 active 0x00007fffdb259fd0  (13,0,0)    None
+  14 active 0x00007fffdb259fd0  (14,0,0)    None
+  15 active 0x00007fffdb259fd0  (15,0,0)    None
+  16 active 0x00007fffdb259fd0  (16,0,0)    None
+  17 active 0x00007fffdb259fd0  (17,0,0)    None
+  18 active 0x00007fffdb259fd0  (18,0,0)    None
+  19 active 0x00007fffdb259fd0  (19,0,0)    None
+  20 active 0x00007fffdb259fd0  (20,0,0)    None
+  21 active 0x00007fffdb259fd0  (21,0,0)    None
+  22 active 0x00007fffdb259fd0  (22,0,0)    None
+  23 active 0x00007fffdb259fd0  (23,0,0)    None
+  24 active 0x00007fffdb259fd0  (24,0,0)    None
+  25 active 0x00007fffdb259fd0  (25,0,0)    None
+  26 active 0x00007fffdb259fd0  (26,0,0)    None
+  27 active 0x00007fffdb259fd0  (27,0,0)    None
+  28 active 0x00007fffdb259fd0  (28,0,0)    None
+  29 active 0x00007fffdb259fd0  (29,0,0)    None
+  30 active 0x00007fffdb259fd0  (30,0,0)    None
+  31 active 0x00007fffdb259fd0  (31,0,0)    None
+                   ↑
+             Program counter
+```
+We can see here that there is only one program counter for all threads:
+```console
+(cuda-gdb) print $pc
+$10 = (void (*)(void)) 0x7fffdb259fd0 <matrix_mul(float*, float*, float*)+2512>
+```
+We can inspect the instruction at this program counter:
+```
+(cuda-gdb) x/i $pc
+=> 0x7fffdb259fd0 <_Z10matrix_mulPfS_S_+2512>:	IMAD.SHL R8, R10, 0x4, RZ
+```
+Notice that all thread have the same program counter. This is a fundamental
+difference from a CPU thread which would have its own program counter register.
+This is what is meant by the threads executing in lock step, they are all executing
+the exact same instruction for each step, but the operate on different data which
+we say when we changed to a different thread/lane.
+The address for
+```console
+(cuda-gdb) p A
+$9 = (@generic float * @parameter) 0x7fffd7e00000
+```
+Now, the memory address for A is in the GPUs global memory. Looking a little bit
+futher in the assembly code we can see the following load instruction:
+```console
+=> 0x00007fffdb259fd0 <+2512>:	IMAD.SHL R8, R10, 0x4, RZ
+   0x00007fffdb259fe0 <+2528>:	IADD3 R8, R8, R13, RZ
+   0x00007fffdb259ff0 <+2544>:	MOV R8, R8
+   0x00007fffdb25a000 <+2560>:	SHF.R.S32.HI R9, RZ, 0x1f, R8
+   0x00007fffdb25a010 <+2576>:	MOV R14, R8
+   0x00007fffdb25a020 <+2592>:	MOV R8, R14
+   0x00007fffdb25a030 <+2608>:	MOV R9, R9
+   0x00007fffdb25a040 <+2624>:	SHF.L.U64.HI R9, R8, 0x2, R9
+   0x00007fffdb25a050 <+2640>:	SHF.L.U32 R8, R8, 0x2, RZ
+   0x00007fffdb25a060 <+2656>:	IADD3 R8, P0, R4, R8, RZ
+   0x00007fffdb25a070 <+2672>:	IADD3.X R9, R5, R9, RZ, P0, !PT
+   0x00007fffdb25a080 <+2688>:	MOV R8, R8
+   0x00007fffdb25a090 <+2704>:	MOV R9, R9
+   0x00007fffdb25a0a0 <+2720>:	MOV R8, R8
+   0x00007fffdb25a0b0 <+2736>:	MOV R9, R9
+   0x00007fffdb25a0c0 <+2752>:	R2UR UR4, R16
+   0x00007fffdb25a0d0 <+2768>:	R2UR UR5, R17
+   0x00007fffdb25a0e0 <+2784>:	LD.E R8, [R8.64]
+```
+Here `LD.E` is the load from global memory instruction with caching enabled, `R8`
+is the destination register, and `[R8.64]` is a 64-bit address stored in `R8`.
+```c++
+a_val = A[row * 4 + k];
+```
+Now, because a single thread does not have its own program counter this means
+that it is external from the processing unit itself. And 32 threads is the unit
+of execution and this is referred to as a warp. There is a warp scheduler which
+actually manages the execution of warps on the SM. There are actually multiple
+warp schedulers but I'll return to this later. Each time we step in the debugger,
+the warp scheduler will fetch another instruction from the instruction cache and
+decodes the instruction. And depending on the instruction it will dispatch to
+different processing units. For example, a floating point instruction might be
+dispatched to the floating point units, while a memory load/store instruction
+would be dispatched to the Load/Store Unit (LSU).
+
+So a warp scheduler on the SM performs the following:
+```console
+1. Fetches LD.E instruction from instruction cache
+2. Decodes: "This is a memory load operation"
+3. Checks: "All 32 threads need to load from memory"
+4. Dispatches to: Load/Store Unit (LSU)
+```
+
+Load/Store Unit (LSU) will:
+```console
+Load/Store Unit receives:
+├── 32 memory addresses (one per thread)
+├── Thread 0: Address in R8 = A[0*4 + k]
+├── Thread 1: Address in R8 = A[0*4 + k+1]
+├── Thread 4: Address in R8 = A[1*4 + k]
+├── Thread 5: Address in R8 = A[1*4 + k+1]
+└── ... (32 different addresses total)
+
+LSU analyzes access pattern:
+├── Are these consecutive? (YES - good coalescing)
+├── Do they fit in cache lines? (YES - 128 bytes)
+├── How many memory transactions needed? (4 transactions)
+└── Generate optimized memory requests
+```
+LSU sends requests to memory hierarchy:
+```console
+L1 Cache Check:
+├── Cache hit? → Return data immediately (4 cycles)
+└── Cache miss? → Forward to L2 Cache
+
+L2 Cache Check:
+├── Cache hit? → Return data (20-40 cycles)
+└── Cache miss? → Forward to GDDR6X memory
+
+GDDR6X Memory:
+├── Access DRAM (200+ cycles)
+├── Load 128-byte cache line
+└── Return requested data
+```
+So the warp scheduler has passed this off to the LSU and now it can handle other
+work while the memory access in progress:
+```console
+Warp Scheduler:
+1. Marks Warp 0 as "MEMORY_PENDING"
+2. Switches to execute different ready warp
+3. Keeps ALUs busy with other warps
+
+When memory returns (200+ cycles later):
+1. Warp 0 marked as "READY"
+2. Data written to register R8 for all 32 threads
+3. Warp scheduler can pick Warp 0 for execution again
+```
+One thing to notice here is that in contrast to CPU thread context switching where
+the threads registers have to be save this does not happen on the GPU. This
+registers are resident and stay allocated to the warp for its entire lifetime. And
+this is the reason for the much much larger register file on a GPU compared to a
+CPU core. The LSU is very important and it can, if the data access patterns
+allow it (coalesced memory accesses), combine multiple memory requests into
+fewer memory transactions. This is very important for performance. And this is
+something that the programmer has to be aware of when writing CUDA code as it
+can help improve performance significantly. So thinking about how data is layed
+out and accessed is very important and I'll come back to this later.
+
+
 Lets think about input data to a process, for example an array that we want to
 sum all the element of. 
 
@@ -173,6 +535,7 @@ CUDA kernel code (PTX->SASS machine code). The size of this instruction cache is
 typically 32-128KB. This is what is meant by "lock step" execution, all 32
 threads in a warp execute the same instruction at the same time, but on
 different data.
+
 
 ```
 Compute Unit Architecture:
@@ -1620,6 +1983,89 @@ nvcc --version
 ```console
 apt list --installed
 ```
+
+### cuda-gdb
+```console
+$ cuda-gdb ./matrix-mul
+NVIDIA (R) cuda-gdb 12.6
+Portions Copyright (C) 2007-2024 NVIDIA Corporation
+Based on GNU gdb 13.2
+
+Reading symbols from ./matrix-mul...
+(cuda-gdb) br matrix-mul.cu:4
+(cuda-gdb) r
+
+(cuda-gdb) info cuda devices
+  Dev PCI Bus/Dev ID                    Name Description SM Type SMs Warps/SM Lanes/Warp Max Regs/Lane Active SMs Mask 
+*   0        3c:00.0 NVIDIA GeForce RTX 4070     AD104-A   sm_89  46       48         32           255  0x000000000001
+
+(cuda-gdb) info cuda sms
+  SM  Active Warps Mask
+Device 0
+*  0 0x0000000000000001
+
+(cuda-gdb) info cuda warps
+  Wp Active Lanes Mask Divergent Lanes Mask          Active PC Kernel BlockIdx First Active ThreadIdx
+Device 0 SM 0
+   0        0xffffffff           0x00000000 0x00007fffdb2597f0      0  (0,0,0)                (0,0,0)
+
+
+(cuda-gdb) info cuda threads
+  BlockIdx ThreadIdx To BlockIdx To ThreadIdx Count      PC              Filename          Line
+Kernel 0
+*  (0,0,0)   (0,0,0)     (0,0,0)     (31,0,0)    32  0x00007fffdb2597b0 src/matrix-mul.cu   4
+
+(cuda-gdb) info cuda blocks
+  BlockIdx To BlockIdx Count   State
+Kernel 0
+*  (0,0,0)     (0,0,0)     1 running
+
+(cuda-gdb) info cuda kernels
+  Kernel Parent Dev Grid Status       SMs Mask GridDim BlockDim Invocation
+*      0      -   0    1 Active 0x000000000001 (1,1,1) (32,1,1) matrix_mul()
+
+(cuda-gdb) info cuda lanes
+  Ln  State         PC         ThreadIdx Exception
+Device 0 SM 0 Warp 0
+*  0 active 0x00007fffdb2597b0   (0,0,0)    None
+   1 active 0x00007fffdb2597b0   (1,0,0)    None
+   2 active 0x00007fffdb2597b0   (2,0,0)    None
+   3 active 0x00007fffdb2597b0   (3,0,0)    None
+   4 active 0x00007fffdb2597b0   (4,0,0)    None
+   5 active 0x00007fffdb2597b0   (5,0,0)    None
+   6 active 0x00007fffdb2597b0   (6,0,0)    None
+   7 active 0x00007fffdb2597b0   (7,0,0)    None
+   8 active 0x00007fffdb2597b0   (8,0,0)    None
+   9 active 0x00007fffdb2597b0   (9,0,0)    None
+  10 active 0x00007fffdb2597b0  (10,0,0)    None
+  11 active 0x00007fffdb2597b0  (11,0,0)    None
+  12 active 0x00007fffdb2597b0  (12,0,0)    None
+  13 active 0x00007fffdb2597b0  (13,0,0)    None
+  14 active 0x00007fffdb2597b0  (14,0,0)    None
+  15 active 0x00007fffdb2597b0  (15,0,0)    None
+  16 active 0x00007fffdb2597b0  (16,0,0)    None
+  17 active 0x00007fffdb2597b0  (17,0,0)    None
+  18 active 0x00007fffdb2597b0  (18,0,0)    None
+  19 active 0x00007fffdb2597b0  (19,0,0)    None
+  20 active 0x00007fffdb2597b0  (20,0,0)    None
+  21 active 0x00007fffdb2597b0  (21,0,0)    None
+  22 active 0x00007fffdb2597b0  (22,0,0)    None
+  23 active 0x00007fffdb2597b0  (23,0,0)    None
+  24 active 0x00007fffdb2597b0  (24,0,0)    None
+  25 active 0x00007fffdb2597b0  (25,0,0)    None
+  26 active 0x00007fffdb2597b0  (26,0,0)    None
+  27 active 0x00007fffdb2597b0  (27,0,0)    None
+  28 active 0x00007fffdb2597b0  (28,0,0)    None
+  29 active 0x00007fffdb2597b0  (29,0,0)    None
+  30 active 0x00007fffdb2597b0  (30,0,0)    None
+  31 active 0x00007fffdb2597b0  (31,0,0)    None
+```
+We can switch to a different lane/thread using:
+```console
+(cuda-gdb) cuda lane 1
+```
+This allows us to step and then switch to another thread to inspect that threads
+specific values.
 
 >>>>> Put this is some appropratate place later or delete it:
 A block is a group of threads that execute the same kernel and can communicate
