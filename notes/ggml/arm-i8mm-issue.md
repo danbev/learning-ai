@@ -246,7 +246,7 @@ So in cmake it can't detect i8mm support but it is still enabled the MATMUL_INT8
 compilation failure.
  
 ### Troubleshooting on CI
-So the above was running on my local machine and forcig i8mm to be disabled.
+So the above was running on my local machine and forcing i8mm to be disabled.
 I've added a debug job to the CI server:
 ```console
     - name: Debug
