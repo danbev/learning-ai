@@ -247,7 +247,7 @@ compilation failure.
  
 ### Troubleshooting on CI
 So the above was running on my local machine and forcing i8mm to be disabled.
-I've added a debug job to the CI server:
+I've added a debug step to the CI server:
 ```console
     - name: Debug
       run: |
