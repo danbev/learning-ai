@@ -837,6 +837,166 @@ Tensors can also have views which is covered in a separate section.
 
 An example can be found in [tensor.c](../fundamentals/ggml/src/tensor.c).
 
+### ggml_nrows
+If we look at `ggml_nrows` we see the following:
+```c++
+int64_t ggml_nrows(const struct ggml_tensor * tensor) {
+    return tensor->ne[1]*tensor->ne[2]*tensor->ne[3];
+}
+```
+So this is just turning the product of all dimension except the first dimension
+which is the x, or column dimension.
+```
+w_0
+    z_0
+           x = 3
+         [0     3]  y =2
+         [0     3]
+    z_0
+           x = 3
+         [0     3]  y =2
+         [0     3]
+```
+So the dimension for this would be:
+```
+[3, 2, 2, 1]
+```
+And to find the number of rows we can:
+```
+rows = 2 * 2 * 1
+```
+
+### Setting Tensor values
+The following function can be called to set all of a tensor's elements to a
+specific value:
+```c++
+struct ggml_tensor * ggml_set_i32 (struct ggml_tensor * tensor, int32_t value) {
+    const int n     = ggml_nrows(tensor);
+    const int nc    = tensor->ne[0]; // number of columns (first dimension)
+    const size_t n1 = tensor->nb[1]; // stride between rows
+
+    char * const data = tensor->data; // raw pointer
+
+    switch (tensor->type) {
+        case GGML_TYPE_I8:
+            {
+                assert(tensor->nb[0] == sizeof(int8_t));
+                for (int i = 0; i < n; i++) {
+                    ggml_vec_set_i8(nc, (int8_t *)(data + i*n1), value);
+                }
+            } break;
+```
+Notice that the above is looping over each row, and calling `ggml_vec_set_i8`,
+so this is setting an entire row at a time.
+```c++
+inline static void ggml_vec_set_i8(const int n, int8_t * x, const int8_t v) {
+    for (int i = 0; i < n; ++i) {
+        x[i] = v;
+    }
+}
+```
+
+### ggml_is_contiguous
+So continuous memory means that the elements of the tensor are stored without
+gaps in between them. For example:
+```console
+2d_tensor = [row0_col0, row0_col1, row0_col2, row1_col0, row1_col1, ...]
+```
+
+```c++
+bool ggml_is_contiguous(const struct ggml_tensor * tensor) {
+    return ggml_is_contiguous_0(tensor);
+}
+
+bool ggml_is_contiguous_0(const struct ggml_tensor * tensor) {
+    return ggml_is_contiguous_n(tensor, 0);
+}
+```
+```c++
+static bool ggml_is_contiguous_n(const struct ggml_tensor * tensor, int n) {
+    size_t next_nb = ggml_type_size(tensor->type); // stride in bytes for a single element in the tensor.
+
+    // The following is checking that the stride between adjacent elements is
+    // equal to the size of the element type's size.
+    if (tensor->ne[0] != ggml_blck_size(tensor->type) && tensor->nb[0] != next_nb) {
+        return false;
+    }
+
+    // This is calculating how many bytes we expect between the start of 
+    // consecutive rows if the tensor is contiguous. Notice that this is for
+    // the first dimension only and that this value will be updated in the for
+    // loop below. The block size if most often 1 so this would simplify to
+    // next_nb *= tensor->ne[0]; But for quantized types the block size would
+    // be different so this is required.
+    next_nb *= tensor->ne[0]/ggml_blck_size(tensor->type);
+
+    // Iterates over dimensions 1-3 of the tensor (notice it starts at 1)
+    for (int i = 1; i < GGML_MAX_DIMS; i++) {
+        // If the dimension only has one element we can skip it as we need at
+        // least two elements to determine if they are contiguous.
+        if (tensor->ne[i] != 1) {
+            // Check if the dimension we have not execeeded the dimension that we
+            // want to check which is the n argument.
+            if (i > n) {
+                // if the number of bytes stride for the current dimension is
+                // not equal to the expected number of bytes we return false.
+                if (tensor->nb[i] != next_nb) {
+                    return false;
+                }
+                // Otherwise we calculate the bytes stride for the next dimension.
+                next_nb *= tensor->ne[i];
+            } else {
+                // this dimension does not need to be contiguous
+                next_nb = tensor->ne[i]*tensor->nb[i];
+            }
+        }
+    }
+    return true;
+}
+```
+`next_nb` always represents "how many bytes should I jump to get to the next
+slice in the current dimension I'm checking."
+
+The block size if mostly 1 but for quantized types it can be larger and the
+value is determined by the trait:
+```c++
+int64_t ggml_blck_size(enum ggml_type type) {
+    return type_traits[type].blck_size;
+}
+```
+Lets look at a matrix
+```console
+A = [1, 2, 3]
+    [4, 5, 6]
+
+ne          = [3, 2, 1, 1]
+nb          = [4, 12, 12, 12]  // assuming f32 (4 bytes)
+tensor_type = f16 (4 bytes)
+
+next_nb = 4;
+
+next_nb *= 3;  // next_nb = 12
+
+for loop:
+i = 1 
+    tensor->nb[i] != 12
+        return false
+    else
+       next_nb *= tensor->ne[1]; // next_nb = 12 * 2 = 24
+```
+
+### ggml_unravel_index
+```c++
+int32_t ggml_get_i32_1d(const struct ggml_tensor * tensor, int i) {
+    if (!ggml_is_contiguous(tensor)) {
+        int64_t id[4] = { 0, 0, 0, 0 };
+        ggml_unravel_index(tensor, i, &id[0], &id[1], &id[2], &id[3]);
+        return ggml_get_i32_nd(tensor, id[0], id[1], id[2], id[3]);
+    }
+```
+
+
+
 ### Views
 If we inspect a tensor we can see that it contains the following:
 ```console
