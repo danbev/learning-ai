@@ -42,9 +42,8 @@ SM_0
 
 ```
 
-The Memory Management Unit (MMU) is a component on the GPU die, but it also
-uses. This translated virtual addresses used by programs into physical
-addresses used by the hardware.
+The Memory Management Unit (MMU) is a component on the GPU die. This translated
+virtual addresses used by programs into physical addresses used by the hardware.
 ```
 MMU translates virtual → physical:
 Virtual:  0x7F8A12345678
@@ -198,8 +197,68 @@ GPU Die Memory Controller 0:
                             connecting ──────┘
                             ```
 ```
+So each of the 6 GDDR6X chips has 2 GB of memory, and the memory cells are
+organized into banks. Each chip typically has a 32-bit interface, meaning it can
+read or write 32 bits (4 bytes) of data in a single operation. This is done by
+using a shared data bus, 6*32 = 192 bits (24 bytes).
+
+There are 16 banks each organized into 4 bank groups.
+```
+ +-------------+ +-------------+ +-------------+ +-------------+
+ | Bank Group 0| | Bank Group 1| | Bank Group 2| | Bank Group 3|
+ |-------------+ +-------------+ +-------------+ +-------------+
+ | Bank 0      | | Bank 0      | | Bank 0      | | Bank 0      |
+ +-------------+ +-------------+ +-------------+ +-------------+
+ | Bank 1      | | Bank 1      | | Bank 1      | | Bank 1      |
+ +-------------+ +-------------+ +-------------+ +-------------+
+ | Bank 2      | | Bank 2      | | Bank 2      | | Bank 2      |
+ +-------------+ +-------------+ +-------------+ +-------------+
+ | Bank 3      | | Bank 3      | | Bank 3      | | Bank 3      |
+ +-------------+ +-------------+ +-------------+ +-------------+
+```
+Bank:
+```
+  Each Bank = Array of Memory Cells
+  ┌─────────────────────────────────────┐
+  │ Row 0:  [cell][cell][cell]...[cell] │ ← 1 row = multiple columns
+  │ Row 1:  [cell][cell][cell]...[cell] │
+  │ Row 2:  [cell][cell][cell]...[cell] │
+  │   ...                               │
+  │ Row N:  [cell][cell][cell]...[cell] │
+  └─────────────────────────────────────┘
+```
+So each memory chip has a capacity of storing 2GB chip, and we have 16 banks
+that gives us 2GB / 16 banks = 128MB per bank.
+```
+128MB * 8 = 1,073,741,824 bits per bank
+Rows    = 16384
+Columns = 16384
+16384 rows * 16384 columns * 8 bits = 1,073,741,824 bits = 128MB
+```
+
+We a flow that looks something like this:
+```console
+GPU Core → LSU → MMU → Address Routing → Memory Controller
+```
+The warp schduler decodes a fetched instruction and if it is an load/store
+instruction it send it to the LSU includuing the virtual address. The LSU then
+tries to use its TLB to translate the virtual address to a physical and if it
+does not exist in the TLB it sends a request to the MMU. The MMU then translates
+the virtual address to a physical address, and maps this to the correct memory
+controller for the physical address. The memory controller then decodes the
+the address to figure out which bank group (2 bits for 4 groups), and which bank
+(also 2 bits for 4 banks per group) to use, and then which row and column.
+The memory controller send the commands (bank/row activation, column read/write,)
+over the 32 bit interface using PAM4 signaling.
+
+* Each of the 6 memory controllers connects to exactly 1 GDDR6X chip
+* Each chip gets its own dedicated 32-bit data bus + control signals
+* No shared buses or chip select lines needed
 
 
+* Each GDDR6X chip: 32-bit interface = 4 bytes per operation
+* Each chip can read OR write (not both simultaneously)
+* 6 chips × 4 bytes = 24 bytes per operation
 
 ```
 32-bit Address: [Bank][Row Address][Column Address][Byte Select]
@@ -219,3 +278,9 @@ Row 3:    [C]      [C]       [C]       [C]     ← Word Line 3
        Bit Line Bit Line Bit Line Bit Line
          0        1         2         3
 ```
+
+GDDR6X uses PAM4 signaling which happens between the memory controller and
+the memory chips. PAM4 uses 4 voltage levels to encode 2 bits per symbol, which
+effectively doubles the data rate compared to traditional binary signaling
+(2 levels, 1 bit per symbol). This allows for higher data throughput without
+increasing the frequency of the signal.
