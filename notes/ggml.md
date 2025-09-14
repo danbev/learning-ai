@@ -986,6 +986,89 @@ i = 1
 ```
 
 ### ggml_unravel_index
+Imaging you have a 1D array, for example:
+```
+[1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24]
+ 0 1 2 3 4 5 6 7 8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+```
+Now, we want to find out the dimension coordinates that a specific index belongs
+to. Take the value 4 which is at index 3.
+
+And the shape of our tensor is:
+```
+shape = [3, 2, 2, 2]
+         x  y  z  w
+ne[0] = 3, ne[1] = 2, ne[2] = 2, ne[3] = 2
+
+w_0
+    z_0
+       [1  2   3]
+       [4  5   6]
+    z_1
+       [7  8   9]
+       [10 11 12]
+
+w_1
+    z_0
+       [13 14 15]
+       [16 17 18]
+    z_1
+       [19 20 21]
+       [22 23 24]
+```
+So we can just look at the shape and see which dimension the index belongs to
+but the computer can do that.
+
+We can check if the index belongs to the w dimension by calculating how many
+complete slices of the number of element in w, which is 12, fit into the index
+3 (this is the same logis we would used to figure out how many hours 75 minutes
+is, we take 75 / 60 = 1 and notice we are looking/checking how many complete
+60 minutes fit into 75 minutes).
+```
+shape = [3, 2, 2, 2]
+
+i3_ = (i / (ne2 * ne1 * ne0));
+i3_ =  3 / (  2 ×  2  × 3   ) = 3 / 12 = floor(0.25) = 0
+           [                ]
+           nr of elments in the w dimension
+i3_ =  3 / 12 = floor(0.25) = 0
+```
+This means that the index is in the first/zero slice of the w dimension (w_0)
+because no complete w-slices of 12 elements fit into index 3.
+
+Next, we can check the z dimension, and we subtract the number of elements that
+might have been in the w dimension (i3_ * ne2 * ne1 * ne0) and also dividing by
+the number of elements in the z dimension (ne1 * ne0):
+```
+shape = [3, 2, 2, 2]
+
+i2_ = (i - i3_ * ne2 * ne1 * ne0) / (ne1 * ne0);
+i2_ = (3 - 0   *   2 *   2 *   3) / (  2 * 3)
+i2_ = (3                        ) / (6)
+i2_ = 0
+```
+This means that the index is in the 0 slice of the w dimension (w_0).
+
+And then we can check the y dimension:
+```
+shape = [3, 2, 2, 2]
+
+i1_ = (i - i3_ * ne2 * ne1 * ne0 - i2_ * ne1 * ne0) / ne0;
+i1_ = (3 - (0  * 2   *  2  * 3 ) - (0   * 2   * 3)) / 3;
+i1_ = 3 / 3;
+i1_ = 1;
+```
+This means that the index is in the 1 slice of the y dimension (y_1).
+```
+i0_ = (i -  i3_ * ne2 * ne1 * ne0  - i2_ * ne1 * ne0 - i1_ * ne0);
+i0_ = (3 - (0   * 2   * 2   * 3) - (0 * 2 * 3) - (1 * 3));
+i0_ = (3 - (0   * 2   * 2   * 3) - (0 * 2 * 3) - (1 * 3));
+i0_ = 3 - 3;
+i0_ = 0;
+```
+This means that the index is in the 0 slice of the x dimension (x_0).
+
+This is used like this:
 ```c++
 int32_t ggml_get_i32_1d(const struct ggml_tensor * tensor, int i) {
     if (!ggml_is_contiguous(tensor)) {
@@ -994,7 +1077,50 @@ int32_t ggml_get_i32_1d(const struct ggml_tensor * tensor, int i) {
         return ggml_get_i32_nd(tensor, id[0], id[1], id[2], id[3]);
     }
 ```
+And lets say we want to get the value at index 4. Also notice that references
+to the dimensions are passed in as pointers so that they can be modified.
+```c++
+void ggml_unravel_index(const struct ggml_tensor * tensor, int64_t i, int64_t * i0, int64_t * i1, int64_t * i2, int64_t * i3) {
+    const int64_t ne2 = tensor->ne[2];
+    const int64_t ne1 = tensor->ne[1];
+    const int64_t ne0 = tensor->ne[0];
 
+    const int64_t i3_ = (i/(ne2*ne1*ne0));
+    const int64_t i2_ = (i - i3_*ne2*ne1*ne0)/(ne1*ne0);
+    const int64_t i1_ = (i - i3_*ne2*ne1*ne0 - i2_*ne1*ne0)/ne0;
+    const int64_t i0_ = (i - i3_*ne2*ne1*ne0 - i2_*ne1*ne0 - i1_*ne0);
+
+    if (i0) {
+        * i0 = i0_;
+    }
+    if (i1) {
+        * i1 = i1_;
+    }
+    if (i2) {
+        * i2 = i2_;
+    }
+    if (i3) {
+        * i3 = i3_;
+    }
+}
+```
+This looked a bit odd to me at first but we have to keep in mind that this is
+setting indices not `ne` dimension values. So it is perfectly valid for them
+to be zero. And in this case what is returned is:
+```
+(0, 1, 0, 0)
+```
+They will then be used like this:
+```c++
+        return ggml_get_i32_nd(tensor, id[0], id[1], id[2], id[3]);
+```
+And notice that `i` stands for index so this is getting an i32 value using
+the indices for each dimension:
+```c++
+int32_t ggml_get_i32_nd(const struct ggml_tensor * tensor, int i0, int i1, int i2, int i3) {
+    void * data   = (char *) tensor->data + i0*tensor->nb[0] + i1*tensor->nb[1] + i2*tensor->nb[2] + i3*tensor->nb[3];
+```
+There is an example of unravel in [unravel_index.cpp](../fundamentals/ggml/src/unravel_index.cpp).
 
 
 ### Views
