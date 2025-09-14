@@ -897,11 +897,92 @@ inline static void ggml_vec_set_i8(const int n, int8_t * x, const int8_t v) {
 ```
 
 ### ggml_is_contiguous
-So continuous memory means that the elements of the tensor are stored without
-gaps in between them. For example:
+So I initially thought that this was about the elements of a tensor are stored without gaps in between them.
+For example:
 ```console
 2d_tensor = [row0_col0, row0_col1, row0_col2, row1_col0, row1_col1, ...]
 ```
+And that might be the general meaning of contiguous. But in GGML it has a more specific meaning and 
+means that it is possbile to iterate over the elements in a logical order without having to jump around
+in memory. For example 
+```
+Tensor shape:               Memory layout:
+tensor = [1, 2, 3]          [1, 2, 3,  4,  5,  6]
+         [4, 5, 6]           0  4  8  12  16  20      (byte offsets)
+```
+So to read this locally row by row and moving 4 bytes:
+```
+1 -> 2 -> 3 -> 4 -> 5 -> 6
+0    4    8    12  16   20
+```
+So the following code would work:
+```c++
+float* ptr = (float*)tensor->data;
+for (int i = 0; i < total_elements; i++) {
+    process(*ptr);
+    ptr++;  // Simple increment!
+}
+```
+
+Now, lets say we transpose this tensor:
+```
+Logical tensor:     Memory layout:
+[1, 4]             [1, 2, 3, 4, 5, 6]  ← same memory!
+[2, 5]              0  4  8  12 16 20  ← byte offsets
+[3, 6]
+```
+To read logically:
+```
+1 -> 4 -> 2 -> 5 -> 3 -> 6
+0    12   4   16    8    20
+```
+Now, to iterate over this transposed tensor we need to jump around in memory:
+```c++
+for (int row = 0; row < rows; row++) {
+    for (int col = 0; col < cols; col++) {
+        // Complex stride calculation for each element
+        float* ptr = (float*)((char*)tensor->data + row * nb[1] + col * nb[0]);
+        process(*ptr);
+    }
+}
+```
+So why does this matter, well if we think about how GPUs work when accessing memory they
+have something called coalesced memory access. And having contiguous memory access will allow
+this optimization to work. For example if we have 4 threads reading a transposed tensor:
+```
+Thread 0: reads address 0    [1]
+Thread 1: reads address 4    [2]
+Thread 2: reads address 8    [3]
+Thread 3: reads address 12   [4]
+→ GPU loads one 128-byte cache line, serves all threads efficiently
+````
+But if we instead have a non-contiguous tensor:
+```
+Thread 0: reads address 0    [1]
+Thread 1: reads address 12   [4]
+Thread 2: reads address 4    [2]
+Thread 3: reads address 16   [5]
+→ GPU needs multiple cache line loads, much slower!
+```
+And like we mentioned in [gpu.md](./gpu.md) this can have very significant impact on performance.
+
+The same thing applied to SIMD operations on the CPU as well. Continuous memory access allows loading
+multiple elements into SIMD registers efficiently:
+```
+__m256 vec = _mm256_load_ps(ptr);  // Load 8 floats at once
+```
+Non-contiguous memory access would require multiple loads and shuffles, negating the benefits of SIMD:
+```
+// Must gather individual elements, much slower
+__m256 vec = _mm256_set_ps(ptr[stride*7], ptr[stride*6], ...);
+```
+
+So this is the reason why we can see checks in ggml to see if a tensor is contiguous or not, it allows
+for choosing the most efficient way to process the tensor. For examples sometimes it might be better
+to make a copy of a non-contiguous tensor to a contiguous one to allow for faster processing.
+
+Non-contiguous access can be 2-10x slower than contiguous access, with the gap being even larger on
+GPUs where coalescing is critical.
 
 ```c++
 bool ggml_is_contiguous(const struct ggml_tensor * tensor) {
@@ -984,6 +1065,8 @@ i = 1
     else
        next_nb *= tensor->ne[1]; // next_nb = 12 * 2 = 24
 ```
+
+There is an example of this in [is_contiguous.cpp](../fundamentals/ggml/src/is_contiguous.cpp).
 
 ### ggml_unravel_index
 Imaging you have a 1D array, for example:
