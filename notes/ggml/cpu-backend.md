@@ -457,17 +457,24 @@ ggml_backend_load_best: /home/danbev/work/ai/llama.cpp/build-ref/bin/libggml-cpu
 ggml_backend_load_best: /home/danbev/work/ai/llama.cpp/build-ref/bin/libggml-cpu-skylakex.so score: 0
 load_backend: loaded CPU backend from /home/danbev/work/ai/llama.cpp/build-ref/bin/libggml-cpu-alderlake.so
 ```
-But the names like 'icelake', 'sandybridge', etc are not stored anywhere as far
-as I can tell. And all of these cpu variants share the same source code, and
+
+A backend registry manages all the backends from the same family, for example
+one might manage all CUDA devices, all OpenCL devices, or all CPU variants.
+
+The names like 'icelake', 'sandybridge', etc are not stored anywhere as far as I
+can tell. And all of these cpu variants share the same source code, and
 the  name returned is simply "CPU":
 ```c++
-static const char * ggml_backend_cpu_get_name(ggml_backend_t backend) {
+static const char * ggml_backend_cpu_reg_get_name(ggml_backend_reg_t reg) {
     return "CPU";
 
     GGML_UNUSED(backend);
 }
 ```
-I'm looking into this now if perhaps we can save this name, perhaps in the
-backends context.
+Instead of having this return "CPU" this could be a macro which is set to the
+values of either just "CPU" or "CPU-icelake", "CPU-sandybridge".
+These could then be printed by `test-backend-ops variant --list` when listing the
+variants, and also the name could be used when selecting a specific variant to
+test.
 
 _wip_
