@@ -1,7 +1,7 @@
 ## Timestep Embeddings
 So I was looking into an issue in ggml where there was a windows specific test
-that was failing intermittently. After looking into it I found the that the
-issue was due to the zero padding for odd dimensions in
+that was failing intermittently. After looking into it I found that the issue
+was due to the zero padding for odd dimensions in
 `ggml_compute_forward_timestep_embedding_f32`.  The issue was that currently if
 an odd dimension is used, the padding check incorrectly uses the dimension value
 for indexing. For example, with dim=15:
@@ -44,11 +44,15 @@ struct ggml_tensor * ggml_timestep_embedding(
     return result;
 }
 ```
-So this function takes in a timestep tensor a dimension and a max period. And
+So this function takes in a timestep tensor, a dimension, and a max period. And
 notice that it checks if the dimension is odd and if so it adds one to make it
-even.  So the actual dimension if we pass in 15 will be 16.  Then it set up
-the parameters and notice the dim is the original dim passed in (so 15 in this
-case). And the operation is GGML_OP_TIMESTEP_EMBEDDING.
+even.  So the actual dimension if we pass in 15 will be 16. I believe the reason
+for this that these timestep embeddings are similar to positional embeddings
+used in and the dimensions will be split in half for sine and cosine values. When
+we have an odd number of dimensions we can't split it evenly so we add one. 
+
+Then it set up the parameters and notice the dim is the original dim passed in
+(so 15 in this case). And the operation is GGML_OP_TIMESTEP_EMBEDDING.
 
 And then we can look at the forward_compute function for the cpu backend which
 we can find in `ggml-cpu.c`:
@@ -212,3 +216,48 @@ The key insight is that every layer needs to know the timestep because:
 * Early layers: Detect what level of noise to expect
 * Middle layers: Apply appropriate feature transformations
 * Late layers: Generate the right amount of denoising
+
+### PR feedback
+I opened [#15932](https://github.com/ggml-org/llama.cpp/pull/15932) and received
+some feedback asking about the reason for padding and that this does not seem
+to be part of the reference python [implementation](https://github.com/CompVis/stable-diffusion/blob/main/ldm/modules/diffusionmodules/util.py#L151):
+
+```python
+def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
+    if not repeat_only:
+        half = dim // 2
+        freqs = torch.exp(
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        ).to(device=timesteps.device)
+        args = timesteps[:, None].float() * freqs[None]
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if dim % 2:
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+    else:
+        embedding = repeat(timesteps, 'b -> b d', d=dim)
+    return embedding
+```
+```python
+        if dim % 2:
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+```
+So `torch.cat` will concatenate the specified sequence of tensors tensors: 
+```python
+  [embedding, torch.zeros_like(embedding[:, :1])]
+```
+And note that this creates a new tensor, it does not modify the original
+`embedding`. So the `embedding` tensor holds the cosine and sine values for the
+timesteps.
+
+The second tensor is:
+```python
+  torch.zeros_like(embedding[:, :1])
+```
+The slicing, `embedding[:, :1]`, means "take all rows (`:`), and the first
+column (`,:1`)". And then `torch.zeros_like` creates a new tensor with is the
+same shape as the embedding tensor but with one column of zeros. 
+And `if dim % 2` checks if the dimension is odd, and if so it adds this extra
+column of zeros to make the final embedding have the correct odd dimension.
+
+So I believe that the padding in ggml is required to match this behavior in the
+reference implementation.
