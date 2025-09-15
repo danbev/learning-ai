@@ -40,6 +40,8 @@ array-add-ptx:
 	nvcc -ptx src/array-add.cu
 	@cat array-add.ptx
 
+template: src/template.cu
+	nvcc -lnppc -o $@ $<
 
 .PHONY: clean
 clean:
