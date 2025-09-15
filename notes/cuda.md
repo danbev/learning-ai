@@ -766,7 +766,30 @@ And we can switch to another thread by using (threadId.x, threadId.y, threadId.z
 12	    int col = blockIdx.x * blockDim.x + threadIdx.x;
 ```
 
+### compilation flags
+When compiling CUDA code there are options that can be specified which control
+the way the CUDA code is compiled:
+* -virtual
+This options compiles the code to PTX (Parallel Thread Execution) which is
+platform independent and the actual machine code that runs on the GPU is compiled
+upon first usage. The advantage here is that a single binary can run on newer
+GPUs that were available at compile time. The price is a slight startup delay.
+
+* -real
+This compiles the CUDA code directly to native machine code (SASS) for a specific
+architecture. So there is not compilation step required, the code can be copied
+directly into the instruction cache and executed. The disadvantage is that the
+binary will only run on the specific architecture it was compiled for.
 
 
-
+### Virtual Memory Management (VMM)
+This is a unified virtual address space that the host and the device share. I
+initally though this was something like Apple's unified memory but it is not.
+Memory is still copied to/from the CPU and GPU memory, but it does not have to
+be explicitly managed by the programmer.
+```console
+float* unified_ptr;
+cudaMallocManaged(&unified_ptr, size);  // Can be accessed by both CPU/GPU
 ```
+There is no need for explicit `cudaMemcpy` calls to transfer data between the
+CPU and GPU with VVM.
