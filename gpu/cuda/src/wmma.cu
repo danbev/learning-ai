@@ -23,7 +23,8 @@ __global__ void wmma_example_kernel(const half* a, const half* b, half* c) {
     nvcuda::wmma::load_matrix_sync(a_frag, a, 16);
     nvcuda::wmma::load_matrix_sync(b_frag, b, 16);
 
-    // Perform the matrix multiplication
+    // Perform the matrix multiplication and accumulate the results
+    // C += AxB
     nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
 
     // Store the result from the threads registers back to global memory.

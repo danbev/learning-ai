@@ -5,6 +5,10 @@ wmma: src/wmma.cu
 # GeForce RTX 4070 has compute compatibility 8.6 (https://developer.nvidia.com/cuda-gpus)
 	nvcc -arch=sm_89 -o $@ $<
 
+wmma-ptx:
+	nvcc --ptx --gpu-architecture=sm_89 src/wmma.cu
+	@cat wmma.ptx
+
 hello-world-ptx: src/hello-world.cu
 	nvcc -ptx $<
 	@cat hello-world.ptx
