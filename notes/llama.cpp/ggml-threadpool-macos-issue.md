@@ -749,5 +749,15 @@ seems to happen on macOS so it might be a compiler bug/issue.
 ### ThreadSanitizer on linux
 I used the same build configuration as before but when I ran this I got the following error:
 ```console
+$ ./build/bin/test-thread-safety -hf ggml-org/gemma-3-270m-qat-GGUF "-ngl" "99" "-p" "The meaning of life is" "-n" "128" "-c" "256" "-ub" "32" "-np" "2" -t 2
+FATAL: ThreadSanitizer: unexpected memory mapping 0x737aaf472000-0x737aaf900000
 ```
-TODO: add error and workaround when this has been commited. I'm currently on my mac.
+Exporting the following TSAN_OPTIONS seems to fix this:
+```console
+$ export TSAN_OPTIONS="mmap_limit_mb=0"
+```
+And then disabling address space layout randomization (ASLR) enabled me to run
+this:
+```console
+$ setarch "$(uname -m)" -R ./build/bin/test-thread-safety -hf ggml-org/gemma-3-270m-qat-GGUF "-ngl" "99" "-p" "The meaning of life is" "-n" "128" "-c" "256" "-ub" "32" "-np" "2" -t 2
+```
