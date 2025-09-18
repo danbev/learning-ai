@@ -449,12 +449,15 @@ In `ggml/CMakeLists.txt` we have the following option:
 ```console
 option(GGML_CPU_REPACK       "ggml: use runtime weight conversion of Q4_0 to Q4_X_X" ON)
 ```
+So this is enabled by default.
+
 And in `ggml/src/ggml-cpu/CMakeLists.txt` we have:
 ```console
     if (GGML_CPU_REPACK)
         target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_REPACK)
     endif()
 ```
+
 And if we look where the macro `GGML_USE_CPU_REPACK` is used we find it in
 `ggml-cpu.cpp`:
 ```c++
@@ -503,7 +506,7 @@ time coming across this extra buffer type concept.
 
 ### Extra buffer type
 Extra buffer types is the mechanism that is used to implement weight repacking
-, see [repack.md](../ggml/repack.md) in the CPU backend. Basically, some weights
+, see [repack.md](../ggml/repack.md), in the CPU backend. Basically, some weights
 can be stored in a different buffer type, which repacks them in a way that is
 more performant for the hardware it is running on.
 
@@ -598,7 +601,13 @@ have been defined at compile time it will add the corresponding buffer types.
 Then a `nullptr` is added to the end of the vector to enable iterating over
 the vector until a `nullptr` is found.
 
-To understand when this is called we have to take a look in `src/llama.cpp`:
+<a name="loading"></a>
+To get an overview of the process of loading tensors in `llama::model::load_tensors`
+the steps are roughly:
+* Creates the tensors
+* Initializes the tensor backend buffers (ggml_backend_cpu_repack_buffer_init_tensor)
+* Loads the tensors data (ggml_backend_cpu_repack_buffer_set_tensor)
+
 ```c++
 static int llama_model_load(const std::string & fname, std::vector<std::string> & splits, llama_model & model, llama_model_params & params) {
     ...
@@ -744,6 +753,7 @@ So using emplace back we add a std::pair of the cpu device and the buffer type.
 
 So the `buft_list` will now contain the repack buffer type. But when will it
 be used?  
+
 When a tensor is created in `llama_model::load_tensors` for example, for
 GEMMA3 we have:
 ```c++
@@ -752,8 +762,8 @@ GEMMA3 we have:
             ```
                 {
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
-
 ```
+
 In the `create_tensor` lambda we have:
 ```c++
 auto create_tensor = [&](const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) -> ggml_tensor * {
@@ -857,12 +867,34 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
     }
 ```
 
-So lets unpack this a bit. the passed in tensor is the operation that to be
+So lets unpack this a bit. The passed in tensor is the operation that to be
 checked if it is supported. Currenty the only supported operations are
-`GGML_OP_MUL_MAT` and for this operation the number of dimensions of the source
-tensor must be 2, and the buffer type of the source tensor must be the repack.
+`GGML_OP_MUL_MAT`, and `GGML_OP_MUL_MAT_ID` and the number of dimensions of the
+source tensor must be 2 or 3 respectively, and the buffer type of the source
+tensor must be the repack.
 Also, `ggml_repack_get_optimal_repack_type` must not return null for the source
-tensor:
+tensor buffer.
+For example:
+```console
+(gdb) p op->op
+$27 = GGML_OP_MUL_MAT
+
+(gdb) p op->src[0]->buffer
+$28 = (ggml_backend_buffer *) 0x555555960af0
+
+(gdb) p ggml_n_dims(op->src[0])
+$29 = 2
+
+(gdb) p op->src[0]->buffer->buft
+$30 = (ggml_backend_buffer_type_t) 0x7ffff777b200 <ggml_backend_cpu_repack_buffer_type()::ggml_backend_cpu_buffer_type_repack>
+(gdb) p op->src[0]->buffer->buft == ggml_backend_cpu_repack_buffer_type()
+$31 = true
+
+(gdb) p ggml_repack_get_optimal_repack_type(op->src[0])
+$32 = (const ggml::cpu::tensor_traits *) 0x7ffff777b1c8 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_0_8x8_q8_0>
+```
+This would return true.
+
 ```c++
 static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) {
     // instance for Q4
@@ -929,8 +961,203 @@ in use.
     return nullptr;
 }
 ```
+So that was the creation of the tensors. Next step is to initialize the tensor.
+
+Notice that the traits are stored in the `extra` field of the source tensor which
+is the first time I've seen this be used in practice and something that I missed
+when going through repack above, but this is set in:
+```c++
+static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
+
+    GGML_UNUSED(buffer);
+    return GGML_STATUS_SUCCESS;
+}
+```
+This is called when the tensors are allocated in `llama_model::load_tensors`:
+```c++
+bool llama_model::load_tensors(llama_model_loader & ml) {
+    ...
+    // create tensors for the weights
+    {
+
+        const auto tn = LLM_TN(arch);
+        switch (arch) {
+            case LLM_ARCH_LLAMA:
+            case LLM_ARCH_REFACT:
+            case LLM_ARCH_MINICPM:
+            case LLM_ARCH_GRANITE:
+            case LLM_ARCH_GRANITE_MOE:
+            ...
+        }
+    }
+    ml.done_getting_tensors();
+    ...
+    for (auto & it : ctx_map) {
+        ggml_backend_buffer_type_t buft = it.first;
+        ggml_context * ctx              = it.second;
+        ...
+        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+            ...
+        }
+        else {
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            ...
+        }
+}
+```
+```c++
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    ...
+        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+            ....
+        }
+```
+```c++
+static bool alloc_tensor_range(struct ggml_context * ctx,
+        struct ggml_tensor * first, struct ggml_tensor * last,
+        ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+        ...
+    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
+        enum ggml_status status = GGML_STATUS_SUCCESS;
+        if (t->data == NULL) {
+            if (t->view_src == NULL) {
+                status = ggml_tallocr_alloc(&tallocr, t);
+```
+
+```c++
+enum ggml_status ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
+    size_t size = ggml_backend_buffer_get_alloc_size(talloc->buffer, tensor);
+    size = GGML_PAD(size, talloc->alignment);
+
+    void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
+    talloc->offset += size;
+
+    return ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
+}
+
+enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    ...
+    tensor->buffer = buffer;
+    tensor->data = addr;
+    return ggml_backend_buffer_init_tensor(buffer, tensor);
+}
+
+enum ggml_status ggml_backend_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    GGML_ASSERT(buffer);
+    // init_tensor is optional
+    if (buffer->iface.init_tensor) {
+        return buffer->iface.init_tensor(buffer, tensor);
+    }
+    return GGML_STATUS_SUCCESS;
+}
+```
+<a name="init"></a>
+And `init_tensor` is the function `ggml_backend_cpu_repack_buffer_init_tensor`: 
+```c++
+static ggml_backend_buffer_t ggml_backend_cpu_repack_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(ggml_backend_cpu_buffer_type(), size);
+
+    if (buffer == nullptr) {
+        return nullptr;
+    }
+
+    buffer->buft              = buft;
+    buffer->iface.init_tensor = ggml_backend_cpu_repack_buffer_init_tensor;
+    buffer->iface.set_tensor  = ggml_backend_cpu_repack_buffer_set_tensor;
+    buffer->iface.get_tensor  = nullptr;
+    buffer->iface.cpy_tensor  = nullptr;
+    return buffer;
+}
+```
+So this is now the tensor->extra field is set:
+```c++
+static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
+
+    GGML_UNUSED(buffer);
+    return GGML_STATUS_SUCCESS;
+}
+```
+
+<a name="repacking"></a>
+This is where the repackaging actually happens:
+```c++
+static void ggml_backend_cpu_repack_buffer_set_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor,
+                                                       const void * data, size_t offset, size_t size) {
+    auto tensor_traits = (ggml::cpu::repack::tensor_traits_base *) tensor->extra;
+    auto OK            = tensor_traits->repack(tensor, data, size);
+
+    GGML_ASSERT(OK == 0);
+    GGML_UNUSED(buffer);
+}
+```
+So it is at tensor load time that the repacking takes place. For example:
+```console
+(gdb) p *tensor
+$40 = {type = GGML_TYPE_Q4_0, buffer = 0x555555967f50, ne = {640, 1024, 1, 1}, nb = {18, 360, 368640, 368640}, op = GGML_OP_NONE, 
+op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, 
+view_offs = 0, data = 0x7fffdda35040, name = "blk.0.attn_q.weight", '\000' <repeats 44 times>, 
+extra = 0x7ffff777b1c8 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_0_8x8_q8_0>, 
+padding = "\000\000\000\000\000\000\000"}
+```
+```c++
+    int repack(struct ggml_tensor * t, const void * data, size_t data_size) override {
+        GGML_LOG_DEBUG("%s: repack tensor %s with %s_%dx%d\n", __func__, t->name, ggml_type_name(t->type),
+                       (int) NB_COLS, (int) INTER_SIZE);
+        return ggml::cpu::repack::repack<BLOC_TYPE, INTER_SIZE, NB_COLS>(t, data, data_size);
+    }
+
+template <> int repack<block_q4_0, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
+    return repack_q4_0_to_q4_0_8_bl(t, 8, data, data_size);
+}
+```
+And this is where the input data the tensor data should be set to is repackaged
+into a format that is more optimal for the hardware. So we have our original
+data in Q4_0 format and we want to repack it block_q4_0x8 format for more
+optimized SIMD operations. This will become important later when we look at the
+matrix multiplication operation and see that it operates on 8 rows at a time.
+```c++
+static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
+    GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(interleave_block == 8);
+    constexpr int nrows_interleaved = 8;
+
+    block_q4_0x8 * dst = (block_q4_0x8*)t->data;
+    const block_q4_0 * src = (const block_q4_0*) data;
+    block_q4_0 dst_tmp[8];
+    int nrow = ggml_nrows(t);
+    int nblocks = t->ne[0] / QK4_0;
+
+    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+
+    if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
+        return -1;
+    }
+
+    for (int b = 0; b < nrow; b += nrows_interleaved) {
+        for (int64_t x = 0; x < nblocks; x++) {
+            for (int i  = 0; i < nrows_interleaved; i++ ) {
+                dst_tmp[i] = src[x + i * nblocks];
+            }
+            *dst++ = make_block_q4_0x8(dst_tmp, interleave_block);
+        }
+        src += nrows_interleaved * nblocks;
+    }
+    return 0;
+
+    GGML_UNUSED(data_size);
+}
+```
+
+So that was the loading of tensors and we have see that it is at this stage
+that the repacking takes place. Next is the usage in matrix multiplication
+operations where the repacked format is used to speed up the operations.
+
 To see this in action we need a model that has quantized weights, for example
 I'll use `gemma-3-270m-it-qat-q4_0-unquantized-Q4_0.gguf` for this.
+
 Then we can set a break point in 
 ```console
 (gdb) br repack.cpp:1604
@@ -1074,17 +1301,7 @@ Now, the `tensor_traits` will be retrieved from:
         return nullptr;
     }
 ```
-Notice that the traits are stored in the `extra` field of the source tensor which
-is the first time I've seen this be used in practice and something that I missed
-when going through repack above, but this is set in:
-```c++
-static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
-    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
 
-    GGML_UNUSED(buffer);
-    return GGML_STATUS_SUCCESS;
-}
-```
 Recall that we had those templated `tensor_traits` instances for different
 repacking configurations, the template itself has the compute_forward function:
 ```c++
@@ -1103,6 +1320,37 @@ repacking configurations, the template itself has the compute_forward function:
         return false;
     }
 ```
+Lets take a look a an example of tensor for this operation:
+```console
+(gdb) p *op
+$2 = {type = GGML_TYPE_F32, buffer = 0x55555596a280, ne = {1024, 9, 1, 1},
+nb = {4, 4096, 36864, 36864}, op = GGML_OP_MUL_MAT, op_params = {0 <repeats 16 times>},
+flags = 0, src = {0x55555836b6e0, 0x555555d1cd00, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+view_src = 0x0, view_offs = 0, data = 0x7fffbb217840, name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, 
+padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p op->src[0]->name
+$3 = "blk.0.attn_q.weight", '\000' <repeats 44 times>
+(gdb) p op->src[0]->type
+$4 = GGML_TYPE_Q4_0
+(gdb) p op->src[0]->ne
+$5 = {640, 1024, 1, 1}
+
+(gdb) p op->src[1]->name
+$6 = "attn_norm-0", '\000' <repeats 52 times>
+(gdb) p op->src[1]->type
+$7 = GGML_TYPE_F32
+(gdb) p op->src[1]->ne
+$9 = {640, 9, 1, 1}
+```
+Notice how `src[0]` is of type Q4_0 and has dimensions 640x1024, and `src[1]` is
+of type F32.
+And params are:
+```console
+(gdb) p *params
+$11 = {ith = 1, nth = 4, wsize = 19840, wdata = 0x55555859b9b0, threadpool = 0x555555968240}
+```
+
 And further down we have the `forward_mul_mat` function which is the operation
 that we are currently stepping through:
 ```
@@ -1117,6 +1365,7 @@ we can enable scheduler locking in gdb:
 ```console
 (gdb) set scheduler-locking on
 ```
+Again, we can inspect the tensors:
 ```c++
 (gdb) p *src0
 $10 = {type = GGML_TYPE_Q4_0, buffer = 0x555555dab150,
@@ -1125,27 +1374,32 @@ op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0
 view_offs = 0, data = 0x7fffb8a35040, name = "blk.0.attn_q.weight", '\000' <repeats 44 times>,
 extra = 0x7ffff777b1a8 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_0_8x8_q8_0>,
 padding = "\000\000\000\000\000\000\000"}
+```
 
+```console
 (gdb) p *src1
 $11 = {type = GGML_TYPE_F32, buffer = 0x555555dac130,
 ne = {640, 9, 1, 1}, nb = {4, 2560, 23040, 23040}, op = GGML_OP_MUL,
 op_params = {0 <repeats 16 times>}, flags = 0, src = {0x555556156750, 0x555558764dc0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 view_src = 0x0, view_offs = 0, data = 0x7fff834db840, name = "attn_norm-0", '\000' <repeats 52 times>, extra = 0x0,
 padding = "\000\000\000\000\000\000\000"}
+```
 
+```console
 (gdb) p *dst
 $12 = {type = GGML_TYPE_F32, buffer = 0x555555dac130, ne = {1024, 9, 1, 1}, nb = {4, 4096, 36864, 36864}, op = GGML_OP_MUL_MAT, 
   op_params = {0 <repeats 16 times>}, flags = 0, src = {0x55555877d3a0, 0x5555561568c0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
   view_src = 0x0, view_offs = 0, data = 0x7fff8361b840, name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0, 
   padding = "\000\000\000\000\000\000\000"}
 ```
+
 ```c++
         const int ith = params->ith;  // Current thread id (0, 1, 2, ..., nth-1).
         const int nth = params->nth;  // Total number of threads.
 ```
 ```console
 (gdb) p ith
-$19 = 3
+$19 = 1
 (gdb) p nth
 $18 = 4
 ```
@@ -1155,13 +1409,19 @@ Next we have the work data.
         char *       wdata = static_cast<char *>(params->wdata);
         const size_t nbw1  = ggml_row_size(PARAM_TYPE, ne10);
 ```
+
 ```console
 (gdb) p nbw1
 $16 = 680
 ```
+
+Next we get the function from the trait which will be used to quantize `src[1]`.
+So `src[0]` is already quantized, but `src[1]` is not and the matrix multiplication
+is performed on the quantized types so we need this conversion.
 ```c++
         const ggml_from_float_t from_float = ggml_get_type_traits_cpu(PARAM_TYPE)->from_float;
 ```
+
 ```console
 (gdb) p from_float
 $17 = (const ggml_from_float_t) 0x7ffff76f2775 <quantize_row_q8_0>
@@ -1481,6 +1741,11 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n,
                 const __m256i rhs_raw_mat_4567_0 = _mm256_loadu_si256((const __m256i *)(b_ptr[b].qs + 32));
                 const __m256i rhs_raw_mat_0123_1 = _mm256_loadu_si256((const __m256i *)(b_ptr[b].qs + 64));
                 const __m256i rhs_raw_mat_4567_1 = _mm256_loadu_si256((const __m256i *)(b_ptr[b].qs + 96));
+```
+The above is loading the quantized values, in the qs array, and doing so 32 bytes
+at a time (32 * 8 = 256 bits). Each block_tx8 structure has 128 bytes
+
+```c++
 
                 // Save the values in the following vectors in the formats B0B1B4B5, B2B3B6B7 for further processing and storing of values
                 const __m256i rhs_raw_mat_0145_0 = _mm256_blend_epi32(rhs_raw_mat_0123_0, _mm256_permutevar8x32_epi32(rhs_raw_mat_4567_0, requiredOrder), 240);
