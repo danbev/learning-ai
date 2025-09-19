@@ -2560,4 +2560,52 @@ What we should be testing:
 * Backend2: Regular data with regular computation
 * Compare the results
 
+So how do we handle this?
+
 _wip_
+
+In the test tensor data is initialized using (for each tensor):
+```c++
+static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
+    size_t nels = ggml_nelements(tensor);
+    std::vector<float> data(nels);
+    // random values generated using threads...
+    ...
+
+    if (tensor->type == GGML_TYPE_F32 || tensor->type == GGML_TYPE_I32) {
+        ggml_backend_tensor_set(tensor, data.data(), 0, nels * sizeof(float));
+    } else if (ggml_is_quantized(tensor->type) || tensor->type == GGML_TYPE_F16 || tensor->type == GGML_TYPE_BF16) {
+      ...
+
+        ggml_backend_tensor_set(tensor, dataq.data(), 0, dataq.size());
+    }
+```
+So at this point we have the un-repacked data in `dataq`. After this call if
+the repack buffer type is used for the tensor, the repack set_tensor will be
+called which will repack the data in the tensor's data buffer. Perhaps we could
+store the original dataq somewhere, but the problem is that we need enable
+the backend2 to use this for its computation was we want it to use the original
+data.
+
+Hmm, I wonder if there is a way to create a new ggml_backend_buffer_type for the
+test, which in wraps the repack backend buffer type. And this specific type would
+be able to store the original data, and it would implement get_tensor to return
+this data instead of the repacked data. So perhaps we can add this as an additional
+ggml_backend_cpu_get_extra_buffer_types in a similar way to 
+```c++
+#ifdef GGML_USE_CPU_REPACK
+        if (ggml_backend_cpu_repack_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_repack_buffer_type());
+        }
+#endif
+
+#ifdef GGML_BUILD_TESTS
+        if (ggml_backend_cpu_wrapper_repack_buffer_type()) {
+            bufts.push_back(ggml_backend_cpu_wrapper_repack_buffer_type());
+        }
+#endif
+```
+And the we might be able to store the data that is passed to set_tensor in this
+new buffer type and return it in get_tensor. This way we can use the repack
+implementation for backend1 and the original data for backend2.
+

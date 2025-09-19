@@ -2171,8 +2171,7 @@ void ggml_build_forward_expand(struct ggml_cgraph * cgraph, struct ggml_tensor *
 ```
 Notice that this is passing `true` as `expand`:
 ```c
-static void ggml_build_forward_impl(struct ggml_cgraph * cgraph,
-    struct ggml_tensor * tensor, bool expand) {
+static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor, bool expand) {
     if (!expand) {
         // TODO: this branch isn't accessible anymore, maybe move this to ggml_build_forward_expand
         ggml_graph_clear(cgraph);
@@ -2191,6 +2190,7 @@ static void ggml_build_forward_impl(struct ggml_cgraph * cgraph,
     }
 }
 ```
+
 In our case `n0` is 0. Lets take a look at the `ggml_visit_parents` function, 
 which will be passed the `mul` tensor:
 ```c
