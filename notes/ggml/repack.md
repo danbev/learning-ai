@@ -560,7 +560,7 @@ ggml_backend_buffer_type_t ggml_backend_cpu_repack_buffer_type(void) {
     return &ggml_backend_cpu_buffer_type_repack;
 }
 ```
-Notice that the context will be set to a new instance of
+Notice that the buffer type context will be set to a new instance of
 `ggml::cpu::repack::extra_buffer_type`:
 ```
 class extra_buffer_type : ggml::cpu::extra_buffer_type {
@@ -759,7 +759,7 @@ GEMMA3 we have:
 ```c++
 
             case LLM_ARCH_GEMMA3:
-            ```
+            ...
                 {
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 ```
@@ -1056,6 +1056,16 @@ enum ggml_status ggml_backend_buffer_init_tensor(ggml_backend_buffer_t buffer, s
 <a name="init"></a>
 And `init_tensor` is the function `ggml_backend_cpu_repack_buffer_init_tensor`: 
 ```c++
+static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
+
+    GGML_UNUSED(buffer);
+    return GGML_STATUS_SUCCESS;
+}
+```
+So this is how the tensor->extra field is set.
+And `init_tensor` is set in:
+```c++
 static ggml_backend_buffer_t ggml_backend_cpu_repack_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(ggml_backend_cpu_buffer_type(), size);
 
@@ -1071,15 +1081,6 @@ static ggml_backend_buffer_t ggml_backend_cpu_repack_buffer_type_alloc_buffer(gg
     return buffer;
 }
 ```
-So this is now the tensor->extra field is set:
-```c++
-static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
-    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
-
-    GGML_UNUSED(buffer);
-    return GGML_STATUS_SUCCESS;
-}
-```
 
 <a name="repacking"></a>
 This is where the repackaging actually happens:
@@ -1093,7 +1094,7 @@ static void ggml_backend_cpu_repack_buffer_set_tensor(ggml_backend_buffer_t buff
     GGML_UNUSED(buffer);
 }
 ```
-So it is at tensor load time that the repacking takes place. For example:
+So it is at tensor data load time that the repacking takes place. For example:
 ```console
 (gdb) p *tensor
 $40 = {type = GGML_TYPE_Q4_0, buffer = 0x555555967f50, ne = {640, 1024, 1, 1}, nb = {18, 360, 368640, 368640}, op = GGML_OP_NONE, 
@@ -1151,14 +1152,19 @@ static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block
 }
 ```
 
-So that was the loading of tensors and we have see that it is at this stage
-that the repacking takes place. Next is the usage in matrix multiplication
+So to recap at startup when loading model tensors, we first detemine if the
+backend can handle the tensor, and if so when the backend buffer initializes
+the tensor it will set the tensor extra field to the repack traits. And when
+the tensor is populated with data the set tensor function will be called which
+will perform the actualy repacking.
+
+So that was the loading of tensors, next is the usage in matrix multiplication
 operations where the repacked format is used to speed up the operations.
 
 To see this in action we need a model that has quantized weights, for example
 I'll use `gemma-3-270m-it-qat-q4_0-unquantized-Q4_0.gguf` for this.
 
-Then we can set a break point in 
+Then we can set a break point:
 ```console
 (gdb) br repack.cpp:1604
 ```
@@ -1290,7 +1296,7 @@ bool ggml_cpu_extra_compute_forward(struct ggml_compute_params * params, struct 
     return false;
 }
 ```
-Now, the `tensor_traits` will be retrieved from:
+Now, the `tensor_traits` will be retrieved from the `src[0]` extra field:
 ```c++
     ggml::cpu::tensor_traits * get_tensor_traits(const struct ggml_tensor * op) override {
         if (op->op == GGML_OP_MUL_MAT || op->op == GGML_OP_MUL_MAT_ID) {
@@ -1301,9 +1307,8 @@ Now, the `tensor_traits` will be retrieved from:
         return nullptr;
     }
 ```
-
-Recall that we had those templated `tensor_traits` instances for different
-repacking configurations, the template itself has the compute_forward function:
+And if there is such a traits instance, then its `compute_forward` function will
+be called:
 ```c++
     bool compute_forward(struct ggml_compute_params * params, struct ggml_tensor * op) override {
         switch (op->op) {
@@ -1320,7 +1325,7 @@ repacking configurations, the template itself has the compute_forward function:
         return false;
     }
 ```
-Lets take a look a an example of tensor for this operation:
+Lets take a look at an example of tensor for this operation:
 ```console
 (gdb) p *op
 $2 = {type = GGML_TYPE_F32, buffer = 0x55555596a280, ne = {1024, 9, 1, 1},
@@ -2046,13 +2051,486 @@ at a time (32 * 8 = 256 bits). Each block_tx8 structure has 128 bytes
         }
     }
 }
-
 ```
+_wip_
 
-### test-backend-ops
-The goal is to enable test-backend-ops to compare the implementation of weight
+### test-backend-ops testing repack correctness
+The goal is to allow `test-backend-ops` to compare the implementation of weight
 repacking with the extra buffer type, to the base implementation with the
 standard buffer type, to verify the correctness of the extra buffer type
-implementation.
+implementation. 
+
+Repack is not an operation like the other operations that are tested by
+`test-backend-ops` so adding a test_case for it does not sound correct...but
+it is part of a matrix multiplication operation, so perhaps adding a test that
+subclasses `test_mul_mat_id` would make sense.
+
+```console
+$ ./build/bin/test-backend-ops -o "MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],v=0,o=1)"
+ggml_cuda_init: GGML_CUDA_FORCE_CUBLAS: no
+ggml_cuda_init: found 1 CUDA devices:
+  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes
+register_backend: registered backend CUDA (1 devices)
+register_device: registered device CUDA0 (NVIDIA GeForce RTX 4070)
+register_backend: registered backend CPU (1 devices)
+register_device: registered device CPU (12th Gen Intel(R) Core(TM) i7-1260P)
+load_backend: failed to find ggml_backend_init in /home/danbev/work/ai/llama.cpp-debug/build/bin/libggml-cuda.so
+load_backend: failed to find ggml_backend_init in /home/danbev/work/ai/llama.cpp-debug/build/bin/libggml-cpu.so
+Testing 2 devices
+
+Backend 1/2: CUDA0
+  Device description: NVIDIA GeForce RTX 4070
+  Device memory: 11903 MB (11743 MB free)
+
+  MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],v=0,o=1): OK
+  MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],v=0,o=1): OK
+  14471/14471 tests passed
+  Backend CUDA0: OK
+Backend 2/2: CPU
+  Skipping CPU backend
+2/2 backends passed
+OK
+```
+
+```c++
+struct test_mul_mat : public test_case {
+    const ggml_type type_a;
+    const ggml_type type_b;
+    const int64_t m;
+    const int64_t n;
+    const int64_t k;
+    const std::array<int64_t, 2> bs;  // dims 3 and 4
+    const std::array<int64_t, 2> nr;  // repeat in dims 3 and 4
+    const std::array<int64_t, 4> per; // permutation of dimensions
+    const bool v; // whether a and b are non-contiguous views
+    const uint32_t o; // number of outputs
+
+    test_mul_mat(ggml_type type_a = GGML_TYPE_F32, ggml_type type_b = GGML_TYPE_F32,
+            int64_t m = 32, int64_t n = 32, int64_t k = 32,
+            std::array<int64_t, 2> bs = {10, 10},
+            std::array<int64_t, 2> nr = {2, 2},
+            std::array<int64_t, 4> per = {0, 1, 2, 3},
+            bool v = false, uint32_t o = 1)
+        : type_a(type_a), type_b(type_b), m(m), n(n), k(k), bs(bs), nr(nr), per(per), v(v), o(o) {}
+```
+The types are the types for the A and B matrices. And m, n, k are the dimensions,
+A is [mxk] and B is [kxn]. The output matrix C is [mxn].
+bs is the batch size for batched matrix multiplication, for 2D matrices it is {1,1}.
+nr is the number of repeats in each batch dimension, for 2D matrices it is {1,1}.
+per is the permutation of the 4 dimensions (m,n,batch0,batch1). 0, 1, 2, 3 is just
+the normal order.
+v is whether A and B are non-contiguous views.
+o is the number of outputs to test generate.
+
+To be able to debug this I've replaced (I renamed the original): 
+```c++
+static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+    std::vector<std::unique_ptr<test_case>> test_cases;
+    std::default_random_engine rng(0);
+
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_0, GGML_TYPE_F32, 16,  1, 256, {1, 1}, {1, 1}));
+
+    return test_cases;
+}
+```
+This is because it was difficult to set breakpoints as all test cases are processed
+and then filtered.
+
+Inspecting the tensors, skipping the first sentinel tensor, we have:
+```console
+(gdb) p *t
+$6 = {type = GGML_TYPE_Q4_0, buffer = 0x0, ne = {256, 16, 1, 1},
+nb = {18, 144, 2304, 2304}, op = GGML_OP_NONE, op_params = { 0 <repeats 16 times>},
+flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, view_offs = 0,
+data = 0x0, name = "a", '\000' <repeats 62 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+But there is no extra buffer allocated for repack so that will not be used here.
+So why does this not get applied for the test. The issue is that the extra
+buffer types are not used in the test as the are when a model is loaded like
+we saw above.
+
+We have to add something like the following (just for testing at this stage to
+force something to work):
+```c++
+        std::vector<ggml_backend_buffer_t> buffers;
+        std::vector<ggml_backend_buffer_type_t> extra_buft_list;
+        auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        auto * cpu_reg = ggml_backend_dev_backend_reg(cpu_dev);
+        auto get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
+            ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_dev_get_extra_bufts");
+
+        if (get_extra_bufts_fn) {
+            ggml_backend_buffer_type_t * extra_bufts = get_extra_bufts_fn(cpu_dev);
+            while (extra_bufts && *extra_bufts) {
+                extra_buft_list.push_back(*extra_bufts);
+                ++extra_bufts;
+            }
+        }
+
+        // Try to find repack buffer type among the extra buffer types
+        ggml_backend_buffer_type_t repack_buft = nullptr;
+        for (auto buft : extra_buft_list) {
+            const char* buft_name = ggml_backend_buft_name(buft);
+            if (buft_name && strstr(buft_name, "CPU_REPACK")) {
+                repack_buft = buft;
+                break;
+            }
+        }
+        //ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, repack_buft);
+```
+This by it self does not work as this will cause a segment fault in repack for
+the sentinel tensor:
+```console
+Thread 1 "test-backend-op" received signal SIGSEGV, Segmentation fault.
+0x00007ffff7852616 in ggml_backend_cpu_repack_buffer_set_tensor (buffer=0x55555567c670, tensor=0x5555556914d0, data=0x5555556794a0, 
+    offset=0, size=4096) at /home/danbev/work/ai/llama.cpp-debug/ggml/src/ggml-cpu/repack.cpp:1885
+1885	    auto OK            = tensor_traits->repack(tensor, data, size);
+(gdb) p *tensor
+$1 = {type = GGML_TYPE_F32, buffer = 0x55555567c670, ne = {1024, 1, 1, 1}, nb = {4, 4096, 4096, 4096}, op = GGML_OP_NONE, 
+op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, 
+view_offs = 0, data = 0x55555569ccc0, name = "sent_0", '\000' <repeats 57 times>,
+extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+We can see that this tensor does not have an extra buffer set. We can work around
+that with a check perhaps.
+
+But back to the test and looking at how the buffer is used, the graph is forward
+expanded:
+```c++
+        // build graph
+        ggml_build_forward_expand(gf, out);
+```
+Then the tensors data are set:
+```c++
+        // randomize tensors
+        initialize_tensors(ctx);
+```
+This will call the repack buffer types set_tensor function if that buffer type
+was used to create the backend buffer.
+
+Next the callback user data type is defined and one instance created:
+```c++
+        // compare
+        struct callback_userdata {
+            bool   ok;
+            double max_err;
+            ggml_backend_t backend1;
+            ggml_backend_t backend2;
+        };
+
+        callback_userdata ud {
+            true,
+            max_nmse_err(),
+            backend1,
+            backend2
+        };
+```
+The callback itself is a lambda that looks like this:
+```c++
+        auto callback = [](int index, ggml_tensor * t1, ggml_tensor * t2, void * user_data) -> bool {
+            callback_userdata * ud = (callback_userdata *) user_data;
+            const char * bn1 = ggml_backend_name(ud->backend1);
+            const char * bn2 = ggml_backend_name(ud->backend2);
+
+            if (t1->op == GGML_OP_NONE) {
+                // sentinels must be unchanged
+                std::vector<uint8_t> t1_data(ggml_nbytes(t1));
+                std::vector<uint8_t> t2_data(ggml_nbytes(t2));
+                ggml_backend_tensor_get(t1, t1_data.data(), 0, ggml_nbytes(t1));
+                ggml_backend_tensor_get(t2, t2_data.data(), 0, ggml_nbytes(t2));
+
+                if (memcmp(t1_data.data(), t2_data.data(), ggml_nbytes(t1)) != 0) {
+                    printf("sentinel mismatch: %s ", t1->name);
+                    ud->ok = false;
+                    return true;
+                }
+            }
+
+            // convert to float for comparision as the data format migth be
+            // in different formats, like normalizing.
+            std::vector<float> f1 = tensor_to_float(t1);
+            std::vector<float> f2 = tensor_to_float(t2);
+
+            for (size_t i = 0; i < f1.size(); i++) {
+                // check for nans
+                if (std::isnan(f1[i]) || std::isnan(f2[i])) {
+                    printf("[%s] NaN at index %zu (%s=%f %s=%f) ", ggml_op_desc(t1), i, bn1, f1[i], bn2, f2[i]);
+                    ud->ok = false;
+                    return true;
+                }
+                // check for infs: both must be inf of the same sign, or both must be finite
+                if (isinf_or_max(f1[i]) || isinf_or_max(f2[i])) {
+                    if (isinf_or_max(f1[i]) && isinf_or_max(f2[i])) {
+                        if (std::signbit(f1[i]) != std::signbit(f2[i])) {
+                            printf("[%s] inf sign mismatch: %s=%f %s=%f ", ggml_op_desc(t1), bn1, f1[i], bn2, f2[i]);
+                            ud->ok = false;
+                            return true;
+                        }
+                    } else {
+                        printf("[%s] inf mismatch: %s=%f %s=%f ", ggml_op_desc(t1), bn1, f1[i], bn2, f2[i]);
+                        ud->ok = false;
+                        return true;
+                    }
+                }
+            }
+
+            double err = nmse(f1.data(), f2.data(), f1.size());
+            if (err > ud->max_err) {
+                printf("[%s] NMSE = %.9f > %.9f ", ggml_op_desc(t1), err, ud->max_err);
+                //for (int i = 0; i < (int) f1.size(); i++) {
+                //    printf("%5d %9.6f %9.6f, diff = %9.6f\n", i, f1[i], f2[i], f1[i] - f2[i]);
+                //}
+                //printf("\n");
+                //exit(1);
+                ud->ok = false;
+            }
+            return true;
+
+            GGML_UNUSED(index);
+        };
+        const bool cmp_ok = ggml_backend_compare_graph_backend(backend1, backend2, gf, callback, &ud, run_whole_graph() ? out : nullptr);
+```
+The `callback` is passed into `ggml_backend_compare_graph_backend` along with the
+two backends, the graph and a test_node which is either the output node or null
+(and is null in this case):
+```c++
+bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor * test_node) {
+    struct ggml_backend_graph_copy copy = ggml_backend_graph_copy(backend2, graph);
+    if (copy.buffer == NULL) {
+        return false;
+    }
+
+    struct ggml_cgraph * g1 = graph;
+    struct ggml_cgraph * g2 = copy.graph;
+    ...
+```
+So, we only have one graph, but we want to compare the result of running this
+graph on two different backends. So we create a copy of the graph.
+
+Next, we 
+```c++
+    ...
+    } else {
+        for (int i = 0; i < g1->n_nodes; i++) {
+            struct ggml_tensor * t1 = g1->nodes[i]; // node we want to test
+            struct ggml_tensor * t2 = g2->nodes[i]; // node 
+
+            assert(t1->op == t2->op && ggml_are_same_layout(t1, t2));
+
+            // Create subgraphs containing only one operation
+            struct ggml_cgraph g1v = ggml_graph_view(g1, i, i + 1); // use node i only
+            struct ggml_cgraph g2v = ggml_graph_view(g2, i, i + 1); // use node i only
+
+            ggml_backend_graph_compute(backend1, &g1v);
+            ggml_backend_graph_compute(backend2, &g2v);
+
+            if (ggml_is_view_op(t1->op)) {
+                continue;
+            }
+
+            // compare results, calculate rms etc. t1 and t1 now contain the
+            // result of this specific opertion
+            if (!callback(i, t1, t2, user_data)) {
+                break;
+            }
+        }
+```
+So this is going compute one node at a time.  Now recall that ggml will sort of 
+compute backwards using "dependency resolution", like the output node is what
+will be computed first in this case:
+```console
+(gdb) p *t1
+$49 = {type = GGML_TYPE_F32, buffer = 0x55555567c670, ne = {16, 1, 1, 1},
+nb = {4, 64, 64, 64}, op = GGML_OP_MUL_MAT, op_params = { 0 <repeats 16 times>}, flags = 0,
+src = {0x555555691640, 0x555555691920, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, 
+view_src = 0x0, view_offs = 0, data = 0x5555556a09c0,
+name = "out", '\000' <repeats 60 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+And all the nodes in the graph look like this:
+```console
+(gdb) p g1->n_nodes
+$51 = 5
+(gdb) p g1->nodes[0]->name
+$53 = "out", '\000' <repeats 60 times>
+(gdb) p g1->nodes[1]->name
+$54 = "sent_0", '\000' <repeats 57 times>
+(gdb) p g1->nodes[2]->name
+$55 = "sent_1", '\000' <repeats 57 times>
+(gdb) p g1->nodes[3]->name
+$56 = "sent_2", '\000' <repeats 57 times>
+(gdb) p g1->nodes[4]->name
+$57 = "sent_3", '\000' <repeats 57 times>
+```
+Notice that this tensor has input tensors which will be computed first which
+is what I mean be dependency resolution and kind of working backwards.
+The above will then create a graph view of the single operation MUL_MAT and then
+compute it for both backends. After result of these operations will be in t1 and
+t2 and the callback will be called to compare them.
+
+In the callback we can inspect the backends being compared:
+```console
+(gdb) p ggml_backend_dev_name(ud->backend2->device)
+$11 = 0x7ffff7542487 "CPU-ref"
+(gdb) p ggml_backend_dev_name(ud->backend1->device)
+$12 = 0x7ffff7942487 "CPU-alderlake"
+```
+So the tensor will be converted to float vectors for comparison as the output/result:
+tensors can be in different formats and this is a way of normalizing them for
+comparison:
+```c++
+            std::vector<float> f1 = tensor_to_float(t1);
+            std::vector<float> f2 = tensor_to_float(t2);
+```
+This should not pose a problem for the repacking as the resulting tensor will
+not be in repacked format, that is only the input tensors that are repacked.
+
+So like we mentioned before, we need to somehow use the repack buffer type
+when allocating the backend buffer for the tensor so that the repack set_tensor
+is called and the repacking happends:
+```c++
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, repack_buft);
+        //ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend1);
+```
+```console
+(gdb) p ggml_backend_buffer_name(buf)
+$3 = 0x7ffff794a0ab "CPU_REPACK"
+```
+And we can see that when we call `initialize_tensors(ctx);` the repack set_tensor
+is called:
+```c++
+        // randomize tensors
+        initialize_tensors(ctx);
+```
+Skipping the first sentinel tensor:
+```console
+(gdb) p *tensor
+$6 = {type = GGML_TYPE_Q4_0, buffer = 0x55555567c670, ne = {256, 16, 1, 1}, nb = {18, 144, 2304, 2304}, op = GGML_OP_NONE,
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0,
+  view_offs = 0, data = 0x55555569dcc0, name = "a", '\000' <repeats 62 times>,
+  extra = 0x7ffff797b3a8 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_0_8x8_q8_0>,
+  padding = "\000\000\000\000\000\000\000"}
+
+  1886	        auto OK = tensor_traits->repack(tensor, data, size);
+(gdb)
+repack: repack tensor a with q4_0_8x8
+1887	        GGML_ASSERT(OK == 0);
+```
+So far so good then, we have repacked the input tensor a.
+
+So then we have the callback user data setup and definition of the callback
+lambda and we call `ggml_backend_compare_graph_backend`, and the first thing
+to happen there is to that the graph is copied:
+```c++
+    struct ggml_backend_graph_copy copy = ggml_backend_graph_copy(backend2, graph);
+```
+```c++
+struct ggml_backend_graph_copy ggml_backend_graph_copy(ggml_backend_t backend, struct ggml_cgraph * graph) {
+    GGML_ASSERT(graph);
+    struct ggml_hash_set hash_set = ggml_hash_set_new(graph->visited_hash_set.size);
+    struct ggml_tensor ** node_copies = (ggml_tensor **) calloc(hash_set.size, sizeof(node_copies[0])); // NOLINT
+    bool * node_init = (bool *) calloc(hash_set.size, sizeof(node_init[0]));
+
+    struct ggml_init_params params = {
+        /* .mem_size   = */ ggml_tensor_overhead()*hash_set.size + ggml_graph_overhead_custom(graph->size, false),
+        /* .mem_buffer = */ NULL,
+        /* .no_alloc   = */ true
+    };
+
+    struct ggml_context * ctx_allocated = ggml_init(params);
+    struct ggml_context * ctx_unallocated = ggml_init(params);
+
+    // dup nodes
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        graph_copy_dup_tensor(hash_set, node_copies, ctx_allocated, ctx_unallocated, node);
+    }
+
+    // allocate nodes
+    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx_allocated, backend);
+
+    // copy data and init views
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        graph_copy_init_tensor(&hash_set, node_copies, node_init, node);
+    }
+
+    // build graph copy
+    struct ggml_cgraph * graph_copy = ggml_new_graph_custom(ctx_allocated, graph->size, false);
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        struct ggml_tensor * node_copy = node_copies[ggml_hash_find(&hash_set, node)];
+        graph_copy->nodes[i] = node_copy;
+    }
+    graph_copy->n_nodes = graph->n_nodes;
+
+    ggml_hash_set_free(&hash_set);
+    free(node_copies);
+    free(node_init);
+
+    return {
+        /* .buffer           = */ buffer,
+        /* .ctx_allocated    = */ ctx_allocated,
+        /* .ctx_unallocated  = */ ctx_unallocated,
+        /* .graph            = */ graph_copy,
+    };
+}
+```
+When we get to `graph_copy_init_tensor` and try to copy
+```console
+(gdb) p *node
+$18 = {type = GGML_TYPE_F32, buffer = 0x55555567c670, ne = {16, 1, 1, 1}, nb = {4, 64, 64, 64}, op = GGML_OP_MUL_MAT, op_params = {
+    0 <repeats 16 times>}, flags = 0, src = {0x555555691640, 0x555555691920, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+  view_src = 0x0, view_offs = 0, data = 0x5555556a09c0, name = "out", '\000' <repeats 60 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+```
+```c++
+static void graph_copy_init_tensor(struct ggml_hash_set * hash_set, struct ggml_tensor ** node_copies, bool * node_init, struct ggml_tensor * src) {
+    ...
+    else {
+        ggml_backend_tensor_copy(src, dst);
+    }
+}
+```
+This will call into ggml-backend.cpp.
+```c++
+void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst) {
+    GGML_ASSERT(ggml_are_same_layout(src, dst) && "cannot copy tensors with different layouts");
+
+    if (src == dst) {
+        return;
+    }
+
+    if (ggml_backend_buffer_is_host(src->buffer)) {
+        ggml_backend_tensor_set(dst, src->data, 0, ggml_nbytes(src));
+    } else if (ggml_backend_buffer_is_host(dst->buffer)) {
+        ggml_backend_tensor_get(src, dst->data, 0, ggml_nbytes(src));
+```
+```c++
+void ggml_backend_tensor_get(const struct ggml_tensor * tensor, void * data, size_t offset, size_t size) {
+    GGML_ASSERT(tensor);
+    ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+
+    if (size == 0) {
+        return;
+    }
+
+    GGML_ASSERT(buf != NULL && "tensor buffer not set");
+    GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
+    GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor read out of bounds");
+
+    buf->iface.get_tensor(buf, tensor, data, offset, size);
+}
+```
+But `buf` is of repack extra buffer type:
+```console
+(gdb) p ggml_backend_buffer_name(buf)
+$24 = 0x7ffff794a0ab "CPU_REPACK"
+```
+And it does not have a `get_tensor` function associated with it:
+```
+(gdb) p buf.iface.get_tensor
+$26 = (void (*)(ggml_backend_buffer_t, const ggml_tensor *, void *, size_t, size_t)) 0x0
+```
 
 _wip_
