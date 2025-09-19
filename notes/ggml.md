@@ -1411,17 +1411,73 @@ so a duplicate of the result tensor is created as set as the gradient.
 ### Backend
 Exploration code can be found in [backend.c](../fundamentals/ggml/src/backend.c).
 
-What is a backend in ggml?  
-A backend in ggml is an interface which describes and abstracts operations on a
-buffer. There are backends for CPU, CUDA, Vulkan, Metal, Kompute, SYCL, etc.
+Note that In the following section, and in c code in general when you see a type
+with the `_t` suffix it means that it is a type definition (typedef). In the
+case of of backend types the are defined 
+```c++
+typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
+typedef struct      ggml_backend_buffer * ggml_backend_buffer_t;
+typedef struct             ggml_backend * ggml_backend_t;
+```
+So we can write `ggml_backend_buffer_type_t` instead of having to write
+`struct ggml_backend_buffer_type *`.
 
-Recall that a buffer is a contiguous block of memory of fixed size and
-intended to hold data while moving that data between places (in this case the
-host and a device). And a buffer has a fixed size. This buffer can be on an
-accelerator, like a GPU, or on the host.
+`ggml_backend_buffer_type_t` is like a factory for how to create (alloc) buffers
+. It also decsribes the alignment (get_alighment) of memory, the maximum size
+(get_max_size) of a buffer, and it can calculate the size required for a tensor
+(get_alloc_size)in the buffer.
+describes how memory is allocated (malloc, mmap, GPU memory etc), in what format
+(repacked, quantized).
 
-All backends implement the same interface which enables them to be used in a
-uniform way and there can be multiple backends available at the same time.
+So with a buffer type we can allocate buffers of a specific types:
+* ggml_backend_cpu_buffer_type()          // CPU memory using malloc
+* ggml_backend_cuda_buffer_type()         // CUDA device memory
+* ggml_backend_cpu_repacked_buffer_type() // CPU memory using repacked format
+
+```c++
+    struct ggml_backend_buffer_type_i {
+        const char *          (*get_name)      (ggml_backend_buffer_type_t buft);
+        ggml_backend_buffer_t (*alloc_buffer)  (ggml_backend_buffer_type_t buft, size_t size);
+        size_t                (*get_alignment) (ggml_backend_buffer_type_t buft);
+        size_t                (*get_max_size)  (ggml_backend_buffer_type_t buft);
+        size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
+        bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
+    };
+
+    struct ggml_backend_buffer_type {
+        struct ggml_backend_buffer_type_i  iface;
+        ggml_backend_dev_t device;
+        void * context;
+    };
+```
+
+`ggml_backend_buffer_t` is the actual memory allocated by a buffer type.
+```c++
+ggml_backend_buffer_t (*alloc_buffer)  (ggml_backend_buffer_type_t buft, size_t size);
+```
+For example:
+```c++
+  ggml_backend_buffer_type_t buft = ggml_backend_cpu_buffer_type();
+  ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+```
+
+```c++
+    struct ggml_backend_buffer {
+        struct ggml_backend_buffer_i  iface;
+        ggml_backend_buffer_type_t    buft;
+        void * context;
+        size_t size;
+        enum ggml_backend_buffer_usage usage;
+    };
+```
+
+`ggml_backend_dev_t` is a compute device  like a CPU or a GPU.
+A device can have multiple buffer types, for example the CPU device can have
+* ggml_backend_cpu_buffer_type()          // CPU memory using malloc
+Extra buffer types:
+    * ggml_backend_cpu_repacked_buffer_type() // CPU memory using repacked format
+    * ggml_backend_cpu_kleidiai_buffer_type() (special ARM optimization)
+
 
 The backend interface is declared in `ggml/include/ggml/ggml-backend.h` and this
 header contains the functions of the interface to the backend. The actual
@@ -1445,41 +1501,37 @@ ggml/src/ggml-backend-impl.h:
 
     typedef void * ggml_backend_context_t;
 ```
-So a backend has a global unique identifier (guid), an interface and a context.
+So a backend has a global unique identifier (guid), an interface, and a context.
 And notice that the context can be anything, since it is a void pointer.
 
 The backend interface, `iface` above, is what defines the operations that are
 available for a backend which every backend must implement.
-`struct ggml_backend_i` has functions like (simplified for readability):
+`struct ggml_backend_i` has functions like :
 ```c
-    const char* get_name();
-    void free();
+    struct ggml_backend_i {
+        const char * (*get_name)(ggml_backend_t backend);
 
-    ggml_backend_buffer_type_t get_default_buffer_type();
-    void set_tensor_async(struct ggml_tensor* tensor,
-                          const void* data,
-                          size_t offset,
-                          size_t size);
-    void get_tensor_async(const struct ggml_tensor* tensor,
-                         void* data,
-                         size_t offset,
-                         size_t size);
-    bool cpy_tensor_async(ggml_backend_t backend_dst,
-                          const struct ggml_tensor* src,
-                          struct ggml_tensor * dst);
+        void (*free)(ggml_backend_t backend);
 
-   void synchronize();
-   ggml_backend_graph_plan_t graph_plan_create(const struct ggml_cgraph* cgraph);
-   enum ggml_status graph_plan_compute(ggml_backend_graph_plan_t plan);
-   enum ggml_status graph_compute(struct ggml_cgraph* cgraph);
-   bool supports_op(const struct ggml_tensor* op);
-   bool offload_op(const struct ggml_tensor* op);
+        void (*set_tensor_async)(ggml_backend_t backend, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
+        void (*get_tensor_async)(ggml_backend_t backend, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size);
+        bool (*cpy_tensor_async)(ggml_backend_t backend_src, ggml_backend_t backend_dst, const struct ggml_tensor * src, struct ggml_tensor * dst);
+        void (*synchronize)(ggml_backend_t backend);
+        ggml_backend_graph_plan_t (*graph_plan_create) (ggml_backend_t backend, const struct ggml_cgraph * cgraph);
+        void                      (*graph_plan_free)   (ggml_backend_t backend, ggml_backend_graph_plan_t plan);
+        void                      (*graph_plan_update) (ggml_backend_t backend, ggml_backend_graph_plan_t plan, const struct ggml_cgraph * cgraph);
+        enum ggml_status          (*graph_plan_compute)(ggml_backend_t backend, ggml_backend_graph_plan_t plan);
+        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+        void (*event_record)(ggml_backend_t backend, ggml_backend_event_t event);
+        void (*event_wait)  (ggml_backend_t backend, ggml_backend_event_t event);
+    };
 
-   ggml_backend_event_t event_new();
-   void event_free(ggml_backend_event_t event);
-   void event_record(ggml_backend_event_t event);
-   void event_wait(ggml_backend_event_t event);
-   void event_synchronize(ggml_backend_event_t event);
+    struct ggml_backend {
+        ggml_guid_t guid;
+        struct ggml_backend_i iface;
+        ggml_backend_dev_t device;
+        void * context;
+    };
 ```
 Not all backends support async operations, for example the CPU backend does not
 and the same goes for the support of events which I think are only for the
@@ -7829,9 +7881,11 @@ $20 = 18
 So in this case we are letting ggml create the memory buffer that is used, and
 it will be freed when the context is freed. This is useful when we have
 sort-lived operations, like we want to run some operations and get the result and
-then free the context. But other times we want to keep the tensors around and for
-that, since the tensor is a pointer into the memory buffer we need to keep the
-memory buffer around, and that means we have to create it ourselves and it will
+then free the context.
+
+But other times we want to keep the tensors around and for that, since the tensor
+is a pointer into the memory buffer we need to keep the memory buffer around, and
+that means we have to create it ourselves, by setting `mem_buffer`  and it will
 not be freed by ggml_free.
 
 ### Internal function "protection"
