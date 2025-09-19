@@ -1864,156 +1864,155 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, 
     return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));
 }
 ```
-And `ggml_backend_alloc_ctx_tensors_from_buft` can also be found in ggml-alloc.c:
-```c
-ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx,
-    ggml_backend_buffer_type_t buft) {
+
+```c++
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
     GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
 
+    // Different backends may need different alignement, CPU might want 32 for
+    // SIMD, GPU might want something else.
     size_t alignment = ggml_backend_buft_get_alignment(buft);
+    // Different backends may have different maximum allocation limit.
+    // This is the maximum size of a single buffer, not the total size of all
+    // buffers. When we have enough tensors to fill up a buffer we allocate
+    // it and continue with a new buffer.
     size_t max_size = ggml_backend_buft_get_max_size(buft);
+
+    // Array of buffers, but mostly just one.
     ggml_backend_buffer_t * buffers = NULL;
     size_t n_buffers = 0;
 
     size_t cur_buf_size = 0;
     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-```
-```console
-(gdb) p alignment 
-$4 = 128
-(gdb) p max_size 
-$5 = 18446744073709551615
+        size_t this_size = 0;
+        // If not allocated yet, we need to allocate space for the tensor and
+        // this calculates the space required for the current tensor, taking
+        // alignment into account.
+        if (t->data == NULL && t->view_src == NULL) {
+            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+        }
 
-(gdb) p *first
-$8 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU,
-      buffer = 0x0, ne = {10, 1, 1, 1}, nb = {4, 40, 40, 40},
-      op = GGML_OP_NONE, op_params = {0 <repeats 16 times>},
-      flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-      0x0, 0x0, 0x0, 0x0},
-      perf_runs = 0, perf_cycles = 0, perf_time_us = 0,
-      view_src = 0x0, view_offs = 0,
-      data = 0x0,
-      name = "x", '\000' <repeats 62 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
-```
-Inside the above for loop we have:
-```console
-(gdb) l
-926	
-927	    size_t cur_buf_size = 0;
-928	    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
-929	    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-930	        size_t this_size = 0;
-931	        if (t->data == NULL && t->view_src == NULL) {
-932	            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
-933	        }
-934	
-935	        if (this_size > max_size) {
+        // We then check that the current buffer can hold the tensor and if so
+        // we allocate the current tensors, notice that we passing in first and
+        // the current tensor.
+        if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
+            // allocate tensors in the current buffer
+            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
+                return NULL;
+            }
+            // reset first to be the current tensor.
+            first = t;
+            cur_buf_size = this_size;
+        } else {
+            // if we are under the max size we just add the size of the
+            // current tensor to the current buffer size.
+            cur_buf_size += this_size;
+        }
+    }
 
-(gdb) p t->data
-$9 = (void *) 0x0
-(gdb) p t->view_src
-$10 = (struct ggml_tensor *) 0x0
+    // allocate remaining tensors or all if there was not enough to fill one
+    // buffer yet.
+    if (cur_buf_size > 0) {
+        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+            return NULL;
+        }
+    }
 
-(gdb) p this_size
-$14 = 128
+    if (n_buffers == 0) {
+#ifndef NDEBUG
+        GGML_LOG_DEBUG("%s: all tensors in the context are already allocated\n", __func__);
+#endif
+        return NULL;
+    }
 
-(gdb) l
-959	    // allocate remaining tensors
-960	    if (cur_buf_size > 0) {
-961	        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
-962	            return NULL;
-963	        }
-964	    }
-(gdb) s
-
-(gdb) l
-878	
-879	static bool alloc_tensor_range(struct ggml_context * ctx,
-880	        struct ggml_tensor * first, struct ggml_tensor * last,
-881	        ggml_backend_buffer_type_t buft, size_t size,
-882	        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
-883	    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
-884	    if (buffer == NULL) {
-885	#ifndef NDEBUG
-886	        fprintf(stderr, "%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(buft), size);
-887	#endif
-```
-`ggml_backed_buft_alloc_buffer` will
-```console
-21	ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
-22	    return buft->iface.alloc_buffer(buft, size);
-23	}
-
-(gdb) l
-492	GGML_CALL static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
-493	    ggml_backend_cuda_buffer_type_context * buft_ctx = (ggml_backend_cuda_buffer_type_context *)buft->context;
-494	
-495	    ggml_cuda_set_device(buft_ctx->device);
-496	
-497	    size = std::max(size, (size_t)1); // cudaMalloc returns null for size 0
-498	
-499	    void * dev_ptr;
-500	    cudaError_t err = cudaMalloc(&dev_ptr, size);
-501	    if (err != cudaSuccess) {
-```
-Notice that this is allocating 128 bytes of memory on the GPU which the device
-pointer (dev_ptr) will point to if successful.
-
-```console
-506	    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr);
-507	
-508	    return ggml_backend_buffer_init(buft, ggml_backend_cuda_buffer_interface, ctx, size);
-509	}
-
-(gdb) p *ctx
-$4 = {device = 0, dev_ptr = 0x7fff94c00200, name = "CUDA0"}
-```
-The final thing to happen in this function is that ggml_backend_buffer_init is
-called.
-```c
-GGML_CALL ggml_backend_buffer_t ggml_backend_buffer_init(
-               ggml_backend_buffer_type_t      buft,
-        struct ggml_backend_buffer_i           iface,
-               ggml_backend_buffer_context_t   context,
-               size_t                          size) {
-    ggml_backend_buffer_t buffer = malloc(sizeof(struct ggml_backend_buffer));
-
-    (*buffer) = (struct ggml_backend_buffer) {
-        /* .interface = */ iface,
-        /* .buft      = */ buft,
-        /* .context   = */ context,
-        /* .size      = */ size,
-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
-    };
-
+    ggml_backend_buffer_t buffer;
+    if (n_buffers == 1) {
+        buffer = buffers[0];
+    } else {
+        buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
+    }
+    free(buffers);
     return buffer;
 }
 ```
-
-```console
-
-895	    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
-896	
-897	    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
-898	        if (t->data == NULL) {
-899	            if (t->view_src == NULL) {
-900	                ggml_tallocr_alloc(&tallocr, t);
-901	            } else if (t->buffer == NULL) {
-902	                ggml_backend_view_init(buffer, t);
-903	            }
-904	        } else {
+So the actual allocation happens in the `alloc_tensor_range`:
+```c++
+   alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)
 ```
-```c
-void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
+And just to clarify the backend_buffer_type_t is a typedef for a pointer to
+a backend_buffer_type which is an object that describes how to allocate memory
+in addition to be able to create a buffer from of that type, think of it like
+a factory for buffers of a certain type. The other information it exposes is
+useful for calculating the size of a tensor in that buffer type, the alignment
+and the maximum size of a buffer of that type.
+```c++
+static bool alloc_tensor_range(struct ggml_context * ctx,
+        struct ggml_tensor * first, struct ggml_tensor * last,
+        ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+
+    // The following is using the factory function we mentioned above to create
+    // a buffer of the specified type and size. For a CPU backend this would
+    // use ggml_aligned_malloc for example. And also call ggml_backend_buffer_init
+    // if the backend implements that function.
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+    if (buffer == NULL) {
+        GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(buft), size);
+        free_buffers(buffers, n_buffers);
+        return false;
+    }
+
+    // The following is creating an array of ggml_backend_buffer_t if n_buffers
+    // using the n_buffers + 1.
+    *buffers = realloc(*buffers, sizeof(ggml_backend_buffer_t) * (*n_buffers + 1));
+    // Sets the first entry in the above array to the newly created buffer.
+    (*buffers)[(*n_buffers)++] = buffer;
+
+    // We create a new tensor allocator for the buffer.
+    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+
+    // And again we have the same type of iteration over the tensors that we
+    // way before.
+    for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
+        enum ggml_status status = GGML_STATUS_SUCCESS;
+        // check if the tensor has data allocated.
+        if (t->data == NULL) {
+            // check that the tensor is not a view of another tensor.
+            if (t->view_src == NULL) {
+                status = ggml_tallocr_alloc(&tallocr, t);
+            } else if (t->buffer == NULL) {
+                status = ggml_backend_view_init(t);
+            }
+        } else {
+            if (t->view_src != NULL && t->buffer == NULL) {
+                // view of a pre-allocated tensor
+                status = ggml_backend_view_init(t);
+            }
+        }
+        if (status != GGML_STATUS_SUCCESS) {
+            GGML_LOG_ERROR("%s: failed to initialize tensor %s\n", __func__, t->name);
+            free_buffers(buffers, n_buffers);
+            return false;
+        }
+    }
+
+    return true;
+}
+```
+```console
+(gdb) p ggml_backend_buffer_name(buffer)
+$17 = 0x7ffff7f5d6b5 "CPU"
+```
+```c++
+enum ggml_status ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
     size_t size = ggml_backend_buffer_get_alloc_size(talloc->buffer, tensor);
     size = GGML_PAD(size, talloc->alignment);
 
     if (talloc->offset + size > ggml_backend_buffer_get_size(talloc->buffer)) {
-        fprintf(stderr, "%s: not enough space in the buffer to allocate %s (needed %zu, available %zu)\n",
+        GGML_LOG_ERROR("%s: not enough space in the buffer to allocate %s (needed %zu, available %zu)\n",
                 __func__, tensor->name, size, ggml_backend_buffer_get_size(talloc->buffer) - talloc->offset);
-        GGML_ASSERT(!"not enough space in the buffer");
-        return;
+        GGML_ABORT("not enough space in the buffer");
     }
 
     void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
@@ -2021,93 +2020,32 @@ void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tenso
 
     assert(((uintptr_t)addr % talloc->alignment) == 0);
 
-    ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
+    return ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
 }
-``` 
-The call to `ggml_backend_tensor_alloc` will set the tensors buffer and
-data (which my be null):
+```
 ```c
-void ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
-    GGML_ASSERT(tensor->buffer == NULL);
-    GGML_ASSERT(tensor->data == NULL);
-    GGML_ASSERT(tensor->view_src == NULL);
-    GGML_ASSERT(addr >= ggml_backend_buffer_get_base(buffer));
-    GGML_ASSERT((char *)addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
-                (char *)ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
-
+enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
+    ...
     tensor->buffer = buffer;
     tensor->data = addr;
-    ggml_backend_buffer_init_tensor(buffer, tensor);
+    return ggml_backend_buffer_init_tensor(buffer, tensor);
 }
 ```
-The last function call will then `ggml_backend_buffer_init_tensor` will then
-...
-
-Before this call the tensor looks like this:
-```console
-(gdb) p *tensor
-$38 = {type = GGML_TYPE_F32, backend = GGML_BACKEND_TYPE_CPU, buffer = 0x41ac880, ne = {10, 1, 1, 1}, nb = {4, 40, 
-    40, 40}, op = GGML_OP_NONE, op_params = {0 <repeats 16 times>}, flags = 0, grad = 0x0, src = {0x0, 0x0, 0x0, 
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, perf_runs = 0, perf_cycles = 0, perf_time_us = 0, view_src = 0x0, 
-  view_offs = 0, data = 0x7fff94c00200, name = "x", '\000' <repeats 62 times>, extra = 0x0, 
-  padding = "\000\000\000\000\000\000\000"}
-```
-
-```c
-GGML_CALL void ggml_backend_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
-    // init_tensor is optional
-    if (buffer->iface.init_tensor) {
-        buffer->iface.init_tensor(buffer, tensor);
-    }
+And this is where the tensor is assigned the buffer and the data pointer is set
+to the address into the buffer. The the backend is given a chance to do any
+thing it may need to initialize the tensor in the backend, for example this
+is where repack's `ggml_backend_cpu_repack_buffer_init_tensor` function is
+called which sets the tensors extra field:
+```c++
+static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
+    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
+    ...
 }
 ```
-```console
-(gdb) p buffer->iface.init_tensor
-$39 = (void (*)(ggml_backend_buffer_t, 
-    struct ggml_tensor *)) 0x4e20c4 <ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t, ggml_tensor*)>
-```
-So that will land us in `ggml_backend_cuda_buffer_init_tensor`:
-```console
-(gdb) s
-ggml_backend_cuda_buffer_init_tensor (buffer=0x41ac880, tensor=0x7fffcaa00030)
-    at /home/danielbevenius/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-cuda.cu:402
-402	    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
-```
-So lets take a closer look at this function:
-```c
-GGML_CALL static void ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
-    ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
-
-    if (tensor->view_src != NULL) {
-        assert(tensor->view_src->buffer->buft == buffer->buft);
-        return;
-    }
-
-    if (ggml_is_quantized(tensor->type)) {
-        // initialize padding to 0 to avoid possible NaN values
-        size_t original_size = ggml_nbytes(tensor);
-        size_t padded_size = ggml_backend_buft_get_alloc_size(buffer->buft, tensor);
-
-        if (padded_size > original_size && tensor->view_src == nullptr) {
-            ggml_cuda_set_device(ctx->device);
-            CUDA_CHECK(cudaMemset((char *)tensor->data + original_size, 0, padded_size - original_size));
-        }
-    }
-    // The following line was added by me as a suggestion that the cuda backend
-    // should set this to GPU (change it from CPU).
-    tensor->backend = GGML_BACKEND_TYPE_GPU;
-}
-```
-```console
-(gdb) p *ctx
-$41 = {device = 0, dev_ptr = 0x7fff94c00200, name = "CUDA0"}
-(gdb) p tensor->view_src
-$42 = (ggml_tensor *) 0x0
-(gdb) p ggml_is_quantized(tensor->type)
-$43 = false
-```
-
-_wip_
+The ggml_context is like a memory areana which manages various objects. Tensors
+have metadata inte their object and pointers to a backen buffer and an address
+within the buffer.
+And the above is done for all tensors in the range.
 
 #### Forward expand
 After we have created tensors we need to create a computation graph that will
