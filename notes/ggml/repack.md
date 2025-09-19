@@ -2532,5 +2532,32 @@ And it does not have a `get_tensor` function associated with it:
 (gdb) p buf.iface.get_tensor
 $26 = (void (*)(ggml_backend_buffer_t, const ggml_tensor *, void *, size_t, size_t)) 0x0
 ```
+Would it perhaps make sense to add a `get_tensor` function to the repack buffer
+type?  
+I'm thinking if this is only used for copying tensors between backends and not
+used for comparing the tensors data (my understanding is that only the
+result/output tensors are compared) then it might be ok to just copy the
+repackaged data.
+
+Trying this out I get:
+```console
+[MUL_MAT] NaN at index 0 (CPU-alderlake=0.000000 CPU-ref=-nan)   
+  MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],v=0,o=1): FAIL
+```
+So the copying of data happens before the graph computation in
+`ggml_backend_compare_graph_backend`. There is only one graph and it is copied
+into backend2 (the reference CPU). For non-repack this would just copy the input
+tensors which is fine and what we actually want so that we have the same input
+for both backends, it is the result we are interested in. But in the case of
+repack, when we set the input tensors data repack's set_tensor will have repacked
+the data and this is what is being copied (since we added a get_tensor for repack).
+So the second backend will execute with repacked data and the first backend will
+also operate on repacked data which is not what we want do to. We want to compare
+the results of repack againt the reference implementation without repack.
+
+What we should be testing:
+* Backend1: Regular data with repack computation optimizations
+* Backend2: Regular data with regular computation
+* Compare the results
 
 _wip_
