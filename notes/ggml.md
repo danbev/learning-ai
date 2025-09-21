@@ -1538,7 +1538,7 @@ and the same goes for the support of events which I think are only for the
 async functions.
 
 
-### Tensor Allocator
+### Tensor Allocator (tallocr)
 This is a struct declared in `ggml/include/ggml-alloc.h` and manages tensor
 `data` allocations from a specific backend buffer:
 ```c
@@ -1904,7 +1904,7 @@ does not support events which I'm guessing are used for the asynchronous
 operations.
 
 And the `ggml_backend_cpu_buffer_type` function is defined as follows:
-```
+```c++
 GGML_CALL ggml_backend_buffer_type_t ggml_backend_cpu_buffer_type(void) {
     static struct ggml_backend_buffer_type ggml_backend_cpu_buffer_type = {
         /* .iface = */ {
@@ -2169,6 +2169,38 @@ The ggml_context is like a memory areana which manages various objects. Tensors
 have metadata inte their object and pointers to a backen buffer and an address
 within the buffer.
 And the above is done for all tensors in the range.
+
+### ggml_dyn_tallocr
+We previously looked at `ggml_tallocr` which is used to has actual backend
+buffers, it uses `ggml_backend_buft_alloc_buffer`, and memory pointers and it is
+about allocating tensor data/payload memory. The allocations in it are linear
+and the offset only moves forward, there is no concept of reusing memory in any
+way.
+
+`ggml_dyn_tallocr` does not handle actual concrete memory, so it does not have
+or use a `ggml_backend_buffer` but simulates allocations an deallocations. It
+does calculate memory offsets and sizes.
+
+So the dynamic tensors (data) allocator is used during the "planning" phase to
+calculate the offsets into the buffers later. It can calculate an optimal 
+layout of the data in memory by reusing memory that is no longer needed. This
+information is then later used to allocate the actual memory using
+`ggml_tallocr`.
+
+```c++
+// dynamic tensor allocator
+
+struct free_block {
+    size_t offset;
+    size_t size;
+};
+
+struct ggml_dyn_tallocr {
+    size_t alignment;
+    int n_free_blocks;
+    struct free_block free_blocks[MAX_FREE_BLOCKS];
+    size_t max_size;
+```
 
 #### Forward expand
 After we have created tensors we need to create a computation graph that will
@@ -5858,138 +5890,6 @@ inline static void ggml_vec_scale_f32(const int n, float * y, const float   v) {
 }
 ```
 
-
-### simd
-There is SIMD support in ggml which is enabled by using pre-processor macros
-and these are based on the features of the target CPU that is being compiled
-for.
-
-When I'm on Linux I can see the that the following macros will be defined
-and used:
-```c
-#define GGML_SIMD
-
-
-// F32 AVX
-
-#define GGML_F32_STEP 32
-#define GGML_F32_EPR  8
-
-#define GGML_F32x8         __m256
-#define GGML_F32x8_ZERO    _mm256_setzero_ps()
-#define GGML_F32x8_SET1(x) _mm256_set1_ps(x)
-#define GGML_F32x8_LOAD    _mm256_loadu_ps
-#define GGML_F32x8_STORE   _mm256_storeu_ps
-#if defined(__FMA__)
-    #define GGML_F32x8_FMA(a, b, c) _mm256_fmadd_ps(b, c, a)
-#else
-    #define GGML_F32x8_FMA(a, b, c) _mm256_add_ps(_mm256_mul_ps(b, c), a)
-#endif
-#define GGML_F32x8_ADD     _mm256_add_ps
-#define GGML_F32x8_MUL     _mm256_mul_ps
-#define GGML_F32x8_REDUCE(res, x)                                 \
-do {                                                              \
-    int offset = GGML_F32_ARR >> 1;                               \
-    for (int i = 0; i < offset; ++i) {                            \
-        x[i] = _mm256_add_ps(x[i], x[offset+i]);                  \
-    }                                                             \
-    offset >>= 1;                                                 \
-    for (int i = 0; i < offset; ++i) {                            \
-        x[i] = _mm256_add_ps(x[i], x[offset+i]);                  \
-    }                                                             \
-    offset >>= 1;                                                 \
-    for (int i = 0; i < offset; ++i) {                            \
-        x[i] = _mm256_add_ps(x[i], x[offset+i]);                  \
-    }                                                             \
-    const __m128 t0 = _mm_add_ps(_mm256_castps256_ps128(x[0]),    \
-                                 _mm256_extractf128_ps(x[0], 1)); \
-    const __m128 t1 = _mm_hadd_ps(t0, t0);                        \
-    res = (ggml_float) _mm_cvtss_f32(_mm_hadd_ps(t1, t1));        \
-} while (0)
-// TODO: is this optimal ?
-
-#define GGML_F32_VEC        GGML_F32x8
-#define GGML_F32_VEC_ZERO   GGML_F32x8_ZERO
-#define GGML_F32_VEC_SET1   GGML_F32x8_SET1
-#define GGML_F32_VEC_LOAD   GGML_F32x8_LOAD
-#define GGML_F32_VEC_STORE  GGML_F32x8_STORE
-#define GGML_F32_VEC_FMA    GGML_F32x8_FMA
-#define GGML_F32_VEC_ADD    GGML_F32x8_ADD
-#define GGML_F32_VEC_MUL    GGML_F32x8_MUL
-#define GGML_F32_VEC_REDUCE GGML_F32x8_REDUCE
-
-// F16 AVX
-
-#define GGML_F16_STEP 32
-#define GGML_F16_EPR  8
-
-// F16 arithmetic is not supported by AVX, so we use F32 instead
-
-#define GGML_F32Cx8             __m256
-#define GGML_F32Cx8_ZERO        _mm256_setzero_ps()
-#define GGML_F32Cx8_SET1(x)     _mm256_set1_ps(x)
-
-#if defined(__F16C__)
-// the  _mm256_cvt intrinsics require F16C
-#define GGML_F32Cx8_LOAD(x)     _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(x)))
-#define GGML_F32Cx8_STORE(x, y) _mm_storeu_si128((__m128i *)(x), _mm256_cvtps_ph(y, 0))
-#else
-static inline __m256 __avx_f32cx8_load(ggml_fp16_t *x) {
-    float tmp[8];
-
-    for (int i = 0; i < 8; i++) {
-        tmp[i] = GGML_FP16_TO_FP32(x[i]);
-    }
-
-    return _mm256_loadu_ps(tmp);
-}
-static inline void __avx_f32cx8_store(ggml_fp16_t *x, __m256 y) {
-    float arr[8];
-
-    _mm256_storeu_ps(arr, y);
-
-    for (int i = 0; i < 8; i++)
-        x[i] = GGML_FP32_TO_FP16(arr[i]);
-}
-#define GGML_F32Cx8_LOAD(x)     __avx_f32cx8_load(x)
-#define GGML_F32Cx8_STORE(x, y) __avx_f32cx8_store(x, y)
-#endif
-
-#define GGML_F32Cx8_FMA         GGML_F32x8_FMA
-#define GGML_F32Cx8_ADD         _mm256_add_ps
-#define GGML_F32Cx8_MUL         _mm256_mul_ps
-#define GGML_F32Cx8_REDUCE      GGML_F32x8_REDUCE
-
-#define GGML_F16_VEC                GGML_F32Cx8
-#define GGML_F16_VEC_ZERO           GGML_F32Cx8_ZERO
-#define GGML_F16_VEC_SET1           GGML_F32Cx8_SET1
-#define GGML_F16_VEC_LOAD(p, i)     GGML_F32Cx8_LOAD(p)
-#define GGML_F16_VEC_STORE(p, r, i) GGML_F32Cx8_STORE(p, r[i])
-#define GGML_F16_VEC_FMA            GGML_F32Cx8_FMA
-#define GGML_F16_VEC_ADD            GGML_F32Cx8_ADD
-#define GGML_F16_VEC_MUL            GGML_F32Cx8_MUL
-#define GGML_F16_VEC_REDUCE         GGML_F32Cx8_REDUCE
-
-// GGML_F32_ARR / GGML_F16_ARR
-//   number of registers to use per step
-#ifdef GGML_SIMD
-#define GGML_F32_ARR (GGML_F32_STEP/GGML_F32_EPR)
-#define GGML_F16_ARR (GGML_F16_STEP/GGML_F16_EPR)
-#endif
-```
-`GGML_F16_STEP 32` defines how may many elements can be processed in a single
-SIMD instruction for F16 (half precision) floating point numbers.
-`GGML_F16_EPR  8` defines the number of elements per register for F16.
-`GGML_F16_ARR (GGML_F16_STEP/GGML_F16_EPR)` defines the number of registers to
-use per step for F16 (half precision) floating point numbers.
-
-So we can process 32 elements in a single SIMD instruction and 8 elements can
-fit into a single register. So the number of registers we need to user for one
-step is 32/8 = 4. 
-So we can process 32 F16 numbers and we need 4 registers to do so each storing
-8 floating point numbers.
-
-
 ### Graph Allocator (gallocr)
 This section is about the graph allocator in GGML and performs lifetime analysis
 accross the entire computation graph. It can optionally assign tensors to
@@ -5999,8 +5899,8 @@ that have non-overlapping lifetimes. And it can also handle multiple backends
 at the same time. So lets dig in.
 
 An example of using this can be found here
-[galloc.c](../fundamentals/ggml/src/galloc.c) and we'll be using this example to
-step through the code.
+[galloc.c](../fundamentals/ggml/src/galloc.c) and this section will use this
+example to step through the code.
 
 ```c++
 struct hash_node {
@@ -6029,8 +5929,8 @@ struct leaf_alloc {
 
 
 struct ggml_gallocr {
-    ggml_backend_buffer_type_t * bufts;     // [n_buffers]
-    ggml_backend_buffer_t * buffers;        // [n_buffers]
+    ggml_backend_buffer_type_t * bufts;     // [n_buffers] // buffer types 
+    ggml_backend_buffer_t * buffers;        // [n_buffers] // actual buffers
     struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
     int n_buffers;
 
@@ -6051,7 +5951,7 @@ $ gdb --args bin/galloc
 
 The code in the example creates a graph in the same way that we "usually" do and
 is done in the same way as the other examples.
-```c
+```c++
   struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, result);
 ```
@@ -6072,8 +5972,7 @@ ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
 ```
 Notice that `ggml_gallocr_new_n` has a `n` in it so it can take an array of
 backend buffer types and not just a pointer to a single one which is the case
-here. Recall that passing an array is really just passing a pointer to the first
-element of the array.
+here.
 
 The first things that happens is that the galloc struct is calloced (allocated
 and cleared):
@@ -6149,6 +6048,54 @@ I'll revisit this struct later when it is used.
 That will return us back in the example and we will call:
 ```c
   ggml_gallocr_alloc_graph(galloc, c_graph);
+```
+I've found it easy to get a bit lost when stepping down into this function so
+I want to provide an overview here so that I can keep track of where I am.
+```c++
+bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    // Check if we need to reallocate the graph
+    if (ggml_gallocr_needs_realloc(galloc, graph)) {
+        if (galloc->n_buffers == 1) {
+            GGML_LOG_DEBUG("%s: reallocating buffers automatically\n", __func__);
+            // Reserve space for the graph, "planning phase"
+            if (!ggml_gallocr_reserve(galloc, graph)) {
+                return false;
+            }
+        } else {
+            GGML_LOG_DEBUG("%s: cannot reallocate multi buffer graph automatically, call reserve\n", __func__);
+            return false;
+        }
+    }
+
+    // reset buffers
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        if (galloc->buffers[i] != NULL) {
+            ggml_backend_buffer_reset(galloc->buffers[i]);
+        }
+    }
+
+    // Use the allocation plan to allocate memory for the graph
+    for (int i = 0; i < graph->n_leafs; i++) {
+        struct ggml_tensor * leaf = graph->leafs[i];
+        struct leaf_alloc * leaf_alloc = &galloc->leaf_allocs[i];
+        ggml_gallocr_init_tensor(galloc, leaf, &leaf_alloc->leaf);
+    }
+    // Use the allocation plan to allocate memory for the graph
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        struct node_alloc * node_alloc = &galloc->node_allocs[i];
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            struct ggml_tensor * src = node->src[j];
+            if (src == NULL) {
+                continue;
+            }
+            ggml_gallocr_init_tensor(galloc, src, &node_alloc->src[j]);
+        }
+        ggml_gallocr_init_tensor(galloc, node, &node_alloc->dst);
+    }
+
+    return true;
+}
 ```
 
 ```c++
@@ -6821,8 +6768,8 @@ block:
                                                        (SIZE_MAX - 64)
 ```
 And before the offset is returned  `alloc->max_size` will be updated to 64.
-One things to keep in mind is that these blocks are used to store tensor data 
-and they are referring to offsets and sizes in a backend buffer.
+One things to keep in mind is that these blocks are simulating where tensor data 
+will be stored referring to offsets and sizes in a backend buffer (id).
 
 And the size was determined by:
 ```console
@@ -7228,8 +7175,8 @@ The else clause will be taken as node a is not a view. Now, `hn` is the hash
 node for `result` and `p_hn` is the hash node for `a`. So this is updating
 the `result` hash node to have the same buffer id and offset as `a` and then
 setting `a`s hash node to not be allocated.
-So for the result tensor if we look up the hash node is will now have the same
-buffer id and offset as `a`. So result will reuse the buffer of `a`?
+So for the result tensor if we look up the hash node it will now have the same
+buffer id and offset as `a`. So result will reuse the buffer of `a`.
 
 This will then return us back to `ggml_gallocr_alloc_graph_impl`:
 ```c
@@ -7460,7 +7407,7 @@ Next, we will do something similar for the leaf nodes. We first allocate the
     }
     galloc->n_leafs = graph->n_leafs;
 ```
-One difference here is hot calloc is called. With the `node_allocs` we used
+One difference here is how calloc is called. With the `node_allocs` we used
 the struct type to get the size of the struct. Here we are using the first
 element of the array to get the size of the array. These are equivalent in this
 situation but perhaps one can argue that using the first element might be more
