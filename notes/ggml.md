@@ -5180,26 +5180,7 @@ parameters using `struct ggml_init_params`:
 ```
 So what does `no_alloc` actually do?  
 
-Lets take a look using the example [no-alloc.c](../fundamentals/ggml/src/no-alloc.c).
-```console
-$ gdb --args ./bin/no-alloc 
-Reading symbols from ./bin/no-alloc...
-(gdb) br no-alloc.c:16
-Breakpoint 1 at 0x4b65: file src/no-alloc.c, line 16.
-(gdb) r
-(gdb) p *no_alloc_ctx
-$2 = {mem_size = 16777216,
-      mem_buffer = 0x7ffff6a00010,
-      mem_buffer_owned = true,
-      no_alloc = false,
-      no_alloc_save = false,
-      n_objects = 0,
-      objects_begin = 0x0,
-      objects_end = 0x0,
-      scratch = {offs = 0, size = 0, data = 0x0},
-      scratch_save = {offs = 0, size = 0, data = 0x0}}
-```
-Now, lets see what happens when we create a tensor using this context.
+Now, lets see what happens when we create a tensor using this context:
 ```c
 static struct ggml_tensor * ggml_new_tensor_impl(
         struct ggml_context * ctx,
@@ -5208,79 +5189,63 @@ static struct ggml_tensor * ggml_new_tensor_impl(
         const int64_t       * ne,
         struct ggml_tensor  * view_src,
         size_t                view_offs) {
-        ...
 
-    size_t obj_alloc_size = 0;
-    if (view_src == NULL && !ctx->no_alloc) {
-        if (ctx->scratch.data != NULL) {
-```
-`view_src` will be NULL in our case as we have set `.no_alloc = false` above
-so this if statement will have its block executed.
+    GGML_ASSERT(type >= 0 && type < GGML_TYPE_COUNT);
+    GGML_ASSERT(n_dims >= 1 && n_dims <= GGML_MAX_DIMS);
 
-```c
-    if (view_src == NULL && !ctx->no_alloc) {
-        if (ctx->scratch.data != NULL) {
-           ...
-        } else {
-            // allocate tensor data in the context's memory pool
-            obj_alloc_size = data_size;
-        }
+    // find the base tensor and absolute offset
+    if (view_src != NULL && view_src->view_src != NULL) {
+        view_offs += view_src->view_offs;
+        view_src   = view_src->view_src;
     }
-```
-So in this case `obj_alloc_size` will be set to 4 which will be used in the
-creation of a new ggml object:
-```c
-struct ggml_object * const obj_new = ggml_new_object(ctx,
-    GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
-```
-So this will use the memory of the context `mem_buffer`. So when `no_alloc` is
-false this what will happen.
 
-Lets try an example where we set `no_alloc` to true. The context will still get
-its `mem_buffer` allocated just as in the previous example. But the context will
-have `no_alloc` and `no_alloc_save` set to true: So when we create a tensor
-```console
-(gdb) p *ctx
-$3 = {mem_size = 1024, mem_buffer = 0x5555556b0740, mem_buffer_owned = true,
-no_alloc = true, no_alloc_save = true, n_objects = 0, objects_begin = 0x0,
-objects_end = 0x0, scratch = {offs = 0, size = 0, data = 0x0}, scratch_save = {offs = 0, size = 0, data = 0x0}}
-```
-So lets see if there is any difference when creating a tensor. There is a
-difference in this case as we won't enter the following if statement and
-hence `obj_alloc_size` will be 0:
-```c
     size_t data_size = ggml_row_size(type, ne[0]);
+    for (int i = 1; i < n_dims; i++) {
+        data_size *= ne[i];
+    }
+
+    GGML_ASSERT(view_src == NULL || data_size == 0 || data_size + view_offs <= ggml_nbytes(view_src));
+
+    void * data = view_src != NULL ? view_src->data : NULL;
+    if (data != NULL) {
+        data = (char *) data + view_offs;
+    }
 
     size_t obj_alloc_size = 0;
 
+    // if this is not a view tensor and no_alloc is false
     if (view_src == NULL && !ctx->no_alloc) {
-       ...
+        // allocate tensor data in the context's memory pool
+        obj_alloc_size = data_size;
     }
-    struct ggml_object * const obj_new = ggml_new_object(ctx, GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
-```
-In this case `obj_alloc_size` will be 0 and not the size of `data_size` which
-was 4 in the previous example.  So the size of this object created will not
-include the data for it after the tensor struct. This makes sense as we might
-not won't to allocated the data for the tensor in the main memory and instead
-use a different backend.
 
-Now, we can also pass in a `mem_buffer` to the context which will be used and
-no memory will be allocated internally:
-```c
-  char stack_buffer[1024];
-  struct ggml_init_params sb_params = {
-    .mem_size   = 1024,
-    .mem_buffer = stack_buffer,
-    .no_alloc   = true,
-  };
-  struct ggml_context* sb_ctx = ggml_init(sb_params);
-```
-And we can inspect the memory used:
-```console
-(gdb) p sb_ctx->mem_buffer
-$7 = (void *) 0x7fffffffd5e0
-(gdb) p &stack_buffer
-$8 = (char (*)[1024]) 0x7fffffffd5e0
+    // We create a new ggml_object of type GGML_OBJECT_TYPE_TENSOR, and optionally
+    // we allocated additional data for the tensors data after tensor metadata
+    // in memory. 
+    struct ggml_object * const obj_new = ggml_new_object(ctx, GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
+    GGML_ASSERT(obj_new);
+
+    struct ggml_tensor * const result = (struct ggml_tensor *)((char *)ctx->mem_buffer + obj_new->offs);
+
+    *result = (struct ggml_tensor) {
+        /*.type         =*/ type,
+        /*.buffer       =*/ NULL,
+        /*.ne           =*/ { 1, 1, 1, 1 },
+        /*.nb           =*/ { 0, 0, 0, 0 },
+        /*.op           =*/ GGML_OP_NONE,
+        /*.op_params    =*/ { 0 },
+        /*.flags        =*/ 0,
+        /*.src          =*/ { NULL },
+        /*.view_src     =*/ view_src,
+        /*.view_offs    =*/ view_offs,
+        // And notice here that we are setting data to result which is the
+        // pointer to ggml_tensor struct, and adding 1 will create a pointer
+        // to past that struct which is where the data will be located.
+        /*.data         =*/ obj_alloc_size > 0 ? (void *)(result + 1) : data,
+        /*.name         =*/ { 0 },
+        /*.extra        =*/ NULL,
+        /*.padding      =*/ { 0 },
+    };
 ```
 
 ### ggml_conv_1d
@@ -7948,3 +7913,71 @@ used by the user. For example:
  this will the macro be defined and the function will be replaced with the
  internal name. This way the function can be used externally but not by the
  internal library.
+
+### GGML_OBJECT_WORK_BUFFER
+This is a `ggml_object` just like we have tensor and graph objects. So this
+is something that can be stored in the context memory buffer just like them.
+A work buffer is created using:
+```c++
+void * ggml_new_buffer(struct ggml_context * ctx, size_t nbytes) {
+    struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_WORK_BUFFER, nbytes);
+
+    return (uint8_t *)ctx->mem_buffer + obj->offs;
+}
+```
+An example of usage can be found in `ggml-cpu.c`:
+```c++
+enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
+    struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
+
+    cplan.work_data = (uint8_t *)ggml_new_buffer(ctx, cplan.work_size);
+
+    return ggml_graph_compute(cgraph, &cplan);
+}
+```
+So this is creating an ggml object of the work buffer type and this is set as
+the compute plans working data. This is later set on the `ggml_compute_params`:
+```c++
+static thread_ret_t ggml_graph_compute_thread(void * data) {
+    struct ggml_compute_state * state = (struct ggml_compute_state *) data;
+    struct ggml_threadpool    * tp    = state->threadpool;
+
+    const struct ggml_cgraph * cgraph = tp->cgraph;
+    const struct ggml_cplan  * cplan  = tp->cplan;
+
+    set_numa_thread_affinity(state->ith);
+
+    struct ggml_compute_params params = {
+        /*.ith       =*/ state->ith,
+        /*.nth       =*/ atomic_load_explicit(&tp->n_threads_cur, memory_order_relaxed),
+        /*.wsize     =*/ cplan->work_size,
+        /*.wdata     =*/ cplan->work_data,
+        /*.threadpool=*/ tp,
+    };
+
+    for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
+        struct ggml_tensor * node = cgraph->nodes[node_n];
+
+        ggml_compute_forward(&params, node);
+```
+And this can then be used by the operation that needs temporary scratch space
+during computation.
+Since operations run sequentially (not concurrently), the same work buffer can
+be safely reused.
+```console
+Context Arena:
+┌─────────────────────────────────────┐
+│ ggml_object (TENSOR) - input        │
+├─────────────────────────────────────┤
+│ ggml_tensor metadata                │
+├─────────────────────────────────────┤
+│ ggml_object (WORK_BUFFER)           │
+├─────────────────────────────────────┤
+│ [2MB shared scratch space]          │ ← Used by ALL operations
+│ (reused for each operation)         │
+├─────────────────────────────────────┤
+│ ggml_object (TENSOR) - result       │
+├─────────────────────────────────────┤
+│ ggml_tensor metadata                │
+└─────────────────────────────────────┘
+```
