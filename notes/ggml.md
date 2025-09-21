@@ -5990,12 +5990,60 @@ So we can process 32 F16 numbers and we need 4 registers to do so each storing
 8 floating point numbers.
 
 
+### Graph Allocator (gallocr)
+This section is about the graph allocator in GGML and performs lifetime analysis
+accross the entire computation graph. It can optionally assign tensors to
+different backends (does this involve copying data between backends and updating
+the tensors buffer and data pointers?). It can also reuse memory for tensors
+that have non-overlapping lifetimes. And it can also handle multiple backends
+at the same time. So lets dig in.
+
+An example of using this can be found here
+[galloc.c](../fundamentals/ggml/src/galloc.c) and we'll be using this example to
+step through the code.
+
+```c++
+struct hash_node {
+    int n_children;   // How many tensors depend on this tensor
+    int n_views;      // How many view tensors reference this tensor
+    int buffer_id;    // Which buffer this tensor is allocated in
+    size_t offset;    // Offset within the buffer identified by buffer_id
+    bool allocated;   // Whether this tensor has been allocated memory
+};
+
+struct tensor_alloc {
+    int buffer_id;    // Which buffer this tensor is allocated in
+    size_t offset;    // Offset within the buffer identified by buffer_id
+    size_t size_max;  // 0 = pre-allocated, unused, or view
+};
+
+struct node_alloc {
+    struct tensor_alloc dst;               // Output/result tensor of an operation
+    struct tensor_alloc src[GGML_MAX_SRC]; // Input tensors to an operation
+};
+
+// Notice that a leaf does not have any src tensors as it is an input tensor.
+struct leaf_alloc {
+    struct tensor_alloc leaf; // The leaf/input tensor
+};
 
 
-### graph allocator (galloc)
-This section is about the graph allocator in GGML. And example of using this
-can be found here [galloc.c](../fundamentals/ggml/src/galloc.c) and we'll be
-using this example to step through the code.
+struct ggml_gallocr {
+    ggml_backend_buffer_type_t * bufts;     // [n_buffers]
+    ggml_backend_buffer_t * buffers;        // [n_buffers]
+    struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
+    int n_buffers;
+
+    struct ggml_hash_set hash_set;
+    struct hash_node * hash_values; // [hash_set.size]
+
+    struct node_alloc * node_allocs; // [n_nodes]
+    int n_nodes;
+
+    struct leaf_alloc * leaf_allocs; // [n_leafs]
+    int n_leafs;
+};
+```
 
 ```console
 $ gdb --args bin/galloc
@@ -6017,32 +6065,6 @@ is defined as:
 typedef struct ggml_backend_buffer_type * ggml_backend_buffer_type_t;
 ```
 
-So lets take a look at this struct that is going to be returned to get an
-overview:
-```c
-struct ggml_gallocr {
-    ggml_backend_buffer_type_t * bufts;          // [n_buffers]
-    ggml_backend_buffer_t * buffers;             // [n_buffers]
-    struct ggml_dyn_tallocr ** buf_tallocs;      // [n_buffers]
-    int n_buffers;
-
-    struct ggml_hash_set hash_set;
-    struct hash_node * hash_values;              // [hash_set.size]
-
-    struct node_alloc * node_allocs;             // [n_nodes]
-    int n_nodes;
-
-    struct leaf_alloc * leaf_allocs;             // [n_leafs]
-    int n_leafs;
-};
-```
-So we have an array of buffer types, and one for the actual buffers, one for the
-tensor allocators. These all have the same number of elemements and the indices
-match up. What I mean is that if we have index 2 then the buffer type is at
-index 2 as will the buffer for it and the tensor allocator.
-
-And notice that we are passing in the `ggml_backend_cpu_buffer_type` which again
-is a pointer to a struct `ggml_backend_buffer_type`:
 ```c
 ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft) {
     return ggml_gallocr_new_n(&buft, 1);
@@ -6102,7 +6124,7 @@ We can see above that `galloc->bufts[i]` is set to the buffer type that was
 passed in (in this case we only passed in 1 buffer type) but this function can
 also be called with an array.  And we can see that the `galloc.buffers[i]` is
 set to NULL. There is also a _dynamic_ tensor allocator which is different from
-the tensor allocator that we've seen before.
+the tensor allocator that we have seen before.
 ```c
 static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment) {
     struct ggml_dyn_tallocr * alloc = (struct ggml_dyn_tallocr *)malloc(sizeof(struct ggml_dyn_tallocr));
@@ -6129,27 +6151,80 @@ That will return us back in the example and we will call:
   ggml_gallocr_alloc_graph(galloc, c_graph);
 ```
 
-```c
+```c++
 bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
     if (ggml_gallocr_needs_realloc(galloc, graph)) {
         if (galloc->n_buffers == 1) {
-            fprintf(stderr, "%s: reallocating buffers automatically\n", __func__);
-
+            GGML_LOG_DEBUG("%s: reallocating buffers automatically\n", __func__);
             if (!ggml_gallocr_reserve(galloc, graph)) {
                 return false;
             }
+        } else {
+            GGML_LOG_DEBUG("%s: cannot reallocate multi buffer graph automatically, call reserve\n", __func__);
+            return false;
+        }
+    }
+    ...
 ```
+So the first thing that happens is that `ggml_gallocr_needs_realloc` is called
+to check if the graph needs to be reallocated:
+```c++
+static bool ggml_gallocr_needs_realloc(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    // Check if the graph allocator has the same number of nodes as the graph
+    if (galloc->n_nodes != graph->n_nodes) {
+        GGML_LOG_DEBUG("%s: graph has different number of nodes\n", __func__);
+        // Need to reallocate as the number of nodes is different
+        return true;
+    }
+
+    // And we also need to check the number of leafs similar to the nodes
+    if (galloc->n_leafs != graph->n_leafs) {
+        GGML_LOG_DEBUG("%s: graph has different number of leafs\n", __func__);
+        // Need to reallocate as the number of leafs is different
+        return true;
+    }
+
+    // So if the number of nodes and leafs are the same then we need end up here.
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        struct node_alloc * node_alloc = &galloc->node_allocs[i];
+
+        if (!ggml_gallocr_node_needs_realloc(galloc, node, &node_alloc->dst)) {
+            GGML_LOG_DEBUG("%s: node %s is not valid\n", __func__, node->name);
+            return true;
+        }
+
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            struct ggml_tensor * src = node->src[j];
+            if (src == NULL) {
+                continue;
+            }
+            if (!ggml_gallocr_node_needs_realloc(galloc, src, &node_alloc->src[j])) {
+                GGML_LOG_DEBUG("%s: src %d (%s) of node %s is not valid\n", __func__, j, src->name, node->name);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+```
+
 In this case `ggml_gallocr_reserve` will be called:
-```c
+```c++
 bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
     return ggml_gallocr_reserve_n(galloc, graph, NULL, NULL);
 }
 ```
-
-```c
+Reserve is about creating an allocation plan, it does not perform any actual
+allocations yet. It just creates a plan for how the allocations will be done.
+```c++
 bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph,
     const int * node_buffer_ids, const int * leaf_buffer_ids) {
+
+    // The hash set size is the number of nodes and leafs in the graph
     size_t min_hash_size = graph->n_nodes + graph->n_leafs;
+
     // add 25% margin to avoid hash collisions
     min_hash_size += min_hash_size / 4;
 
@@ -6157,11 +6232,9 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph,
     if (galloc->hash_set.size < min_hash_size) {
         ggml_hash_set_free(&galloc->hash_set);
         galloc->hash_set = ggml_hash_set_new(min_hash_size);
-        GGML_ASSERT(galloc->hash_set.keys != NULL);
 
         free(galloc->hash_values);
         galloc->hash_values = malloc(sizeof(struct hash_node) * galloc->hash_set.size);
-        GGML_ASSERT(galloc->hash_values != NULL);
     }
 ```
 In this case `min_hash_size` will be 3 and `galloc->hash_set.size` is 0.
@@ -6789,41 +6862,6 @@ $141 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 32, allocated = tru
 So this whole time we've been stepping through `ggml_gallocr_reserve` which
 is called from `ggml_gallocr_alloc_graph`. 
 
-TODO: Move this somewhere and explain it better. Or remove it?
-```
-[ggml_gallocr]
-|
-+--[ggml_backend_buffer_type_t] Array of backend buffer types 
-|   |
-|   +-- [0] --> ggml_backend_cpu_buffer_type
-|
-+--[ggml_backend_buffer_t]  Array of backend buffers
-|   |
-|   +-- [0] --> 0x0
-|
-+--[ggml_dyn_tallocr]  Array of dynamic tensor allocators
-|   |
-|   +-- [0] --> [ggml_dyn_tallocr]
-|                 |
-|                 +-- [
-+--[ggml_hash_set]
-|   |
-|   +-- [keys]: Array of tensor pointers (tensors)
-|        [0] --> Tensor A
-|        [1] --> Tensor B
-|
-+--[hash_values[]]: Array of hash_node entries
-|   [0] --> hash_node for Tensor A
-|   [1] --> hash_node for Tensor B
-|
-+--[node_allocs]: Array of node_alloc entries
-|   |
-|   +-- [0] --> 0x0
-+--[leaf_allocs]: Array of leaf_alloc entries
-|   |
-|   +-- [0] --> 0x0
-```
-
 Following that there will be an iteration over all the nodes in the graph which
 in our case is only 1:
 ```
@@ -6855,7 +6893,7 @@ in our case is only 1:
         }
     }
 ```
-I need to revisit the first two is statements as I'm not sure what they are
+I need to revisit the first two if statements as I'm not sure what they are
 about yet, but this this case we are processing the `result` tensor which is
 a mul operation and has `a` and `b` it's parents (srcs).
 
@@ -6867,7 +6905,7 @@ $148 = {n_children = 0, n_views = 0, buffer_id = 0, offset = 0, allocated = true
 ```
 So the above is incrementing/setting the number of children for `a` to 1.  I
 believe that this is used for reference counting. Since the `a` tensor is used
-by the `result` it is being referenced so the number of children is incremented.
+by the `result` it is being referenced, so the number of children is incremented.
 And the same will happen for `b`.
 
 
