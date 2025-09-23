@@ -2609,3 +2609,4 @@ And the we might be able to store the data that is passed to set_tensor in this
 new buffer type and return it in get_tensor. This way we can use the repack
 implementation for backend1 and the original data for backend2.
 
+This suggestion can be found in [#16182](https://github.com/ggml-org/llama.cpp/pull/16182)
