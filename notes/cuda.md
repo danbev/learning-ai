@@ -428,6 +428,136 @@ regarding memory. If I access memory in consecutively the memory subsystem
 (like we discussed above) will work efficiently, but if I read data in patterns
 that "jump" around and access different rows things will not be as performant.
 
+### Grid and blocks
+A grid is a logical collection of blocks. And each block contains a number of
+threads.
+```
+   +----------------------------------------------+
+   |                      GRID                    |
+   | +-------------------+ +-------------------+  |
+   | |      BLOCK 0      | |      BLOCK 1      |  |
+   | +----+----+----+----+ +-------------------+  |
+   | | T0 | T1 | T2 | T3 | | T0 | T1 | T2 | T3 |  |
+   | +----+----+----+----+ +----+----+----+----+  |
+   |                                              |
+   +----------------------------------------------+
+
+blockDim is how many elementes we have in the x dimension of a block, in this
+case we have 4 threads.
+
+blockIdx is the of the block in the grid, in this case we have two blocks
+to the index can be 0 or 1.
+
+threadIdx.x is the thread index within the block.
+
+i = threadIdx.x + blockIdx.x * blockDim.x
+
+i | threadIdx.x | blockIdx.x * blockDim.x
+--|-------------|------------------------|
+0 |     0       |    0 x 4 = 0           |
+1 |     1       |    0 x 4 = 0           |
+2 |     2       |    0 x 4 = 0           |
+3 |     3       |    0 x 4 = 0           |
+4 |     0       |    1 x 4 = 4           |
+5 |     1       |    1 x 4 = 4           |
+6 |     2       |    1 x 4 = 4           |
+7 |     3       |    1 x 4 = 4           |
+
+Total: 8 threads
+```
+
+A block runs entirely on a single SM and threads within this block can communicate
+by synchronizing with each other using `__syncthreads()`. 
+It is not possible for thread synchronization to happen between blocks.
+
+The maxium number of threads in a block is 1024 for most GPUs. So for optimal
+performace we want a block size that is a multiple of 32 (the size of a warp).
+
+Now, we can more dimensions, for example we can have a 2D block:
+```
+blockDim.x = 4, blockDim.y = 2, total threads per block = 8
+
+   +--------------------------------------------------------------+
+   |                           GRID                               |
+   | +---------------------------+ +---------------------------+  |
+   | |         BLOCK 0           | |         BLOCK 1           |  |
+   | | threadIdx.y=1             | | threadIdx.y=1             |  |
+   | | +----+----+----+----+     | | +----+----+----+----+     |  |
+   | | |T4  |T5  |T6  |T7  |     | | |T4  |T5  |T6  |T7  |     |  |
+   | | +----+----+----+----+     | | +----+----+----+----+     |  |
+   | | threadIdx.y=0             | | threadIdx.y=0             |  |
+   | | +----+----+----+----+     | | +----+----+----+----+     |  |
+   | | |T0  |T1  |T2  |T3  |     | | |T0  |T1  |T2  |T3  |     |  |
+   | | +----+----+----+----+     | | +----+----+----+----+     |  |
+   | |threadIdx.x: 0  1  2  3    | |threadIdx.x: 0  1  2  3    |  |
+   | +---------------------------+ +---------------------------+  |
+   +--------------------------------------------------------------+
+
+Total: 16 threads
+```
+We still have 4 elements in each block, but how we have an additional "row" or
+4 elements in each block. And notice how this effected the threadidx which now
+has a y component that is either 0 or 1.
+```
+1D block
+dim3(32)        blockDim.x=32, blockDim.y=1, blockDim.z=1
+                threadIdx.x: 0-31, threadIdx.y: always 0, threadIdx.z: always 0
+
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
+All 32 threads active.
+
+2D block
+dim3(4, 2)      blockDim.x=4, blockDim.y=2, blockDim.z=1
+                threadIdx.x: 0-3, threadIdx.y: 0-1, threadIdx.z: always 0
+
+[0, 1, 2, 3, 4, 5, 6, 7, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x]
+Only 8 active threads, 24 masked out.
+
+3D block
+dim3(4, 2, 2)   blockDim.x=4, blockDim.y=2, blockDim.z=2
+                threadIdx.x: 0-3, threadIdx.y: 0-1, threadIdx.z: 0-1
+
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x]
+Only 16 active threads, 16 masked out.
+```
+So the warp scheduler always schedules warps of 32 threads and it views the
+threads as a flat array.
+
+Each block gets its own set of warps - warps never span across blocks.
+```
+Block 0 (8 threads):
+Warp 0: [T0, T1, T2, T3, T4, T5, T6, T7, inactive, inactive, ..., inactive]
+                     8 active threads, 24 masked out
+
+Block 1 (8 threads):
+Warp 0: [T0, T1, T2, T3, T4, T5, T6, T7, inactive, inactive, ..., inactive]
+                     8 active threads, 24 masked out
+```
+This is why block sizes should be multiples of 32 having less or number that is
+not a multiple of 32 means poor utilization of the GPU's compute resources.
+
+So the special variables that exist in a CUDA kernel are:
+```
+2D block
+dim3(4, 2)      blockDim.x=4, blockDim.y=2, blockDim.z=1
+                threadIdx.x: 0-3, threadIdx.y: 0-1, threadIdx.z: always 0
+
+threadIdx.x: 0-3, threadIdx.y: 0-1, threadIdx.z: always 0
+blockIdx.x : 0-1, blockIdx.y: always 0, blockIdx.z: always 0
+blockDim.x : 4, blockDim.y: 2, blockDim.z: 1
+
+int flatIndex = threadIdx.x + (threadIdx.y * blockDim.x) + (threadIdx.z * blockDim.x * blockDim.y);
+            4 =           0 + (          1 * 4         ) + (          0 * 4          * 2         )
+
+[0, 1, 2, 3, 4, 5, 6, 7, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x]
+[----------] ↑
+    ↑        |
+    |        |
+    |        +-------------------+
+    |                            ↓
+(threadIdx.y * blockDim.x) + threadIdx.x
+```
+
 To tie this back to CUDA, lets take a look a the following kernel function:
 ```c++
 __global__ void add_arrays(int* a, int* b, int* c, int size) {
@@ -481,7 +611,7 @@ patterns. The memory subsystem in GPUs works on the same fundamental DRAM
 principles we discussed earlier - with rows, columns, sense amplifiers, and the
 efficiency advantage of accessing consecutive locations within the same row.
 
-In CUDA we have a grid or work, which gets split into many blocks, and there
+In CUDA we have a grid of work, which gets split into many blocks, and there
 are many threads in each block.
 
 Thread block:
@@ -516,11 +646,11 @@ __global__ void add_arrays(int* a, int* b, int* c, int size) {
 }
 ```
 What will happen is that there will be a hardware activity mask which will
-mask all threads but thread 4 as active. There state will be maintained but
-the won't actually execute. When a warp executes a path that only some threads
-need to take, the execution units for the inactive threads sit idle. In our
-example, while executing the if (idx == 4) block, 31 out of 32 execution units
-(97%) are doing nothing.
+mask all threads but thread 4 as active. Their state will be maintained, kept
+in the registers but they won't actually execute. When a warp executes a path
+that only some threads need to take, the execution units for the inactive
+threads sit idle. In our example, while executing the if (idx == 4) block, 31
+out of 32 execution units (97%) are doing nothing.
 
 The hardware masking is specific to the GPU architecture. Each warp has a 32 bit
 mask (one for each thread) where a 1 means that the thread is active and a 0
