@@ -65,6 +65,7 @@ int main(int argc, const char * argv[]) {
         for (NSUInteger i = 0; i < dataSize; i++) {
             inputData[i] = (float)i;
         }
+        int constant_value = 2;
 
         // Create buffers, and this is pretty nice as Metal has a unified memory model so
         // both the CPU and GPU can access the same memory. So we don't need to allocate explicitly
@@ -73,13 +74,15 @@ int main(int argc, const char * argv[]) {
         id<MTLBuffer> outputBuffer = [device newBufferWithLength:dataSize * sizeof(float) options:MTLResourceStorageModeShared];
         // Debug buffer as we can printf from a kernel in Metal
         id<MTLBuffer> debugBuffer = [device newBufferWithLength:10 * sizeof(int) options:MTLResourceStorageModeShared];
-
+        // Constant
+        id<MTLBuffer> constant_buffer = [device newBufferWithLength:1 * sizeof(int) options:MTLResourceStorageModeShared];
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         [computeEncoder setComputePipelineState:computePipelineState];
         [computeEncoder setBuffer:inputBuffer offset:0 atIndex:0];
         [computeEncoder setBuffer:outputBuffer offset:0 atIndex:1];
         [computeEncoder setBuffer:debugBuffer offset:0 atIndex:2];
+        [computeEncoder setBytes:&constant_value length:sizeof(int) atIndex:3];
 
         // Calculate threadgroup and grid sizes
         MTLSize gridSize = {dataSize, 1, 1}; // Total threads needed.
