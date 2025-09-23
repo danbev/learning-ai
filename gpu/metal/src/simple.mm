@@ -71,12 +71,15 @@ int main(int argc, const char * argv[]) {
         // on both sides, nore do we need to copy data between them.
         id<MTLBuffer> inputBuffer = [device newBufferWithBytes:inputData length:dataSize * sizeof(float) options:MTLResourceStorageModeShared];
         id<MTLBuffer> outputBuffer = [device newBufferWithLength:dataSize * sizeof(float) options:MTLResourceStorageModeShared];
+        // Debug buffer as we can printf from a kernel in Metal
+        id<MTLBuffer> debugBuffer = [device newBufferWithLength:10 * sizeof(int) options:MTLResourceStorageModeShared];
 
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         [computeEncoder setComputePipelineState:computePipelineState];
         [computeEncoder setBuffer:inputBuffer offset:0 atIndex:0];
         [computeEncoder setBuffer:outputBuffer offset:0 atIndex:1];
+        [computeEncoder setBuffer:debugBuffer offset:0 atIndex:2];
 
         // Calculate threadgroup and grid sizes
         MTLSize gridSize = {dataSize, 1, 1}; // Total threads needed.
@@ -102,6 +105,11 @@ int main(int argc, const char * argv[]) {
         memcpy(outputData, [outputBuffer contents], dataSize * sizeof(float));
         for (NSUInteger i = 0; i < dataSize; i++) {
             //NSLog(@"Output[%lu] = %f", (unsigned long)i, outputData[i]);
+        }
+
+        int* debugData = (int*)[debugBuffer contents];
+        for (int i = 0; i < 10; i++) {
+            NSLog(@"Debug[%d] = %d", i, debugData[i]);
         }
 
         free(inputData);
