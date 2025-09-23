@@ -21,8 +21,34 @@ kernel void simpleMultiply(const device float* input [[buffer(0)]],
     output[id] = input[id] * 2.0;
 }
 ```
+We compile this kernel into Apple Intermediate Representation (AIR) using the `metal` compiler:
+```console
+$ xcrun metal -c src/kernel.metal -o kernel.air
+```
+AIR is a LLVM like bitcode which is a binary representation of the LLVM IR but is not standard LLVM bitcode.
+
+Multiple kernels can be packaged together into a single library using the `metallib` tool:
+```console
+$ xcrun metallib kernel.air -o kernel.metallib
+```
+
+To inspect the symbols:
+```console
+$ xcrun metal-nm kernel.metallib
+0000005c T simpleMultiply
+```
+
+To disassemble the metallib:
+```console
+$ xcrun metal-objdump -d kernel.metallib
+```
 
 Shaders are compiled into a `.metallib` file which is then loaded by the application.
+
+The metalib can then be loaded by a Swift or Objective-C/C++ application using the Metal framework.
+An Objective-C source file would have the extension `.m` and an Objective-C++ source file
+would have the extension `.mm`. Normally when we use c++ libraries/features then we would use
+the `.mm` extension.
 
 ### Parameter syntax
 These are specified with double brackets which are called attribute specifiers which provide

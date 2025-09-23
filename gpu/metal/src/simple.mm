@@ -2,11 +2,18 @@
 #import <Metal/Metal.h>
 
 int main(int argc, const char * argv[]) {
+    // Autorelease pool for memory management like RAII in C++
     @autoreleasepool {
-        // Metal (MLT) Device
+        // Metal (MLT) Device is protocol (interface).
+        // The following is simlar to CUDA's cudaGetDeviceCount.
         NSArray<id<MTLDevice>>* devices = MTLCopyAllDevices();
+
+        // Recall that id is like a void pointer in C/C++
         id<MTLDevice> device = nil;
         for (id<MTLDevice> availableDevice in devices) {
+            // Recall that method calls use square brackets [object methodName:parameters]
+            // And @"string" is a string literal in Objective-C.
+            // Notice that here the object is availableDevice and the method is name.
             if ([availableDevice.name isEqualToString:@"Apple M3"]) {
                 device = availableDevice;
                 NSLog(@"Using Metal device: %@", device.name);
@@ -19,6 +26,7 @@ int main(int argc, const char * argv[]) {
             return -1;
         }
 
+        // Load the precompiled Metal library from a .metallib file
         NSError *error = nil;
         NSString *libraryPath = @"kernel.metallib";
         NSURL *libraryURL = [NSURL fileURLWithPath:libraryPath];
@@ -32,6 +40,7 @@ int main(int argc, const char * argv[]) {
             NSLog(@"    %@", name);
         }
 
+        // Create a compute function from the library
         id<MTLFunction> kernelFunction = [defaultLibrary newFunctionWithName:@"simpleMultiply"];
         if (!kernelFunction) {
             NSLog(@"Failed to find the kernel function.");
@@ -39,12 +48,15 @@ int main(int argc, const char * argv[]) {
         }
         NSLog(@"Kernel function: %@", kernelFunction.name);
 
+        // Create a compute pipeline state. This is what compiles the AIR to run on the GPU.
+        // This is similar to compiling from PTX to SASS in CUDA.
         id<MTLComputePipelineState> computePipelineState = [device newComputePipelineStateWithFunction:kernelFunction error:&error];
         if (!computePipelineState) {
             NSLog(@"Failed to create compute pipeline state. Error: %@", error.localizedDescription);
             return -1;
         }
 
+        // Command queue is used for submitting work to the GPU, similar to CUDA streams.
         id<MTLCommandQueue> commandQueue = [device newCommandQueue];
         NSUInteger dataSize = 1024; // number of float elements
         float *inputData = (float *)malloc(dataSize * sizeof(float));
@@ -54,6 +66,9 @@ int main(int argc, const char * argv[]) {
             inputData[i] = (float)i;
         }
 
+        // Create buffers, and this is pretty nice as Metal has a unified memory model so
+        // both the CPU and GPU can access the same memory. So we don't need to allocate explicitly
+        // on both sides, nore do we need to copy data between them.
         id<MTLBuffer> inputBuffer = [device newBufferWithBytes:inputData length:dataSize * sizeof(float) options:MTLResourceStorageModeShared];
         id<MTLBuffer> outputBuffer = [device newBufferWithLength:dataSize * sizeof(float) options:MTLResourceStorageModeShared];
 
@@ -63,16 +78,25 @@ int main(int argc, const char * argv[]) {
         [computeEncoder setBuffer:inputBuffer offset:0 atIndex:0];
         [computeEncoder setBuffer:outputBuffer offset:0 atIndex:1];
 
-        MTLSize gridSize = {dataSize, 1, 1};
-        NSUInteger threadGroupSize = computePipelineState.maxTotalThreadsPerThreadgroup;
+        // Calculate threadgroup and grid sizes
+        MTLSize gridSize = {dataSize, 1, 1}; // Total threads needed.
+        NSUInteger threadGroupSize = computePipelineState.maxTotalThreadsPerThreadgroup; // Threads per group.
         if (threadGroupSize > dataSize) {
             threadGroupSize = dataSize;
         }
         MTLSize threadgroupSize = {threadGroupSize, 1, 1};
+
+        // Dispatch the compute kernel.
         [computeEncoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
         [computeEncoder endEncoding];
+        // The above is equivalent to the following CUDA kernel launch:
+        // dim3 threads(threadGroupSize, 1, 1);
+        // dim3 blocks((dataSize + threadGroupSize - 1) / threadGroupSize, 1, 1);
+        // myKernel<<<blocks, threads>>>(input, output);
 
+        // Submit to GPU.
         [commandBuffer commit];
+        // Block until done.
         [commandBuffer waitUntilCompleted];
 
         memcpy(outputData, [outputBuffer contents], dataSize * sizeof(float));
