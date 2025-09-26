@@ -478,3 +478,48 @@ variants, and also the name could be used when selecting a specific variant to
 test.
 
 _wip_
+
+### x64-64
+Something that I was not aware of and a collegue pointed on to me was that even
+if we try to create a backend in pure c, the compiler might still generate
+code that uses SIMD instructions. This is because the base ABIs often include
+certain vector instructions that are mandatory. For example x86-64 requires
+SSE2 instructions to be supported, it is not an optional feature.
+So even if we write:
+```c++
+float add_arrays(float* a, float* b, int n) {
+    for (int i = 0; i < n; i++) {
+        a[i] += b[i];
+    }
+}
+```
+The compiler might still emit SSE2 instructions because:
+* SSE2 is guaranteed to be available on any x86-64 system
+* The compiler can use SSE2 for regular floating-point operations
+* The ABI allows (or even expects) SSE2 usage for things like parameter passing
+
+The AMD64 ABI (System V ABI used on Linux) specifically mandates SSE2 usage in
+several ways.
+
+```c
+// This C function signature...
+double compute(double a, double b, float c);
+```
+This gets compiled to to use XMM registers (SSE2) for parameter passing, 'a'
+goes in %xmm0, 'b' goes in %xmm1, 'c' goes in %xmm2, and the return value comes
+back in %xmm0
+
+For example:
+```c
+double add(double x, double y) {
+    return x + y;
+}
+```
+Even compiled with -O0 -fno-vectorize, this generates assembly like:
+```assembly
+add:
+    addsd %xmm1, %xmm0  # SSE2 instruction!
+    ret
+```
+The addsd is an SSE2 instruction - it's unavoidable because the ABI mandates
+using XMM registers for double parameters.
