@@ -26,3 +26,11 @@ simple: src/simple.cpp
 
 features: src/features.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+
+
+smmla: src/smmla.s
+	clang -mcpu=native -g3 -o $@ $<
+
+.PHONY: clean
+clean:
+	${RM} simple features smmla
