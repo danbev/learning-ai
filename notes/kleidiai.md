@@ -34,6 +34,42 @@ we can see the:
 So we have the instruction, and v2 is the vector 2 register that will hold the result which will
 be 4 32-bit signed integers. v0 and v1 are the input registers that hold 16 8-bit signed integers.
 
+```console
+(lldb) si
+Process 2363 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = instruction step into
+    frame #0: 0x00000001000003c0 smmla`do_smmla + 8
+smmla`do_smmla:
+->  0x1000003c0 <+8>:  smmla
+    0x1000003c4 <+12>: adrp   x2, 4
+    0x1000003c8 <+16>: add    x2, x2, #0x20 ; result_matrix
+    0x1000003cc <+20>: st1.4s { v2 }, [x2]
+Target 0: (smmla) stopped.
+
+(lldb) register read v2 --format int32
+      v2 = {0 0 0 0}
+
+(lldb) register read v0 --format int8
+      v0 = {1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16}
+
+(lldb) register read v1 --format int8
+      v1 = {1 3 5 7 9 1 3 5 2 4 6 8 10 2 4 6}
+
+(lldb) si
+Process 2363 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = instruction step into
+    frame #0: 0x00000001000003c4 smmla`do_smmla + 12
+smmla`do_smmla:
+->  0x1000003c4 <+12>: adrp   x2, 4
+    0x1000003c8 <+16>: add    x2, x2, #0x20 ; result_matrix
+    0x1000003cc <+20>: st1.4s { v2 }, [x2]
+    0x1000003d0 <+24>: ldp    x29, x30, [sp], #0x10
+Target 0: (smmla) stopped.
+
+(lldb) register read v2 --format int32
+      v2 = {162 198 434 534}
+```
+
 
 ### API
 Just a short note about the API which I think is targeted to framework developers where

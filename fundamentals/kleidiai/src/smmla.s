@@ -72,16 +72,16 @@ do_smmla:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
     
+    // This is just to show how the addition part of smmla works, here we are setting all
+    // values of v2 to 10, so the result of the multiplication will be added to 10.
+    //movi    v2.4s, #10
+
     // One instruction does 2x8 × 8x2 → 2x2
-    // SMMLA Vd.4S, Vn.16B, Vm.16B
     // This computes: C[2x2] = A[2x8] × B[8x2] + C[2x2] (accumulate)
     smmla   v2.4s, v0.16b, v1.16b
-    
-    // At this point:
-    // v2.s[0] = A[0][0]*B[0][0] + A[0][1]*B[1][0] + ... + A[0][7]*B[7][0] = C[0][0]
-    // v2.s[1] = A[0][0]*B[0][1] + A[0][1]*B[1][1] + ... + A[0][7]*B[7][1] = C[0][1]  
-    // v2.s[2] = A[1][0]*B[0][0] + A[1][1]*B[1][0] + ... + A[1][7]*B[7][0] = C[1][0]
-    // v2.s[3] = A[1][0]*B[0][1] + A[1][1]*B[1][1] + ... + A[1][7]*B[7][1] = C[1][1]
+    // destination iv v2 and it will be 4 int32_t values (2x2 matrix)
+    // source1 is v0 16 bytes (2x8 matrix of int8_t)
+    // source2 is v1 16 bytes (8x2 matrix of int8_t)
     
     // Store result back to memory for inspection
     adrp    x2, result_matrix@PAGE
@@ -91,7 +91,6 @@ do_smmla:
     ldp     x29, x30, [sp], #16
     ret
 
-// Data section - our test matrices
 .data
 .p2align 4  // Align to 16 bytes
 
@@ -99,29 +98,23 @@ do_smmla:
 // A = [1, 2, 3, 4, 5, 6, 7, 8]      <- Row 0
 //     [9,10,11,12,13,14,15,16]      <- Row 1
 matrix_a:
-    .byte   1, 2, 3, 4, 5, 6, 7, 8     // Row 0: A[0][0] through A[0][7]
-    .byte   9,10,11,12,13,14,15,16     // Row 1: A[1][0] through A[1][7]
+    .byte   1, 2, 3, 4, 5, 6, 7, 8
+    .byte   9,10,11,12,13,14,15,16
 
 // Matrix B: 8x2 matrix of int8_t  
-// B = [1, 2]     <- Row 0: B[0][0], B[0][1]
-//     [3, 4]     <- Row 1: B[1][0], B[1][1]
-//     [5, 6]     <- Row 2: B[2][0], B[2][1]
-//     [7, 8]     <- Row 3: B[3][0], B[3][1]
-//     [9,10]     <- Row 4: B[4][0], B[4][1]
-//     [1, 2]     <- Row 5: B[5][0], B[5][1]
-//     [3, 4]     <- Row 6: B[6][0], B[6][1] 
-//     [5, 6]     <- Row 7: B[7][0], B[7][1]
+// B = [1, 2]
+//     [3, 4]
+//     [5, 6]
+//     [7, 8]
+//     [9,10]
+//     [1, 2]
+//     [3, 4]
+//     [5, 6]
 matrix_b:
-    .byte   1, 2, 3, 4, 5, 6, 7, 8     // B[0][0],B[0][1],B[1][0],B[1][1],B[2][0],B[2][1],B[3][0],B[3][1]
-    .byte   9,10, 1, 2, 3, 4, 5, 6     // B[4][0],B[4][1],B[5][0],B[5][1],B[6][0],B[6][1],B[7][0],B[7][1]
+    .byte  1, 3, 5, 7,  9, 1, 3, 5 // column 0
+    .byte  2, 4, 6, 8, 10, 2, 4, 6 // column 1
 
 // Result matrix: 2x2 matrix of int32_t (results from SMMLA)
 .p2align 4  // Align to 16 bytes
 result_matrix:
-    .word   0, 0, 0, 0                 // C[0][0], C[0][1], C[1][0], C[1][1]
-
-// Expected results for verification:
-// C[0][0] = 1*1 + 2*3 + 3*5 + 4*7 + 5*9 + 6*1 + 7*3 + 8*5 = 204
-// C[0][1] = 1*2 + 2*4 + 3*6 + 4*8 + 5*10 + 6*2 + 7*4 + 8*6 = 236  
-// C[1][0] = 9*1 + 10*3 + 11*5 + 12*7 + 13*9 + 14*1 + 15*3 + 16*5 = 620
-// C[1][1] = 9*2 + 10*4 + 11*6 + 12*8 + 13*10 + 14*2 + 15*4 + 16*6 = 716
+    .word   0, 0, 0, 0
