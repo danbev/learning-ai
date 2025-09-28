@@ -181,6 +181,82 @@ qai8dxp4x8
 This is an asymmetric quantized (qa) 8-bit integer (i8), with per-dimension quantization (dx),
 whichis packed (p) into blocks of 4 rows and 8 columns (4x8).
 
+### Quantization
+Similar to GGML values are grouped into blocks that share quantization parameters. This is
+```
+Original float32 values: [1.2  3.4  2.1  4.8  1.9  3.2  2.7  4.1  ... 8.5]               
+                           0    1    2    3    4    5   6     7   ...  63]
+                         {    Block 0      }  {      Block 1   }  ... 
+```
+This could be quantized into a 8x8 blocks of 4-bit integers using a block structure like:
+```
+Scale factor (delta): 1 float32 per channel/block.
+Zero point          : 0 (symmetric quantization).
+Quantized values    : 4 bits per weight.
+Block size          : Typically 8×8 = 64 values sharing one scale (delta) value.
+```
+So in this example the original weight matrix where we have an 8x8 matrix of float32 values,
+this would have a single block because the quantization is quantizing each float32 value into
+a 4-bit value, and the block can store 64 values. And the whole block will share one
+scale/delta value.
+```
+Original: 8×8 = 64 float32 values
+     ↓
+Single quantization block:
+- 1 scale/delta value (shared by all 64 values)
+- 64 quantized 4-bit values
+- Total storage: 1 float32 (4 bytes) + 64×4bits (32 bytes) = 36 bytes
+
+Block 0 (covers entire 8×8 matrix):
+┌─────────────────────────────────┐
+│ Scale: 0.2 (float32)            │
+├─────────────────────────────────┤
+│ Quantized values (4-bit each):  │
+│ [10,9,15,13,8,12,14,11,...]     │ ← 64 values, 4 bits each
+│ Packed into 32 bytes            │
+└─────────────────────────────────┘
+```
+Process:
+```
+Original 8×8 matrix:
+[2.1, 1.8, 3.2, 2.7, 1.6, 2.4, 2.8, 2.2]
+[1.9, 3.1, 2.6, 3.0, 2.3, 1.7, 2.9, 2.5]
+[... 6 more rows ...]
+
+Step 1: Find scale for entire block
+scale = max_abs_value / 7  // 4-bit signed: -7 to +7 range
+scale = 3.2 / 7 = 0.457
+
+Step 2: Quantize all 64 values using same scale
+q_values = round(original_values / scale)
+q_values = [5, 4, 7, 6, 4, 5, 6, 5, 4, 7, 6, 7, 5, 4, 6, 5, ...]
+
+Step 3: Pack into memory
+All 64 quantized values share the single scale = 0.457
+```
+
+In Kleidiai there are descriptors that tell the system how matrices have been pre-packed:
+```
+mr x kr (written as mrxkr)
+nr x kr (written as nrxkr)
+
+where:
+mr : number of rows in the LHS (matrix A) side matrix packed together
+nr : number of columns in the RHS (matrix B) side matrix packed together
+kr : number of columns in the LHS side matrix (or rows in the RHS side matrix) packed together
+     which is the reduction dimension.
+```
+So the example above we have:
+```
+A (LHS): 4×8 matrix     B (RHS): 8×2 matrix
+```
+For optimal SMMLA packing:
+```
+mr = 2, pack 2 rows of A together which fits with the ssmla instruction requirements
+nr = 2, pack 2 columns of B together which fits with the ssmla instruction requirements
+kr = 8, pack 8 columns of A (or rows of B) together which fits with the ssmla instruction requirements
+```
+So for LHS this would be mrxkr = 2x8 and for RHS this would be nrxkr = 2x8.
 
 ### API
 Just a short note about the API which I think is targeted to framework developers where
@@ -191,10 +267,111 @@ and then you are good to go but multiple which I found a bit confusing at first.
 kleidiai/install/include/kai/
     ukernels/matmul/
         matmul_clamp_f32_qai8dxp_qsi4cxp/
-            kai_matmul_clamp_f32_ai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm.h
 ```
-So this is a header file for a matrix multiplication with clamp operation, where the
-output if float32, the input is `qai8dxp` and `qsi4cxp` and the micro kernel
+So this is a header file directory is for matrix multiplications with clamp operation, where
+the output if float32, the input is `qai8dxp` and `qsi4cxp`. So the top level is the operation
+and the data types.
+
+There are a number of files in this directory but let start with the interface file:
+```console
+kai_matmul_clamp_f32_qai8dxp_qsi4cxp_interface.h
+````
+/// Micro-kernel interface
+struct kai_matmul_clamp_f32_qai8dxp_qsi4cxp_ukernel {
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_run_matmul_func_t run_matmul;
+
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_m_step_func_t get_m_step;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_n_step_func_t get_n_step;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_mr_func_t     get_mr;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_nr_func_t     get_nr;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_kr_func_t     get_kr;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_sr_func_t     get_sr;
+
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_lhs_packed_offset_func_t get_lhs_packed_offset;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_rhs_packed_offset_func_t get_rhs_packed_offset;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_dst_offset_func_t        get_dst_offset;
+    kai_matmul_clamp_f32_qai8dxp_qsi4cxp_get_dst_size_func_t          get_dst_size;
+
+};
+```
+So the main function is the `run_matmul` which is the micro-kernel core function:
+```c
+/// Micro-kernel core function ("run" method)
+typedef void (*kai_matmul_clamp_f32_qai8dxp_qsi4cxp_run_matmul_func_t)(
+    size_t m,
+    size_t n,
+    size_t k,
+    const void* lhs_p,
+    const void* rhs_p,
+    float* dst,
+    size_t dst_stride_row,
+    size_t dst_stride_col,
+    float scalar_min,
+    float scalar_max);
+```
+And for the different variants
+```
+get_m_step() // How many rows this micro-kernel processes at once
+get_n_step() // How many columns this micro-kernel processes at once
+get_mr()     // LHS packing: rows packed together
+get_nr()     // RHS packing: columns packed together
+get_kr()     // Reduction dimension packing
+get_sr()     // Scale packing (for quantization blocks)
+```
+Now, if we look at a specific implementation we will find these values defined,
+for example in `kleidiai/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi4cxp/kai_matmul_clamp_f32_qai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm.c`:
+```c
+static const size_t kai_m_step = 8;
+static const size_t kai_n_step = 8;
+static const size_t kai_mr = 4;
+static const size_t kai_nr = 8;
+static const size_t kai_kr = 16;
+static const size_t kai_sr = 2;
+static const size_t kai_num_bytes_multiplier_lhs = sizeof(float);
+static const size_t kai_num_bytes_multiplier_rhs = sizeof(float);
+static const size_t kai_num_bytes_offset_lhs = sizeof(int32_t);
+static const size_t kai_num_bytes_sum_rhs = sizeof(int32_t);
+static const size_t kai_num_bytes_bias = sizeof(float);
+```
+
+The files inside the above directory represent specific micro kernel variants with different
+packing formats (mrxkr), tile sizes, hardware targets like neon, sme2, and feature sets like
+i8mm, dotprod, sdot, mopa. So just like we saw with the smmla instruction it required its data
+in a specific format, but if neon is the target for this matric multiplication then the data
+may have to be packed differently. And if sme2 is the target then it may have to be packed
+differently again.
+```
+The last p is for packing but there can be multiple different ways to pack the data, so there are
+multiple files in this
+```console
+$ ls kleidiai/install/include/kai/ukernels/matmul/matmul_clamp_f32_qai8dxp_qsi4cxp
+kai_matmul_clamp_f32_qai8dx p1vlx8  _qsi4cxp4vlx8  _1vlx4vl _sme2 _mopa.h
+kai_matmul_clamp_f32_qai8dx p1x4    _qsi4cxp4vlx4  _1x4vl   _sme2 _sdot.h
+kai_matmul_clamp_f32_qai8dx p1x4    _qsi4cxp4x4    _1x4     _neon _dotprod.h
+kai_matmul_clamp_f32_qai8dx p1x8    _qsi4cxp4x8    _1x4x32  _neon _dotprod.h
+kai_matmul_clamp_f32_qai8dx p1x8    _qsi4cxp8x8    _1x8x32  _neon _dotprod.h
+kai_matmul_clamp_f32_qai8dx p4x4    _qsi4cxp8x4    _8x8x32  _neon _dotprod.h
+kai_matmul_clamp_f32_qai8dx p4x8    _qsi4cxp4x4    _16x4x32 _neon _dotprod.h
+kai_matmul_clamp_f32_qai8dx p4x8    _qsi4cxp4x8    _4x4x32  _neon _i8mm.h
+kai_matmul_clamp_f32_qai8dx p4x8    _qsi4cxp4x8    _8x4x32  _neon _i8mm.h
+kai_matmul_clamp_f32_qai8dx p4x8    _qsi4cxp8x8    _4x8x32  _neon _i8mm.h
+kai_matmul_clamp_f32_qai8dx p4x8    _qsi4cxp8x8    _8x8x32  _neon _i8mm.h
+```
+
+### rs value
+Specifies how many elements share the same scale factor along the reduction dimension (k).
+```c
+void kai_run_rhs_pack_nxk_qsi4cxp_qs4cxs1s0(
+    size_t num_groups, size_t n, size_t k, size_t nr, size_t kr, size_t sr, const uint8_t* rhs, const float* bias,
+    const float* scale, void* rhs_packed, size_t extra_bytes,
+    const struct kai_rhs_pack_nxk_qsi4cxp_qs4cxs1s0_params* params) {
+    KAI_ASSERT((kr % sr) == 0);
+    ...
+    const size_t block_length_in_bytes = kr / sr;
+```
+So if kr=32, and sr=2, then every 16 elements share the same scale factor.
+So with `sr=2`, every 16 bytes (32 elements ÷ 2) of the packed data share the same
+quantization parameters.
 
 __wip__
 
