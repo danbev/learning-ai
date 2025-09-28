@@ -1,6 +1,17 @@
+// Left-hand side (LHS) packing:
 #include "kai_lhs_quant_pack_qai8dxp_f32.h"
+// Right-hand side (RHS) packing:
 #include "kai_rhs_pack_nxk_qsi4cxp_qs4cxs1s0.h"
+// Matrix multiplication:
 #include "kai_matmul_clamp_f32_qai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm.h"
+// op = matmul
+// activation = clamp
+// output type = f32
+// input matrix A type  = qai8dxp4x8
+// input matrix B type  = qsi4cxp8x8
+// block sizes = 8x8x32
+// engine = neon
+// cpu feature = , i8mm
 
 #include <stdio.h>
 #include <float.h>
@@ -88,7 +99,8 @@ int main() {
         (float*)dst_mtx_f32,
         dst_stride,
         sizeof(float),
-        -FLT_MAX, FLT_MAX);
+        -FLT_MAX, // min clamp value
+        FLT_MAX); // max clamp value
     
     printf("\nResult matrix (%zu x %zu):\n", m, n);
     float* result = (float*)dst_mtx_f32;
