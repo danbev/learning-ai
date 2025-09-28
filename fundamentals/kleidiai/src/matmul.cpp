@@ -62,11 +62,14 @@ int main() {
     }
     printf("\n");
     
+    // Number of rows in matrix A
     const size_t mr = kai_get_mr_matmul_clamp_f32_qai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm();
+    // Number of columns in matrix B
     const size_t nr = kai_get_nr_matmul_clamp_f32_qai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm();
+    // Number of columns in blocks for the reduction dimension
     const size_t kr = kai_get_kr_matmul_clamp_f32_qai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm();
+    // How many elements share the same scale factor along the reduction dimension 
     const size_t sr = kai_get_sr_matmul_clamp_f32_qai8dxp4x8_qsi4cxp8x8_8x8x32_neon_i8mm();
-    
     printf("Block sizes - mr: %zu, nr: %zu, kr: %zu, sr: %zu\n", mr, nr, kr, sr);
     
     const size_t matrix_a_packed_size = kai_get_lhs_packed_size_lhs_quant_pack_qai8dxp_f32(m,
