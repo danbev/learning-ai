@@ -21,7 +21,7 @@ kleidiai-build:
 	cmake --install ./build
 
 
-simple: src/simple.cpp
+matmul: src/matmul.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 features: src/features.cpp
@@ -33,4 +33,4 @@ smmla: src/smmla.s
 
 .PHONY: clean
 clean:
-	${RM} simple features smmla
+	${RM} matmul features smmla
