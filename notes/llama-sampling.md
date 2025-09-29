@@ -1,5 +1,5 @@
 ### Llama.cpp Sampling API
-This document is about the sampling in llama.cpp. I've written about sampling
+This document is about sampling in llama.cpp. I've written about sampling
 strategies in [sampling.md](sampling.md) and these notes are specifically about
 the implementation in llama.cpp.
 
@@ -120,7 +120,7 @@ llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_conte
     }
 ```
 So we can see that we are getting the logits from the context and using -1 as
-the index. Then we get the size of the vocabulary and create a vector of of
+the index. Then we get the size of the vocabulary and create a vector of
 `llama_token_data` structs with that size. In this case the vocabulary size is
 ```console
 (gdb) p cur.size()
@@ -237,3 +237,171 @@ reset = 0x0, clone = 0x0, free = 0x0}
 ```
 The last thing that happens in `llama_sampler_sample` is that the token id is
 returned.
+
+
+### Order of samplers
+The default samplers that will be used for genreation are the following:
+```console
+    penalties;dry;top_n_sigma;top_k;typ_p;top_p;min_p;xtc;temperature)
+```
+These come from `arg.cpp`:
+```c++
+    add_opt(common_arg(
+        {"--samplers"}, "SAMPLERS",
+        string_format("samplers that will be used for generation in the order, separated by \';\'\n(default: %s)", sampler_type_names.c_str()),
+        [](common_params & params, const std::string & value) {
+            const auto sampler_names = string_split<std::string>(value, ';');
+            params.sampling.samplers = common_sampler_types_from_names(sampler_names, true);
+        }
+```
+And saqmpler_type_names is created at the start of the function:
+```c++
+    std::string sampler_type_chars;
+    std::string sampler_type_names;
+    for (const auto & sampler : params.sampling.samplers) {
+        sampler_type_chars += common_sampler_type_to_chr(sampler);
+        sampler_type_names += common_sampler_type_to_str(sampler) + ";";
+    }
+    sampler_type_names.pop_back();
+```
+```console
+(gdb) set print array on
+(gdb) p params.sampling.samplers
+$4 = std::vector of length 9, capacity 9 = {
+  COMMON_SAMPLER_TYPE_PENALTIES,
+  COMMON_SAMPLER_TYPE_DRY,
+  COMMON_SAMPLER_TYPE_TOP_N_SIGMA,
+  COMMON_SAMPLER_TYPE_TOP_K,
+  COMMON_SAMPLER_TYPE_TYPICAL_P,
+  COMMON_SAMPLER_TYPE_TOP_P,
+  COMMON_SAMPLER_TYPE_MIN_P,
+  COMMON_SAMPLER_TYPE_XTC,
+  COMMON_SAMPLER_TYPE_TEMPERATURE
+}
+```
+
+### Simplify `llama_token_data`
+In the above code we saw the definition of `llama_token_data`:
+```c++
+    // TODO: simplify (https://github.com/ggml-org/llama.cpp/pull/9294#pullrequestreview-2286561979)
+    typedef struct llama_token_data {
+        llama_token id; // token id
+        float logit;    // log-odds of the token
+        float p;        // probability of the token
+    } llama_token_data;
+```
+Notice that this has the token id which is the index in the vocabulary, the logit
+which is the raw score from the model. Now, the probability field is something
+that needs to be computed from the logits, for example using softmax. But not
+all sampling strategies need or use the probability field. For example top-k
+samples where the k highest logits are selected and the rest are filtered out.
+
+This struct is included in the following array:
+```c++
+    typedef struct llama_token_data_array {
+        // TODO: consider SoA
+        // NOTE: this pointer can be modified by the samplers
+        llama_token_data * data;
+        size_t size;
+        int64_t selected; // this is the index in the data array (i.e. not the token id)
+        bool sorted;      // note: do not assume the data is sorted - always check this flag
+    } llama_token_data_array;
+```
+
+After making the changes to only have a single score field instead of logit and
+p field I added the following assert to `llama_sampler_temp_impl` and a few
+other samplers which operate on the raw logits:
+```console
+static void llama_sampler_temp_impl(llama_token_data_array * cur_p, float temp) {
+    GGML_ASSERT(cur_p->raw);
+    if (temp <= 0.0f) {
+        // find the token with the highest logit and set the rest to -inf
+        size_t max_i = 0;
+        float  max_l = cur_p->data[0].score;
+
+        for (size_t i = 1; i < cur_p->size; ++i) {
+            if (cur_p->data[i    ].score > max_l) {
+                cur_p->data[max_i].score = -INFINITY;
+                max_i = i;
+                max_l = cur_p->data[i].score;
+            } else {
+                cur_p->data[i].score = -INFINITY;
+            }
+        }
+
+        return;
+    }
+
+    for (size_t i = 0; i < cur_p->size; ++i) {
+        cur_p->data[i].score /= temp;
+    }
+}
+```
+But this caused a test in `test-thread-safety` to fail with:
+```console
+/home/danbev/work/ai/llama.cpp/src/llama-sampling.cpp:263: GGML_ASSERT(cur_p->raw) failed
+```
+The samplers configured in the test are as follows:
+```console
+(gdb) p params.samplers
+$7 = std::vector of length 9, capacity 9 =
+{
+COMMON_SAMPLER_TYPE_PENALTIES,
+COMMON_SAMPLER_TYPE_DRY,
+COMMON_SAMPLER_TYPE_TOP_N_SIGMA,
+COMMON_SAMPLER_TYPE_TOP_K,
+COMMON_SAMPLER_TYPE_TYPICAL_P,
+COMMON_SAMPLER_TYPE_TOP_P,
+COMMON_SAMPLER_TYPE_MIN_P,
+COMMON_SAMPLER_TYPE_XTC,
+COMMON_SAMPLER_TYPE_TEMPERATURE}
+```
+If these are applied in this order, that is they are chained, then temperature
+will come last and it will expect the score to be raw logits. But there other
+samplers like TOP_P will have converted the logits into probabilities. So this
+has introduced a ordering dependency between the samplers which is not ideal but
+is something that was there previously as well only that there was not an error
+but it just worked as there were separate fields for the logits and the
+probabilites.
+This is how the test is started:
+```console
+$ gdb --args build/bin/test-thread-safety "-hf" "ggml-org/models" "-hff" "tinyllamas/stories15M-q4_0.gguf" "-ngl" "99" "-p" "The meaning of life is" "-n" "128" "-c" "256" "-ub" "32" "-np" "4" "-t" "2"
+```
+So there is nothing specific about the sampling parameters that have been set
+here. If we inspect the samplers right after the the  struct has been created:
+```c++
+int main(int argc, char ** argv) {
+    common_params params;
+```
+struct common_params {
+```console
+(gdb) p params.sampling.samplers
+$11 = std::vector of length 9, capacity 9 = {COMMON_SAMPLER_TYPE_PENALTIES, COMMON_SAMPLER_TYPE_DRY, 
+  COMMON_SAMPLER_TYPE_TOP_N_SIGMA, COMMON_SAMPLER_TYPE_TOP_K, COMMON_SAMPLER_TYPE_TYPICAL_P, COMMON_SAMPLER_TYPE_TOP_P, 
+  COMMON_SAMPLER_TYPE_MIN_P, COMMON_SAMPLER_TYPE_XTC, COMMON_SAMPLER_TYPE_TEMPERATURE}
+
+```
+```c++
+struct common_params {
+    ...
+    struct common_params_sampling    sampling;
+    ...
+```
+```c++
+struct common_params_sampling {
+    ...
+    std::vector<enum common_sampler_type> samplers = {
+        COMMON_SAMPLER_TYPE_PENALTIES,
+        COMMON_SAMPLER_TYPE_DRY,
+        COMMON_SAMPLER_TYPE_TOP_N_SIGMA,
+        COMMON_SAMPLER_TYPE_TOP_K,
+        COMMON_SAMPLER_TYPE_TYPICAL_P,
+        COMMON_SAMPLER_TYPE_TOP_P,
+        COMMON_SAMPLER_TYPE_MIN_P,
+        COMMON_SAMPLER_TYPE_XTC,
+        COMMON_SAMPLER_TYPE_TEMPERATURE,
+    };
+    ...
+```
+For this to work I think we need to order the samplers so that those that
+expect raw logits come first and those that expect probabilities come last.
