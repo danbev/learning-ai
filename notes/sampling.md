@@ -17,11 +17,11 @@ This is a hyperparameter that uses a technique called nucleus sampling. This
 works as follows, we start by sorting the words in our very limited
 vocabulary:
 ```
-"apple": 0.5
-"banana": 0.2
+"apple"     : 0.5
+"banana"    : 0.2
 "strawberry": 0.15
 "watermelon": 0.1
-"mango": 0.05
+"mango"     : 0.05
 ```
 Next, we add these probablities until we reach, or exceed the specified `top_p`
 value. For example if `top_p` = 0.8:
@@ -40,16 +40,16 @@ variation in the output.
 This is a hyperparameter that uses a technique called top-k sampling.
 Lets say we have the following vocabulary:
 ```
-"apple": 0.4
-"banana": 0.25
-"cherry": 0.15
-"date": 0.1
+"apple"     : 0.4
+"banana"    : 0.25
+"cherry"    : 0.15
+"date"      : 0.1
 "elderberry": 0.05
-"fig": 0.02
-"grape": 0.015
-"honeydew": 0.01
-"kiwi": 0.005
-"lemon": 0.005
+"fig"       : 0.02
+"grape"     : 0.015
+"honeydew"  : 0.01
+"kiwi"      : 0.005
+"lemon"     : 0.005
 ```
 And say we set `top_k = 4`. This means that we will only consider the 4 top most
 probable words for the next selection and then sample from them.

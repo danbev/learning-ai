@@ -12,7 +12,7 @@ Github: https://github.com/guidance-ai/llguidance
 When we use an LLM we sometimes want the output to follow specific rules or 
 have a specific structure (like JSON as an example).
 
-First there need to be some way of defining the rules and for this a context-free
+First there needs to be some way of defining the rules and for this a context-free
 grammar is used. This is what defines the structure of the output.
 
 The components involved in this process are:
