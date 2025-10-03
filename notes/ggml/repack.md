@@ -2610,3 +2610,630 @@ new buffer type and return it in get_tensor. This way we can use the repack
 implementation for backend1 and the original data for backend2.
 
 This suggestion can be found in [#16182](https://github.com/ggml-org/llama.cpp/pull/16182)
+
+### Attempt 2
+So I got help with this task and instead of creating the test backend buffer
+type we can simply swap the order of the backends in the test:
+```c++
+    for (auto & test : test_cases) {
+        // Switch the order so that we copy from the reference backend to the
+        // variant backend.
+        if (test->eval(backend_ref, backend_variant, op_names_filter, output_printer)) {
+            n_ok++;
+        }
+    }
+```
+So this means that instead of copying from the repack backend to the reference
+we are using the cpu ref as the source. So the whole issue of copying repacked
+data is avoided. But we do need to ensure that the tensors are initialized by
+the repack extra buffer type, or otherwise the tensors extra field will not
+get populated and the repacking will not happen, and we will be comparing
+unpacked data only and never test repacked data.
+
+```c++
+bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor * test_node) {
+    struct ggml_backend_graph_copy copy = ggml_backend_graph_copy(backend2, graph);
+    if (copy.buffer == NULL) {
+        return false;
+    }
+    ...
+
+    // copy data and init views
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (node->op == GGML_OP_MUL_MAT) {
+            ggml_status status = ggml_backend_buffer_init_tensor(extra_buffer, node->src[0]);
+            if (status != GGML_STATUS_SUCCESS) {
+                GGML_LOG_ERROR("%s: failed to initialize tensor in extra buffer for graph copy\n", __func__);
+            }
+        }
+        ggml_status status = ggml_backend_buffer_init_tensor(buffer, node);
+        if (status != GGML_STATUS_SUCCESS) {
+            GGML_LOG_ERROR("%s: failed to initialize tensor in buffer for graph copy\n", __func__);
+        }
+        graph_copy_init_tensor(&hash_set, node_copies, node_init, node);
+    }
+```
+So we go through all the nodes in the graph and for each one we call:
+```c++
+static void graph_copy_init_tensor(struct ggml_hash_set * hash_set, struct ggml_tensor ** node_copies, bool * node_init, struct ggml_tensor * src) {
+    size_t id = ggml_hash_find(hash_set, src);
+    if (node_init[id]) {
+        return;
+    }
+    node_init[id] = true;
+
+    struct ggml_tensor * dst = node_copies[id];
+    // Go through all the sources recursively
+    if (dst->view_src != NULL) {
+        graph_copy_init_tensor(hash_set, node_copies, node_init, src->view_src);
+        enum ggml_status status = ggml_backend_view_init(dst);
+        GGML_ASSERT(status == GGML_STATUS_SUCCESS);
+    }
+    else {
+        ggml_backend_tensor_copy(src, dst);
+    }
+
+    // init src
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        struct ggml_tensor * s = src->src[i];
+        if (s == NULL) {
+            continue;
+        }
+        graph_copy_init_tensor(hash_set, node_copies, node_init, s);
+    }
+}
+```
+So take the following node:
+```console
+(gdb) p *node
+$13 = {
+type = GGML_TYPE_F32, buffer = 0x5555558bbb70, ne = {16, 1, 1, 1}, nb = {4, 64, 64, 64},
+op = GGML_OP_MUL_MAT, op_params = {
+0 <repeats 16 times>}, flags = 0, src = {0x55555592bc40, 0x55555592bf20, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+view_src = 0x0, view_offs = 0, data = 0x5555558fe2c0, name = "out", '\000' <repeats 60 times>, extra = 0x0,
+padding = "\000\000\000\000\000\000\000"}
+```
+
+```c++
+void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst) {
+    GGML_ASSERT(ggml_are_same_layout(src, dst) && "cannot copy tensors with different layouts");
+
+    if (src == dst) {
+        return;
+    }
+
+    if (ggml_backend_buffer_is_host(src->buffer)) {
+        ggml_backend_tensor_set(dst, src->data, 0, ggml_nbytes(src));
+    } else if (ggml_backend_buffer_is_host(dst->buffer)) {
+        ggml_backend_tensor_get(src, dst->data, 0, ggml_nbytes(src));
+    } else if (!ggml_backend_buffer_copy_tensor(src, dst)) {
+        GGML_LOG_DEBUG("%s: warning: slow copy from %s to %s\n", __func__, ggml_backend_buffer_name(src->buffer), ggml_backend_buffer_name(dst->buffer));
+        size_t nbytes = ggml_nbytes(src);
+        void * data = malloc(nbytes);
+        ggml_backend_tensor_get(src, data, 0, nbytes);
+        ggml_backend_tensor_set(dst, data, 0, nbytes);
+        free(data);
+    }
+}
+```
+
+```c++
+struct ggml_backend_graph_copy ggml_backend_graph_copy(ggml_backend_t backend, struct ggml_cgraph * graph) {
+    ...
+    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx_allocated, backend);
+```
+```c++
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {
+    return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));
+}
+```
+```console
+(gdb) p ggml_backend_dev_name(backend->device)
+$6 = 0x7ffff75453e7 "CPU-x64"
+
+(gdb) p ggml_backend_get_default_buffer_type(backend)
+$7 = (ggml_backend_buffer_type *) 0x7ffff7f8c280 <ggml_backend_cpu_buffer_type::ggml_backend_cpu_buffer_type>
+```
+So this will use the standard cpu buffer type and not the repack buffer type.
+
+```
+(gdb) f
+#0  ggml_cpu_has_avx2 () at /home/danbev/work/ai/llama.cpp-debug/ggml/src/ggml-cpu/ggml-cpu.c:3323
+3323	    return 0;
+(gdb) info registers pc
+pc             0x7ffff74aa8f2      0x7ffff74aa8f2 <ggml_cpu_has_avx2+8>
+(gdb) info symbol $pc
+ggml_cpu_has_avx2 + 8 in section .text of /home/danbev/work/ai/llama.cpp-debug/build-ref/bin/libggml-cpu-x64.so
+```
+
+### Testing repack (extra buffer types)
+So to be able to test the repack buffer type there were a few things I did to
+force this to work. The of having a test wrapper buffer type like was 
+mentioned above can be avoided by simply passing in the cpu-ref backend as the
+source backend and the repack backend as the destination backend. This way there
+is no need to copy repacked data and store the original data somewhere. This is
+great, but there we ran into a different issue is that the repack buffer type's
+init_tensor must be called. I've currently added/forced this into ggml-backend.cpp
+in `ggml_backend_graph_copy`.
+
+We need to have the extra buffer types run for when tensors are initialized
+at least that is the case for the repack buffer.
+```c++
+bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor * test_node) {
+    struct ggml_backend_graph_copy copy = ggml_backend_graph_copy(backend2, graph);
+```
+```c++
+struct ggml_backend_graph_copy ggml_backend_graph_copy(ggml_backend_t backend, struct ggml_cgraph * graph) {
+
+    ggml_backend_buffer_t extra_buffer = nullptr;
+    std::vector<ggml_backend_buffer_type_t> extra_buft_list;
+    auto * dev = ggml_backend_get_device(backend);
+    auto * reg = ggml_backend_dev_backend_reg(dev);
+    auto get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_dev_get_extra_bufts");
+    if (get_extra_bufts_fn) {
+        ggml_backend_buffer_type_t * extra_bufts = get_extra_bufts_fn(dev);
+        while (extra_bufts && *extra_bufts) {
+            extra_buft_list.push_back(*extra_bufts);
+            ++extra_bufts;
+        }
+    }
+    if (extra_buft_list.size() > 0) {
+        // Setting size to 1 just to ensure that the underlying extra buffer
+        // allocation is called. In the case of the repack buffer it does not
+        // really use the buffer and the repacking is done directory on the
+        // tensor data.
+        extra_buffer = ggml_backend_buft_alloc_buffer(extra_buft_list[0], 1);
+    }
+
+    // copy data and init views
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+
+        // Again just here to see if I can get the repacking to work.
+        if (extra_buffer && !ggml_op_is_empty(node->op) && node->src[0]) {
+            size_t id = ggml_hash_find(&hash_set, node);
+            // init tensor will set the extra field on the tensor for repack
+            ggml_status status = ggml_backend_buffer_init_tensor(extra_buffer, node_copies[id]);
+            if (status != GGML_STATUS_SUCCESS) {
+                GGML_LOG_ERROR("%s: failed to initialize tensor in extra buffer for graph copy\n", __func__);
+            }
+        }
+
+        // This is where repacks set tensor will be called which does the
+        // repacking
+        graph_copy_init_tensor(&hash_set, node_copies, node_init, node);
+    }
+```
+
+```
+supports_tensor (op=0x7ffff6c3d060) at /home/danbev/work/ai/llama.cpp-debug/ggml/src/ggml-cpu/repack.cpp:1873
+1873	    if (op->op == GGML_OP_MUL_MAT &&
+(gdb) info symbol $pc
+supports_tensor(ggml_tensor const*) + 16 in section .text of /home/danbev/work/ai/llama.cpp-debug/build-ref/bin/libggml-cpu-sandybridge.so
+```
+
+### Failing test
+`CPU-alderlake` MUL_MAT test fails on:
+```
+[MUL_MAT] NMSE = 0.629932732 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.424904600 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+...
+
+[MUL_MAT] NMSE = 0.488256616 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.499625640 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+...
+
+[MUL_MAT] NMSE = 0.629034638 > 0.000500000   MUL_MAT(type_a=q4_K,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.444866520 > 0.000500000   MUL_MAT(type_a=q4_K,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+...
+
+[MUL_MAT] NMSE = 0.512891100 > 0.000500000   MUL_MAT(type_a=q4_K,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.548872258 > 0.000500000   MUL_MAT(type_a=q4_K,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+
+```
+I want to compare a few different Operating Systems/Architectures to see if the
+same test is failing consitently.
+
+
+CPU-armv8.2_2:
+```
+[MUL_MAT] NMSE = 0.562542919 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.736554722 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+...
+
+[MUL_MAT] NMSE = 0.479809280 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.480791757 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+```
+So there are no q4_K types at all in this log, is q4_K not supported on armv8.2_2?
+
+But looking at the others we can match them up where the first entry is from
+`CPU-alderlake` and the second from `CPU-armv8.2_2` for each failure:
+```
+[MUL_MAT] NMSE = 0.629932732 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.562542919 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+
+[MUL_MAT] NMSE = 0.424904600 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.736554722 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+...
+
+[MUL_MAT] NMSE = 0.488256616 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.479809280 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+
+[MUL_MAT] NMSE = 0.499625640 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.480791757 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+```
+
+Lets check macos as well.
+```
+[MUL_MAT] NMSE = 0.376144799 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.540939489 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+...
+
+[MUL_MAT] NMSE = 0.491756784 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1): FAIL
+[MUL_MAT] NMSE = 0.506640885 > 0.000500000   MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=16,k=256,bs=[1,1],nr=[1,2],per=[0,1,2,3],v=0,o=1): FAIL
+```
+So they all seem to fail for the repeat pattern [2.1] and [1,2] while just a
+single nr=[1,1] works fine.
+
+The nr parameter in the tests controls broadcasting in the matrix multiplication:
+```c++
+struct test_mul_mat : public test_case {
+    const ggml_type type_a;
+    const ggml_type type_b;
+    const int64_t m;
+    const int64_t n;
+    const int64_t k;
+    const std::array<int64_t, 2> bs;  // batch size (dims 3 and 4)
+    const std::array<int64_t, 4> per; // permutation of dimensions
+    const bool v; // whether a and b are non-contiguous views
+    const uint32_t o; // number of outputs
+
+    const std::array<int64_t, 2> nr;  // repeat factors for dims 3 and 4
+```
+```c++
+            // Create tensors with the permuted dimensions, then permute them back to the dimensions given by m,n,k.
+            const int64_t ne_a[4] = {k, m, bs[0],       bs[1]};
+            const int64_t ne_b[4] = {k, n, bs[0] * nr[0], bs[1] * nr[1]};
+                                                 ↑              ↑
+                                           [   nr_0    ]  [    nr_1    ]
+```
+So for example [1,1] would mean no broadcasting while [2,1] would mean that
+the 3rd dimension of b is repeated twice while the 4th dimension is not repeated.
+What does repeated mean in this context?  
+It means that the tensor is treated as if it had more elements in that dimension
+than it actually has. So if the tensor has a shape of (k, n, bs[0], bs[1]) and
+we set nr to (2, 1) then the tensor will be treated as if it had a shape of
+(k, n, bs[0]*2, bs[1]). The data in the tensor is not actually changed, it is
+just how the tensor is interpreted during the matrix multiplication.
+
+Example 1: nr = [1, 1] (No broadcasting)
+```
+src0 shape: [2, 2, 1, 1]
+w_0
+  z_0
+    [1, 2]
+    [3, 4]
+
+src1 shape: [2, 2, 1, 1]
+w_0
+  z_0
+    [5, 6]
+    [7, 8]
+
+Result of src0 x src1 (standard matrix multiply):
+
+    [1, 2] x [5, 6] = [1*5+2*7 1*6+2*8] = [19, 22]
+    [3, 4]   [7, 8]   [3*5+4*7 3*6+4*8] = [43, 50]
+    
+Result shape: [2, 2, 1, 1]
+w_0
+  z_0
+    [19, 22]
+    [43, 50]
+]
+```
+
+Example 2: nr = [2, 1] (Broadcasting in dimension 2)
+```
+src0 shape: [2, 2, 1, 1]  // same as the previous example
+w_0
+  z_0
+    [1, 2]
+    [3, 4]
+
+src1 shape: [2, 2, 2, 1]  ← TWO matrices (dimension 2 = z axis)
+w_0
+  z_0
+    [5, 6]
+    [7, 8]
+  z_1
+    [9, 10]
+    [11, 12]
+
+Broadcasting: src0's w_0/z_0 is reused for BOTH z_0 and z_1 of src1
+
+Computation:
+  For z_0:
+    [1, 2] x [5, 6]  = [1*5+2*7,  1*6+2*8]  = [19, 22]
+    [3, 4]   [7, 8]    [3*5+4*7,  3*6+4*8]    [43, 50]
+  
+  For z_1: (Same src0 matrix is reused!)
+    [1, 2] x [9, 10]  = [1*9+2*11,  1*10+2*12]  = [31, 34]
+    [3, 4]   [11,12]    [3*9+4*11,  3*10+4*12]    [71, 78]
+
+dst shape: [2, 2, 2, 1]
+w_0
+  z_0
+    [19, 22]
+    [43, 50]
+  z_1
+    [31, 34]
+    [71, 78]
+```
+
+Example 3: nr = [1, 2] (Broadcasting in dimension 3)
+```
+src0 shape: [2, 2, 1, 1]  // same as the previous examples
+w_0
+  z_0
+    [1, 2]
+    [3, 4]
+
+src1 shape: [2, 2, 1, 2]  ← TWO matrices (dimension 3 = w axis)
+w_0
+  z_0
+    [5, 6]
+    [7, 8]
+w_1
+  z_0
+    [9, 10]
+    [11, 12]
+
+Broadcasting: src0's w_0/z_0 is reused for BOTH w_0 and w_1 of src1
+
+Computation:
+  For w_0:
+    [1, 2] x [5, 6]  = [1*5+2*7,  1*6+2*8]  = [19, 22]
+    [3, 4]   [7, 8]    [3*5+4*7,  3*6+4*8]    [43, 50]
+
+  For w_1: (SAME src0 matrix reused!)
+    [1, 2] x [9, 10]  = [1*9+2*11,  1*10+2*12]  = [31, 34]
+    [3, 4]   [11,12]    [3*9+4*11,  3*10+4*12]    [71, 78]
+
+dst shape: [2, 2, 1, 2]
+w_0
+  z_0
+    [19, 22]
+    [43, 50]
+w_1
+  z_0
+    [31, 34]
+    [71, 78]
+```
+
+```
+The GGML_TENSOR_BINARY_OP_LOCALS macro creates local variables with this pattern:
+- No suffix (ne0, ne1, ne2, ne3)     = dst    dimensions
+- Suffix 0  (ne00, ne01, ne02, ne03) = src[0] dimensions
+- Suffix 1  (ne10, ne11, ne12, ne13) = src[1] dimensions
+```
+```
+        GGML_TENSOR_BINARY_OP_LOCALS
+
+        GGML_ASSERT(ne0 == ne01); // dst->ne[0] == src0->ne[0] 2 == 2
+        GGML_ASSERT(ne1 == ne11); // dst->ne[1] == src1->ne[1] 2 == 2
+        GGML_ASSERT(ne2 == ne12); // dst->ne[2] == src1->ne[2]
+        GGML_ASSERT(ne3 == ne13); // dst->ne[3] == src1->ne[3]
+```
+The assertions don't catch broadcasting because they check the wrong thing. They
+verify:
+* dst and src1 dimensions match (correct)
+* src0 is effectively 2D (correct)
+
+In `forward_mul_mat` we then have (which is where the above check came from):
+```c++
+    void forward_mul_mat(ggml_compute_params * params, ggml_tensor * op) {
+        const ggml_tensor * src0 = op->src[0];
+        const ggml_tensor * src1 = op->src[1];
+        ggml_tensor *       dst  = op;
+
+        GGML_TENSOR_BINARY_OP_LOCALS
+
+        const int ith = params->ith;
+        const int nth = params->nth;
+
+        GGML_ASSERT(ne0 == ne01); // dst[0] == src0[0]
+        GGML_ASSERT(ne1 == ne11); // dst[1] == src1[1]
+        GGML_ASSERT(ne2 == ne12); // dst[2] == src1[2]
+        GGML_ASSERT(ne3 == ne13); // dst[3] == src1[3]
+
+        // dst cannot be transposed or permuted
+        GGML_ASSERT(nb0 == sizeof(float));
+        GGML_ASSERT(nb0 <= nb1);
+        GGML_ASSERT(nb1 <= nb2);
+        GGML_ASSERT(nb2 <= nb3);
+
+        GGML_ASSERT(src1->type == GGML_TYPE_F32);
+
+        GGML_ASSERT(ggml_n_dims(op->src[0]) == 2);
+        // GGML_ASSERT(ggml_n_dims(op->src[1]) == 2); // this is interesting as this is the same check I've added to supports_tensor
+
+        char *       wdata = static_cast<char *>(params->wdata);
+        const size_t nbw1  = ggml_row_size(PARAM_TYPE, ne10);
+
+        assert(params->wsize >= nbw1 * ne11);
+
+        const ggml_from_float_t from_float = ggml_get_type_traits_cpu(PARAM_TYPE)->from_float;
+
+        // index for in dimension 1 of tensor 1 (i11)
+        int64_t i11_processed = 0;
+        // ne10 = src1->ne[0] = 256  // src1 has 256 elements in dimension 0
+        // ne11 = src1->ne[1] = 2    // src1 has 2 elements in dimension 1
+        // nb11 = src1->nb[1] = 1024 // stride to go from one row to the next (bytes)
+        // ith = 0, so i11 starts at 0, 0 < (ne11 - ne11 % 4) == (2 - 2 % 4) == 0, so loop does not run
+        // In this case src1 is of type GGML_TYPE_F32 and this would have quantized groups of 4 rows
+        // and convert them to quantied format.
+        for (int64_t i11 = ith * 4; i11 < ne11 - ne11 % 4; i11 += nth * 4) {
+            // Notice that the quantied data is written to params->wdata
+            ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>((float *) ((char *) src1->data + i11 * nb11), (void *) (wdata + i11 * nbw1), 4, ne10);
+        }
+
+        // this will also be 0 for this session
+        i11_processed = ne11 - ne11 % 4;
+        // So we could not quantize groups of 4 rows, or we did and we have some
+        // left over rows to convert. We quantize each row separately
+        for (int64_t i11 = i11_processed + ith; i11 < ne11; i11 += nth) {
+            from_float((float *) ((char *) src1->data + i11 * nb11), (void *) (wdata + i11 * nbw1), ne10);
+        }
+
+        // Sync all thread if there are more than one.
+        ggml_barrier(params->threadpool);
+
+        // So at this stage we have quantized matrix B.
+
+        // params->wdata now contains the quantized version of src1  (matrix B)
+        const void * src1_wdata      = params->wdata;
+        // number of bytes per row in the quantized format.
+        const size_t src1_col_stride = ggml_row_size(PARAM_TYPE, ne10);
+        // start will be 0 in our case
+        int64_t      src0_start      = (ith * ne01) / nth;
+        // end will be 16 in our case
+        int64_t      src0_end        = ((ith + 1) * ne01) / nth;
+        src0_start = (src0_start % NB_COLS) ? src0_start + NB_COLS - (src0_start % NB_COLS) : src0_start;
+        src0_end   = (src0_end   % NB_COLS) ? src0_end   + NB_COLS - (src0_end   % NB_COLS) : src0_end;
+        if (src0_start >= src0_end) {
+            return; // nothing to do for this thread.
+        }
+
+        // If there are more than three rows in src1, use gemm; otherwise, use gemv.
+        if (ne11 > 3) {
+            gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
+                    (float *) ((char *) dst->data) + src0_start, ne01,
+                    (const char *) src0->data + src0_start * nb01,
+                    (const char *) src1_wdata, ne11 - ne11 % 4, src0_end - src0_start);
+        }
+        for (int iter = ne11 - ne11 % 4; iter < ne11; iter++) {
+            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
+                    (float *) ((char *) dst->data + (iter * nb1)) + src0_start, ne01,
+                    (const char *) src0->data + src0_start * nb01,
+                    (const char *) src1_wdata + (src1_col_stride * iter), 1,
+                    src0_end - src0_start);
+        }
+    }
+```
+```c++
+template <> void gemv<block_q4_K, 8, 8, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+    ggml_gemv_q4_K_8x8_q8_K(n, s, bs, vx, vy, nr, nc);
+}
+```
+This will land in `ggml/src/ggml-cpu/arch/x86/repack.cpp`:
+```c++
+void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    const int qk = QK_K;
+    const int nb = n / qk;
+    const int ncols_interleaved = 8;
+    const int blocklen = 8;
+    static const uint32_t kmask1 = 0x3f3f3f3f;
+    static const uint32_t kmask2 = 0x0f0f0f0f;
+    static const uint32_t kmask3 = 0x03030303;
+```
+TODO: work through this function but it is a bit heavy for a Friday afternoon.
+
+```console
+(gdb) p *src0
+$9 = {type = GGML_TYPE_Q4_K, buffer = 0x55555569e400, ne = {256, 16, 1, 1}, nb = {144, 144, 2304, 2304}, op = GGML_OP_NONE, 
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, 
+  view_offs = 0, data = 0x5555559636c0, name = "a", '\000' <repeats 62 times>, 
+  extra = 0x7ffff757b3d0 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_K_8x8_q8_K>, 
+  padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p *src1
+$10 = {type = GGML_TYPE_F32, buffer = 0x55555592db30, ne = {256, 2, 1, 1}, nb = {4, 1024, 2048, 2048}, op = GGML_OP_NONE, 
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, 
+  view_offs = 0, data = 0x555555963fc0, name = "b", '\000' <repeats 62 times>, extra = 0x0, padding = "\000\000\000\000\000\000\000"}
+```
+
+Keep in mind that Matrix multiplication is unconventional:
+```console
+C = ggml_mul_mat(ctx, A, B)
+means:
+C^T = AB^T = C = BA^T
+```
+
+So we have matrix A and matrix B and could visualize them like this:
+```console
+     B                             A^T
+    0  [0 ...           255] x  0[0   ... 15]   0 [0   ... 15]
+    1  [0 ...           255]    1[0   ... 15] = 1 [0   ... 15]
+                                   ...
+                              255[0   ... 15]
+```
+Or like this:
+```console
+               A                        B^T             C^T
+
+    0  [0 ...           255]       [0      0]        0 [0  0]
+    1  [0 ...           255]   x   [1      1]     =  1 [0  0] 
+    2  [0 ...           255]       [2      2]        2 [0  0]
+       ...                         ...                 ...
+    15 [0 ...           255]       ...              15 [0  0]
+                                   [255  255]
+```
+So normally we would need to transpose B to multiply with A but the 256 dimension
+(the inner dimension for the dot products) lines up perfectly, and 
+C = BA^T means that B's rows are dot producted with A's rows. So we can just
+access row by row and do the dot products as they are stored in memory.
+
+So in memory the tensors can be stored like this:
+```console
+A in memory: [row₀: 256 elements][row₁: 256 elements]...[row₁₅: 256 elements]
+B in memory: [row₀: 256 elements][row₁: 256 elements]
+```
+The computation C = BA^T:
+```console
+C[0,0] = B_row₀ · A_row₀   ← Both are contiguous in memory!
+C[0,1] = B_row₀ · A_row₁   ← Both are contiguous in memory!
+...
+C[1,0] = B_row₁ · A_row₀   ← Both are contiguous in memory!
+```
+
+Now, if we have an additional dimension in the tests like:
+```console
+$ gdb --args ./build-ref/bin/test-backend-ops cpu-variants --variant CPU-alderlake \
+  -o "MUL_MAT(type_a=q4_0,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[2,1],per=[0,1,2,3],v=0,o=1)"
+```
+```console
+(gdb) p ggml_n_dims(op->src[1])
+$2 = 3
+(gdb) p ne10
+$3 = 256
+(gdb) p ne11
+$4 = 1
+(gdb) p ne12
+$5 = 2
+(gdb) p ne13
+$6 = 1
+```
+When we get to:
+```c++
+for (int64_t i11 = i11_processed + ith; i11 < ne11; i11 += nth) {
+    from_float((float *) ((char *) src1->data + i11 * nb11), (void *) (wdata + i11 * nbw1), ne10);
+                                                       ↑
+                                                    only used nb11
+}
+```
+So this will only quantize the first rows in `z_0`:
+```
+w_0
+  z_0
+    [5, 6]
+    [7, 8]
+  z_1
+    [9, 10]
+    [11, 12]
+```
+But `z_1` will not be quantized!
+
+But the multiplication will be performed assuming that all data has been
+quantized. And writes garbage to memory which was causing the NMSE errors.
