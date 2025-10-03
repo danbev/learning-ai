@@ -15,27 +15,40 @@ prop_x₂ = softmax(x₂) = exp(x₂) / (exp(x₁) + exp(x₂) + ... + exp(xₙ)
 Notice that we need to calculate the sum of all the exponentials of the input
 which is then used to divide (normalize) each exponential.
 
-
 In the case of a neural network the last layer will be a matrix of logits, that
 is raw unnormalized predictions. Each row in this matrix corresponds to an
-entry in the input sequence. So to visualize this we can think of this matrix
-as:
+entry in the models vocabulary.
+
+So to visualize this say we have an sequence that looks like this:
 ```
 'Dan':   [0.1, 0.2, 0.3, 0.4]
 'loves': [0.5, 0.6, 0.7, 0.8]
 'ice':   [0.9, 1.0, 1.1, 1.2]
-'cream': [1.3, 1.4, 1.5, 1.6]
 ```
-Think of each row in the logits matrix as a set of scores given by the network,
+The result of the last inference layer is a matrix of logits that looks like
+```
+'a':     [0.1]
+'cream': [1.3]
+'this':  [0.4]
+...
+```
 However, these scores are not probabilities yet, they can be any real number.
+
 The softmax function's role is to transform these scores into actual
-probabilities. What we want to do is to normalize each row of this matrix. So
-we apply the softmax function to each row: 
+probabilities.
+
+So if our vocabulary has 32,000 tokens, you get a single vector with 32,000
+real-valued logits.
+```console
+Vector of logits (size = vocabulary_size)
+├─ token_id 0: -2.3
+├─ token_id 1:  5.1
+├─ token_id 2:  3.8
+├─ token_id 3: -0.5
+├─ ...
+└─ token_id 32000: 1.2
 ```
-'Dan':   [0.1, 0.2, 0.3, 0.4] -> [0.1, 0.2, 0.3, 0.4]
-'loves': [0.5, 0.6, 0.7, 0.8] -> [0.1, 0.2, 0.3, 0.4]
-'ice':   [0.9, 1.0, 1.1, 1.2] -> [0.1, 0.2, 0.3, 0.4]
-'cream': [1.3, 1.4, 1.5, 1.6] -> [0.1, 0.2, 0.3, 0.4]
+
 ```
 The softmax function is defined as:
 ```
@@ -47,6 +60,10 @@ The softmax function is defined as:
 eˣⁱ = exponential of the i-th element of the input vector
 ∑_j eˣʲ = sum of all the exponentials of the input vector
 ```
+
+And each time we take the softmax, we have to do exp(logit[0]) + exp(logit[2])
+... exp(logit[31999] and then divide by each entry by that number. That is
+32.000 exponentials and sum operations, and then 32.000 divisions.
 
 ### Numerical Stability
 The standard softmax function involves computing the exponential of numbers. If
