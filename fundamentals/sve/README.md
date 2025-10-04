@@ -7,6 +7,12 @@ TODO:
 ```console
 $ sudo apt-get install qemu-user
 ```
+
+And install a cross compiler:
+```console
+sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+```
+
 ```console
 $ qemu-aarch64 --cpu help
 Available CPUs:
