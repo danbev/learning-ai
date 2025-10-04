@@ -1,5 +1,5 @@
-CXX = g++
-CXXFLAGS = -march=armv8-a+sve -g
+CXX = aarch64-linux-gnu-g++
+CXXFLAGS = -march=armv8-a+sve -g -static
 
 SRCDIR = src
 BINDIR = bin
@@ -15,6 +15,9 @@ $(TARGETS): % : $(SRCDIR)/%.cpp | bindir
 bindir: bin
 bin:
 	@mkdir -p $(BINDIR)
+
+run-vad: ${BINDIR}/vadd-sve
+	qemu-aarch64 -cpu max,sve256=on $<
 
 .PHONY: clean
 clean:
