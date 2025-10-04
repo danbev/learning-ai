@@ -5,23 +5,42 @@
 void vector_add_sve(const float *a, const float *b, float *result, size_t n) {
     uint64_t i = 0;
 
-    // Process vectors while there are elements remaining
+    // Iterate over all elements in steps of vector length (8)
     while (i < n) {
+        printf("Processing index: %ld\n", i);
         // Create a predicate for the remaining elements
-        // This handles the tail automatically - no cleanup loop needed!
-        svbool_t pg = svwhilelt_b32(i, (uint64_t)n);
+        // The svwhilelt_b32 intrinsic generates a predicate for 32-bit elements
+        // to mask off elements beyond the array bounds.
+        svbool_t pg = svwhilelt_b32(i, (uint64_t) n);
 
-        // Load vectors with predication
+        // The following is on to inspect the predicate as I was cuirious about it
+        svfloat32_t test  = svdup_f32(1.0f);
+        svfloat32_t zeros = svdup_f32(0.0f);
+        svfloat32_t res   = svsel_f32(pg, test, zeros);
+
+        float lanes[svcntw()];
+        svst1_f32(svptrue_b32(), lanes, res);
+
+        printf("Predicate lanes[%ld]: ", i);
+        for (int j = 0; j < svcntw(); j++) {
+            printf("%.0f ", lanes[j]);
+        }
+        printf("\n");
+
+
+        // Load vectors of size svcntw() (8 32-bit elements in a vector)
         svfloat32_t va = svld1_f32(pg, &a[i]);
         svfloat32_t vb = svld1_f32(pg, &b[i]);
 
-        // Perform addition
+        // Perform addition of the vectors
         svfloat32_t vresult = svadd_f32_z(pg, va, vb);
 
         // Store result with predication
         svst1_f32(pg, &result[i], vresult);
 
-        // Increment by the vector length (scalable!)
+        // Increment by the vector length (scalable!) and hardware dependant
+        // On my Ubuntu system using QEMU, svcntw() returns 8, meaning 8 floats (32-bit) per vector
+        // SO each register can store 8 floats, 8*32 = 256
         i += svcntw();  // Count of 32-bit elements in a vector
     }
 }
@@ -34,7 +53,7 @@ void vector_add_scalar(const float *a, const float *b, float *result, size_t n) 
 }
 
 int main() {
-    const size_t N = 1000;
+    const size_t N = 1005;
     float a[N], b[N], result_sve[N], result_scalar[N];
 
     // Initialize arrays

@@ -16,8 +16,8 @@ bindir: bin
 bin:
 	@mkdir -p $(BINDIR)
 
-run-vad: ${BINDIR}/vadd-sve
-	qemu-aarch64 -cpu max,sve256=on $<
+run-vad: vadd-sve
+	qemu-aarch64 -cpu max,sve256=on ${BINDIR}/$<
 
 .PHONY: clean
 clean:
