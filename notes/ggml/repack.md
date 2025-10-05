@@ -3043,10 +3043,11 @@ In `forward_mul_mat` we then have (which is where the above check came from):
         const int ith = params->ith;
         const int nth = params->nth;
 
-        GGML_ASSERT(ne0 == ne01); // dst[0] == src0[0]
-        GGML_ASSERT(ne1 == ne11); // dst[1] == src1[1]
-        GGML_ASSERT(ne2 == ne12); // dst[2] == src1[2]
-        GGML_ASSERT(ne3 == ne13); // dst[3] == src1[3]
+        // Recall that ne0 is dst[0]->ne[0], ne01 is src[0], ne01 is src[1]
+        GGML_ASSERT(ne0 == ne01); // dst->ne[0] == src0->ne[1]
+        GGML_ASSERT(ne1 == ne11); // dst->ne[1] == src1->ne[1]
+        GGML_ASSERT(ne2 == ne12); // dst->ne[2] == src1->ne[2]
+        GGML_ASSERT(ne3 == ne13); // dst->ne[3] == src1->ne[3]
 
         // dst cannot be transposed or permuted
         GGML_ASSERT(nb0 == sizeof(float));
@@ -3057,7 +3058,8 @@ In `forward_mul_mat` we then have (which is where the above check came from):
         GGML_ASSERT(src1->type == GGML_TYPE_F32);
 
         GGML_ASSERT(ggml_n_dims(op->src[0]) == 2);
-        // GGML_ASSERT(ggml_n_dims(op->src[1]) == 2); // this is interesting as this is the same check I've added to supports_tensor
+        // this is interesting as this is the same check I've added to supports_tensor:
+        // GGML_ASSERT(ggml_n_dims(op->src[1]) == 2);
 
         char *       wdata = static_cast<char *>(params->wdata);
         const size_t nbw1  = ggml_row_size(PARAM_TYPE, ne10);
@@ -3066,7 +3068,7 @@ In `forward_mul_mat` we then have (which is where the above check came from):
 
         const ggml_from_float_t from_float = ggml_get_type_traits_cpu(PARAM_TYPE)->from_float;
 
-        // index for in dimension 1 of tensor 1 (i11)
+        // index in src1, dimension 1 (i, 1=tensor number, 1=dimension number)
         int64_t i11_processed = 0;
         // ne10 = src1->ne[0] = 256  // src1 has 256 elements in dimension 0
         // ne11 = src1->ne[1] = 2    // src1 has 2 elements in dimension 1
@@ -3074,9 +3076,13 @@ In `forward_mul_mat` we then have (which is where the above check came from):
         // ith = 0, so i11 starts at 0, 0 < (ne11 - ne11 % 4) == (2 - 2 % 4) == 0, so loop does not run
         // In this case src1 is of type GGML_TYPE_F32 and this would have quantized groups of 4 rows
         // and convert them to quantied format.
-        for (int64_t i11 = ith * 4; i11 < ne11 - ne11 % 4; i11 += nth * 4) {
+        for (int64_t i11 = ith * 4; i11 < ne11 - (ne11 % 4); i11 += nth * 4) {
             // Notice that the quantied data is written to params->wdata
-            ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>((float *) ((char *) src1->data + i11 * nb11), (void *) (wdata + i11 * nbw1), 4, ne10);
+            ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>(
+            (float *) ((char *) src1->data + i11 * nb11), // start at src1.data and offset to row i11
+            (void *) (wdata + i11 * nbw1),
+            4, // process 4 rows at a time
+            ne10); // number of elements in dimension 0 for src1 (matrix B)
         }
 
         // this will also be 0 for this session
@@ -3237,3 +3243,174 @@ But `z_1` will not be quantized!
 
 But the multiplication will be performed assuming that all data has been
 quantized. And writes garbage to memory which was causing the NMSE errors.
+
+Lets take a look as some real data and not just random test tensor data:
+```console
+$3 = (const ggml_tensor *) 0x555558462960
+(gdb) p *src0
+$4 = {type = GGML_TYPE_Q4_0, buffer = 0x555555964360, ne = {640, 1024, 1, 1}, nb = {18, 360, 368640, 368640}, op = GGML_OP_NONE,
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0,
+  view_offs = 0, data = 0x7fffdda35040, name = "blk.0.attn_q.weight", '\000' <repeats 44 times>,
+  extra = 0x7ffff5faf3c8 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_0_8x8_q8_0>,
+  padding = "\000\000\000\000\000\000\000"}
+
+(gdb) p *src1
+$5 = {type = GGML_TYPE_F32, buffer = 0x5555559670a0, ne = {640, 9, 1, 1}, nb = {4, 2560, 23040, 23040}, op = GGML_OP_MUL,
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x555555d23a90, 0x55555844a380, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+  view_src = 0x0, view_offs = 0, data = 0x7fffba4d6840, name = "attn_norm-0", '\000' <repeats 52 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+```
+Notice that src0 is the weight matrix and this is pre-quantized. And the input
+embedding tensor is src1 which is of type f32 and has 9 rows each with 640
+dimension.
+
+Before we step into `gemv` just show the current function so that we are clear
+on the values of the type parameters used:
+```console
+(gdb) f
+#0  ggml::cpu::repack::tensor_traits<block_q4_0, 8l, 8l, (ggml_type)8>::forward_mul_mat (
+    this=0x7ffff5faf3c8 <ggml_repack_get_optimal_repack_type(ggml_tensor const*)::q4_0_8x8_q8_0>, params=0x7fffffff69d0,
+    op=0x555555d23d70) at /home/danbev/work/ai/llama.cpp-debug/ggml/src/ggml-cpu/repack.cpp:1666
+1666	            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
+
+```
+And the declaration of the class template:
+```c++
+template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE>
+class tensor_traits : public tensor_traits_base {
+```
+So block type is `block_q4_0`, inter size is 8, nb_cols is 8 and param type is
+`GGML_TYPE_Q8_0`:
+And `dst` looks like this:
+```console
+(gdb) p *dst
+$8 = {type = GGML_TYPE_F32, buffer = 0x5555559670a0, ne = {1024, 9, 1, 1},
+  nb = {4, 4096, 36864, 36864}, op = GGML_OP_MUL_MAT,
+  op_params = {0 <repeats 16 times>}, flags = 0,
+  src = {0x555558462960, 0x555555d23c00, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+  view_src = 0x0, view_offs = 0, data = 0x7fffba616840, name = "Qcur-0", '\000' <repeats 57 times>, extra = 0x0,
+  padding = "\000\000\000\000\000\000\000"}
+```
+```c++
+        for (int iter = ne11 - ne11 % 4; iter < ne11; iter++) {
+            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
+                    (float *) ((char *) dst->data + (iter * nb1)) + src0_start, ne01,
+                    (const char *) src0->data + src0_start * nb01,
+                    (const char *) src1_wdata + (src1_col_stride * iter), 1, // this is src1 quantized data
+                    src0_end - src0_start);
+        }
+```
+```c++
+template <>
+void gemv<block_q4_0, 8, 8, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+    ggml_gemv_q4_0_8x8_q8_0(n, s, bs, vx, vy, nr, nc);
+}
+```
+The next call will land in `ggml/src/ggml-cpu/arch/x86/repack.cpp`:
+```c++
+void ggml_gemv_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+#if defined(__AVX2__) || defined(__AVX512F__)
+    {
+        // Lookup table to convert signed nibbles to signed bytes
+        __m256i signextendlut = _mm256_castsi128_si256(_mm_set_epi8(-1, -2, -3, -4, -5, -6, -7, -8, 7, 6, 5, 4, 3, 2, 1, 0));
+        signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
+
+        gemv_q4_b32_8x8_q8_0_lut_avx<block_q4_0x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+
+        return;
+    }
+#endif
+
+    ggml_gemv_q4_0_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+}
+```
+We can check that we are in the correct image using:
+```console
+(gdb) info symbol $pc
+ggml_gemv_q4_0_8x8_q8_0 + 117 in section .text of /home/danbev/work/ai/llama.cpp-debug/build-ref/bin/libggml-cpu-alderlake.so
+```
+GEMV is General Matrix Vector multiplication, `q4_0` is the type of the first
+operand (the weights)
+```
+The parameters are:
+* n = number of operations/vector length (640 in this case)
+* s = sum, pointer to output vector
+* bs = batch stride between consecutive elements or batches (1024 in this case)
+* vx = the input matrix or first operand of (y = A*x + y) (v for void pointer?)
+* vy = the weight matrix or second operand of (y = A*x + y) (v for void pointer?)
+* nr = number of rows (1 in this case)
+* nc = number of columns (256 in this case)
+
+
+So first we have:
+```c++
+_mm_set_epi8(-1, -2, -3, -4, -5, -6, -7, -8, 7, 6, 5, 4, 3, 2, 1, 0)
+```
+This is creating a 128-bit value with 16 bytes. The arguments are listed in
+reverse order:
+```console
+(gdb) p/d ((signed char*)&signextendlut)[0]@32
+$13 = {0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1, 0 <repeats 16 times>}
+```
+This acts as a lookup table that maps 4-bit unsigned values (0 to 15) to their
+signed equivalents (-8 to 7):
+* 0-7 map to 0-7
+* 8-15 map to -8 to -1
+
+The `__mm256_castsi128_si256` takes this 128-bit value (the table) and places
+it into the lower half of a 256-bit register. The upper values are undefined.
+Then `_mm256_permute2f128_si256` is used to copy the lower 128-bits to the upper
+128-bits. So now we have a 256-bit register with the lookup table repeated
+twice:
+```
+(gdb) p/d ((signed char*)&signextendlut)[0]@32
+$15 = {0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1}
+```
+And recall that there will most often be multiple thread performing this.
+```c++
+        gemv_q4_b32_8x8_q8_0_lut_avx<block_q4_0x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+```
+
+```c++
+template<typename block_tx8>
+static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
+    static_assert(
+            std::is_same_v<block_tx8, block_q4_0x8> ||
+            std::is_same_v<block_tx8, block_iq4_nlx8>,
+            "Unsupported block type");
+
+    const int qk = QK8_0;
+    const int nb = n / qk;
+
+    UNUSED(bs);
+
+    __m128i changemask = _mm_set_epi8(15, 14, 7, 6, 13, 12, 5, 4, 11, 10, 3, 2, 9, 8, 1, 0);
+```
+```console
+(gdb) p/d ((signed char*)&changemask)[0]@16
+$31 = {0, 1, 8, 9, 2, 3, 10, 11, 4, 5, 12, 13, 6, 7, 14, 15}
+```
+This mask specifies that: 
+```
+Output bytes 0-1  : Take input bytes 0-1   (FP16 value #0)
+Output bytes 2-3  : Take input bytes 8-9   (FP16 value #4)
+Output bytes 4-5  : Take input bytes 2-3   (FP16 value #1)
+Output bytes 6-7  : Take input bytes 10-11 (FP16 value #5)
+Output bytes 8-9  : Take input bytes 4-5   (FP16 value #2)
+Output bytes 10-11: Take input bytes 12-13 (FP16 value #6)
+Output bytes 12-13: Take input bytes 6-7   (FP16 value #3)
+Output bytes 14-15: Take input bytes 14-15 (FP16 value #7)
+```
+```
+[0, 4, 1, 5, 2, 6, 3, 7]
+```
+The 8 blocks in block_q4_0x8 have their scale factors stored in an interleaved
+pattern for memory efficiency:
+```
+Memory layout: [B0, B4, B1, B5, B2, B6, B3, B7]
+```
+But for computation, they need to be in sequential order:
+```
+[B0, B1, B2, B3, B4, B5, B6, B7]
+```
+_wip_
