@@ -21,8 +21,7 @@ static inline int ggml_cpu_get_sve_cnt(void) {
 
 // The GGML function with the bug
 void ggml_vec_scale_f32(const int n, float * y, const float v) {
-    const int sve_register_length = ggml_cpu_get_sve_cnt() * 8;
-    const int ggml_f32_epr = sve_register_length / 32;
+    const int ggml_f32_epr = svcntw(); // elements per register
     const int ggml_f32_step = 2 * ggml_f32_epr;
     
     GGML_F32_VEC vx = GGML_F32_VEC_SET1(v);
@@ -45,13 +44,15 @@ void ggml_vec_scale_f32(const int n, float * y, const float v) {
     printf("Processed %d elements in main loop\n", n_processed);
     
     printf("Leftover elements to process: %d\n", n - np);
-    // 16 is less than 25 so we have leftovers
+    // 16 is less than 25 so we have 9 leftovers
     /*
     if (np < n) {
         printf("Create predicate with %d, %d\n", np, n);
-        // 1 1 1 1 1 1 1 1
-        // So the first 8 lanes are active, but recall that we a have 9
-        // leftovers.
+        // svwhilelt_b32(16, 25) generates a predicate by checking each of the
+        // 8 hardware lanes: "Is (start + lane_index) < 25?"
+        // Lanes 0-7 check indices 16-23, all of which are < 25, so all lanes
+        // are set to 1, giving us: [1,1,1,1,1,1,1,1]
+        // Note: Element 24 is not checked because we only have 8 lanes!
         svbool_t pg = svwhilelt_b32(np, n);
 
         // Just printing the predicate lanes to see what they are
@@ -106,12 +107,14 @@ void ggml_vec_scale_f32(const int n, float * y, const float v) {
 int main() {
     printf("=== GGML vec_scale Leftover Bug Demo ===\n\n");
     
+    int svcntwv = svcntw();
     int sve_cnt = ggml_cpu_get_sve_cnt();
     // elements per register
     int ggml_f32_epr = (sve_cnt * 8) / 32;
     // we process two registers per loop iteration
     int ggml_f32_step = 2 * ggml_f32_epr;
     
+    printf("SVE elements per vector (svcntw): %d\n", svcntwv);
     printf("SVE vector length: %d bytes (%d bits)\n", sve_cnt, sve_cnt * 8);
     printf("Elements per register (epr): %d\n", ggml_f32_epr);
     printf("Step size (two registers per loop): %d\n\n", ggml_f32_step);
