@@ -19,6 +19,9 @@ bin:
 run-vad: vadd-sve
 	qemu-aarch64 -cpu max,sve256=on ${BINDIR}/$<
 
+run-vec-scale: vec_scale
+	qemu-aarch64 -cpu max,sve256=on ${BINDIR}/$<
+
 .PHONY: clean
 clean:
 	${RM} -r ${BINDIR}
