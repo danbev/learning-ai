@@ -40,28 +40,19 @@ int main(int argc, char **argv) {
     // Define simple 4x4 matrices for demonstration
     // Matrix A (stored with 4-byte groups as AMX requires)
     int8_t A[4][16] = {0};
-    // Row 0: [1, 2, 3, 4] - each value in a 4-byte group
-    A[0][0] = 1; A[0][1] = 0; A[0][2]  = 0; A[0][3]  = 0;
-    A[0][4] = 2; A[0][5] = 0; A[0][6]  = 0; A[0][7]  = 0;
-    A[0][8] = 3; A[0][9] = 0; A[0][10] = 0; A[0][11] = 0;
-    A[0][12]= 4; A[0][13]= 0; A[0][14] = 0; A[0][15] = 0;
-    
-    // Row 1: [5, 6, 7, 8]
-    A[1][0] = 5; A[1][4] = 6; A[1][8] = 7; A[1][12] = 8;
-    
-    // Row 2: [1, 1, 1, 1]
-    A[2][0] = 1; A[2][4] = 1; A[2][8] = 1; A[2][12] = 1;
-    
-    // Row 3: [2, 2, 2, 2]
-    A[3][0] = 2; A[3][4] = 2; A[3][8] = 2; A[3][12] = 2;
+    // First row, each value starts at index: 0, 4, 8, 12
+    A[0][0] = 1;  A[0][4] = 2;   A[0][8] = 3;   A[0][12] = 4;
+    A[1][0] = 5;  A[1][4] = 6;   A[1][8] = 7;   A[1][12] = 8;
+    A[2][0] = 9;  A[2][4] = 10;  A[2][8] = 11;  A[2][12] = 12;
+    A[3][0] = 13; A[3][4] = 14;  A[3][8] = 15;  A[3][12] = 16;
     
     // Matrix B (identity matrix for simple verification)
     // Each row k of B contributes to column k of the output
     int8_t B[4][16] = {0};
-    B[0][0]  = 1;  // Row 0 -> contributes to output column 0
-    B[1][4]  = 1;  // Row 1 -> contributes to output column 1
-    B[2][8]  = 1;  // Row 2 -> contributes to output column 2
-    B[3][12] = 1;  // Row 3 -> contributes to output column 3
+    B[0][0] = 1;  B[0][4] = 0;   B[0][8] = 0;   B[0][12] = 0;
+    B[1][0] = 0;  B[1][4] = 1;   B[1][8] = 0;   B[1][12] = 0;
+    B[2][0] = 0;  B[2][4] = 0;   B[2][8] = 1;   B[2][12] = 0;
+    B[3][0] = 0;  B[3][4] = 0;   B[3][8] = 0;   B[3][12] = 1;
     
     // Result matrix
     int32_t C[4][4] = {0};
@@ -83,16 +74,22 @@ int main(int argc, char **argv) {
     
     // Display matrices
     printf("Matrix A (4x4):\n");
-    printf("  1  2  3  4\n");
-    printf("  5  6  7  8\n");
-    printf("  1  1  1  1\n");
-    printf("  2  2  2  2\n\n");
-    
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            printf("%3d ", A[i][j * 4]);  // j*4 because values are at positions 0,4,8,12
+        }
+        printf("\n");
+    }
+    printf("\n");
+
     printf("Matrix B (4x4 identity):\n");
-    printf("  1  0  0  0\n");
-    printf("  0  1  0  0\n");
-    printf("  0  0  1  0\n");
-    printf("  0  0  0  1\n\n");
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            printf("%3d ", B[i][j * 4]);  // j*4 for the same reason
+        }
+        printf("\n");
+    }
+    printf("\n");
     
     printf("Result C = A * B (should equal A):\n");
     for (int i = 0; i < 4; i++) {
