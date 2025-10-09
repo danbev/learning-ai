@@ -5,10 +5,18 @@ number (16 bits), and converting it to a fixed point number with a fixed number
 of bits. We do this to save space and memory and also to speed up computations.
 
 The type of quantization to use is not just a matter of the level of precision
-that we want to maintain which I thought initially, but the actual data that
-we are quantizing also matters and should influence the choice of quantization
+that we want to maintain which I thought initially, but the actual data that we
+are quantizing also matters and should influence the choice of the quantization
 strategy/type. I'm just mentioning this as it was not obivious to me at first,
 and I'll include examples that illustrate this.
+
+One thing that was not obvious to me at first is that quantization the type of
+quantization depends on the what the backend can handle efficiently. For example
+if a backend has uppport for int 8 operations that using 8 bit quantization might
+seem like the best choice. This way there is no dequantization required if the
+data is packed in int8 format. This felt intuitive to me but it is actually still
+more efficient to use 4 bit quantization and then dequantize to int8 because
+memory transfers are the bottleneck not the computation.
 
 ### Symmetric quantization
 This is where we map zero in the original data range to zero in the quantized
@@ -261,6 +269,7 @@ void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_REST
 ```
 So this function takes in a pointer to float `x`, a pointer to `block_q4_0` which
 is `y`, and `k` which is the size of x. This has to be divisable by 32.
+
 We calculate the number of blocks `nb` and then iterate over them. For each
 block we calculate the absolute max and the max value that block (32 value).
 
@@ -269,20 +278,21 @@ After the first loop we use max value to compute the delta/scale value:
         const float d  = max / -8;
         const float id = d ? 1.0f/d : 0.0f;
 ```
-So each float32 (single precision) value is going to be represented with 4 bits.
+
+Each float32 (single precision) value is going to be represented with 4 bits.
 The `block_q4_0` stores its members as `uint8_t` which is 1 byte (8 bits) and
 unsigned so it can only store positive values.
 That gives as a range of `[0-15] (0000b-1111b)` which is 16 values. 
 
 But notice that the code above is using `-8` as the denominator and this is
-creating a range of `[-8, 7]`. Why do this? With this range 0 is always maps to
-the center of our quantization range and using [0-15] range might not, it
-depends on the actual values.
+creating a range of `[-8, 7]`. Why do this? With this range 0 always maps to the
+center of our quantization range and using [0-15] range might not, it depends on
+the actual values.
 
 Also notice that this is using the _inverse delta_ `id` which is done so that
 division can be avoided and instead just a multiplication operation performed.
-The "real" delta/scale, `d`, is the only thing stored in the block as that is
-what is required for dequantization.
+The "real" delta/scale, `d`, is the only thing that is stored in the block as
+that is what is required for dequantization.
 
 And notice that in the following how the scaled values are extracted from the
 input array `x`:
@@ -310,8 +320,9 @@ qa  [f0, f16]
 Notice that in the low bits we have the first quantized values, from f0...f15,
 and in the high bits we have the second quantized values, from f16...f31.
 
-So a single 16-byte load holds all 32 4-bit codes: the first 16 in the low
-nibbles and the second 16 in the high nibbles.
+So a single 16-byte load holds all 32 4-bit codes:
+* the first 16 in the low nibbles
+* and the second 16 in the high nibbles.
 
 So why would we do this? Well if we are thinking in pure C/C++ programming we
 would have to access these values using something like:
@@ -365,7 +376,7 @@ Input: [2.1, 2.3, 2.5, 2.7, 2.9]
 
 max = 2.9  // extremal value
 d = 2.9 / -8 = -0.3625
-id = 1.0 / -0.3625 = -2.758
+id = 1.0 / -0.3625 = -2.758   (id = inverse delta)
 
 // Quantize each value:
 2.1 * -2.758 = -5.792 → -5.792 + 8.5 = 2.708 → stored as 2
@@ -432,7 +443,7 @@ Add offset of 8.5:
 The addition of 8.5 is to bring the values into the range of [0.5-15.5] so that
 we can store them in the `qs` array which is an array of 16 elements of type
 uint8_t (notice that this is unsigned). Casting will truncate the decimal part
-so the 0.5 ensure rounding.
+so the 0.5 ensures rounding.
 
 Then when we dequantize we need to "move" back into the original range, so
 from [0-15] to [-8-7], so we have to subtract by 8 (the 0.5 was only for rounding
@@ -471,6 +482,11 @@ void dequantize_row_q4_0(const block_q4_0 * GGML_RESTRICT x, float * GGML_RESTRI
 ```
 So `x` will be our quantized blocks, and `y` the output flaot array, and `k` the
 total number of float values to reconstruct.
+
+So notice that when we quantize we store the values in pairs, {0, 16}, {1, 17},
+{2, 18}, ..., {15, 31}, and when we dequantize we are putting them back in the
+original order, so the first half of the output array gets the low bits and the
+second half gets the high bits.
 
 
 ### ggml quantization type traits
@@ -521,9 +537,11 @@ void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_REST
         const float id = d ? 1.0f/d : 0.0f;
 
         y[i].d = GGML_FP32_TO_FP16(d);
-
         for (int j = 0; j < qk/2; ++j) {
+            // Extract and scale/divide value in x for positions 0, 1, 2, 3, ... , 15
             const float x0 = x[i*qk + 0    + j]*id;
+            // Extract and scale/divide value in x for positions 16, 17, 18, 19, .. , 31
+            // because qk is 32.
             const float x1 = x[i*qk + qk/2 + j]*id;
 
             const uint8_t xi0 = MIN(15, (int8_t)(x0 + 8.5f));
@@ -2070,14 +2088,105 @@ Or a little more compact:
 ```
 And we only process 4 elements so this will simply skip the last 0 trit.
 
-## IQ (Interger Quantization?)
-So we have see that Q4_0 uses 4 bits per weight (bpw), and these quantization methods
-use much lower bpw:
-* block_iq2_xxs: ~ 2.06 bpw
-* iq2_xs:  ~ 2.31 bpw
-* iq2_s:   ~ 2.56 bpw
-* iq2_m:   ~ 2.81 bpw
+## IQ (Importance  Quantization)
+This was introduced in https://github.com/ggml-org/llama.cpp/pull/4773.
 
+Similar to how a .zip file uses a dictionary repeated patterns
+reference the dictionary rather than storing data multiple times.
+
+Acts like compressed file, using lookup table to save extra space, trading speed
+for additional memory usage memory. So this would be of interest for constrained
+devices/environments where memory is at a premium and somewhat slower inference
+is acceptable.
+
+```c++
+    [GGML_TYPE_IQ2_XXS] = {
+        .type_name                = "iq2_xxs",
+        .blck_size                = QK_K,
+        .type_size                = sizeof(block_iq2_xxs),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_iq2_xxs,
+        .from_float_ref           = NULL,
+    },
+```
+
+Instead of storing quantized weights directly, store indices into a shared
+lookup table. Lets start with the lookup tables as this is not something I've
+looked at before. The structs looks like this:
+```c++
+typedef struct {
+    uint64_t * grid;
+    int      * map;
+    uint16_t * neighbours;
+} iq2_entry_t;
+
+static iq2_entry_t iq2_data[4] = {
+    {NULL, NULL, NULL},
+    {NULL, NULL, NULL},
+    {NULL, NULL, NULL},
+    {NULL, NULL, NULL},
+};
+```
+And these are initilized in
+```c++
+void ggml_quantize_init(enum ggml_type type) {
+    ggml_critical_section_start();
+
+    switch (type) {
+        case GGML_TYPE_IQ2_XXS:
+        case GGML_TYPE_IQ2_XS:
+        case GGML_TYPE_IQ2_S:
+        case GGML_TYPE_IQ1_S:
+        case GGML_TYPE_IQ1_M:   iq2xs_init_impl(type); break;
+        case GGML_TYPE_IQ3_XXS: iq3xs_init_impl(256); break;
+        case GGML_TYPE_IQ3_S:   iq3xs_init_impl(512); break;
+        default: // nothing
+            break;
+    }
+
+    ggml_critical_section_end();
+}
+```
+```c++
+void iq2xs_init_impl(enum ggml_type type) {
+    const int gindex = iq2_data_index(type);
+    const int grid_size = iq2_grid_size(type);
+    if (iq2_data[gindex].grid) {
+        return;
+    }
+    static const uint16_t kgrid_2bit_256[256] = {
+        ...
+    };
+    static const uint16_t kgrid_2bit_512[512] = {
+        ...
+    };
+    static const uint16_t kgrid_1bit_2048[NGRID_IQ1S] = {
+        ...
+    };
+    static const uint16_t kgrid_2bit_1024[1024] = {
+        ...
+    };
+
+    const int kmap_size = 43692;
+    //const int nwant = type == GGML_TYPE_IQ1_S ? 3 : 2;
+    const int nwant = type == GGML_TYPE_IQ1_S || type == GGML_TYPE_IQ1_M ? 3 : type == GGML_TYPE_IQ2_S ? 1 : 2;
+    const uint16_t * kgrid = type == GGML_TYPE_IQ2_XXS ? kgrid_2bit_256 :
+                             type == GGML_TYPE_IQ2_XS  ? kgrid_2bit_512 :
+                             type == GGML_TYPE_IQ1_S || type == GGML_TYPE_IQ1_M ? kgrid_1bit_2048 : kgrid_2bit_1024;
+
+}
+```
+
+Notice that this type requires an important matrix (imatrix):
+```c++
+bool ggml_quantize_requires_imatrix(enum ggml_type type) {
+    return
+        type == GGML_TYPE_IQ2_XXS ||
+        type == GGML_TYPE_IQ2_XS  ||
+        type == GGML_TYPE_IQ1_S;//   ||
+        //type == GGML_TYPE_IQ1_M;
+}
+```
 
 ```c++
 #define QK_K 256
