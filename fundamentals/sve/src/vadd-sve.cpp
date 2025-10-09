@@ -1,5 +1,6 @@
 #include <arm_sve.h>
 #include <stdio.h>
+#include <sys/prctl.h>
 
 // Vector addition using ARM SVE
 void vector_add_sve(const float *a, const float *b, float *result, size_t n) {
@@ -29,6 +30,8 @@ void vector_add_sve(const float *a, const float *b, float *result, size_t n) {
 
 
         // Load vectors of size svcntw() (8 32-bit elements in a vector)
+        // ld1  the 1 is the the stride, so each element, but it could be 2
+        // for every other element etc.
         svfloat32_t va = svld1_f32(pg, &a[i]);
         svfloat32_t vb = svld1_f32(pg, &b[i]);
 
@@ -61,6 +64,9 @@ int main() {
         a[i] = i * 1.5f;
         b[i] = i * 0.5f;
     }
+
+    int svc_cnt = PR_SVE_VL_LEN_MASK & prctl(PR_SVE_GET_VL);
+    printf("SVE vector length (in bytes): %d\n", svc_cnt);
 
     // Perform additions
     vector_add_sve(a, b, result_sve, N);
