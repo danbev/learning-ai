@@ -1,4 +1,4 @@
-OPENVINO_DIR     := deps/l_openvino_toolkit_ubuntu22_2024.5.0.17288.7975fa5da0c_x86_64
+OPENVINO_DIR     := deps/openvino_toolkit_ubuntu24_2025.3.0.19807.44526285f24_x86_64
 OPENVINO_INCLUDE := $(OPENVINO_DIR)/runtime/include
 OPENVINO_LIB     := $(OPENVINO_DIR)/runtime/lib/intel64
 
