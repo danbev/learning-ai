@@ -51,10 +51,62 @@ struct common_sampler {
 `cur_p` is the struct that is passed through all the samplers in the chain, and
 samplers can modify the logits, probabilities, sort, and modifiy the size of the
 array. The GPU samplers should be able to do the same. 
+So we have array of elements and for each element stored we have the token id, the
+logits for this token and optionally the probability for this token. I say probably
+as the probabilities are intially 0.0f and is something that samplers in the chain
+can calculate an modify. These have to be recalculated if the logits are modified in
+any way (like also if the size of the array is modified).
 
 To be processed by a GGML graph the data, the information in `cur_p` needs to be
-in the form of a `ggml_tensor`.
+in the form of a `ggml_tensor` (or multiple).
 
-### Data layout
-TODO:
+One way could be to store the tensors in a struct like this:
+```c++
+    struct llama_sampler_ggml_data {
+        struct ggml_tensor * ids;     // [size] - GGML_TYPE_I32
+        struct ggml_tensor * logits;  // [size] - GGML_TYPE_F32
+        struct ggml_tensor * probs;   // [size] - GGML_TYPE_F32
+        int64_t size;                 // current number of tokens in the array
+        int64_t selected;             // index in the array (-1 if not yet selected)
+        bool sorted;                  // whether data is sorted by logits/probs
+    };
+};
+```
+The token ids can be stored as I32 type tensors, and the logits and probabilities as F32.
+Having separate tensors instead of perhaps packing data into a single tensor makes enables
+easier operations on all of the logits or probabilities. Also if they types are different
+this might also make sense to have them separate and not packed. 
 
+This would allow the function declaration to be:
+```c++
+        void                   (*apply_ggml)(  struct llama_sampler * smpl,
+                                                       ggml_context * ctx,
+                                                        ggml_cgraph * gf,
+                                            llama_sampler_ggml_data * ggml_data);
+```
+So this way multiple GPU samplers can be chained together and they can all update
+the graph with the operations they need to perform. And `llama_sampler_chain` would then
+apply all the samplers calling `apply_ggml` for each sampler in the chain, passing in
+a `gggml_cgraph` that is built up with all the operations from each sampler.
+
+In this case then `llama_sampler_chain_apply` could be responsible for converting from
+`llama_token_data_array` to `llama_sampler_ggml_data` and back.
+```c++
+static void llama_sampler_chain_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
+    auto * chain = (llama_sampler_chain *) smpl->ctx;
+
+    time_meas tm(chain->t_sample_us, chain->params.no_perf);
+
+    for (auto * smpl : chain->samplers) {
+        llama_sampler_apply(smpl, cur_p);
+    }
+
+    // If there are gpu samplers in the chain:
+    // * Create computation graph
+    // * Convert cur_p to llama_sampler_ggml_data
+    // * Call apply_ggml for each gpu sampler in the chain
+    // * Compute the graph
+    // * Convert back to cur_p
+}
+```
+Something like this perhaps.
