@@ -3413,4 +3413,112 @@ But for computation, they need to be in sequential order:
 ```
 [B0, B1, B2, B3, B4, B5, B6, B7]
 ```
+
+### Take 3
+So my previous attempt was not acceptable and it was indeed mainly to get
+something to work and perhaps get some ideas from others. So it is not ok
+to modify the buffers in `init_tensor` for this purpose so I've reverted that
+and I've moved this into `test-backends-ops` for now. So this still allows the
+tests to pass and something I can iterate upon.
+
+So just to recap on `init_tensor`. When we load a model the tensors are loaded
+and allocated using:
+```c++
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+```
+So all the tensors that have been added to this context will be allocated to buffers,
+that is their buffers and data pointers will be set to a concrete backend buffer.
+So for each tensor `ggml_backend_cpu_repack_buffer_init_tensor` is called but only
+the tensors that support repack will get its `tensor->extra` set to the repack trait:
+```c++
+static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer,
+                                                                   struct ggml_tensor * tensor) {
+    tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
+
+    GGML_UNUSED(buffer);
+    return GGML_STATUS_SUCCESS;
+}
+```
+At this point we only have weights tensors from the model, leaf nodes, and there are no
+operation tensors at this point. The operation tensor are created later when the graph
+is built. And just to be clear, the model tensors persist across inference calls while
+operation tensors are create fresh each time the computation graph is built.
+
+So repacks `init_tensor` function is only called once when the model is loaded.
+Now, for the test we don't have a model loaded stage but we do have an init tensor
+stage.
+
+So in the test, `test::eval` is called, which will create a `ggml_context` and also
+call the test `build_graph` function which is where the tensors are created. This function
+returns an operation tensor which has both it sources set. The source tensors don't contain
+any data at this stage, this happens later in the call to `initialize_tensors`.
+
+Now, for the cpu variants testing we use the cpu ref backend for the initial allocation
+which is to avoid the issue mentioned earlier in this document that when repack's
+`set_tensor` is called the original data is lost, it is repacked. And if we then try
+to copy this data which happend when the tests are run, we copy the tensors from one
+backend to the other, calling `get_tensor` is not even implemented for repack so this
+fails. So we can't really inject any handling at this stage, we need the cpu referense
+backend to work as is without any extra buffer type handling.
+
+Currently what I've done is that an `extra_buf_map` is created in `test_cpu_variant` from
+the variant being tested which creates a buffer for that extra backend type. And this is
+passed into `ggml_backend_compare_graph_backend`:
+```c++
+        const bool cmp_ok = ggml_backend_compare_graph_backend(backend1, backend2, gf, callback,
+                &ud, run_whole_graph() ? out : nullptr, extra_buf_map);
+```
+
+So what I've suggested this time is to use the following function:
+```c++
+    static void try_assign_extra_buffer(struct ggml_tensor * node_copy, const extra_buffer_map_t & extra_buf_map) {
+        struct ggml_tensor * src0_copy = node_copy->src[0];
+        ggml_backend_buffer_t org_buf  = src0_copy->buffer;
+
+        for (const auto& [buft, buf] : extra_buf_map) {
+            // Initialize the tensor in the extra buffer
+            if (ggml_backend_buffer_init_tensor(buf, src0_copy) != GGML_STATUS_SUCCESS) {
+                continue;
+            }
+
+            if (!src0_copy->extra) {
+                continue;
+            }
+
+            // Temporarily assign buffer so we can call ggml_backend_dev_supports_op
+            src0_copy->buffer = buf;
+
+            ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+            // Check if extra buffer type supports the operation
+            if (dev && ggml_backend_dev_supports_op(dev, node_copy)) {
+                return;
+            } else {
+                src0_copy->buffer = org_buf; // Restore original buffer if not supported
+            }
+        }
+    }
+```
+And then call this function from (which is also in test-backend-ops.cpp):
+```
+    struct ggml_backend_graph_copy ggml_backend_graph_copy(ggml_backend_t backend, struct ggml_cgraph * graph,
+            std::unordered_map<ggml_backend_buffer_type_t, ggml_backend_buffer_t> extra_buf_map) {
+        GGML_ASSERT(graph);
+        ...
+
+        // copy data and init views
+        for (int i = 0; i < graph->n_nodes; i++) {
+            struct ggml_tensor * node = graph->nodes[i];
+
+            // Handle extra buffer types (before graph_copy_init_tensor)
+            if (node->op != GGML_OP_NONE && !ggml_is_view_op(node->op) && node->src[0]) {
+                size_t id = ggml_hash_find(&hash_set, node);
+                try_assign_extra_buffer(node_copies[id], extra_buf_map);
+            }
+
+            graph_copy_init_tensor(&hash_set, node_copies, node_init, node);
+        }
+```
+
 _wip_
+
+
