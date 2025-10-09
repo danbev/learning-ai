@@ -1,6 +1,6 @@
 ### GPU Sampling
-Currently sampling is implemented on the CPU in llama.cpp through the sampling
-chain specified. After `llama_decode` is called the logits  are passed to the
+Currently, sampling is implemented on the CPU in llama.cpp through the sampling
+chain configured. After `llama_decode` is called the logits are passed to the
 sampler chain which can modify the logits and probabilities. For example this
 is done in `common::set_logits`:
 ```c++
@@ -33,6 +33,7 @@ struct common_sampler {
         cur_p = { cur.data(), cur.size(), -1, false };
     }
 ```
+And the data structure that is passed to the samplers looks like this:
 ```c++
     typedef struct llama_token_data {
         llama_token id; // token id
@@ -47,14 +48,14 @@ struct common_sampler {
         bool sorted;      // note: do not assume the data is sorted - always check this flag
     } llama_token_data_array;
 ```
-
 `cur_p` is the struct that is passed through all the samplers in the chain, and
 samplers can modify the logits, probabilities, sort, and modifiy the size of the
 array. The GPU samplers should be able to do the same. 
+
 So we have array of elements and for each element stored we have the token id, the
-logits for this token and optionally the probability for this token. I say probably
+logits for the token and optionally the probability for the token. I say probably
 as the probabilities are intially 0.0f and is something that samplers in the chain
-can calculate an modify. These have to be recalculated if the logits are modified in
+can calculate and modify. These have to be recalculated if the logits are modified in
 any way (like also if the size of the array is modified).
 
 To be processed by a GGML graph the data, the information in `cur_p` needs to be
@@ -72,22 +73,24 @@ One way could be to store the tensors in a struct like this:
     };
 };
 ```
-The token ids can be stored as I32 type tensors, and the logits and probabilities as F32.
+The token ids can be stored as `I32` type tensors, and the logits and probabilities as `F32`.
 Having separate tensors instead of perhaps packing data into a single tensor makes enables
-easier operations on all of the logits or probabilities. Also if they types are different
-this might also make sense to have them separate and not packed. 
+easier operations on all of the logits or probabilities. Also if the types are different
+this might also make sense to have them separate and not packed as well.
 
-This would allow the function declaration to be:
+This would allow a function declaration to look something like this:
 ```c++
         void                   (*apply_ggml)(  struct llama_sampler * smpl,
                                                        ggml_context * ctx,
                                                         ggml_cgraph * gf,
                                             llama_sampler_ggml_data * ggml_data);
 ```
-So this way multiple GPU samplers can be chained together and they can all update
-the graph with the operations they need to perform. And `llama_sampler_chain` would then
-apply all the samplers calling `apply_ggml` for each sampler in the chain, passing in
-a `gggml_cgraph` that is built up with all the operations from each sampler.
+This way multiple GPU samplers can be chained together and they can all update
+the graph with the operations they need to perform.
+
+And `llama_sampler_chain` would then apply all the samplers calling `apply_ggml` for
+each sampler in the chain, passing in a `gggml_cgraph` that is built up with all the
+operations from each sampler.
 
 In this case then `llama_sampler_chain_apply` could be responsible for converting from
 `llama_token_data_array` to `llama_sampler_ggml_data` and back.
