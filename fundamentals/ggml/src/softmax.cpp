@@ -8,49 +8,51 @@
 #include "ggml-cpu.h"
 
 int main(int argc, char **argv) {
-  printf("GGML softmax example\n");
+    printf("GGML softmax example\n");
 
-  struct ggml_init_params params = {
-    .mem_size   = 16*1024*1024,
-    .mem_buffer = NULL,
-  };
-  struct ggml_context* ctx = ggml_init(params);
+    struct ggml_init_params params = {
+        .mem_size   = 16*1024*1024,
+        .mem_buffer = NULL,
+    };
+    struct ggml_context* ctx = ggml_init(params);
 
-  struct ggml_tensor* logits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 1, 1);
-  ggml_set_name(logits, "logits");
+    struct ggml_tensor* logits = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 1, 1);
+    ggml_set_name(logits, "logits");
 
-  float tensor_data[8] = { 6, 7, 10, 9, 22, 33, 44, 55};
-  memcpy((char *)logits->data, tensor_data, ggml_nbytes(logits));
+    float tensor_data[8] = { 6, 7, 10000, 9, 2200, 3300, 4400, 5500};
+    memcpy((char *)logits->data, tensor_data, ggml_nbytes(logits));
 
-  struct ggml_tensor* mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 1);
+    // Prevent from selecting entries, for example this can be used in attention
+    // to prevent from attending to future tokens
+    struct ggml_tensor* mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 1);
                                 
-  ggml_set_name(mask, "mask");
-  float mask_data[8] = { 0, 0, -INFINITY, 0, -INFINITY, -INFINITY, -INFINITY, -INFINITY};
-  memcpy((char *)mask->data, mask_data, ggml_nbytes(mask));
+    ggml_set_name(mask, "mask");
+    float mask_data[8] = { 0, 0, -INFINITY, 0, -INFINITY, -INFINITY, -INFINITY, -INFINITY};
+    memcpy((char *)mask->data, mask_data, ggml_nbytes(mask));
 
-  struct ggml_tensor* result = ggml_soft_max_ext(ctx, logits, mask, 1.0f, 0.0f);
-  ggml_set_name(result, "result");
+    struct ggml_tensor* result = ggml_soft_max_ext(ctx, logits, mask, 1.0f, 0.0f);
+    ggml_set_name(result, "result");
 
-  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
-  ggml_build_forward_expand(c_graph, result);
-  int n_threads = 1;
-  enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
-  if (st != GGML_STATUS_SUCCESS) {
-    printf("could not compute graph\n");
-    return 1;
-  }
+    struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(c_graph, result);
+    int n_threads = 1;
+    enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, n_threads);
+    if (st != GGML_STATUS_SUCCESS) {
+        printf("could not compute graph\n");
+        return 1;
+    }
 
-  printf("result tensor type: %s\n", ggml_type_name(result->type));
-  printf("result dim: %d\n", ggml_n_dims(result));
-  printf("result dim[0]: %ld\n", result->ne[0]);
-  float sum = 0.0f;
-  for (int i = 0; i < ggml_nelements(result); i++) {
-    float value = *(float *) ((char *) result->data + i * result->nb[0]); 
-	printf("%.4f ", value);
-    sum += value;
-  }
-  printf("\nsum: %.4f\n", sum);
+    printf("result tensor type: %s\n", ggml_type_name(result->type));
+    printf("result dim: %d\n", ggml_n_dims(result));
+    printf("result dim[0]: %ld\n", result->ne[0]);
+    float sum = 0.0f;
+    for (int i = 0; i < ggml_nelements(result); i++) {
+        float value = *(float *) ((char *) result->data + i * result->nb[0]); 
+        printf("%.4f ", value);
+        sum += value;
+    }
+    printf("\nsum: %.4f\n", sum);
 
-  ggml_free(ctx);
-  return 0;
+    ggml_free(ctx);
+    return 0;
 }
