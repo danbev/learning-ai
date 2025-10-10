@@ -16,7 +16,10 @@ if a backend has uppport for int 8 operations that using 8 bit quantization migh
 seem like the best choice. This way there is no dequantization required if the
 data is packed in int8 format. This felt intuitive to me but it is actually still
 more efficient to use 4 bit quantization and then dequantize to int8 because
-memory transfers are the bottleneck not the computation.
+memory transfers are the bottleneck not the computation. For this to be possible
+the backend must be able to dequantize efficiently and also do this on the device
+itself or there will still be a memory transfer bottleneck. This is why we often
+see dequantization kernels/functions in backends.
 
 ### Symmetric quantization
 This is where we map zero in the original data range to zero in the quantized
