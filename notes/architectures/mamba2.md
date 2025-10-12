@@ -69,6 +69,7 @@ B = [b₀, b₁, b₂, b₃] = [0.1, 0.2, 0.15, 0.25] (input dependent)
 C = [c₀, c₁, c₂, c₃] = [1.0, 0.8, 1.2, 0.9]   (input dependent)
 A = 0.9 (simplified, this is usually a matrix)
 ```
+
 Mamba-1:
 ```python
 # Initialize state
@@ -145,3 +146,116 @@ Y = M · X =
 ```
 Notice that we get the same result as Mamba-1, but now we can compute it all
 in parallel using matrix multiplication which is much more efficient on GPUs.
+
+In the above example we showed A as a scalar for simplicity, but in reality A
+is a matrix, a diagonal matrix.
+
+In Mamba-1 A would be a matrix with different values:
+have the same scalar values.
+```
+# State dimension N = 4 (just for example)
+A = ┌                    ┐
+    │ 0.9   0    0    0  │
+    │ 0    0.85  0    0  │
+    │ 0     0   0.92  0  │
+    │ 0     0    0   0.88│
+    └                    ┘
+
+h = [h₀, h₁, h₂, h₃]  # N-dimensional state vector
+```
+But in Mamba-2 we can use the same A for all heads, so we can use a single
+scalar A for all heads:
+```
+# Number of heads H = 4
+A = ┌                   ┐
+    │ 0.9  0    0    0  │
+    │ 0   0.9   0    0  │
+    │ 0    0   0.9   0  │
+    │ 0    0    0   0.9 │
+    └                   ┘
+
+h = [h₀, h₁, h₂, h₃]  # N-dimensional state vector
+```
+
+The meaning of the values in A is that these values control how much each
+state dimension remembers or forgets over time.
+
+```
+A = diag([0.9, 0.85, 0.92, 0.88])  # N=4
+
+# At each time step:
+h[0] = 0.9  * h[0] + B[t,0] * x[t]  # Dimension 0: slow decay
+h[1] = 0.85 * h[1] + B[t,1] * x[t]  # Dimension 1: faster decay
+h[2] = 0.92 * h[2] + B[t,2] * x[t]  # Dimension 2: very slow decay
+h[3] = 0.88 * h[3] + B[t,3] * x[t]  # Dimension 3: faster decay
+```
+* Dimension 0 (a=0.9) : Retains 90% of previous value → "medium-term memory"
+* Dimension 1 (a=0.85): Retains 85% of previous value → "shorter memory"
+* Dimension 2 (a=0.92): Retains 92% of previous value → "longer memory"
+* Dimension 3 (a=0.88): Retains 88% of previous value → "short memory"
+
+With Mamba-2 we can use the same A value for all dimensions:
+```
+a = 0.9  # Single scalar value
+A = 0.9 * I = diag([0.9, 0.9, 0.9, 0.9])  # All same!
+
+# At each time step:
+h[0] = 0.9 * h[0] + B[t,0] * x[t]  # All dimensions
+h[1] = 0.9 * h[1] + B[t,1] * x[t]  # decay at the
+h[2] = 0.9 * h[2] + B[t,2] * x[t]  # same rate
+h[3] = 0.9 * h[3] + B[t,3] * x[t]  # (0.9)
+```
+When all dimensions share the same A value, they all decay at the same rate, but
+these also means that we can factor it out.
+And keep in mind that A is the matrix that determines how much of each state
+get merged into the hidden state. In this example we have a inner state dimension
+of 4, so each h[i] represent how much of the current token x[t] should we store
+(merge) into the h[0] state and so on.
+We can think of h as having N=4 memory slots:
+```
+h[0] = slot 0: stores some learned aspect of the history
+h[1] = slot 1: stores another learned aspect
+h[2] = slot 2: stores yet another aspect
+h[3] = slot 3: stores another aspect
+```
+
+```
+# Initialize: all memory slots empty
+h = [0, 0, 0, 0]
+
+# Token 1: "The"
+x[0] = 1.0
+
+B[0] = [0.8, 0.3, 0.5, 0.2]  # How much to store in each slot
+# The model learned: "The" should go strongly into slot 0 and 2
+
+h[0] = 0.9 * 0   + 0.8 * 1.0 = 0.8    # Slot 0: stores 0.8 from "The"
+h[1] = 0.85 * 0  + 0.3 * 1.0 = 0.3    # Slot 1: stores 0.3 from "The"
+h[2] = 0.92 * 0  + 0.5 * 1.0 = 0.5    # Slot 2: stores 0.5 from "The"
+h[3] = 0.88 * 0  + 0.2 * 1.0 = 0.2    # Slot 3: stores 0.2 from "The"
+
+# Token 2: "cat"
+x[1] = 2.0
+
+B[1] = [0.6, 0.9, 0.2, 0.4]  # How much "cat" goes into each slot
+# The model learned: "cat" (subject) should go strongly into slot 1
+
+h[0] = 0.9  * 0.8  + 0.6 * 2.0 = 0.72 + 1.2 = 1.92   # Some "The", more "cat"
+h[1] = 0.85 * 0.3  + 0.9 * 2.0 = 0.26 + 1.8 = 2.06   # Little "The", lots "cat"
+h[2] = 0.92 * 0.5  + 0.2 * 2.0 = 0.46 + 0.4 = 0.86   # Mostly "The", little "cat"
+h[3] = 0.88 * 0.2  + 0.4 * 2.0 = 0.18 + 0.8 = 0.98   # Little "The", some "cat"
+
+# Token 3: "sat"
+x[2] = 3.0
+
+B[2] = [0.2, 0.7, 0.3, 0.8]  # How much "sat" goes into each slot
+
+h[0] = 0.9  * 1.92 + 0.2 * 3.0 = 1.73 + 0.6 = 2.33   # Fading memory
+h[1] = 0.85 * 2.06 + 0.7 * 3.0 = 1.75 + 2.1 = 3.85   # "cat" and "sat"
+h[2] = 0.92 * 0.86 + 0.3 * 3.0 = 0.79 + 0.9 = 1.69   # Long memory of "The"
+h[3] = 0.88 * 0.98 + 0.8 * 3.0 = 0.86 + 2.4 = 3.26   # Mostly recent "sat"
+```
+So with Mamba-1 we can have different decay rates for each dimension, but in Mamba-2
+we have the same decay rate for all dimensions. But this is per layer so it
+different layer can have different decay rates and with multiple layers say 64
+layers this gives 64 different timescales accross the model.
