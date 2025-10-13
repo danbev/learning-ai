@@ -64,10 +64,10 @@ in the form of a `ggml_tensor` (or multiple).
 One way could be to store the tensors in a struct like this:
 ```c++
     struct llama_sampler_ggml_data {
-        struct ggml_tensor * ids;     // [size] - GGML_TYPE_I32
-        struct ggml_tensor * logits;  // [size] - GGML_TYPE_F32
-        struct ggml_tensor * probs;   // [size] - GGML_TYPE_F32
-        int64_t size;                 // current number of tokens in the array
+        struct ggml_tensor * ids;     // [n_vocab] - GGML_TYPE_I32
+        struct ggml_tensor * logits;  // [n_vocab] - GGML_TYPE_F32
+        struct ggml_tensor * probs;   // [n_vocab] - GGML_TYPE_F32
+        int64_t size;                 // number of valid tokens in the arrays (<= n_vocab)
         int64_t selected;             // index in the array (-1 if not yet selected)
         bool sorted;                  // whether data is sorted by logits/probs
     };
@@ -106,6 +106,14 @@ llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_conte
 
     const int n_vocab = llama_vocab_n_tokens(vocab);
     ...
+
+    bool all_gpu = ...
+    
+    if (all_gpu) {
+       ... 
+    } else {
+        ...
+    }
 }
 ```
 Something like this perhaps.
