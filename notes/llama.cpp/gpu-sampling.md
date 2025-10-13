@@ -89,27 +89,48 @@ This way multiple GPU samplers can be chained together and they can all update
 the graph with the operations they need to perform.
 
 And `llama_sampler_chain` would then apply all the samplers calling `apply_ggml` for
-each sampler in the chain, passing in a `gggml_cgraph` that is built up with all the
+each sampler in the chain, passing in a `ggml_cgraph` that is built up with all the
 operations from each sampler.
 
-In this case then `llama_sampler_chain_apply` could be responsible for converting from
-`llama_token_data_array` to `llama_sampler_ggml_data` and back.
+We want to avoid intermixing CPU and GPU samplers as this would require converting
+and copying data from system memory to device memory. So we should use either
+only GPU samplers, or only CPU samplers in the chain. We could add a check for
+to see if the samplers in the chain are GPU only and then avoid creating the
+llama_token_data_array and only create the ggml_data struct in llamaa_sampler_sample.
 ```c++
-static void llama_sampler_chain_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
-    auto * chain = (llama_sampler_chain *) smpl->ctx;
+llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_context * ctx, int32_t idx) {
+    const auto * logits = llama_get_logits_ith(ctx, idx);
 
-    time_meas tm(chain->t_sample_us, chain->params.no_perf);
+    const llama_model * model = llama_get_model(ctx);
+    const llama_vocab * vocab = llama_model_get_vocab(model);
 
-    for (auto * smpl : chain->samplers) {
-        llama_sampler_apply(smpl, cur_p);
-    }
-
-    // If there are gpu samplers in the chain:
-    // * Create computation graph
-    // * Convert cur_p to llama_sampler_ggml_data
-    // * Call apply_ggml for each gpu sampler in the chain
-    // * Compute the graph
-    // * Convert back to cur_p
+    const int n_vocab = llama_vocab_n_tokens(vocab);
+    ...
 }
 ```
 Something like this perhaps.
+
+### Feedback/Questions
+* The GPU sampling ops should probably be operating on constant-shape tensors.
+  We want to have static graphs for efficiency.
+The current suggestion that I proposed above uses dynamic tensors, the samplers
+can change the sized of them. This is an issue because each time the graph
+structure changes the graph needs to be rebuilt. So instead of having:
+```c++
+    struct llama_sampler_ggml_data {
+        struct ggml_tensor * ids;     // [n_vocab] - GGML_TYPE_I32
+        struct ggml_tensor * logits;  // [n_vocab] - GGML_TYPE_F32
+        struct ggml_tensor * probs;   // [n_vocab] - GGML_TYPE_F32
+        int64_t size;                 // number of valid tokens in the arrays (<= n_vocab)
+        int64_t selected;             // index in the array (-1 if not yet selected)
+        bool sorted;                  // whether data is sorted by logits/probs
+    };
+```
+This way the tensors will have a fixed tensor size.
+
+* The conversion from llama_token_data_array to llama_sampler_ggml_data should not
+  be performed when we are using only GPU samplers. Otherwise it would incur
+  significant data transfer to negate the benefits of GPU sampling.
+I've updated the suggestion above and we can check the samplers in the chain
+and if they are all GPU samplers then we can avoid creating the
+llama_token_data_array altogether.
