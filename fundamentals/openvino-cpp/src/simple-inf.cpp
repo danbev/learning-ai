@@ -25,10 +25,16 @@ int main() {
             ov::ParameterVector{input},    // inputs
             "simple_relu_model"            // model name
         );
+
         
         printf("Model created successfully!\n");
         printf("Model name: %s\n", model->get_friendly_name().c_str());
         printf("Input shape: [%zu, %zu, %zu, %zu]\n", input_shape[0], input_shape[1], input_shape[2], input_shape[3]);
+
+        printf("Model nodes:\n");
+        for (const auto& node : model->get_ops()) {
+            printf("Node: %s, Type: %s\n", node->get_friendly_name().c_str(), node->get_type_name());
+        }
         printf("\n");
         
         printf("Compiling Model...\n");
