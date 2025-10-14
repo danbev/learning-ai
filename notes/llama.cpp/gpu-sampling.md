@@ -395,3 +395,11 @@ $9 = 49152
 ```
 So perhaps for top-k sampling we might need a different algoritm that argsort
 to avoid this shared memory limitation.
+
+A simliar limit can be found in the metal backend as well, in ggml-metal-device.m
+there is the following check:
+```c++
+        case GGML_OP_ARGSORT:
+            // TODO: Support arbitrary column width
+            return op->src[0]->ne[0] <= 1024;
+```
