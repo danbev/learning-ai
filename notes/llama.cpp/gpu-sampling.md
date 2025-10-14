@@ -93,7 +93,7 @@ each sampler in the chain, passing in a `ggml_cgraph` that is built up with all 
 operations from each sampler.
 
 While we want to avoid intermixing CPU and GPU samplers in the samplers chain, as this
-would require converting and copying data from system memory to device memory, we should
+would require converting and copying data between system memory to device memory, we should
 support having GPU samplers at the start of the sampling chain. This way we can take
 advantage of the logits already being on the GPU and perform some of the sampling
 operations on the GPU before copying the data back to the CPU for any CPU samplers
@@ -114,7 +114,133 @@ llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_conte
     // which can then be passed to the remaining CPU samplers in the chain.
 }
 ```
-Something like this perhaps.
+Something like this perhaps. A suggestion following the above can be found in
+[commit](https://github.com/danbev/llama.cpp/commit/c4d8e78d31e2ee5148c8b6bf8d564667a846b2c5).
+
+### GPU Sampler parameters and state
+Some samplers need to be able to accept parameters and also maintain state.
+The tensors for the parameters and state need to be pre allocated made accessible
+to the samplers.
+
+If we take a top-k sampler as an example. This sampler needs to be initialized with
+the 'k' value. This is possible in much the same way as the CPU implementation:
+```c++
+static struct llama_sampler * llama_sampler_gpu_init_top_k(int32_t k) {
+    static const llama_sampler_i iface = {
+        /*.name        =*/ llama_sampler_gpu_top_k_name,
+        /*.accept      =*/ nullptr,
+        /*.apply       =*/ nullptr,
+        /*.reset       =*/ nullptr,
+        /*.clone       =*/ nullptr,
+        /*.free        =*/ llama_sampler_gpu_top_k_free,
+        /*.apply_ggml  =*/ llama_sampler_gpu_top_k_apply_ggml
+    };
+
+    auto * ctx_data = new llama_sampler_gpu_top_k_ctx {
+        /*.k =*/ k,
+    };
+
+    auto * sampler = new llama_sampler {
+        /*.iface =*/ &iface,
+        /*.ctx   =*/ ctx_data,
+    };
+
+    return sampler;
+}
+```
+Currently, the GPU sampler are initialized before calling `llama_sampler_sample` so the
+above works fine. In llama_sampler_sample is where we currently have the GPU sampler
+processsing:
+```c++
+llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_context * ctx, int32_t idx) {
+    ...
+        struct ggml_init_params params = {
+            // TODO: need to take into account any tensors that GPU sampler may need.
+            /*.mem_size   =*/ (ggml_tensor_overhead() * 5) + GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead(),
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        struct ggml_context * ctx_sample = ggml_init(params);
+
+        struct ggml_tensor * logits_t = ggml_new_tensor_1d(ctx_sample, GGML_TYPE_F32, n_vocab);
+        struct ggml_tensor * ids      = ggml_new_tensor_1d(ctx_sample, GGML_TYPE_I32, n_vocab);
+        struct ggml_tensor * probs    = ggml_new_tensor_1d(ctx_sample, GGML_TYPE_F32, n_vocab);
+        struct ggml_tensor * selected = ggml_new_tensor_1d(ctx_sample, GGML_TYPE_I32, 1);
+
+        // Select a GPU backend.
+        // TODO: perhaps this should be configurable as to which GPU to use
+        ggml_backend_t backend = nullptr;
+        ggml_backend_buffer_type_t buft = nullptr;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto * dev = ggml_backend_dev_get(i);
+            if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                backend = ggml_backend_dev_init(dev, nullptr);
+                buft = ggml_backend_dev_buffer_type(dev);
+                printf("Using GPU device '%s' for sampling\n", ggml_backend_dev_name(dev));
+                break;
+            }
+        }
+        ...
+
+        struct ggml_cgraph * gf = ggml_new_graph(ctx_sample);
+
+        struct llama_sampler_ggml_data ggml_data = {
+            /*.ids      =*/ ids,
+            /*.logits   =*/ logits_t,
+            /*.probs    =*/ probs,
+            /*.selected =*/ selected,
+            /*.size     =*/ n_vocab,
+            /*.sorted   =*/ false,
+        };
+
+        // Apply GPU samplers (add sampling operations to the graph)
+        for (auto & smpl : gpu_samplers) {
+            smpl.iface->apply_ggml(&smpl, ctx_sample, gf, &ggml_data);
+        }
+
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx_sample, buft);
+        ...
+}
+```
+A GPU sampler can create the tensors it needs in its apply_ggml function. But notice that the
+graph is passed to this function, and we have to specify the memory size for the ggml_context
+before this call happens.
+So how do we know how much memory to allocate for the samplers tensors?  
+Perhaps adding a callback for the gpu samplers be accaptable where the size of memory needed
+by a sampler is returned? Something like:
+```c++
+        size_t                  (*size_ggml)(const  struct llama_sampler * smpl);
+```
+This could then be called when we gather the GPU samplers:
+```c++
+    std::vector<llama_sampler> gpu_samplers;
+    size_t gpu_samplers_ggml_size = 0;
+    if (smpl->iface->name && strcmp(smpl->iface->name(smpl), "chain") == 0) {
+        for (int i = 0; i < llama_sampler_chain_n(smpl); i++) {
+            auto * s = llama_sampler_chain_get(smpl, i);
+            if (s->iface->apply_ggml) {
+                gpu_samplers.push_back(*s);
+                gpu_samplers_ggml_size += s->iface->size_ggml(s);
+
+                // Remove the GPU sampler so that only CPU samplers remain in the chain
+                llama_sampler_chain_remove(smpl, i);
+            }
+        }
+```
+We can then use this later when creating the context parameters:
+```c++
+        size_t total_ggml_size = gpu_samplers_ggml_size + (ggml_tensor_overhead() * 5) + GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead();
+        printf("Total ggml size for GPU samplers: %zu bytes\n", total_ggml_size);
+        struct ggml_init_params params = {
+            // TODO: need to take into account any tensors that GPU sampler may need.
+            /*.mem_size   =*/ total_ggml_size,
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        struct ggml_context * ctx_sample = ggml_init(params);
+```
+This suggestion can be found in [commit](https://github.com/danbev/llama.cpp/commit/b0b2b904cc38bdafb07145d034a336c211af1537).
+
 
 ### Feedback/Questions
 * The GPU sampling ops should probably be operating on constant-shape tensors.
