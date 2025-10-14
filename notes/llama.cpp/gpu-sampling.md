@@ -276,3 +276,122 @@ llama_token_data_array altogether.
   parameters and state. These tensors need to be preallocated and made availabe to the
   GPU samplers in some way. An example of such a sampler is the dist sampler that needs
   to store the RNG (random number generator) state.
+
+### Top-k GPU sampling
+I ran into an issue when trying to implement the top-k sampling on the GPU.
+```c++
+static void llama_sampler_gpu_top_k_apply_ggml(
+        struct llama_sampler           * smpl,
+        struct ggml_context            * ctx,
+        struct ggml_cgraph             * gf,
+        struct llama_sampler_ggml_data * ggml_data) {
+
+    auto * ctx_data = (llama_sampler_gpu_top_k_ctx *) smpl->ctx;
+    printf("gpu top-k: Building top-k sampler with k=%d\n", ctx_data->k);
+
+    struct ggml_tensor * top_k = ggml_top_k(ctx, ggml_data->logits, ctx_data->k);
+    ggml_set_name(top_k, "top_k");
+
+    ggml_data->logits = ggml_get_rows(ctx, ggml_data->logits, top_k);
+    ggml_build_forward_expand(gf, ggml_data->logits);
+    ggml_data->size = ctx_data->k;
+}
+```
+If we look at ggml_top_k we find that it is implemented like this:
+```c++
+// ggml_top_k
+
+struct ggml_tensor * ggml_top_k(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   k) {
+    GGML_ASSERT(a->ne[0] >= k);
+
+    struct ggml_tensor * result = ggml_argsort(ctx, a, GGML_SORT_ORDER_DESC);
+
+    result = ggml_view_4d(ctx, result,
+                k, result->ne[1], result->ne[2], result->ne[3],
+                   result->nb[1], result->nb[2], result->nb[3],
+                0);
+
+    return result;
+}
+```
+We can see that this is implemented using argsort:
+```c++
+struct ggml_tensor * ggml_argsort(
+        struct ggml_context  * ctx,
+        struct ggml_tensor   * a,
+        enum ggml_sort_order   order) {
+    GGML_ASSERT(a->ne[0] <= INT32_MAX);
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_I32, GGML_MAX_DIMS, a->ne);
+
+    ggml_set_op_params_i32(result, 0, (int32_t) order);
+
+    result->op     = GGML_OP_ARGSORT;
+    result->src[0] = a;
+
+    return result;
+}
+```
+For the CUDA backend this is implemented using:
+```c++
+        case GGML_OP_ARGSORT:
+            ggml_cuda_op_argsort(ctx, dst);
+            break;
+```
+```c++
+void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    const float * src0_d = (const float *)src0->data;
+    float * dst_d = (float *)dst->data;
+    cudaStream_t stream = ctx.stream();
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_I32);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+
+    const int64_t ncols = src0->ne[0];
+    const int64_t nrows = ggml_nrows(src0);
+
+    enum ggml_sort_order order = (enum ggml_sort_order) dst->op_params[0];
+
+    argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
+}
+```
+```c++
+static void argsort_f32_i32_cuda(const float * x, int * dst, const int ncols, const int nrows, ggml_sort_order order, cudaStream_t stream) {
+    // bitonic sort requires ncols to be power of 2
+    const int ncols_pad = next_power_of_2(ncols);
+
+    const dim3 block_dims(ncols_pad, 1, 1);
+    const dim3 block_nums(1, nrows, 1);
+    const size_t shared_mem = ncols_pad * sizeof(int);
+
+    // FIXME: this limit could be raised by ~2-4x on Ampere or newer
+    GGML_ASSERT(shared_mem <= ggml_cuda_info().devices[ggml_cuda_get_device()].smpb);
+
+    if (order == GGML_SORT_ORDER_ASC) {
+        k_argsort_f32_i32<GGML_SORT_ORDER_ASC><<<block_nums, block_dims, shared_mem, stream>>>(x, dst, ncols, ncols_pad);
+    } else if (order == GGML_SORT_ORDER_DESC) {
+        k_argsort_f32_i32<GGML_SORT_ORDER_DESC><<<block_nums, block_dims, shared_mem, stream>>>(x, dst, ncols, ncols_pad);
+    } else {
+        GGML_ABORT("fatal error");
+    }
+}
+```
+In the case that I'm testing the models vocabulary is 32000 tokens:
+```console
+(gdb) p *src0
+$2 = {type = GGML_TYPE_F32, buffer = 0x555556989ce0, ne = {32000, 1, 1, 1}, nb = {4, 128000, 128000, 128000}, op = GGML_OP_NONE, 
+  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, 
+  view_offs = 0, data = 0x7fff9ea20400, name = "leaf_0", '\000' <repeats 57 times>, extra = 0x0, 
+  padding = "\000\000\000\000\000\000\000"}
+```
+But my devices shared memory per block is only 49152 bytes:
+``` console
+(gdb) p ggml_cuda_info().devices[ggml_cuda_get_device()].smpb
+$9 = 49152
+```
+So perhaps for top-k sampling we might need a different algoritm that argsort
+to avoid this shared memory limitation.
