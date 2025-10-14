@@ -92,11 +92,13 @@ And `llama_sampler_chain` would then apply all the samplers calling `apply_ggml`
 each sampler in the chain, passing in a `ggml_cgraph` that is built up with all the
 operations from each sampler.
 
-We want to avoid intermixing CPU and GPU samplers as this would require converting
-and copying data from system memory to device memory. So we should use either
-only GPU samplers, or only CPU samplers in the chain. We could add a check for
-to see if the samplers in the chain are GPU only and then avoid creating the
-llama_token_data_array and only create the ggml_data struct in llamaa_sampler_sample.
+While we want to avoid intermixing CPU and GPU samplers in the samplers chain, as this
+would require converting and copying data from system memory to device memory, we should
+support having GPU samplers at the start of the sampling chain. This way we can take
+advantage of the logits already being on the GPU and perform some of the sampling
+operations on the GPU before copying the data back to the CPU for any CPU samplers
+to process later in the chain.
+
 ```c++
 llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_context * ctx, int32_t idx) {
     const auto * logits = llama_get_logits_ith(ctx, idx);
@@ -106,14 +108,10 @@ llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_conte
 
     const int n_vocab = llama_vocab_n_tokens(vocab);
     ...
-
-    bool all_gpu = ...
-    
-    if (all_gpu) {
-       ... 
-    } else {
-        ...
-    }
+ 
+    // check the smpl chain and store the GPU samplers in a vector
+    // Process the GPU samplers and afterwards create a llama_token_data_array
+    // which can then be passed to the remaining CPU samplers in the chain.
 }
 ```
 Something like this perhaps.
@@ -142,3 +140,13 @@ This way the tensors will have a fixed tensor size.
 I've updated the suggestion above and we can check the samplers in the chain
 and if they are all GPU samplers then we can avoid creating the
 llama_token_data_array altogether.
+
+* Originally I have specified that either GPU samplers or CPU samplers would be
+  used in a sampling chain. But there was a suggestion to allow mixing them in the
+  sense that the GPU samplers would be at the start of the chain and CPU samplers
+  after them.
+
+* It was also brought up that CPU samplers may require addition tensors for storing
+  parameters and state. These tensors need to be preallocated and made availabe to the
+  GPU samplers in some way. An example of such a sampler is the dist sampler that needs
+  to store the RNG (random number generator) state.
