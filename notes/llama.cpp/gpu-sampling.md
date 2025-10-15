@@ -290,6 +290,18 @@ llama_token_data_array altogether.
   GPU samplers in some way. An example of such a sampler is the dist sampler that needs
   to store the RNG (random number generator) state.
 
+* Does it make sense to implement all the current CPU samplers on the GPU?  
+Would it perhaps be enough to implement the samplers like temperature, top-k,
+top-p, min-p on the GPU so that they can take advantage of the logits already
+being on the GPU, then filter down the logits/probabilities before copying them
+from device to system memory for the remaining CPU samplers to process?
+So perhaps we could start by implementing:
+- Temparature
+- Top-k (see section below about an issue I ran into trying to implement this)
+- Top-p
+- Min-p
+- additional?
+
 ### Top-k GPU sampling
 I ran into an issue when trying to implement the top-k sampling on the GPU.
 ```c++
