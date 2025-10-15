@@ -114,8 +114,6 @@ llama_token llama_sampler_sample(struct llama_sampler * smpl, struct llama_conte
     // which can then be passed to the remaining CPU samplers in the chain.
 }
 ```
-Something like this perhaps. A suggestion following the above can be found in
-[commit](https://github.com/danbev/llama.cpp/commit/c4d8e78d31e2ee5148c8b6bf8d564667a846b2c5).
 
 ### GPU Sampler parameters and state
 Some samplers need to be able to accept parameters and also maintain state.
@@ -221,9 +219,6 @@ This could then be called when we gather the GPU samplers:
             if (s->iface->apply_ggml) {
                 gpu_samplers.push_back(*s);
                 gpu_samplers_ggml_size += s->iface->size_ggml(s);
-
-                // Remove the GPU sampler so that only CPU samplers remain in the chain
-                llama_sampler_chain_remove(smpl, i);
             }
         }
 ```
@@ -239,7 +234,25 @@ We can then use this later when creating the context parameters:
         };
         struct ggml_context * ctx_sample = ggml_init(params);
 ```
-This suggestion can be found in [commit](https://github.com/danbev/llama.cpp/commit/b0b2b904cc38bdafb07145d034a336c211af1537).
+
+### GPU Sampler state
+This was brought up in the feedback and something that we need to consider. The
+parameters to the GPU samplers can work as the currently do for CPU samplers and
+allows the GPU sampler to use them, for example this is what the top-k sampler
+does with the 'k' parameter.
+
+But the for something like the dist sampler that needs to maintain the RNG state
+I'm not exactly sure how to handle. There is a difference here as the GPU
+samplers when their apply_ggml function is called they build/add to the
+computation graph that will later be run. But the CPU sampler actually perform
+their operations directly in this function on the CPU. And this is where the
+rng state for the dist CPU sampler is used.
+
+Thinking about this some more, perhaps the GPU sampler should only to the
+expensive filtering on the GPU like top-k, top-p, min-p etc. And then with the
+reduced set of logits/probabilites the CPU samplers can then take over for things
+like dist, greedy, mirostate, penalties, and grammer. This would simplify the
+GPU samplers as they would not require additional state to be maintained.
 
 
 ### Feedback/Questions
@@ -396,7 +409,7 @@ $9 = 49152
 So perhaps for top-k sampling we might need a different algoritm that argsort
 to avoid this shared memory limitation.
 
-A simliar limit can be found in the metal backend as well, in ggml-metal-device.m
+A similar limit can be found in the metal backend as well, in ggml-metal-device.m
 there is the following check:
 ```c++
         case GGML_OP_ARGSORT:
