@@ -1,36 +1,65 @@
 ## OpenVINO backend
+OpenVINO is an open-source toolkit for optimizing and deploying AI inference.
+If you search for examples online you will probably see examples where a model
+is loaded from a file. But this can all be done programmatrically and there
+is an example of this in [simple-inf.cpp](../fundamentals/openvino-cpp/src/simple-inf.cpp).
 
-### Overview
-Basically the overall picture of what is done is that GGML concepts like
-ggml_tensor are mapped to OpenVINO concepts like ov::Node. And the ggml_cgraph
-is translated into and ov::Model. 
+The OpenVINO backend, being part of ggml use the gguf file format just like
+everything else. What the backend does is that it translates the GGML concepts
+to OpenVINO concepts and then uses the OpenVINO runtime to execute the model.
 
-1. Tensor Translation (ggml-decoder.cpp):
-    - Converts ggml tensors (ggml_tensor) to OpenVINO tensors (ov::Tensor)
-    - Maps ggml data types (F32, F16, BF16, quantized types) to OpenVINO element types (ov::element::Type)
-    - Handles shapes and strides conversion
+* GGML tensors are translated into ov::Tensor (ov = OpenVINO). 
 
-2. Operation Translation (openvino/op/*.cpp):
-    - Each ggml operation (like GGML_OP_RMS_NORM, GGML_OP_ROPE, etc.) is converted to OpenVINO operations
-    - Custom ops are implemented for operations not natively available in OpenVINO
+* OpenVINO has a number of built-in operations and additional one have been created
+  in ggml/src/ggml-openvino/openvino/op/*.cpp).
 
-3. Graph Translation (ggml-decoder.cpp, utils.cpp):
-    - The GgmlOvDecoder walks through the ggml compute graph (ggml_cgraph)
-    - Identifies inputs, outputs, weights, and operations
-    - Creates an OpenVINO model (ov::Model) with equivalent structure
-    - Uses OpenVINO's GGML frontend: ov::frontend::ggml::FrontEnd::convert(input_model)
+* The computation graph is translated into an ov::Model (which is a directed
+  acyclic graph of ov::Node).
 
-4. Execution Flow (utils.cpp:66):
-    - openvino_frontend_compute(backend, cgraph)
-    - Compiles the OpenVINO model for the target device (GPU/CPU/NPU)
-    - Creates an inference request (ov::InferRequest)
-    - Copies input data from ggml tensors to OpenVINO tensors
-    - Executes inference via infer_request.infer()
-    - Copies results back to ggml tensor memory
 
 ### Debugging session notes
-Can just to recap, the openvino backend uses openvino c++ api. When
-llama_context::graph_compute is called the following function will be called:
+```console
+source ~/work/ai/learning-ai/fundamentals/openvino-cpp/deps/openvino_toolkit_ubuntu24_2025.3.0.19807.44526285f24_x86_64/setupvars.sh
+
+cmake -S . -B build -DLLAMA_CURL=ON \
+    -DGGML_OPENVINO=ON \
+    -DGGML_NATIVE=ON \
+    -DLLAMA_BUILD_TESTS=ON \
+    -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -- -j 12
+````
+
+Running in gdb:
+```console
+gdb --args \
+    ./build/bin/llama-cli \
+    -m ../llama.cpp/models/gemma-3-270m-it-qat-q4_0-unquantized-Q4_0.gguf \
+    --no-warmup --prompt '"What is capital of France?"' -n 40  -t 4 -no-cnv
+```
+
+When `graph_compute` is called this will land in the OpenVINO backend, and the
+function `ggml_backend_openvino_graph_compute` will be called:
+```console
+(gdb) bt
+#0  ggml_backend_openvino_graph_compute (backend=0x555555bd2380, cgraph=0x555555bb3e78)
+    at /home/danbev/work/ai/llama.cpp-openvino/ggml/src/ggml-openvino/ggml-openvino.cpp:54
+#1  0x00007ffff756f0db in ggml_backend_graph_compute_async (backend=0x555555bd2380, cgraph=0x555555bb3e78)
+    at /home/danbev/work/ai/llama.cpp-openvino/ggml/src/ggml-backend.cpp:359
+#2  0x00007ffff757412a in ggml_backend_sched_compute_splits (sched=0x555555b51d30)
+    at /home/danbev/work/ai/llama.cpp-openvino/ggml/src/ggml-backend.cpp:1553
+#3  0x00007ffff7574f5e in ggml_backend_sched_graph_compute_async (sched=0x555555b51d30, graph=0x555555fe2930)
+    at /home/danbev/work/ai/llama.cpp-openvino/ggml/src/ggml-backend.cpp:1753
+#4  0x00007ffff7c2280c in llama_context::graph_compute (this=0x555555b6c1d0, gf=0x555555fe2930, batched=true)
+    at /home/danbev/work/ai/llama.cpp-openvino/src/llama-context.cpp:1460
+#5  0x00007ffff7c1f4fa in llama_context::process_ubatch (this=0x555555b6c1d0, ubatch=..., gtype=LLM_GRAPH_TYPE_DECODER, 
+    mctx=0x555555aecec0, ret=@0x7fffffffaed4: 32767) at /home/danbev/work/ai/llama.cpp-openvino/src/llama-context.cpp:784
+#6  0x00007ffff7c20a75 in llama_context::decode (this=0x555555b6c1d0, batch_inp=...)
+    at /home/danbev/work/ai/llama.cpp-openvino/src/llama-context.cpp:1088
+#7  0x00007ffff7c278c5 in llama_decode (ctx=0x555555b6c1d0, batch=...)
+    at /home/danbev/work/ai/llama.cpp-openvino/src/llama-context.cpp:2747
+#8  0x00005555555e459d in main (argc=11, argv=0x7fffffffd678) at /home/danbev/work/ai/llama.cpp-openvino/tools/main/main.cpp:671
+```
+This function is defined in ggml/src/ggml-openvino/ggml-openvino.cpp:
 ```c++
 static enum ggml_status
 ggml_backend_openvino_graph_compute(ggml_backend_t backend, struct ggml_cgraph *cgraph) {
@@ -38,8 +67,9 @@ ggml_backend_openvino_graph_compute(ggml_backend_t backend, struct ggml_cgraph *
 
     return GGML_STATUS_SUCCESS;
 }
-
 ```
+And openvino_frontend_compute is defined in ggml/src/ggml-openvino/utils.h:
+```c++
 This will land in ggml/src/ggml-openvino/utils.cpp:
 ```c++
 enum ggml_status openvino_frontend_compute(ggml_backend_t backend, struct ggml_cgraph* cgraph) {
@@ -103,5 +133,4 @@ std::map<std::string, std::shared_ptr<ov::Node>> GgmlOvDecoder::create_weight_no
 `ov::Node` is the the base class for all operations in OpenVINO's computation
 graph.
 
-
-
+_wip_
