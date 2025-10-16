@@ -96,7 +96,6 @@ To be able to perform the GPU sampling operations on the GPU this will be done
 in a similar manner to how pooling is currently applied. To enable this a
 llama_sampler has been added to llama_context_params:
 ```c++
-```c++
         struct llama_sampler_chain_params gpu_sampler_params = llama_sampler_chain_default_params();
         struct llama_sampler * gpu_sampler_chain = llama_sampler_chain_init(gpu_sampler_params);
         llama_sampler_chain_add(gpu_sampler_chain, llama_sampler_gpu_init_greedy());
