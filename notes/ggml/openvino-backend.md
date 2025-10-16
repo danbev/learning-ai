@@ -2,7 +2,7 @@
 OpenVINO is an open-source toolkit for optimizing and deploying AI inference.
 If you search for examples online you will probably see examples where a model
 is loaded from a file. But this can all be done programmatrically and there
-is an example of this in [simple-inf.cpp](../fundamentals/openvino-cpp/src/simple-inf.cpp).
+is an example of this in [simple-inf.cpp](../../fundamentals/openvino-cpp/src/simple-inf.cpp).
 
 The OpenVINO backend, being part of ggml use the gguf file format just like
 everything else. What the backend does is that it translates the GGML concepts
