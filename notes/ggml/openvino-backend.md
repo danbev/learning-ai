@@ -64,12 +64,36 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 ```
 And this will build the computation graph for the model in question, and this
 includes specific sizes for the inputs, like the sequence length, batch size
-etc. In the case of OpenVINO which translate the GGML graph to an OpenVINO
-model, they have to perform the above steps of compilation, firmware generation
-and loading to the NPU. This is a slow process and it is not feasible to do
-for every inference call. Currently that do some form of caching which I'm not
-exactly sure how this works and I think this only applied of the NPU case which
-I can't really test.
+etc.
+
+In the case of OpenVINO which translate the GGML graph to an OpenVINO model, they
+have to perform the above steps of compilation, firmware generation and loading
+to the NPU. This is a slow process and it is not feasible to do for every
+inference call. Currently they do some form of caching which I'm not exactly sure
+how this works and I think this only applied of the NPU case which I can't
+really test it as I don't have the hardware.
+
+It sounds like this is not something unique to Intel:
+* Apple Neural Engine: Similar black box through Core ML
+
+### NPU issue
+To understand the NPU issue better we can think of the NPU as my IoT device. If
+I need to update something, like change a configuration in the program, say the
+size of a variable, then I actually need to compile and flash the device to see
+that change. This is alright if it seldom changes but if it is frequenent it is
+time consuming.
+The same thing happens with the NPU where if you have operation that contain the
+same sizes that are called many times it will bascially be compiled once and
+called multiple times. But if the case is that tensor sizes change then it needs
+to "flash" the device for the new program. And this is what is happening with
+llama.cpp and OpenVINO backend where the sequence length and batch size can
+change for every inference call. And this is also the reason why the NPU has
+this issue and not the CPU or GPU as they are more flexible and can handle it.
+There are solutions like having a fixed sequence lenght and padding the input
+to fit but this also wastes resources.
+
+So could the CPU handle the prefill prompt and then the NPU handle the decoding
+of tokens with a fixed sequence length of 1?
 
 
 ### Debugging session notes
@@ -124,8 +148,6 @@ ggml_backend_openvino_graph_compute(ggml_backend_t backend, struct ggml_cgraph *
 }
 ```
 And openvino_frontend_compute is defined in ggml/src/ggml-openvino/utils.h:
-```c++
-This will land in ggml/src/ggml-openvino/utils.cpp:
 ```c++
 enum ggml_status openvino_frontend_compute(ggml_backend_t backend, struct ggml_cgraph* cgraph) {
     static ov::Core core;
