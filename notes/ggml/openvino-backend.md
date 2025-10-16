@@ -17,6 +17,61 @@ to OpenVINO concepts and then uses the OpenVINO runtime to execute the model.
   acyclic graph of ov::Node).
 
 
+I naively thought that a compuation unit like a NPU (Neural Processing Unit)
+would be accessable by something like intrinsics or some other low-level
+API. But this does not seem to be the case. The NPU is accessed through the
+OpenVINO runtime:
+```
+Application Code
+    ↓
+Framework (PyTorch/TensorFlow/ONNX/Llama.cpp)
+    ↓
+OpenVINO Runtime
+    ↓
+NPU Compiler/Plugin (closed source)
+    ↓
+NPU Firmware/Driver
+    ↓
+NPU Hardware (VPU/NPU)
+```
+
+Intel NPUs (formerly VPUs) are based on acquired Movidius technology
+The actual instruction set and architecture are proprietary
+
+So in the example above when we call:
+```c++
+        ov::CompiledModel compiled_model = core.compile_model(model, "CPU");
+        ov::InferRequest infer_request = compiled_model.create_infer_request();
+        infer_request.infer();
+```
+The following happends behind the scenes:
+* Graph Compiler (proprietary) translates the model
+* Firmware blob is generated for the specific NPU
+* Driver loads this blob to NPU via PCIe/USB
+* NPU firmware orchestrates execution
+
+This becomes an issue as in llama.cpp when we perform inference:
+```c++
+int llama_context::decode(const llama_batch & batch_inp) {
+    ...
+        const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_DECODER, mctx.get(), status);
+```
+And process_ubatch will call build_graph:
+```c++
+llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
+    ...
+        gf = model.build_graph(gparams);
+```
+And this will build the computation graph for the model in question, and this
+includes specific sizes for the inputs, like the sequence length, batch size
+etc. In the case of OpenVINO which translate the GGML graph to an OpenVINO
+model, they have to perform the above steps of compilation, firmware generation
+and loading to the NPU. This is a slow process and it is not feasible to do
+for every inference call. Currently that do some form of caching which I'm not
+exactly sure how this works and I think this only applied of the NPU case which
+I can't really test.
+
+
 ### Debugging session notes
 ```console
 source ~/work/ai/learning-ai/fundamentals/openvino-cpp/deps/openvino_toolkit_ubuntu24_2025.3.0.19807.44526285f24_x86_64/setupvars.sh
@@ -125,6 +180,32 @@ So this is not a naive graph.
             std::shared_ptr<ov::Model> model;
             auto model_weights = GgmlOvDecoder::create_weight_nodes(cgraph, get_types_to_requant(device));
 ```
+Lets take a look at the types that need requantization:
+```c++
+std::map<ggml_type, ExtraQuantType> get_types_to_requant(const std::string& device) {
+    if (device == "NPU") {
+        return {
+            {GGML_TYPE_Q4_0, ExtraQuantType::Q4_0_128},
+            {GGML_TYPE_Q4_1, ExtraQuantType::Q4_0_128},
+            {GGML_TYPE_Q4_K, ExtraQuantType::Q4_0_128},
+            {GGML_TYPE_Q6_K, ExtraQuantType::F16     },
+            {GGML_TYPE_Q5_K, ExtraQuantType::F16     },
+        };
+    }
+    if (device == "GPU") {
+        return {
+            // gs16 is WIP
+            {GGML_TYPE_Q6_K, ExtraQuantType::Q8_0_32},
+        };
+    }
+    return {};
+}
+```
+So for NPUs Q4_0, Q4_1, and Q4_K are requantized to a Q4_0 format but with a
+larger block size of 128.
+and for GPU Q6_K is requantized to an 8-bit format.
+
+
 ```c++
 std::map<std::string, std::shared_ptr<ov::Node>> GgmlOvDecoder::create_weight_nodes(
     struct ggml_cgraph* cgraph, std::map<ggml_type, ExtraQuantType> types_to_requantize) {
