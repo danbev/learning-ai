@@ -277,8 +277,8 @@ ggml_tensor * llm_graph_context::build_rs(
                     get_state_rows);
 }
 ```
-So notice that we are passing in the conv_states_all as `s` here which is the
-which contains state for each sequence (we only have one sequence in this case):
+So notice that we are passing in the conv_states_all as `s` here which contains
+the state for each sequence (we only have one sequence in this case):
 ```c++
 ggml_tensor * llm_graph_context::build_rs(
         ggml_tensor * s,                  // conv_states_all
@@ -304,7 +304,7 @@ ggml_tensor * llm_graph_context::build_rs(
     // {state_size, rs_size} -> {state_size, n_seqs}
     ggml_tensor * output_states = get_state_rows(ctx0, states, state_copy_main);
     // Uses indices in state_copy_main to select which rows to copy for the
-    // three previous states.
+    // 3 previous states.
     ggml_build_forward_expand(gf, output_states);
 
     // copy extra states which won't be changed further (between n_seqs and n_rs)
@@ -549,6 +549,330 @@ Notice that for each step we take we are mixing in the previous three timesteps!
 This is how local temporal context is added before the SSM computation.
 
 This operation is performed for each of the 3328 dimensions (rows) in parallel.
+The shape of xBC after the convolution is:
+```console
+(gdb) p xBC->ne
+$23 = {3328, 7, 1, 1}
+```
+
+The final operations to happen in the convolution is:
+```c++
+            // bias
+            xBC = ggml_add(ctx0, xBC, model.layers[il].ssm_conv1d_b);
+
+            xBC = ggml_silu(ctx0, xBC);
+```
+
+Following the convolution we have the selective scan.
+First a views are created for x, B, and C from xBC ([3328, 7, 1, 1]):
+```c++
+            ggml_tensor * x = ggml_view_4d(ctx0, xBC, head_dim, n_head,
+                n_seq_tokens, n_seqs, head_dim*xBC->nb[0], xBC->nb[1], xBC->nb[2], 0);
+
+            ggml_tensor * B = ggml_view_4d(ctx0, xBC, d_state, n_group,
+                n_seq_tokens, n_seqs, d_state*xBC->nb[0], xBC->nb[1], xBC->nb[2], d_inner*ggml_element_size(xBC));
+
+            ggml_tensor * C = ggml_view_4d(ctx0, xBC, d_state, n_group,
+                n_seq_tokens, n_seqs, d_state*xBC->nb[0], xBC->nb[1], xBC->nb[2], (d_inner + n_group*d_state)*ggml_element_size(xBC));
+```
+So x is the input to the selective scan and has a total of 3072 elements which
+are organinzed as 48 heads each of dimension 64:
+```console
+(gdb) p x->ne
+$16 = {64, 48, 7, 1}
+```
+B is the input-dependent B matrix which controls how the current input affects
+the state update:
+```console
+(gdb) p B->ne
+$17 = {128, 1, 7, 1}
+```
+C is the input-dependent C matrix which controls how the hidden state is read
+out to produce the output:
+```console
+(gdb) p C->ne
+$18 = {128, 1, 7, 1}
+```
+Next we adjust dt with a bias:
+```c++
+            dt = ggml_add(ctx0, ggml_cont(ctx0, dt), model.layers[il].ssm_dt_b);
+```
+```console
+(gdb) p dt->ne
+$21 = {48, 7, 1, 1
+(gdb) p model.layers[il].ssm_dt_b->ne
+$20 = {48, 1, 1, 1}
+```
+The delta controls the descretization of the continous-time SSM which is also
+input dependent and determines how much the state evolves at each timestep.
 
 
-_wip_
+Next we get the A matrix for the selective scan which is the state transition
+matrix. This is not input dependant but is per layer. This matrix determines
+how the the hidden state evolves over time:
+```c++
+            ggml_tensor * A = model.layers[il].ssm_a;
+```
+```console
+(gdb) p A->ne
+$22 = {1, 48, 1, 1}
+```
+The hidden state evolves over time according to the equations of Mamba2 or the
+SSM (not sure what is the most correct term here). And the delta (dt) determines
+when we sample the state. 
+
+Next we have a lambda function:
+```c++
+            auto get_ssm_rows = [&](ggml_context * ctx, ggml_tensor * states, ggml_tensor * ids) {
+                ggml_tensor * ssm = ggml_reshape_4d(ctx, states, d_state, head_dim, n_head, mctx_cur->get_size());
+
+                // TODO: use semistructured matrices to implement state-space duality
+                // => {d_inner, n_seq_tokens, n_seqs} and {d_state, d_inner, n_seqs}
+                return ggml_ssm_scan(ctx, ssm, x, dt, A, B, C, ids);
+            };
+```
+Notice that it takes a states tensor and an ids tensor. This is where the actual
+ggml_ssm_scan function is called to build the ssm scan operation.
+
+Next we will see the first usage of ssm_states_all which contains all the hidden
+ssm states, and notice that this is also calling build_rs which we also did for
+the conv_states_all earlier, but this time the lambda function defined above is
+passed in which is what will call ggml_ssm_scan:
+```c++
+            ggml_tensor * y_ssm = build_rs(inp, ssm_states_all, hparams.n_embd_s(), ubatch.n_seqs, get_ssm_rows);
+```
+```console
+(gdb) p d_state
+$39 = 128
+
+(gdb) p d_inner
+$40 = 3072
+
+(gdb) p d_state * d_inner
+$41 = 393216
+
+(gdb) p hparams.n_embd_s()
+$38 = 393216
+```
+
+Just like the previous build_rs call which we saw loaded the previous conv statas
+this time it will load the previous hidden states.
+```c++
+ggml_tensor * llm_graph_context::build_rs(
+        llm_graph_input_rs * inp,               
+        ggml_tensor * s,                   // ssm_states_all
+            int32_t   state_size,
+            int32_t   n_seqs,
+        const llm_graph_get_rows_fn & get_state_rows) const {
+    const auto * kv_state = inp->mctx;
+
+    return build_rs(s, inp->s_copy_main, inp->s_copy_extra, state_size, n_seqs,
+                    kv_state->get_n_rs(), kv_state->get_head(), kv_state->get_size(), kv_state->get_rs_z(),
+                    get_state_rows);
+}
+```
+
+```c++
+ggml_tensor * llm_graph_context::build_rs(
+        ggml_tensor * s,                   // ssm_states_all
+        ggml_tensor * state_copy_main,
+        ggml_tensor * state_copy_extra,
+            int32_t   state_size,
+            int32_t   n_seqs,
+           uint32_t   n_rs,
+           uint32_t   rs_head,
+           uint32_t   rs_size,
+            int32_t   rs_zero,
+        const llm_graph_get_rows_fn & get_state_rows) const {
+
+    ggml_tensor * states = ggml_reshape_2d(ctx0, s, state_size, rs_size);
+```
+This reshapes the ssm_states_all into a 2d tensor where each row is the hidden
+state for a sequence in the cache, in our case we only have one sequence but
+there could be more:
+```console
+(gdb) p states->ne
+$36 = {393216, 1, 1, 1}
+               ↑
+               sequences
+
+Row 0: [393216 elements] <-- SSM state for sequence slot 0
+
+If `rs_size` were larger (say 4), it would be:
+Row 0: [393216 elements] <-- Slot 0
+Row 1: [393216 elements] <-- Slot 1
+Row 2: [393216 elements] <-- Slot 2
+Row 3: [393216 elements] <-- Slot 3
+```
+
+Next if there are new sequences we need to zero out their states. This is only
+done if rs_zero is greater than or equal to 0:
+```console
+(gdb) p rs_zero
+$42 = 0
+```
+So this is creating a view into the states tensor with the number of elements
+specified by state_size * (rs_zero >= 0), and remember that if rs_zero is true
+then the expression (rs_zero >= 0) evaluates to 1, so the number of elements
+in our case will be be the state size of 393216, and the offset will be zero:
+```c++
+    ggml_tensor * state_zero = ggml_view_1d(ctx0, states,
+        state_size*(rs_zero >= 0), rs_zero*states->nb[1]*(rs_zero >= 0));
+    ggml_build_forward_expand(gf, ggml_scale_inplace(ctx0, state_zero, 0));
+```
+So in our case this will create a view having 393216 elements starting at offset
+0. And notice that the scale_inplace with 0 will zero out this view. So that is
+zeroing out the state for the new sequence that will be written to slot 0, which
+is the one we are processing currrently.
+
+Next we have the call to the lambda function get_state_rows which will call
+```c++
+    ggml_tensor * output_states = get_state_rows(ctx0, states, state_copy_main);
+    ggml_build_forward_expand(gf, output_states);
+```
+```c++
+            auto get_ssm_rows = [&](ggml_context * ctx, ggml_tensor * states, ggml_tensor * ids) {
+                ggml_tensor * ssm = ggml_reshape_4d(ctx, states, d_state, head_dim, n_head, mctx_cur->get_size());
+```
+This will reshape the states into a 4d tensor:
+```console
+(gdb) p ssm->ne
+$52 = {128, 64, 48, 1}
+```
+This is d_state = 128, head_dim = 64, n_head = 48, and the last dimension.
+Next we call the ggml_ssm_scan funtion which will operate on the ssm states
+which can be empty if this is the first timestep for this sequence:
+```c++
+                return ggml_ssm_scan(ctx, ssm, x, dt, A, B, C, ids);
+            };
+```
+This will perform something like the following:
+```console
+For each timestep t in 0..6:
+    For each head h:
+        h_state[t, h] = discretize(A, dt[t,h]) * h_state[t-1, h] + discretize(B[t], dt[t,h]) * x[t, h]
+        y[t, h] = C[t] * h_state[t, h]
+```
+The returned tensor will contain both the updated hidden states (h_state above)
+as well as the the output of the SSM (y above) for each of the inputs.
+The lambda returns this into output_states (recall that we are in build_rs):
+```c++
+    ggml_tensor * output_states = get_state_rows(ctx0, states, state_copy_main);
+    ggml_build_forward_expand(gf, output_states);
+```
+In a batched scenario where n_rs > n_seqs, some sequence slots might be included
+in the request but not actively processed. This step preserves those states by
+copying them forward in the cache.
+```c++
+    ggml_tensor * states_extra = ggml_get_rows(ctx0, states, state_copy_extra);
+    ggml_build_forward_expand(gf,
+        ggml_cpy(ctx0,
+            states_extra,
+            ggml_view_1d(ctx0, s, state_size*(n_rs - n_seqs), (rs_head + n_seqs)*state_size*ggml_element_size(s))));
+
+    return output_states;
+```
+In our case this will create a view with zero elements since n_rs == n_seqs:
+```console
+(gdb) p state_size*(n_rs - n_seqs)
+$62 = 0
+```
+This will then return us into the build_mamba2_layer function the output_states:
+```c++
+            ggml_tensor * y_ssm = build_rs(inp, ssm_states_all, hparams.n_embd_s(), ubatch.n_seqs, get_ssm_rows);
+```
+```console
+(gdb) p y_ssm->ne
+$65 = {414720, 1, 1, 1}
+```
+Baked into the following is the copying of the updates ssm states into
+ssm_states_all for the next timestep:
+```c++
+            ggml_build_forward_expand(gf,
+                ggml_cpy(ctx0,
+                    ggml_view_1d(ctx0, y_ssm,
+                        d_state*d_inner*n_seqs,  // same number of elements
+                        ggml_nelements(x)*x->nb[0]),
+                    ggml_view_1d(ctx0, ssm_states_all,
+                        d_state*d_inner*n_seqs,  // same number of elements
+                        kv_head*d_state*d_inner*ggml_element_size(ssm_states_all))));
+```
+The source of the copy is 393216 elements starting from offset 86016 in y_ssm:
+```console
+(gdb) p d_state * d_inner * n_seqs
+$67 = 393216
+
+(gdb) p ggml_nelements(x) * x->nb[0]
+$71 = 86016
+```
+In our case kv_heads is 0 so the offset into ssm_states_all is zero, so the
+elements are copyied into it.
+
+Next a view is created for y which is the output of the SSM for each head:
+```c++
+            ggml_tensor * y = ggml_view_4d(ctx0, y_ssm,
+                head_dim,
+                n_head,
+                n_seq_tokens,
+                n_seqs,
+                x->nb[1],
+                n_head*x->nb[1],
+                n_seq_tokens*n_head*x->nb[1], 0);
+```
+```console
+(gdb) p y->ne
+$76 = {64, 48, 7, 1}
+```
+Then the D matrix is applied which is the skip connection/residual connection
+which is the `y = C*h + D*x` part of the SSM equation:
+```c++
+            y = ggml_add(ctx0, y, ggml_mul(ctx0, x, model.layers[il].ssm_d));
+            cb(y, "mamba2_y_add_d", il);
+```
+Then we have the SwiGLU gating using z:
+```c++
+            y = ggml_swiglu_split(ctx0, ggml_cont(ctx0, z), y);
+```
+After that we have:
+```c++
+            if (model.layers[il].ssm_norm) {
+                y = ggml_reshape_4d(ctx0, y, d_inner / n_group, n_group, n_seq_tokens, n_seqs);
+                y = build_norm(y, model.layers[il].ssm_norm, NULL, LLM_NORM_RMS, il);
+            }
+```
+```console
+(gdb) p model.layers[il].ssm_norm->ne
+$81 = {3072, 1, 1, 1}
+```
+Then y is reshaped to 3d for the output of the layer:
+```c++
+            y = ggml_reshape_3d(ctx0, y, d_inner, n_seq_tokens, n_seqs);
+```
+```console
+(gdb) p y->ne
+$86 = {3072, 7, 1, 1}
+```
+
+And then the output is projected back to the embedding dimension:
+```c++
+            cur = build_lora_mm(model.layers[il].ssm_out, y);
+```
+```console
+(gdb) p model.layers[il].ssm_out->ne
+$88 = {3072, 1536, 1, 1}
+
+(gdb) p cur->ne
+$89 = {1536, 7, 1, 1}
+```
+And then reshaped but we only have a single sequence so this does not change
+anything:
+```c++
+        cur = ggml_reshape_2d(ctx0, cur, cur->ne[0], n_seq_tokens * n_seqs);
+        cb(cur, "mamba_out", il);
+```
+```console
+(gdb) p cur->ne
+$90 = {1536, 7, 1, 1}
+```
+
+And that was the complete mamba2 layer!
