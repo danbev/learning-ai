@@ -196,3 +196,111 @@ I'm showing the simple  as that is the example I'm working with at the moment:
 ```
 So a model that has quantized weights will also have scale tensors that are used to dequantize the weights.
 And these are the inverse scale/delta so to dequantize we just multiply the weights by the scale.
+
+
+Now, I came accross a model which has the following tensors in the original mode:
+```console
+backbone.layers.51.mixer.experts.98.down_proj.input_scale : shape = torch.Size([]), dtype = torch.float32
+backbone.layers.51.mixer.experts.98.down_proj.weight : shape = torch.Size([2688, 1856]), dtype = torch.float8_e4m3fn
+ backbone.layers.51.mixer.experts.98.down_proj.weight_scale : shape = torch.Size([]), dtype = torch.bfloat16
+backbone.layers.51.mixer.experts.98.up_proj.input_scale : shape = torch.Size([]), dtype = torch.float32
+backbone.layers.51.mixer.experts.98.up_proj.weight : shape = torch.Size([1856, 2688]), dtype = torch.float8_e4m3fn
+ backbone.layers.51.mixer.experts.98.up_proj.weight_scale : shape = torch.Size([]), dtype = torch.bfloat16
+```
+
+dequant will iterator over all the tensors in the original model:
+```python
+for name in list(self.model_tensors.keys()):
+    print(name)
+    for suffix, to_weight in suffix_rules:
+        if name.endswith(suffix):
+            weight_name = to_weight(name)
+            w = self.model_tensors[weight_name]
+            s = self.model_tensors[name]
+            self.model_tensors[weight_name] = (lambda w=w, s=s: dequant_simple(w(), s()))
+            tensors_to_remove.append(name)
+            break
+```
+
+```console
+backbone.layers.51.mixer.experts.98.down_proj.input_scale
+backbone.layers.51.mixer.experts.98.down_proj.weight
+backbone.layers.51.mixer.experts.98.down_proj.weight_scale
+
+backbone.layers.51.mixer.experts.98.up_proj.input_scale
+backbone.layers.51.mixer.experts.98.up_proj.weight
+backbone.layers.51.mixer.experts.98.up_proj.weight_scale
+```
+
+My understanding is that the tensors of this model have been quantized, and the tensors
+named the same as the tensor with _scale suffices are the scales. If we start with the
+.weight.scale I feel I understand this, it is the inverse delta which we can use to
+dequantize. But the .input_scale tensor was not clear to me?
+I'm thinking that the inputs to the operation, for example a up_project, are quantized to,
+and we are "baking" this into the up_proj.weight but then I'm lost
+
+In quantized models both weights and activations (inputs) are quantized.
+So we do something like the following to dequantize a quantized weight:
+```
+real_value = quant_value * scale
+```
+This can use the inverse delta so that this becomes a multiplication instead of a division.
+
+* weight_scale (or weight_scale_inv) is used to dequantize the weights.
+* input_scale is used to dequantize the inputs that will be multiplied by those weights.
+
+For each tensor:
+If it ends with .weight_scale, it replaces the corresponding .weight callable with
+```
+lambda: weight() * weight_scale()
+```
+
+If it ends with .input_scale, it again wraps the same .weight callable with
+```
+lambda: weight() * input_scale()
+```
+
+The result is that the final callable, when you read .weight, returns the fully dequantized weight:
+```
+weight = raw_weight * weight_scale * input_scale
+```
+
+
+For example, say we have the following values:
+```
+input_scale  = 0.02
+weight_scale = 0.01
+weight (quantized) =  [ 5, -3]
+                      [10,  0]
+```
+Now, we can create a single matrix like the following:
+```
+W_dequant = weight * weight_scale * input_scale
+
+          =  [5 *  0.01 * 0.02, -3 * 0.01 * 0.02]
+             [10 * 0.01 * 0.02,  0 * 0.01 * 0.02]
+
+          =  [0.001, -0.0006]
+             [0.002,       0]
+```
+Now, something that was not obvious to at first is:
+```python
+    if name.endswith(suffix):
+        weight_name = to_weight(name)
+        w = self.model_tensors[weight_name]  #<--notice that this is calling model_tensors[weight_name]
+        s = self.model_tensors[name]
+        self.model_tensors[weight_name] = (lambda w=w, s=s: dequant_simple(w(), s()))
+```
+In our case we will first process the weight scalar tensor for a weight and this will
+be added to model_tensors. And later if there is a input_scale tensor, the lambda for
+the weights will then be gotten from model_tensors and then used in the new lambda and
+this lambda will replace the previous one in model_tensors.
+
+Later in convert_hf_to_gguf.py we find:
+```python
+    def get_tensors(self) -> Iterator[tuple[str, Tensor]]:
+        for name, gen in self.model_tensors.items():
+            yield name, gen()
+```
+Here gen is the lambda that we stored and this is calling it performing the dequantization.
+The iterator yields the dequantized tensor for each name.
