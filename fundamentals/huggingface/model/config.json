@@ -1,0 +1,18 @@
+{
+  "architectures": [
+    "ModelLM"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration_model.ModelConfig",
+    "AutoModel": "modeling_model.ModelLM",
+    "AutoModelForCausalLM": "modeling_model.ModelLM"
+  },
+  "dtype": "float32",
+  "hidden_size": 32,
+  "model_type": "model",
+  "num_attention_heads": 4,
+  "num_hidden_layers": 2,
+  "tie_word_embeddings": true,
+  "transformers_version": "4.57.1",
+  "vocab_size": 100
+}
