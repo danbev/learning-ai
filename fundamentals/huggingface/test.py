@@ -12,6 +12,7 @@ model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=False,
     device_map=None,
     dtype=torch.float32,
+    config=config,
 )
 bad = [n for n,p in model.named_parameters() if p.device.type == "meta"]
 bad += [f"(buffer) {n}" for n,b in model.named_buffers() if b.device.type == "meta"]
