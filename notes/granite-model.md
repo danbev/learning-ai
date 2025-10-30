@@ -217,8 +217,6 @@ $74 = 1
 (gdb) p n_seq_tokens 
 $75 = 7
 ```
-
-```
 Next we have:
 ```c++
         ggml_tensor * conv_states_all = mctx_cur->get_r_l(il);
