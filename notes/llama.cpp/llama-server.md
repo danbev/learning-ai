@@ -79,6 +79,172 @@ $ ./call-server.sh | jq
 }
 ```
 
+### slots
+The concept of a slot is something that can be good to know up front.
+A slot is the server’s long-lived execution context for a single client request.
+The number slots created
+```c++
+    void init() {
+        const int32_t n_ctx_slot = n_ctx / params_base.n_parallel;
+
+        SRV_INF("initializing slots, n_slots = %d\n", params_base.n_parallel);
+
+        for (int i = 0; i < params_base.n_parallel; i++) {
+            server_slot slot;
+```
+The number of slots is determined by the --parallel command line argument and
+this becomes n_parallel. So if we only 1 slot than this means that only one
+request will be processed in one go. We can still have multiple clients/request
+but they will be queued up and processed one at a time.
+
+So even with n_parallel 1, we can still serve multiple request, but they will
+run one after the other. But we can also set it to 2 and then 2 requests can run
+and the tokens will be added to the same batch but will have separate sequence
+ids for each request.
+
+The total KV/context budget n_ctx is split across slots, so:
+```c++
+n_ctx_slot = n_ctx / n_parallel
+```
+Pushing n_parallel higher reduces the context length available per request
+unless you also bump --ctx-size.
+Each slot needs its own sampler state, prompt cache, etc., so memory footprints
+and decode latency go up with larger n_parallel.
+
+```c++
+struct server_context {
+
+    common_params params_base;
+    // slots / clients
+    std::vector<server_slot> slots;
+    ...
+}
+```
+
+A server_context has a llama_batch member:
+```c++
+    // batching
+    llama_batch batch;
+```
+Which is what is used for decoding. This is reset/cleared before each decode:
+```c++
+        common_batch_clear(batch);
+```
+```c++
+                    while (slot.n_past < slot.n_prompt_tokens() && batch.n_tokens < n_batch) {
+                        // get next token to process
+                        llama_token cur_tok = input_tokens[slot.n_past];
+                        if (cur_tok == LLAMA_TOKEN_NULL) {
+                            break; // end of text chunk
+                        }
+
+                        // if this is an alora request with pre-invocation
+                        // tokens that are not cached, we need to stop filling
+                        // this batch at those pre-invocation tokens.
+                        if (alora_scale > 0 && slot.n_past == slot.alora_invocation_start - 1) {
+                            SLT_DBG(slot, "stop prompt batch filling at (n_past = %d, alora_invocation_start = %d)\n", slot.n_past, slot.alora_invocation_start);
+                            break;
+                        }
+
+                        // embedding requires all tokens in the batch to be output
+                        common_batch_add(batch, cur_tok, slot.n_past, { slot.id }, slot.need_embd());
+                        slot.prompt.tokens.push_back(cur_tok);
+
+                        slot.n_prompt_tokens_processed++;
+                        slot.n_past++;
+
+                        // process the last few tokens of the prompt separately in order to allow for a checkpoint to be created.
+                        if (do_checkpoint && slot.n_prompt_tokens() - slot.n_past == 64) {
+                            break;
+                        }
+                    }
+```
+The following was a little confusing to me at first:
+```c++
+                    // entire prompt has been processed
+                    if (slot.n_past == slot.n_prompt_tokens()) {
+                        slot.state = SLOT_STATE_DONE_PROMPT;
+
+                        GGML_ASSERT(batch.n_tokens > 0);
+
+                        common_sampler_reset(slot.smpl);
+
+                        // Process all prompt tokens through sampler system
+                        for (int i = 0; i < slot.n_prompt_tokens(); ++i) {
+                            llama_token id = input_tokens[i];
+                            if (id != LLAMA_TOKEN_NULL) {
+                                common_sampler_accept(slot.smpl, id, false);
+                            }
+                        }
+```
+The sampler is reset (the prompt has not been processed yet) but we are calling
+common_sampler_accept for all the prompt tokens. But this is just to replay
+the prompt tokens into the sampler. Notice that it passes in false
+That simply tells the sampler "these tokens are already in the context," so its
+penalty history matches what the model has seen. The false flag means "don’t
+advance the grammar state," because prompt tokens may not have been constrained
+by the runtime grammar filter.
+Once that history is reconstructed, the subsequent call to common_sampler_sample
+can look at the logits of the last prompt token and choose the first generated
+token with the correct penalties/grammar state in place.
+
+Next we have:
+  ```c++
+                        // extract the logits only for the last token
+                        batch.logits[batch.n_tokens - 1] = true;
+
+                        slot.n_decoded = 0;
+                        slot.i_batch   = batch.n_tokens - 1;
+```
+This is setting the last tokens logits (which we can think of as output logits
+for this token) to true. And then notice that slot.i_batch is set to the last
+token, which is the index into the batch for this sequence. So if we want to
+get the logits for this sequence this is the value we would use.
+
+The actual llama_decode then happens shortly after this:
+```c++
+        // process the created batch of tokens
+        for (int32_t i = 0; i < batch.n_tokens; i = i_next) {
+            const int32_t n_tokens = std::min(n_batch, batch.n_tokens - i);
+
+            llama_batch batch_view = {
+                n_tokens,
+                batch.token    + i,
+                nullptr,
+                batch.pos      + i,
+                batch.n_seq_id + i,
+                batch.seq_id   + i,
+                batch.logits   + i,
+            };
+
+            const int ret = llama_decode(ctx, batch_view);
+            ...
+
+            i_next = i + n_tokens;
+```
+
+```c++
+            for (auto & slot : slots) {
+                ...
+
+                const int tok_idx = slot.i_batch - i;
+
+                llama_token id = common_sampler_sample(slot.smpl, ctx, tok_idx);
+
+                slot.i_batch = -1;
+
+                common_sampler_accept(slot.smpl, id, true);
+
+                slot.n_decoded += 1;
+```
+And this is where the samplers get a chance to sampler the tokens for the
+specific index.
+For GPU sampling perhaps there should be a way of calling a function like
+llama_has_sampled_token as the GPU samplers might already have sampled a token.
+And perhaps we could add llama_has_sampled_probs what can be checked in
+common_sampler::set_logits to populate llama_token_data_array.
+
+
 ### Walkthrough
 This section will step through the server code to understand how it works.
 
