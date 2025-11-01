@@ -3,6 +3,10 @@
 # named kwargs.
 # And for the callee 
 def print_info(**kwargs):
+
+    # we can add values to the kwargs dictionary
+    kwargs["_some_value"] = "something"
+
     for key, value in kwargs.items():
         print(f"{key}: {value}")
 
