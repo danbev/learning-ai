@@ -374,9 +374,9 @@ $103 = {type = GGML_TYPE_Q4_0, buffer = 0x555557a25f10, ne = {1536, 6448, 1, 1},
 Now, this is an interesting operation, this is a matrix multiplication that is
 expanding the input token embedding into the space required for Mamba2.
 So this is one large matrix multiplication for efficiency and then we can create
-views into this for each of the parts. Notice that we used cur for with this
-matrix multiplication so this is how the input tokens are used in the z, B, C,
-and dt operations/values.
+views into this for each of the parts. Notice that we used cur with this matrix
+multiplication so this is how the input tokens are used in the z, B, C, and dt
+operations/values.
 
 This projects each of the 7 tokens from 1536 dimensions to 6448 dimensions.
 The 6448 dimensions are made up of 3 parts:
@@ -553,6 +553,10 @@ The shape of xBC after the convolution is:
 $23 = {3328, 7, 1, 1}
 ```
 
+So the convolution is to incorporate some local context tokens and also to
+enable B and C to be influenced by the input. If we didn't allow for some local
+context the selective scan would only be handling long-range dependencies.
+
 The final operations to happen in the convolution is:
 ```c++
             // bias
@@ -562,7 +566,8 @@ The final operations to happen in the convolution is:
 ```
 
 Following the convolution we have the selective scan.
-First a views are created for x, B, and C from xBC ([3328, 7, 1, 1]):
+
+First views are created for x, B, and C from xBC ([3328, 7, 1, 1]):
 ```c++
             ggml_tensor * x = ggml_view_4d(ctx0, xBC, head_dim, n_head,
                 n_seq_tokens, n_seqs, head_dim*xBC->nb[0], xBC->nb[1], xBC->nb[2], 0);
@@ -579,18 +584,21 @@ are organinzed as 48 heads each of dimension 64:
 (gdb) p x->ne
 $16 = {64, 48, 7, 1}
 ```
+
 B is the input-dependent B matrix which controls how the current input affects
 the state update:
 ```console
 (gdb) p B->ne
 $17 = {128, 1, 7, 1}
 ```
+
 C is the input-dependent C matrix which controls how the hidden state is read
 out to produce the output:
 ```console
 (gdb) p C->ne
 $18 = {128, 1, 7, 1}
 ```
+
 Next we adjust dt with a bias:
 ```c++
             dt = ggml_add(ctx0, ggml_cont(ctx0, dt), model.layers[il].ssm_dt_b);
@@ -606,11 +614,18 @@ input dependent and determines how much the state evolves at each timestep.
 
 
 Next we get the A matrix for the selective scan which is the state transition
-matrix. This is not input dependant but is per layer. This matrix determines
+matrix. This is not input dependent but is per layer. This matrix determines
 how the the hidden state evolves over time:
 ```c++
             ggml_tensor * A = model.layers[il].ssm_a;
 ```
+The values in this matrix are actually stored in log form for numerical stability:
+```python
+        if name.endswith(".A_log"):
+            logger.debug("A_log --> A ==> " + new_name)
+            data_torch = -torch.exp(data_torch)
+```
+
 ```console
 (gdb) p A->ne
 $22 = {1, 48, 1, 1}
@@ -752,8 +767,8 @@ For each timestep t in 0..6:
         y[t, h] = C[t] * h_state[t, h]
 ```
 The returned tensor will contain both the updated hidden states (h_state above)
-as well as the the output of the SSM (y above) for each of the inputs.
-The lambda returns this into output_states (recall that we are in build_rs):
+as well as the output of the SSM (y above) for each of the inputs. The lambda
+returns this into output_states (recall that we are in build_rs):
 ```c++
     ggml_tensor * output_states = get_state_rows(ctx0, states, state_copy_main);
     ggml_build_forward_expand(gf, output_states);
