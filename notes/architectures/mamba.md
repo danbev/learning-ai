@@ -349,6 +349,25 @@ as a continous space of information. When we process tokens there are in a
 descrete values. The A (state transition), B (input transition), and C
 (output transition) matrices operate in the continuous space.
 
+Lets say we have input tokens embeddings for the sequence "Dan loves ice cream":
+```
+      ^
+      |
+      |
+      |       ice *-----+
+      |           |     |
+   Dan*-----+     |cream*-----
+      |     |     |
+      |loves*-----+
+      |
+      +-----|-----|-----|-----|----->
+
+                 time (t)
+```
+Imagine this as a smooth graph which would be the continuous space. But we only
+have access to discrete points (the tokens). We can use Zero Order Hold (ZOH)
+for this. Order here means "that there is now change in the value."
+
 
 So we will first discretize the parameters A, and B of the state space model,
 which means that we will convert them from continuous values to discrete values.
@@ -356,6 +375,11 @@ which means that we will convert them from continuous values to discrete values.
 I think there are multiple methods/ways to do this but the paper mentions
 the zero-order hold transform method which is a method for converting a
 descrite time signal to continous time signal (the inner space). 
+
+So we have the tokens embeddings as points which is the input we have in to the
+mamba2 layer. This is in discrete points/values, but mambas state is a
+continuous, similar to a system that needs a continuous signal, the mamba system
+operates on an analog signal. So it needs to be converted to such a signal.
 
 So instead of the using functions as shown above we concrete values we will
 transform A and B into discrete values and the equations become:
