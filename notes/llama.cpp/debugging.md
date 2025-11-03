@@ -67,3 +67,26 @@ And with two files we can use a tool like cmp:
 ```console
 
 ```
+
+### Printing tensor weights
+When printing tensors it is important to do this after the backends have been
+scheduled/reserved. This can be done by placing the following code in 
+llama-context.cpp, in process_ubatch after the graphs has been created and
+reserved:
+```c++
+    {
+        struct ggml_tensor * tensor = model.layers[0].ssm_a;
+        if (tensor != nullptr) {
+            float buffer[10];
+            ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), tensor);
+            printf("Backend type: %s\n", ggml_backend_name(backend));
+            printf("Tensor type: %s\n", ggml_type_name(tensor->type));
+            ggml_backend_tensor_get_async(backend, tensor, buffer, 0, sizeof(buffer));
+            ggml_backend_sched_synchronize(sched.get());
+            for (int i = 0; i < 10; i++) {
+                printf("%s[%d] = %f\n", tensor->name, i, buffer[i]);
+            }
+        }
+    }
+```
+This can be placed after set_inputs if you want to see the input tensors.
