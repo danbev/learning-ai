@@ -79,10 +79,119 @@ $ ./call-server.sh | jq
 }
 ```
 
+### server_context
+There is a single shared server_context which is main:
+```c++
+int main(int argc, char ** argv) {
+    ...
+    // struct that contains llama context and inference
+    server_context ctx_server;
+    ...
+
+    if (!ctx_server.load_model(params)) {
+        clean_up();
+        t.join();
+        LOG_ERR("%s: exiting due to model loading error\n", __func__);
+        return 1;
+    }
+```
+```c++
+struct server_context {
+    common_params params_base;
+
+    // note: keep these alive - they determine the lifetime of the model, context, etc.
+    common_init_result llama_init;
+    common_init_result llama_init_dft;
+
+    llama_model * model = nullptr;
+    llama_context * ctx = nullptr;
+    ...
+};
+```
+And in load_model we can see that the the llama_context is set:
+```c++
+    bool load_model(const common_params & params) {
+        SRV_INF("loading model '%s'\n", params.model.path.c_str());
+
+        params_base = params;
+
+        llama_init = common_init_from_params(params_base);
+
+        model = llama_init.model.get();
+        ctx   = llama_init.context.get();
+```
+So all slot in the server will share this single llama_context, model, vocab.
+
+### samplers
+When a new request comes this will be handled by on_new_task:
+```c++
+    ctx_server.queue_tasks.on_new_task([&ctx_server](server_task && task) {
+        ctx_server.process_single_task(std::move(task));
+    });
+```
+```c++
+    void process_single_task(server_task && task) {
+        switch (task.type) {
+            case SERVER_TASK_TYPE_COMPLETION:
+            case SERVER_TASK_TYPE_INFILL:
+            case SERVER_TASK_TYPE_EMBEDDING:
+            case SERVER_TASK_TYPE_RERANK:
+                {
+                    const int id_slot = task.id_slot;
+
+                    server_slot * slot = id_slot != -1 ? get_slot_by_id(id_slot) : get_available_slot(task);
+
+                    if (slot == nullptr) {
+                        // if no slot is available, we defer this task for processing later
+                        SRV_DBG("no slot is available, defer task, id_task = %d\n", task.id);
+                        queue_tasks.defer(std::move(task));
+                        break;
+                    }
+
+                    if (slot->is_processing()) {
+                        // if requested slot is unavailable, we defer this task for processing later
+                        SRV_DBG("requested slot is unavailable, defer task, id_task = %d\n", task.id);
+                        queue_tasks.defer(std::move(task));
+                        break;
+                    }
+
+                    if (!launch_slot_with_task(*slot, std::move(task))) {
+                        SRV_ERR("failed to launch slot with task, id_task = %d\n", task.id);
+                        break;
+                    }
+                } break;
+```
+And if we look in launch_slot_with_task we can see the following:
+```c++
+    bool launch_slot_with_task(server_slot & slot, server_task && task) {
+        slot.reset();
+        ...
+        // initialize samplers
+        {
+            if (slot.smpl != nullptr) {
+                common_sampler_free(slot.smpl);
+            }
+
+            slot.smpl = common_sampler_init(model, task.params.sampling);
+            if (slot.smpl == nullptr) {
+                // for now, the only error that may happen here is invalid grammar
+                send_error(task, "Failed to parse grammar", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+        }
+```
+So for each new task/request, if a previous sampler exists is it freed and
+a new one is created using common_sampler_init.
+Each request can specify different sampling parameters in its request, which
+is done by params_from_json_cmpl. These will override the servers global defaults
+which are set when the server starts.
+
+
 ### slots
 The concept of a slot is something that can be good to know up front.
 A slot is the server’s long-lived execution context for a single client request.
-The number slots created
+The number slots created is determined by the --parallel command line argument 
+and this is done in ctx_server.init:
 ```c++
     void init() {
         const int32_t n_ctx_slot = n_ctx / params_base.n_parallel;
@@ -91,16 +200,20 @@ The number slots created
 
         for (int i = 0; i < params_base.n_parallel; i++) {
             server_slot slot;
+
+            slot.id = i;
+            slot.ctx = ctx;
+            slot.n_ctx = n_ctx_slot;
 ```
 The number of slots is determined by the --parallel command line argument and
-this becomes n_parallel. So if we only 1 slot than this means that only one
-request will be processed in one go. We can still have multiple clients/request
-but they will be queued up and processed one at a time.
+this becomes n_parallel. So if we only 1 slot this means that only one request
+will be processed at a time.
+The ctx is llama_context from the server_context (this).
 
-So even with n_parallel 1, we can still serve multiple request, but they will
-run one after the other. But we can also set it to 2 and then 2 requests can run
-and the tokens will be added to the same batch but will have separate sequence
-ids for each request.
+So even with n_parallel 1, we can still serve multiple clients/request, but they
+will run one after the other. But we can also set it to 2 and then 2 requests
+can run and the tokens will be added to the same batch but will have separate
+sequence ids for each request.
 
 The total KV/context budget n_ctx is split across slots, so:
 ```c++
@@ -108,6 +221,7 @@ n_ctx_slot = n_ctx / n_parallel
 ```
 Pushing n_parallel higher reduces the context length available per request
 unless you also bump --ctx-size.
+
 Each slot needs its own sampler state, prompt cache, etc., so memory footprints
 and decode latency go up with larger n_parallel.
 
@@ -126,7 +240,7 @@ A server_context has a llama_batch member:
     // batching
     llama_batch batch;
 ```
-Which is what is used for decoding. This is reset/cleared before each decode:
+This is used for decoding and is reset/cleared before each decode:
 ```c++
         common_batch_clear(batch);
 ```
@@ -147,7 +261,11 @@ Which is what is used for decoding. This is reset/cleared before each decode:
                         }
 
                         // embedding requires all tokens in the batch to be output
-                        common_batch_add(batch, cur_tok, slot.n_past, { slot.id }, slot.need_embd());
+                        common_batch_add(batch,
+                            cur_tok,
+                            slot.prompt.tokens.pos_next(),
+                            { slot.id },  // <--- This is where we set the sequence id to the slot id
+                            slot.need_embd());
                         slot.prompt.tokens.push_back(cur_tok);
 
                         slot.n_prompt_tokens_processed++;
@@ -222,7 +340,13 @@ The actual llama_decode then happens shortly after this:
 
             i_next = i + n_tokens;
 ```
+So in update_slot, we iterate over each slot and each slots sampler is able
+to accept the tokens that are to be processes. Then the tokens are added
+to the batch using the slot's id as the sequence id.
 
+After decoding we also iterate over all the slots so that their samplers can
+sample the token generated for that slot, notice that this uses the token index
+in the batch (tok_idx):
 ```c++
             for (auto & slot : slots) {
                 ...
@@ -239,10 +363,41 @@ The actual llama_decode then happens shortly after this:
 ```
 And this is where the samplers get a chance to sampler the tokens for the
 specific index.
+```console
+(gdb) p tok_idx
+$42 = 25
+(gdb) p id
+$40 = 1318
+(gdb) p this->vocab->pimpl->id_to_token[id]
+$41 = {text = "The", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+
 For GPU sampling perhaps there should be a way of calling a function like
 llama_has_sampled_token as the GPU samplers might already have sampled a token.
 And perhaps we could add llama_has_sampled_probs what can be checked in
 common_sampler::set_logits to populate llama_token_data_array.
+```c++
+                completion_token_output result;
+                result.tok          = id;
+                result.text_to_send = common_token_to_piece(ctx, result.tok, accept_special_token(slot, result.tok));
+                result.prob         = 1.0f; // TODO: set it here instead of doing inside populate_token_probs
+```
+```console
+(gdb) p result
+$44 = {tok = 1318, prob = 1, text_to_send = "The", probs = std::vector of length 0, capacity 0}
+```
+Next we have process_token:
+```c++
+                if (!process_token(result, slot)) {
+                    // release slot because of stop condition
+                    slot.print_timings();
+                    send_final_response(slot);
+                    metrics.on_prediction(slot);
+                    slot.release();
+
+                    continue;
+                }
+```
 
 
 ### Walkthrough
