@@ -194,134 +194,124 @@ being on the GPU, then filter down the logits/probabilities before copying them
 from device to system memory for the remaining CPU samplers to process?
 So perhaps we could start by implementing:
 - Temparature
-- Top-k (see section below about an issue I ran into trying to implement this)
 - Top-p
 - Min-p
 - additional?
 
 ### Top-k GPU sampling
-I ran into an issue when trying to implement the top-k sampling on the GPU.
-```c++
-static void llama_sampler_gpu_top_k_apply_ggml(
-        struct llama_sampler           * smpl,
-        struct ggml_context            * ctx,
-        struct ggml_cgraph             * gf,
-        struct llama_sampler_ggml_data * ggml_data) {
+So currently we have a sampler chain per sequence, and each sampler is provided
+with the logits for its sequence.
 
-    auto * ctx_data = (llama_sampler_gpu_top_k_ctx *) smpl->ctx;
-    printf("gpu top-k: Building top-k sampler with k=%d\n", ctx_data->k);
-
-    struct ggml_tensor * top_k = ggml_top_k(ctx, ggml_data->logits, ctx_data->k);
-    ggml_set_name(top_k, "top_k");
-
-    ggml_data->logits = ggml_get_rows(ctx, ggml_data->logits, top_k);
-    ggml_build_forward_expand(gf, ggml_data->logits);
-    ggml_data->size = ctx_data->k;
-}
-```
-If we look at ggml_top_k we find that it is implemented like this:
-```c++
-// ggml_top_k
-
-struct ggml_tensor * ggml_top_k(
-        struct ggml_context * ctx,
-        struct ggml_tensor  * a,
-        int                   k) {
-    GGML_ASSERT(a->ne[0] >= k);
-
-    struct ggml_tensor * result = ggml_argsort(ctx, a, GGML_SORT_ORDER_DESC);
-
-    result = ggml_view_4d(ctx, result,
-                k, result->ne[1], result->ne[2], result->ne[3],
-                   result->nb[1], result->nb[2], result->nb[3],
-                0);
-
-    return result;
-}
-```
-We can see that this is implemented using argsort:
-```c++
-struct ggml_tensor * ggml_argsort(
-        struct ggml_context  * ctx,
-        struct ggml_tensor   * a,
-        enum ggml_sort_order   order) {
-    GGML_ASSERT(a->ne[0] <= INT32_MAX);
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_I32, GGML_MAX_DIMS, a->ne);
-
-    ggml_set_op_params_i32(result, 0, (int32_t) order);
-
-    result->op     = GGML_OP_ARGSORT;
-    result->src[0] = a;
-
-    return result;
-}
-```
-For the CUDA backend this is implemented using:
-```c++
-        case GGML_OP_ARGSORT:
-            ggml_cuda_op_argsort(ctx, dst);
-            break;
-```
-```c++
-void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * src0 = dst->src[0];
-    const float * src0_d = (const float *)src0->data;
-    float * dst_d = (float *)dst->data;
-    cudaStream_t stream = ctx.stream();
-
-    GGML_ASSERT(src0->type == GGML_TYPE_F32);
-    GGML_ASSERT( dst->type == GGML_TYPE_I32);
-    GGML_ASSERT(ggml_is_contiguous(src0));
-
-    const int64_t ncols = src0->ne[0];
-    const int64_t nrows = ggml_nrows(src0);
-
-    enum ggml_sort_order order = (enum ggml_sort_order) dst->op_params[0];
-
-    argsort_f32_i32_cuda(src0_d, (int *)dst_d, ncols, nrows, order, stream);
-}
-```
-```c++
-static void argsort_f32_i32_cuda(const float * x, int * dst, const int ncols, const int nrows, ggml_sort_order order, cudaStream_t stream) {
-    // bitonic sort requires ncols to be power of 2
-    const int ncols_pad = next_power_of_2(ncols);
-
-    const dim3 block_dims(ncols_pad, 1, 1);
-    const dim3 block_nums(1, nrows, 1);
-    const size_t shared_mem = ncols_pad * sizeof(int);
-
-    // FIXME: this limit could be raised by ~2-4x on Ampere or newer
-    GGML_ASSERT(shared_mem <= ggml_cuda_info().devices[ggml_cuda_get_device()].smpb);
-
-    if (order == GGML_SORT_ORDER_ASC) {
-        k_argsort_f32_i32<GGML_SORT_ORDER_ASC><<<block_nums, block_dims, shared_mem, stream>>>(x, dst, ncols, ncols_pad);
-    } else if (order == GGML_SORT_ORDER_DESC) {
-        k_argsort_f32_i32<GGML_SORT_ORDER_DESC><<<block_nums, block_dims, shared_mem, stream>>>(x, dst, ncols, ncols_pad);
-    } else {
-        GGML_ABORT("fatal error");
-    }
-}
-```
-In the case that I'm testing the models vocabulary is 32000 tokens:
+So in our sampler we have:
 ```console
-(gdb) p *src0
-$2 = {type = GGML_TYPE_F32, buffer = 0x555556989ce0, ne = {32000, 1, 1, 1}, nb = {4, 128000, 128000, 128000}, op = GGML_OP_NONE, 
-  op_params = {0 <repeats 16 times>}, flags = 0, src = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, view_src = 0x0, 
-  view_offs = 0, data = 0x7fff9ea20400, name = "leaf_0", '\000' <repeats 57 times>, extra = 0x0, 
-  padding = "\000\000\000\000\000\000\000"}
+(gdb) p ggml_data->logits->ne
+$9 = {32000, 1, 1, 1}
 ```
-But my devices shared memory per block is only 49152 bytes:
-``` console
-(gdb) p ggml_cuda_info().devices[ggml_cuda_get_device()].smpb
-$9 = 49152
-```
-So perhaps for top-k sampling we might need a different algoritm that argsort
-to avoid this shared memory limitation.
+These are the logits for the last token in the sequence, so we have 32000 tokens.
 
-A similar limit can be found in the metal backend as well, in ggml-metal-device.m
-there is the following check:
+So going through this. top_k will look like this:
+```console
+(gdb) p top_k->ne
+$3 = {8, 1, 1, 1}
+```
+This is just one row with the indices of the top 8 logits.
+
+Then we reshape the logits to become 32000 rows each with one element.
+And we use ggml_get_rows to select those values using the indices which produces
+```console
+  (gdb) p top_k_rows->ne
+  $6 = {1, 8, 1, 1}
+```
+And each or these rows contains a token, and the first row is the top selection,
+followed by the second etc.
+
+_wip_
+
+
+### Dist GPU sampling
+To implement dist sampling on the GPU we need to be able to generate random
+and uniform numbers on the GPU. I don't think that  GGML currently has support
+for generating random numbers nor that GPU backend have such an operation.
+But instead what we could do is that we enable the GPU sampler's _apply_ggml
+function to create a tensor in the samplers context. And we then add a new
+function to the sampler interface named set_input_ggml. This function will be
+called after the graph has been built and scheduled but before it has been
+executed. This way samplers like this one can generate the random numbers on
+the CPU and then upload them to the GPU before the graph is executed. This
+involved some data transfer but only of a relatively small tensor of random
+numbers.
+
+I naively just created the tensor in the apply_ggml function like this:
 ```c++
-        case GGML_OP_ARGSORT:
-            // TODO: Support arbitrary column width
-            return op->src[0]->ne[0] <= 1024;
+    // Create the uniform random scalar input tensor. This will be set by
+    // llama_sampler_gpu_dist_set_input_ggml after this graph is built, but
+    // before it is executed.
+    struct ggml_tensor * uniform = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+    sctx->uniform = uniform;
+    ggml_set_name(uniform, "uniform");
+    ggml_set_input(uniform);
+    ggml_set_output(uniform);
+```
+Now, if we think about how samplers are used, then are added to then end of the
+models graphs, after the ouput tensors. So it makes sense to create the samplers
+on the same backend as that tensor so that there is not copying between the
+backends.
+
+So we need to do something like the following when creaing tensors in GPU 
+samplers:
+```c++
+  ggml_backend_sched_set_tensor_backend(sched, uniform, target_backend);
+```
+Notice
+```console
+(gdb) p *model->pimpl->dev_output.dev
+```
+```c++
+    GGML_API void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched,
+        struct ggml_tensor * node, ggml_backend_t backend);
+    GGML_API ggml_backend_t ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched,
+        struct ggml_tensor * node);
+```
+
+So perhaps we can add a function the samplers interface that sets this information,
+the scheduler and the backend tensor to use. I'll try this out and see if it
+works and how it "feels". The samplers that need to maintain states or create
+tenorsr would need to implement this function and also add members for the
+scheduler and the target backend.
+
+
+### llama-server
+Now GPU sampling for llama-cli was pretty straightforward as there is bacially
+just one GPU sampler needed to be configured. And recall that the samplers need
+to be configured before the context is created as the GPU samplers add to the
+models computation graph and are not something that is processed after the model
+graph like CPU samplers. 
+
+It is possible to have a sampler per sequence in llama.cpp, and llama-server
+support multiple slots/sequences. And it is possible to requests to specify a
+specific slot to be used. So we could provide a configuration option for
+llama-server to have different gpu sampler chains per slot.
+
+```console
+-gpu-sampling                          enable GPU sampling (default: disabled)
+--gpu-top-k N                           GPU top-k sampling (default: 40, <= 0 = disabled)
+--gpu-top-p-approx-k N                  GPU top-p approximation using top-k (default: 0, 0 = disabled)
+--gpu-temp N                            GPU temperature (default: 0.80, 0.0 = disabled, greedy sampling)
+--gpu-softmax                           add GPU softmax to sampling chain (default: disabled)
+--gpu-dist                              add GPU dist (final sampling) to sampling chain (default: disabled)
+--gpu-slot SLOT_ID:CONFIG               configure GPU sampling for a specific slot (server only)
+                                        format: SLOT_ID:top_k=N,temp=F,dist=BOOL
+                                        example: --gpu-slot 0:top_k=20,temp=0.8,dist=true --gpu-slot
+                                        1:top_k=40,temp=0.5
+```
+And this could then be use as follows:
+```console
+./build-gpu-sampling/bin/llama-server \
+      -m models/Qwen2.5-VL-3B-Instruct-Q8_0.gguf \
+      --gpu-sampling \
+      --gpu-top-k 20 \
+      --gpu-temp 0.8 \
+      --gpu-dist \
+      -ngl 99 \
+      -v
 ```
