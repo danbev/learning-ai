@@ -685,8 +685,8 @@ In server.cpp we have the following code:
             });
 ```
 
-Now, `index_html_gz` gzipped file in `examples/server/public` which is built
-by `examples/server/webui/package.json`:
+Now, `index_html_gz` is a gzipped file in `tools/server/public` which is built
+by `tools/server/webui/package.json`:
 ```console
   "scripts": {
     "dev": "vite",
@@ -698,25 +698,48 @@ by `examples/server/webui/package.json`:
 We can inspect the vite configuration which is in `vite.config.js`:
 ```js
 ...
-      writeBundle() {
-        const outputIndexHtml = path.join(config.build.outDir, 'index.html');
-        const content = GUIDE_FOR_FRONTEND + '\n' + fs.readFileSync(outputIndexHtml, 'utf-8');
-        const compressed = zlib.gzipSync(Buffer.from(content, 'utf-8'), { level: 9 });
+     llamaCppBuildPlugin() {
+        ...
+				try {
+					const indexPath = resolve('../public/index.html');
+					const gzipPath = resolve('../public/index.html.gz');
 
-        // because gzip header contains machine-specific info, we must remove these data from the header
-        // timestamp
-        compressed[0x4] = 0;
-        compressed[0x5] = 0;
-        compressed[0x6] = 0;
-        compressed[0x7] = 0;
-        // OS
-        compressed[0x9] = 0;
+					if (!existsSync(indexPath)) {
+						return;
+					}
+
+					let content = readFileSync(indexPath, 'utf-8');
+
+					const faviconPath = resolve('static/favicon.svg');
+					if (existsSync(faviconPath)) {
+						const faviconContent = readFileSync(faviconPath, 'utf-8');
+						const faviconBase64 = Buffer.from(faviconContent).toString('base64');
+						const faviconDataUrl = `data:image/svg+xml;base64,${faviconBase64}`;
+
+						content = content.replace(/href="[^"]*favicon\.svg"/g, `href="${faviconDataUrl}"`);
+
+						console.log('✓ Inlined favicon.svg as base64 data URL');
+					}
+
+					content = content.replace(/\r/g, '');
+					content = GUIDE_FOR_FRONTEND + '\n' + content;
+
+					const compressed = fflate.gzipSync(Buffer.from(content, 'utf-8'), { level: 9 });
+
+                    // because gzip header contains machine-specific info, we must remove these data from the header
+                    // timestamp
+					compressed[0x4] = 0;
+					compressed[0x5] = 0;
+					compressed[0x6] = 0;
+					compressed[0x7] = 0;
+					compressed[0x9] = 0;
 ```
-This is reading the `webui/index.html` file and prepending `GUIDE_FOR_FRONTEND`
-warning to it. This is then gzipped and the timestamp and OS fields are zeroed
-out.
+This is reading the `public/index.html` file which is then gzipped and the
+timestamp and OS fields are zeroed out.
+
 So when we run `npm run build` in the `webui` directory, the `index.html` file
-is built and gzipped and the resulting `index.html.gz` file is copied to the
+is built and gzipped and the resulting `index.html.gz` file is placed in the
+public directory.
 
 And then when we build `llama-server` using cmake we can see the following
 in `examples/server/CMakeLists.txt`:
@@ -738,12 +761,12 @@ foreach(asset ${PUBLIC_ASSETS})
     set_source_files_properties(${output} PROPERTIES GENERATED TRUE)
 endforeach()
 ```
-Notice that this is actually generateing a `.hpp` file from the `.gz` file:
+Notice that this is actually generating a `.hpp` file from the `.gz` file:
 ```console
 /home/danbev/work/ai/llama.cpp-debug/build/examples/server/index.html.gz.hpp
 ```
 
-Now, this is passed to the script `xxd.cmake`:
+This is passed to the script `xxd.cmake`:
 ```
 # CMake equivalent of `xxd -i ${INPUT} ${OUTPUT}`
 ```
@@ -755,6 +778,7 @@ If we look in includes in server.cpp we find:
 #include "index.html.gz.hpp"
 ```
 
+And in build/tools/server/index.html.gz.hpp we find:
 ```cpp
 unsigned char index_html_gz[] = {0x1f,0x8b,...
 
@@ -765,5 +789,57 @@ And this is how the `index.html.gz` file is included in the server:
     res.set_content(reinterpret_cast<const char*>(index_html_gz), index_html_gz_len, "text/html; charset=utf-8");
 ```
 
-### Slots
-This section aims to explain what slots are in the context of llama-server.
+### GPU Sampling with llama-server
+
+Currently the GPU sampling works in a similar manner to how pooling works, it
+is an option function that is called in build_graph:
+```c++
+    // add GPU sampling layers (if any)
+    llm->build_sampling(*this, params);
+```
+GPU samplers can be configured by creating sampler chains, where each sampler
+chain is associated with a specific sequence id:
+```c++
+    struct llama_sampler_chain_params params = llama_sampler_chain_default_params();
+    struct llama_sampler * chain = llama_sampler_chain_init(params);
+    llama_sampler_chain_add(chain, llama_sampler_gpu_init_greedy());
+    std::vector<llama_sampler_seq_config> sampler_configs = {
+        { 0, gpu_sampler_chain }
+    };
+```
+The struct is defined as:
+```c++
+    struct llama_sampler_seq_config {
+        llama_seq_id           seq_id;
+        struct llama_sampler * sampler;
+    };
+```
+And these sampler configs are then passed into as context params:
+```c++
+        llama_context_params cparams = llama_context_default_params();
+        cparams.samplers = sampler_configs.data();
+        cparams.n_samplers = sampler_configs.size();
+```
+When the graph is built then the configured samplers will be added the
+computation graph and be part of the computed graph. This is done in the
+samplers _apply function which allows it to add operations/nodes to the computation 
+graph.
+
+This enables the sampling to happen fully, or partially on the GPU. The samplers
+could sample a single token in which case that is what will be transferred from
+the device memory to host memory after llama_decode has been called.
+The sampled token can then be retrieved using:
+```c++
+    llama_token id = llama_get_sampled_token_ith(test_ctx.ctx, index);
+```
+
+Is it also possible to run a GPU sampler that only filters the logits and then
+only the filtered logits are transferred back to the host and the sampling can
+proceed on the CPU with the normal(CPU) sampler chain. In this case one configures
+the CPU samplers as usual but they will now operate on already filtered logits.
+
+Similar to the above with logits, it is possible for a GPU sampler to compute
+the full probability distribution and transfer that to the host. And similar
+to the logits filtering, the CPU samplers can then operate on the full
+probability.
+
