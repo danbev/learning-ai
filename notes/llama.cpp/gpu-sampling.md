@@ -61,6 +61,118 @@ any way (like also if the size of the array is modified).
 To be processed by a GGML graph the data, the information in `cur_p` needs to be
 in the form of a `ggml_tensor` (or multiple).
 
+
+### Current implementation
+In contrast to CPU sampling where the sampling operations are performed after
+the models graph has been executed, GPU sampling is part of the same execution
+graph. All of the sampling can be done on the GPU or parts of it can be done on
+the GPU and the rest on the CPU.
+
+#### Configuration of GPU samplers
+GPU samplers are configured before the context is created and a GPU sampler
+can be configured per sequence:
+```console
+    struct llama_sampler_chain_params params = llama_sampler_chain_default_params();
+    struct llama_sampler * samplers = llama_sampler_chain_init(params);
+
+    llama_sampler_chain_add(samplers, llama_sampler_gpu_init_greedy());
+
+    std::vector<llama_sampler_seq_config> gpu_sampler_configs = {
+        { 0, gpu_sampler_chain }
+    };
+```
+The above is only showing one sampler but multiple samplers can be added to the
+gpu_samplers_config vector.
+
+These samplers are then passed into the context parameters when creating the
+context:
+```c++
+    llama_context_params cparams = llama_context_default_params();
+    cparams.samplers = sampler_configs.data();
+    cparams.n_samplers = sampler_configs.size();
+
+    ctx = llama_init_from_model(model, cparams);
+```
+
+When the model graph is built the GPU samplers will called to enable them to
+add their operations to the graph:
+```c++
+ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+    std::unique_ptr<llm_graph_context> llm;
+    ...
+
+    // add GPU sampling layers (if any)
+    llm->build_sampling(*this, params);
+```
+The llama_sampler_i interface as been extended with 4 new methods in the API, 
+and they are currently all named with a `_ggml` suffix to indicate that they
+are for GPU sampling:
+```c++
+        void                   (*apply_ggml)(  struct llama_sampler * smpl,
+                                                       ggml_context * ctx,
+                                                        ggml_cgraph * gf,
+                                            llama_sampler_ggml_data * ggml_data);
+
+        void                   (*accept_ggml)( struct llama_sampler * smpl,
+                                                       ggml_context * ctx,
+                                                        ggml_cgraph * gf,
+                                               struct ggml_tensor * selected_token);
+
+        void                   (*set_input_ggml)( struct llama_sampler * smpl,
+                                                       ggml_context * ctx,
+                                                        ggml_cgraph * gf);
+
+        void                   (*set_backend_context)( struct llama_sampler * smpl,
+                                                       ggml_backend_sched_t sched,
+                                                       ggml_backend_t backend);
+```
+set_backenck_context function is use to enable the GPU sampler to know which
+backend the tensors that it creates/uses should be created on. This is important
+so that we avoid splits in the computation graph that would require data transfer
+between different backends.
+
+apply_ggml is where the GPU sampler adds its operations to the graphs. For
+example the greedy sampler will select the token with the highest probability:
+```c++
+static void llama_sampler_gpu_greedy_apply_ggml(
+        struct llama_sampler           * smpl,
+        struct ggml_context            * ctx,
+        struct ggml_cgraph             * gf,
+        struct llama_sampler_ggml_data * ggml_data) {
+    (void) gf;
+    auto * sctx = (llama_sampler_gpu_greedy_ctx *) smpl->ctx;
+
+    struct ggml_tensor * argmax_result = ggml_argmax(ctx, ggml_data->logits);
+    ggml_set_name(argmax_result, "argmax_result");
+    ggml_backend_sched_set_tensor_backend(sctx->sched, argmax_result, sctx->backend);
+    ggml_data->sampled_token = argmax_result;
+}
+```
+And here we also see the usage of the scheduler and backend to ensure that the
+tensor is created on the correct backend.
+
+accept_ggml is called after the GPU graph has been executed to allow the GPU
+sampler to accept the selected token and update its state. Note that currently
+no GPU samplers maintain any state in this way and is something that needs more
+work.
+
+set_input_ggml is called after the computation graph has been schduled but before
+it is computed. This allows the GPU sampler to set any input. This is currently
+used by the temp sampler to set a random number tensor that is used for sampling.
+
+Support has been added to llama-cli and llama-server to enable testing of the GPU
+sampling features. Even though the implementation might still change and perhaps
+significantly it was valuable to implement that support to see how this would work
+and it uncovered some isseus that the tests missed.
+
+The pull request can be found here:
+https://github.com/ggml-org/llama.cpp/pull/17004
+
+----
+
+The sections below contains some notes taken during the initial design and
+exporation of GPU sampling llama.cpp and are not really relavant anymore.
+
 ### Suggested approach
 One way could be to store the tensors in a struct like this:
 ```c++
