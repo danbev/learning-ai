@@ -1,6 +1,6 @@
 # Makefile
 CC = clang++
-CFLAGS = -std=c++14 -framework Metal -framework Foundation
+CFLAGS = -g -std=c++14 -framework Metal -framework Foundation
 
 all: simple
 
