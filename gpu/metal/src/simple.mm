@@ -41,7 +41,7 @@ int main(int argc, const char * argv[]) {
         }
 
         // Create a compute function from the library
-        id<MTLFunction> kernelFunction = [defaultLibrary newFunctionWithName:@"simpleMultiply"];
+        id<MTLFunction> kernelFunction = [defaultLibrary newFunctionWithName:@"simple_multiply"];
         if (!kernelFunction) {
             NSLog(@"Failed to find the kernel function.");
             return -1;
