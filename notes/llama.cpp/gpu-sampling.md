@@ -108,6 +108,13 @@ The llama_sampler_i interface as been extended with 4 new methods in the API,
 and they are currently all named with a `_ggml` suffix to indicate that they
 are for GPU sampling:
 ```c++
+        void                   (*init_ggml)(struct llama_sampler      * smpl,
+                                            ggml_backend_buffer_type_t  buft);
+
+        void                   (*set_input_ggml)( struct llama_sampler * smpl,
+                                                       ggml_context * ctx,
+                                                        ggml_cgraph * gf);
+
         void                   (*apply_ggml)(  struct llama_sampler * smpl,
                                                        ggml_context * ctx,
                                                         ggml_cgraph * gf,
@@ -118,21 +125,68 @@ are for GPU sampling:
                                                         ggml_cgraph * gf,
                                                struct ggml_tensor * selected_token);
 
-        void                   (*set_input_ggml)( struct llama_sampler * smpl,
-                                                       ggml_context * ctx,
-                                                        ggml_cgraph * gf);
-
-        void                   (*set_backend_context)( struct llama_sampler * smpl,
-                                                       ggml_backend_sched_t sched,
-                                                       ggml_backend_t backend);
 ```
-set_backenck_context function is use to enable the GPU sampler to know which
-backend the tensors that it creates/uses should be created on. This is important
-so that we avoid splits in the computation graph that would require data transfer
-between different backends.
+The _init_ggml_ function allows GPU samplers to create input tensors that they
+might need. The ggml_backend_buffer_type should be used so that the tensors are
+created using this backend buffer type, which is the same as the ouput logits
+backend. This avoids splits in the computation graph that would require data
+transfer between different backends.
+For example:
+```c++
+struct llama_sampler_gpu_dist_ctx {
+    const uint32_t seed;
+          uint32_t seed_cur;
+    std::mt19937   rng;
 
-apply_ggml is where the GPU sampler adds its operations to the graphs. For
-example the greedy sampler will select the token with the highest probability:
+    struct ggml_tensor * uniform;
+    struct ggml_context * ctx;
+    ggml_backend_buffer_t buffer;
+};
+
+static void llama_sampler_gpu_dist_init_ggml(
+        struct llama_sampler      * smpl,
+        ggml_backend_buffer_type_t  buft) {
+
+    auto * sctx = (llama_sampler_gpu_dist_ctx *) smpl->ctx;
+    ggml_init_params params = {
+        /*.mem_size   =*/ ggml_tensor_overhead(),
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+    sctx->ctx = ggml_init(params);
+
+    // Create the uniform random scalar input tensor. This will be set by
+    // llama_sampler_gpu_dist_set_input_ggml after this graph is built.
+    sctx->uniform = ggml_new_tensor_1d(sctx->ctx, GGML_TYPE_F32, 1);
+    ggml_set_name(sctx->uniform, "uniform");
+    ggml_set_input(sctx->uniform);
+    ggml_set_output(sctx->uniform);
+
+    // Allocate all tensors from our context to the backend
+    sctx->buffer = ggml_backend_alloc_ctx_tensors_from_buft(sctx->ctx, buft);
+}
+```
+
+The _set_input_ggml_ function is called after the computation graph has been
+scheduled but before it is computed. This allows the GPU sampler to set any
+input for the tensors it created in init_ggml.
+```c++
+static void llama_sampler_gpu_dist_set_input_ggml(struct llama_sampler * smpl) {
+    auto * sctx = (llama_sampler_gpu_dist_ctx *) smpl->ctx;
+    GGML_ASSERT(sctx->uniform != nullptr);
+
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    const float rnd = dist(sctx->rng);
+    ggml_backend_tensor_set(sctx->uniform, &rnd, 0, sizeof(float));
+}
+```
+
+The _apply_ggml_ function is where the GPU sampler adds its operations to the
+graphs. When the graph is built, the configured sampler's _apply function is
+called which allows them to add operations/nodes to the computation graph.
+
+The _accept_ggml_ functions allows GPU samplers to update their tensor states if needed.
+
 ```c++
 static void llama_sampler_gpu_greedy_apply_ggml(
         struct llama_sampler           * smpl,
@@ -167,6 +221,35 @@ and it uncovered some isseus that the tests missed.
 
 The pull request can be found here:
 https://github.com/ggml-org/llama.cpp/pull/17004
+
+
+#### Setting/unsetting a GPU sampler
+Currently the samplers are configured for a specific sequence id which happens
+at the same time that the context is created.
+```c++
+    std::unordered_map<llama_seq_id, llama_sampler*> samplers;
+```
+In the llama_context constructor we have the following:
+```c++
+llama_context::llama_context(
+        const llama_model & model,
+              llama_context_params params) :
+    model(model),
+    balloc(std::make_unique<llama_batch_allocr>(model.hparams.n_pos_per_embd())) {
+    ...
+
+    // GPU samplers
+    if (params.samplers != nullptr && params.n_samplers > 0) {
+        samplers.reserve(params.n_samplers);
+
+        for (size_t i = 0; i < params.n_samplers; ++i) {
+            const auto & config = params.samplers[i];
+            samplers[config.seq_id] = config.sampler;
+        }
+    }
+```
+Now, we might want to unset or change the GPU sampler for a specific sequence.
+Unsetting would just be clearing that so lets start with that functionality.
 
 ----
 
