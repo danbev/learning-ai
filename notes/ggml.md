@@ -5574,9 +5574,7 @@ contiguous:
 Now the matrix multipliation operation likely creates a tensor that is
 contiguous in memory. The reshaping operations change the interpretation of the
 tensors dimensinons without change the actual data in the tensor. The permuation
-operation logically reorders the tensor without changing the data. `ggml_cont`
-is used to ensure that the physical memory layout matches the logical layout
-after these operations.
+operation logically reorders the tensor without changing the data.
 
 For image tensors we would probably have a channel dimension and also a batch.
 I'm thinking this might look something like this in ggml:

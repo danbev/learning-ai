@@ -1,9 +1,4 @@
 ## CUDA (Compute Unified Device Architecture)
-The motivation for this page is that I want to get a basic understanding of
-how GPUs work from a programming perspective. I can understand that there are
-libraries like Torch and TensorFlow that can do this for us but is just seems
-like magic to me at the moment.
-
 CUDA is a parallel computing platform and programming model developed by Nvidia
 for general computing on its own GPUs (graphics processing units).
 
