@@ -15,8 +15,8 @@ As an example we can look at [kernel.metal](../gpu/metal/src/kernel.metal) which
 
 using namespace metal;
 
-kernel void simpleMultiply(const device float* input [[buffer(0)]],
-                           device float* output [[buffer(1)]],
+kernel void simpleMultiply(const device float* input  [[buffer(0)]],
+                                 device float* output [[buffer(1)]],
                            uint id [[thread_position_in_grid]]) {
     output[id] = input[id] * 2.0;
 }
@@ -57,8 +57,8 @@ using `#[...]`.
 
 Lets look at the `simpleMultiply` kernel:
 ```c++
-kernel void simpleMultiply(const device float* input [[buffer(0)]],
-                           device float* output [[buffer(1)]],
+kernel void simple_multiply(const device float* input  [[buffer(0)]],
+                                  device float* output [[buffer(1)]],
                            uint id [[thread_position_in_grid]]) {
 ```
 The `[[buffer(0)]]` specifies that this parameter is bound to buffer 0.
@@ -89,7 +89,8 @@ parameter is part of the method name and the additional parameters need to be na
 like error above.
 
 ### Exploration
-In the example [project](../gpu/metal) we have the kernel in [kernel.metal](../gpu/metal/src/kernel.metal). We compile this using `metal`:
+In the example [project](../gpu/metal) we have the kernel in [kernel.metal](../gpu/metal/src/kernel.metal).
+We compile this using `metal`:
 ```console
 $ xcrun metal --help
 OVERVIEW: clang LLVM compiler
@@ -107,7 +108,7 @@ OPTIONS:
 Notice that this says clang and the output if very similiar to a normal llvm tool chain. So I'm
 guessing that Metal is a frontend to clang.
 
-So we compile the kernal into an object file:
+So we compile the kernel into an object file:
 ```console
 $ xcrun metal -c src/kernel.metal -o kernel.air
 ```
@@ -201,6 +202,21 @@ functions).
 library. When we call `makeFunction` that is similar to using `dlsym` to get a function pointer
 from a dynamic library.
 
+For additional details and a brush up on objective-c syntax see [simple.mm](../gpu/metal/src/simple.mm).
+
+Lambdas/closures in objective-c are done using blocks. For example:
+```objc
+^(size_t iter) { ... }
+```
+
+### MTLComputePipelineState
+This is what compiles the AIR to run on the GPU, and is similar to compiling from PTX to SASS in CUDA.
+This returned object is an optimized and ready-to-run GPU program.
+
+```objective-c
+id<MTLComputePipelineState> computePipelineState = [device newComputePipelineStateWithFunction:kernelFunction error:&error];
+```
+This is an expensive operation and should be done once and reused.
 
 
 ### GGML_USE_METAL
@@ -235,4 +251,71 @@ function(ggml_add_backend backend)
         endif()
     endif()
 endfunction()
+```
+
+### Adding an new operation to the metal backend
+Apart from implementing the actual operation in a metal kernel we also need to enable the
+
+#### Add a new struct for the operation
+This is done by adding a new struct in ggml/src/ggml-metal/ggml-metal-impl.h:
+```c
+typedef struct {
+    float repeat;
+    float freq;
+    float present;
+    int32_t n_vocab;
+} ggml_metal_kargs_penalties;
+```
+
+#### Add device support for the new operation
+This is done by adding a new case in ggml_metal_device_supports_op in
+ggml/src/ggml-metal/ggml-metal-device.m:
+```objc
+bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_tensor * op) {
+    ...
+    switch (op->op) {
+        ...
+        case GGML_OP_PENALTIES:
+            return op->src[0]->type == GGML_TYPE_F32 &&  // logits
+                   op->src[1]->type == GGML_TYPE_I32 &&  // history
+                   op->src[2]->type == GGML_TYPE_I32;    // n_history
+       ...
+    }
+```
+
+#### Add the operation
+First add the operation to the operations header file ggml/src/ggml-metal/ggml-metal-op.h:
+```c++
+int ggml_metal_op_penalties         (ggml_metal_op_t ctx, int idx);
+```
+And then add a case to the ggml_metal_op_encode_impl function in
+```c++
+static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+    ...
+    switch (node->op) {
+        ...
+        case GGML_OP_PENALTIES:
+            {
+                n_fuse = ggml_metal_op_penalties(ctx, idx);
+            } break;
+        ...
+    }
+```
+And we add this function to the same file:
+```c++
+int ggml_metal_op_penalties(ggml_metal_op_t ctx, int idx) {
+    ...
+}
+```
+And the kernel itself is in ggml/src/ggml-metal/ggml-metal.metal:
+```metal
+kernel void kernel_penalties_f32(
+        constant ggml_metal_kargs_penalties & args,
+        device const float  * logits,        // src[0] - logits to penalize
+        device const int    * history,       // src[1] - token history
+        device const int    * n_history_ptr, // src[2] - number of valid tokens in history
+        device       float  * dst,           // output - penalized logits
+        uint tpig[[thread_position_in_grid]]) {
+    ...
+}
 ```
