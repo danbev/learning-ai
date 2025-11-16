@@ -30,8 +30,9 @@ class vector_addition {
 private:
     // WebGPU entry point, creates and manages everything else.
     wgpu::Instance instance;
-    // An adapter represents a specifc GPU implementation on the system. Help to identifty
-    // the hardware and its capabilities. Can execute anything on a GPU but can get information about it.
+    // An adapter represents a specifc GPU implementation on the system. Help to
+    // identifty the hardware and its capabilities. Can't execute anything on a
+    // GPU but can get information about it.
     wgpu::Adapter adapter;
     // The actual connection to the GPU device (interface for transitting works)
     wgpu::Device device;
