@@ -79,6 +79,29 @@ A compute shader is executed in thread.
 * .metallib contains compiled Metal code.
 
 
+#### Compling process
+* Source -> AIR (offline/buildtime) using `metal` compiler
+This is a portable format similar to LLVM IR or SPIR-V. This produces a .metallib file
+or gets embedded in your app. There have been no device specific optimizations done yet.
+
+* AIR -> MTLLibrary (loadtime/runtime)
+We load the .metallib into an id<MTLLibrary>. These is still no execution of code yet,
+this only deserializes the AIR into an in-memory representation.
+
+* MTLFunction look up
+```
+id<MTLFunction> kernelFunction = [defaultLibrary newFunctionWithName:@"simple_multiply"];
+```
+This is just a lookup of a functions AIR representation by name, no compilation happens yet.
+
+* MTLFunction → MTLComputePipelineState
+This is where the real compilation happens. The driver compiles functions AIR to native GPU
+machine code for your specific device. This is device-specific: M1 vs M2 vs A-series chips get
+different code.
+This involves mapping virtual registers to physical registers, instruction selection,
+scheduling instructions, etc.
+
+
 ### Objective-C brush up
 Function calls are done with square brackets:
 ```objc
