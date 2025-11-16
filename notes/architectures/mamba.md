@@ -367,19 +367,34 @@ Lets say we have input tokens embeddings for the sequence "Dan loves ice cream":
 Imagine this as a smooth graph which would be the continuous space. But we only
 have access to discrete points (the tokens). We can use Zero Order Hold (ZOH)
 for this. Order here means "that there is now change in the value."
-
-
-So we will first discretize the parameters A, and B of the state space model,
-which means that we will convert them from continuous values to discrete values.
-
-I think there are multiple methods/ways to do this but the paper mentions
-the zero-order hold transform method which is a method for converting a
-descrite time signal to continous time signal (the inner space). 
+The increment where we take samples is called the time step (delta, Δ) and
+is something the model learns but can be influenced by the token I think.
 
 So we have the tokens embeddings as points which is the input we have in to the
-mamba2 layer. This is in discrete points/values, but mambas state is a
-continuous, similar to a system that needs a continuous signal, the mamba system
+mamba layer. This is in discrete points/values, but mambas state is a continuous
+system, similar to a system that needs a continuous signal, the mamba system
 operates on an analog signal. So it needs to be converted to such a signal.
+But in practice we don't transform the input tokens into a continuous signal but
+instead we transform the parameters A and B of the state space model into discrete
+values and perform the selective scan using them. This is called discretization.
+
+To clarify this a bit more:
+* We have discrete token embeddings (already discrete).
+* We have a continuous SSM formulation: dh/dt = Ah(t) + Bx(t)
+* We need a way to apply this continuous SSM to discrete token embeddings.
+
+So we discretize A and B.
+
+
+So we will first discretize the parameters A:
+```console
+A_d = exp(A * Δt)
+
+
+
+, and B of the state space model,
+which means that we will convert them from continuous values to discrete values.
+
 
 So instead of the using functions as shown above we concrete values we will
 transform A and B into discrete values and the equations become:
