@@ -44,3 +44,27 @@ And we can update the git remote to use ssh:
 ```console
 $ git remote add origin git@hf.co:danbev/test-model
 ```
+
+### Meta
+This is a place, I'm guessing a memory area on the CPU for storing only meta
+data for a tensor. I think of this like in ggml when selecting to not allocate
+tensor data for a tensor. What is stored in the memory arean is the tensors
+metadata. This is possible in transformers too so that tensors can be created
+and later filled with data, possibly by passing the CPU and loading directly to
+a GPU for example.
+
+### model.safetensors.index.json
+This files is only created then checkpoint is shared accross multiple weight
+files.
+
+### checkpoint
+A checkpoint is just a directory on disk that contains everything needed to
+re-create the model later. So it is not a single file but a bundle.
+When we save a model we are creating a checkpoint:
+```python
+model.save_pretrained("model")
+```
+
+In Transformers, even if you never train, “checkpoint” just refers to “one saved
+instance of model weights + config.”.
+
