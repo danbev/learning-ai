@@ -1,5 +1,7 @@
 kernel.air
-kernel.metallib
+*.metallib
 simple
 simple-source
 .build
+cumsum
+*.dSYM

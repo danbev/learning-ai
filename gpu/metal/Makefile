@@ -11,5 +11,9 @@ simple: src/simple.mm src/kernel.metal
 simple-source: src/simple-source.mm
 	$(CC) $(CFLAGS) $< -o $@
 
+cumsum: src/cumsum.mm src/cumsum.metal
+	xcrun metal -c src/cumsum.metal -o - | xcrun metallib - -o cumsum.metallib
+	$(CC) $(CFLAGS) src/cumsum.mm -o $@
+
 clean:
-	rm -f simple* *.air *.metallib
+	${RM} -f simple* *.air *.metallib
