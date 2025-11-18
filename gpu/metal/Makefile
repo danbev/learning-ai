@@ -15,5 +15,9 @@ cumsum: src/cumsum.mm src/cumsum.metal
 	xcrun metal -c src/cumsum.metal -o - | xcrun metallib - -o cumsum.metallib
 	$(CC) $(CFLAGS) src/cumsum.mm -o $@
 
+cumsum_simd: src/cumsum_simd.mm src/cumsum_simd.metal
+	xcrun metal -c src/cumsum_simd.metal -o - | xcrun metallib - -o cumsum_simd.metallib
+	$(CC) $(CFLAGS) src/cumsum_simd.mm -o $@
+
 clean:
 	${RM} -f simple* *.air *.metallib

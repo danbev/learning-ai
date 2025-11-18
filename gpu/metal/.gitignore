@@ -5,3 +5,4 @@ simple-source
 .build
 cumsum
 *.dSYM
+cumsum_simd
