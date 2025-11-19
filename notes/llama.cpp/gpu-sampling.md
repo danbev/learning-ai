@@ -510,3 +510,33 @@ And this could then be use as follows:
       -ngl 99 \
       -v
 ```
+
+### Filtered tokens id map
+We should probably rename the following to:
+```c++
+    std::unordered_map<llama_seq_id, ggml_tensor*> t_backend_sampled_logits;
+    std::unordered_map<llama_seq_id, ggml_tensor*> t_backend_filtered_token_ids;
+    std::unordered_map<llama_seq_id, ggml_tensor*> t_backend_sampled_tokens;
+    std::unordered_map<llama_seq_id, ggml_tensor*> t_backned_sampled_probs;
+```
+The filtered token id is used when a backend sampler reduces/sorts the logits
+and we need to be able to map back to the original token id. For example top-k
+sampling will select the top k logits and sort them. The distribution (dist)
+backend sampler computes an index into logits, which may have been filtered. If
+this is the case then the index is no longer an index into the models vocabulary 
+but rather an index into the filtered logits array.
+For example:
+- Full vocab has 32000 tokens
+- Top-k filters to k=40 tokens with vocab IDs: [15234, 892, 25631, ...]
+- Dist sampler picks index 2
+- Need filtered_ids[2] = 25631 to get the actual token
+
+And we need this map both for the dist sampler but also for when a sampler
+like top-k filters the logit and we need to pass these to the CPU sampler chain
+
+1. Backend dist sampler:
+Maps the sampled index [0, k) → actual vocab token ID using ggml_get_rows(filtered_ids, idx)
+
+2. CPU sampler chain:
+Uses sampled_ids[i] to associate each filtered logit with its corresponding
+vocabulary token ID, so CPU samplers can work with the correct token IDs
