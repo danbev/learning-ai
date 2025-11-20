@@ -48,8 +48,8 @@ template: src/template.cu
 	nvcc -lnppc -o $@ $<
 
 prefix-sum: src/prefix-sum.cu
-	nvcc -arch=sm_86 -ptx $< -o $@.ptx
-	nvcc -arch=sm_86 -cubin $< -o $@.cubin
+	nvcc -arch=sm_89 -ptx $< -o $@.ptx
+	nvcc -arch=sm_89 -cubin $< -o $@.cubin
 	cuobjdump -sass $@.cubin > $@.sass
 	nvcc -lnppc -G -g -o $@ $<
 
