@@ -9,3 +9,7 @@ array-add.ptx
 matrix-mul
 matrix-mul-tiled
 template
+prefix-sum
+*.cubin
+*.ptx
+*.sass
