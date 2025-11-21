@@ -214,5 +214,20 @@ So if a user now requests the logits for token index 5 in the original batch, we
 can use the output_ids[5] which is 0, to know that this data is at index 0 in
 the logits pinned memory.
 
+And notice that the async copy is done prior to this step:
+```c++
+        // extract logits
+        if (t_logits && n_outputs > 0) {
+            ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
 
+            float * logits_out = logits + n_outputs_prev*n_vocab;
 
+            if (n_outputs) {
+                ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+            }
+        }
+```
+Here, logits_out is pointing to the start of the logits buffer for this batch.
+And logits is the start of our pinned memory buffer. So we will copy the tensor
+data from the GPU that is in t_logits to the pinned memory location pointed to
+by logits_out.
