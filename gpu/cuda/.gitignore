@@ -10,6 +10,9 @@ matrix-mul
 matrix-mul-tiled
 template
 prefix-sum
+pagable
 *.cubin
 *.ptx
 *.sass
+*.sqlite
+*.nsys-rep

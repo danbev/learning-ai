@@ -53,6 +53,15 @@ prefix-sum: src/prefix-sum.cu
 	cuobjdump -sass $@.cubin > $@.sass
 	nvcc -lnppc -G -g -o $@ $<
 
+pagable: src/pagable.cu
+	nvcc -lnppc -o $@ $<
+
+run-pagable: pagable
+	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
+	nsys stats --report cuda_api_sum --force-overwrite true --force-export true $<.nsys-rep
+	nsys analyze --rule cuda_memcpy_async --force-export=true $<.nsys-rep
+	#nsys-ui $<.nsys-rep
+
 .PHONY: clean
 clean:
 	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add matrix-mul prefix-sum
