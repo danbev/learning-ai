@@ -62,6 +62,14 @@ run-pagable: pagable
 	nsys analyze --rule cuda_memcpy_async --force-export=true $<.nsys-rep
 	#nsys-ui $<.nsys-rep
 
+pinned: src/pinned.cu
+	nvcc -lnppc -o $@ $<
+
+run-pinned: pinned
+	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
+	#nsys stats --report cuda_api_sum --force-overwrite true --force-export true $<.nsys-rep
+	nsys analyze --rule cuda_memcpy_async --force-export=true $<.nsys-rep
+
 .PHONY: clean
 clean:
 	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add matrix-mul prefix-sum

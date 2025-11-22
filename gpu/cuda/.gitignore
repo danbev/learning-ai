@@ -11,6 +11,7 @@ matrix-mul-tiled
 template
 prefix-sum
 pagable
+pinned
 *.cubin
 *.ptx
 *.sass
