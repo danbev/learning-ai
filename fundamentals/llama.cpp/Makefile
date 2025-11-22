@@ -18,8 +18,13 @@ llama:
 		cmake --build build -j8
 
 llama-cuda: 
-	. ./cuda-env.sh && cd llama.cpp && \
-		cmake --build build -DGGML_CUDA=ON -j8
+	cd llama.cpp && cmake -S . -B build -DLLAMA_CURL=ON \
+    -DGGML_CUDA=ON \
+    -DCMAKE_CUDA_ARCHITECTURES="89" \
+    -DGGML_CPU_AARCH64=OFF \
+    -DGGML_CUDA_F16=ON \
+    -DGGML_NATIVE=ON \
+    -DCMAKE_BUILD_TYPE=Debug && cmake --build build -- -j 8
 
 llama-vulkan:
 	. ./cuda-env.sh && cd llama.cpp && \

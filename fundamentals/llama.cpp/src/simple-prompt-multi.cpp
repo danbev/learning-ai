@@ -119,7 +119,9 @@ int main(int argc, char** argv) {
         batch.logits[i] = false;
         batch.n_tokens++;
     }
-    batch.logits[batch.n_tokens - 1] = true;
+    int batch_0_output_idx = batch.n_tokens - 1;
+    batch.logits[batch_0_output_idx] = true;
+    printf("batch0 output idx: %d\n", batch_0_output_idx);
     int seq_0_cur = n_tokens;
 
     int pos = batch.n_tokens;
@@ -132,7 +134,9 @@ int main(int argc, char** argv) {
         batch.logits[idx] = false;
         batch.n_tokens++;
     }
-    batch.logits[batch.n_tokens - 1] = true;
+    int batch_1_output_idx = batch.n_tokens - 1;
+    batch.logits[batch_1_output_idx] = true;
+    printf("batch1 output idx: %d\n", batch_1_output_idx);
     int seq_1_cur = n_tokens2;
 
     fprintf(stderr, "batch.n_tokens: %d\n", batch.n_tokens);
@@ -160,8 +164,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> seq_1_output;
     
     while (n_cur <= n_len) {
-        const llama_token new_token_id_0 = llama_sampler_sample(sampler, ctx, -2);
-        const llama_token new_token_id_1 = llama_sampler_sample(sampler, ctx, -1);
+        const llama_token new_token_id_0 = llama_sampler_sample(sampler, ctx, batch_0_output_idx);
+        const llama_token new_token_id_1 = llama_sampler_sample(sampler, ctx, batch_1_output_idx);
         llama_batch new_batch = llama_batch_init(2, 0, 2);
         new_batch.n_tokens = 2;
         new_batch.token[0] = new_token_id_0;
@@ -174,6 +178,8 @@ int main(int argc, char** argv) {
         new_batch.seq_id[1][0] = 1;
         new_batch.logits[0] = true;
         new_batch.logits[1] = true;
+        batch_0_output_idx = 0;
+        batch_1_output_idx = 1;
 
         // Sequence 1
         {
