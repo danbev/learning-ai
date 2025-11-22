@@ -20,7 +20,10 @@ int main() {
     const int N = 1 << 20;    // 1M floats
     const size_t bytes = N * sizeof(float);
 
-    // pageable memory using normal malloc.
+    // pageable memory using normal malloc. This is pagable memory and
+    // if we use this with cudaMemcpyAsync, the runtime will have to create
+    // pinned memory and then copy the data to that pinned memory and then
+    // to the normal asynchronous copy.
     float * h_data = (float *) std::malloc(bytes);
     if (!h_data) {
         std::cerr << "Host malloc failed\n";
@@ -37,7 +40,11 @@ int main() {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Host to device async copy from PAGEABLE memory
+    // Host to device async copy from PAGEABLE memory.
+    // 1) create temporary pinned memory location
+    // 2) synchronous copy from pageable to pinned.Once the sync copy is done
+    //    then cudaMemcpyAsync returns. This is what sometimes refered to as
+    //    it "reverts" to a synchronous copy I think.
     CUDA_CHECK(cudaMemcpyAsync(d_data, h_data, bytes, cudaMemcpyHostToDevice, stream));
 
     int block = 256;
