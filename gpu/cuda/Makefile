@@ -70,6 +70,9 @@ run-pinned: pinned
 	#nsys stats --report cuda_api_sum --force-overwrite true --force-export true $<.nsys-rep
 	nsys analyze --rule cuda_memcpy_async --force-export=true $<.nsys-rep
 
+vmm: src/vmm.cu
+	nvcc -lnppc -lcuda -G -g -o $@ $<
+
 .PHONY: clean
 clean:
 	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add matrix-mul prefix-sum
