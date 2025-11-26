@@ -618,6 +618,146 @@ So if we wanted to get the logits for batch index 5 we would look up output_ids[
 and get 2 which tells us that the logits for that token are in row 2 of the
 logits buffer.
 
+###  output_swaps
+The llama_context also has the following fields which are closely related to
+the output ids:
+```c++
+    struct swap_info {
+        uint32_t i0;
+        uint32_t i1;
+    };
+
+    std::vector<swap_info> output_swaps;
+```
+These are reset/cleared for each decode:
+```c++
+    output_swaps.clear();
+```
+After the docode loop which we went through earlier we have. Not the order of
+the outputs can be influenced by the model and its graph processing, like
+recurrant models. The purpose of the output_swaps is to keep track this.
+```c++
+    if (n_outputs > 0) {
+        bool sorted_output = true;
+
+        // get the original batch positions from the batch allocator
+        auto & out_ids = balloc->get_out_ids();
+
+        // iterate over the outputs and populate output_ids
+        for (int64_t i = 0; i < n_outputs; ++i) {
+            int64_t out_id = out_ids[i];
+            // to find the data for batch position out_it, look at row i
+            output_ids[out_id] = i;
+
+            // check the original order is the same as the current order.
+            if (out_id != i) {
+                sorted_output = false;
+            }
+        }
+
+        // make the outputs have the same order they had in the user-provided batch
+        // note: this is mostly relevant for recurrent models atm
+        if (!sorted_output && n_outputs > 1) {
+            GGML_ASSERT((size_t) n_outputs == out_ids.size());
+
+            // selection sort, we don't have to compute the last elemnent as it
+            // will already be in place.
+            for (uint32_t i = 0; i < n_outputs - 1; ++i) {
+
+                // First find the minimum element in unsorted array
+                uint32_t j_min = i;
+                for (uint32_t j = i + 1; j < n_outputs; ++j) {
+                    if (out_ids[j] < out_ids[j_min]) {
+                        j_min = j;
+                    }
+                }
+
+                if (j_min == i) {
+                    continue;
+                }
+
+                std::swap(out_ids[i], out_ids[j_min]);
+
+                // remember the swaps and apply them lazily upon logits/embeddings access
+                // create swap_info and push it to output_swaps
+                output_swaps.push_back({ i, j_min });
+            }
+
+            std::fill(output_ids.begin(), output_ids.end(), -1);
+
+            for (uint32_t i = 0; i < n_outputs; ++i) {
+                output_ids[out_ids[i]] = i;
+            }
+        }
+    }
+```
+```c++
+void llama_context::output_reorder() {
+    const uint64_t n_vocab = model.vocab.n_tokens();
+    const uint64_t n_embd  = model.hparams.n_embd;
+
+    for (size_t s = 0; s < output_swaps.size(); ++s) {
+        const uint64_t i0 = output_swaps[s].i0;
+        const uint64_t i1 = output_swaps[s].i1;
+
+        if (logits_size > 0) {
+            for (uint64_t k = 0; k < n_vocab; k++) {
+                std::swap(logits[i0*n_vocab + k], logits[i1*n_vocab + k]);
+            }
+        }
+
+        if (embd_size > 0) {
+            for (uint64_t k = 0; k < n_embd; k++) {
+                std::swap(embd[i0*n_embd + k], embd[i1*n_embd + k]);
+            }
+        }
+
+        if (sampling.logits && sampling.logits_size > 0) {
+            for (uint64_t k = 0; k < n_vocab; ++k) {
+                std::swap(sampling.logits[i0*n_vocab + k], sampling.logits[i1*n_vocab + k]);
+            }
+        }
+
+        if (sampling.probs && sampling.probs_size > 0) {
+            for (uint64_t k = 0; k < n_vocab; ++k) {
+                std::swap(sampling.probs[i0*n_vocab + k], sampling.probs[i1*n_vocab + k]);
+            }
+        }
+
+        if (sampling.candidates && sampling.candidates_size > 0) {
+            for (uint64_t k = 0; k < n_vocab; ++k) {
+                std::swap(sampling.candidates[i0*n_vocab + k], sampling.candidates[i1*n_vocab + k]);
+            }
+        }
+
+        if (sampling.sampled && sampling.sampled_size > 0) {
+            std::swap(sampling.sampled[i0], sampling.sampled[i1]);
+        }
+
+        if (!sampling.logits_count.empty()) {
+            std::swap(sampling.logits_count[i0], sampling.logits_count[i1]);
+        }
+        if (!sampling.probs_count.empty()) {
+            std::swap(sampling.probs_count[i0], sampling.probs_count[i1]);
+        }
+        if (!sampling.candidates_count.empty()) {
+            std::swap(sampling.candidates_count[i0], sampling.candidates_count[i1]);
+        }
+    }
+
+    output_swaps.clear();
+}
+```
+Example: If selection sort recorded swaps {0, 2} and {1, 3}, then:
+```
+First swap rows 0 and 2
+Then swap rows  1 and 3
+```
+The result is that data is now in sorted order.
+
+
+_wip_
+
 ### backend sampling
 For backend sampling we also need to use pinned memory for the sampled tokens,
 logits, probablities, and for the candidate tokens.
@@ -720,3 +860,5 @@ $ nsys stats --report cuda_api_sum llama_profile.nsys-rep | grep -i 'malloc\|mem
       0.2        3,837,754          2   1,918,877.0  1,918,877.0    727,613    3,110,141   1,684,701.7  cudaMallocHost
       0.0          847,870         23      36,863.9     11,326.0      8,071      289,543      66,279.5  cudaMalloc 
 
+
+#
