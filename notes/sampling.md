@@ -170,3 +170,94 @@ the PresencePenalty value.
 * Sample the next token from the adjusted probability distribution. 
 
 * Add the token to the current context and repeat the process.
+
+### Min-p
+```console
+p("the")    = 0.6
+p("a")      = 0.2
+p("it")     = 0.15
+p("house")  = 0.02
+p("banana") = 0.0001
+... and so on for thousands of other words.
+```
+Find the max probability, the token with the highest probability, so this wold
+be 'the' with a probability of 0.6.
+Next we calculate a cutoff threshold which is what the min_p parameter is used
+for which is a user defined value between 0 and 1.
+```
+threshold = p_max * min_p
+```
+If we choose min_p = 0.1, then threshold = 0.6 * 0.1 = 0.06.
+
+Go through the list of all possible probabilites and discard any the probablities
+that are less than the threshold.
+```
+p("the")    = 0.6 (Keep, it's >= 0.06)
+p("a")      = 0.2 (Keep, it's >= 0.06)
+p("it")     = 0.15 (Keep, it's >= 0.06)
+p("house")  = 0.02 (Discard, it's < 0.06)
+p("banana") = 0.0001 (Discard, it's < 0.06)
+``
+
+So the float p that this sampler accepts, this is a value between 0 and 1 which
+we use to multiply by the maxium probablity in the set of logits. This gives us
+a threshold, and we subtract this from the probabilities. Where the output of
+this subtraction is zero, or less than zero the step function will produce 0
+for the zero or negative values and 1 for the positive which are those that are
+to be kept
+
+```c++
+    const float large_neg_val = -1e9f;
+    struct ggml_tensor * punishment = ggml_scale_bias(ctx, mask, -large_neg_val, large_neg_val);
+    ggml_set_name(punishment, "min_p_punishment");
+```
+The function ggml_scale_bias(ctx, a, s, b) calculates the formula:
+```
+output = (a * s) + b
+a is the input tensor.
+s is a float scale factor.
+b is a float bias to be added.
+```
+Lets plug in the values:
+```
+a = mask (our tensor of 1.0s and 0.0s)
+s = -large_neg_val = -(-1e9f) = 1e9f
+b = large_neg_val = -1e9f
+```
+So the formula becomes:
+```
+punishment = (mask * 1e9f) + (-1e9f)
+```
+Now, let's see what happens for the two different values inside the mask tensor:
+1. When we want to KEEP a token:
+```
+The mask value for this token is 1.0f.
+The calculation is: (1.0f * 1e9f) + (-1e9f)
+This simplifies to: 1e9f - 1e9f = 0.0f
+Result:
+The punishment is 0.0f. When we add this to the original logit, the logit is
+unchanged. This is exactly what we want for tokens we keep.
+```
+2. When we want to DISCARD a token:
+```
+The mask value for this token is 0.0f.
+The calculation is: (0.0f * 1e9f) + (-1e9f)
+This simplifies to: 0.0f - 1e9f = -1e9f
+Result:
+The punishment is -1e9f. When we add this to the original logit, it gets driven
+to a very large negative value. This is exactly what we want for tokens we discard.
+```
+
+We could also reverse the negative value:
+```
+a = mask (our tensor of 1.0s and 0.0s)
+s =  1e9f
+b = -1e9f
+```
+So we are first scaling the mask which are values that are either 0 or 1. So
+only values that are to be kept will:
+```
+punishment = (mask * 1e9f) + (-1e9f)
+              0    * 1e9f + (-1e9f) = -1e9f (bascially -infinity, we discard this token)
+              1    * 1e9f + (-1e9f) = 0     (nothing happend to tokens we keep)
+
