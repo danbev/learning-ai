@@ -511,32 +511,50 @@ And this could then be use as follows:
       -v
 ```
 
-### Filtered tokens id map
-We should probably rename the following to:
-```c++
-    std::unordered_map<llama_seq_id, ggml_tensor*> t_backend_sampled_logits;
-    std::unordered_map<llama_seq_id, ggml_tensor*> t_backend_filtered_token_ids;
-    std::unordered_map<llama_seq_id, ggml_tensor*> t_backend_sampled_tokens;
-    std::unordered_map<llama_seq_id, ggml_tensor*> t_backned_sampled_probs;
+### Mixed backend and cpu sampling
+I initially developed this as an all or nothing, either we perform backend
+sampling for the batch, or we perform CPU sampling for the batch (after
+llama_decode for CPU samplers and backend samplers are part of the models graph).
+
+But we need to support the case where we have mixed sequences in a batch. What I
+mean is that may have configured a backend sampler for sequence 0 but just that
+one and our batch might contains two sequences. In this case we need to be able
+to perform the backend sampling for sequence 0 and CPU sampling for sequence 1.
+
+For example, the following batch is used by the test_backend_cpu_mixed_batch:
 ```
-The filtered token id is used when a backend sampler reduces/sorts the logits
-and we need to be able to map back to the original token id. For example top-k
-sampling will select the top k logits and sort them. The distribution (dist)
-backend sampler computes an index into logits, which may have been filtered. If
-this is the case then the index is no longer an index into the models vocabulary 
-but rather an index into the filtered logits array.
-For example:
-- Full vocab has 32000 tokens
-- Top-k filters to k=40 tokens with vocab IDs: [15234, 892, 25631, ...]
-- Dist sampler picks index 2
-- Need filtered_ids[2] = 25631 to get the actual token
+n_tokens: 4
+token[0]: tok=1    , pos=0, n_seq_id=1, seq_ids=[0], logits=0
+token[1]: tok=15043, pos=1, n_seq_id=1, seq_ids=[0], logits=1
+token[2]: tok=1    , pos=0, n_seq_id=1, seq_ids=[1], logits=0
+token[3]: tok=3834 , pos=1, n_seq_id=1, seq_ids=[1], logits=1
+```
+This is a batch with 4 tokens, two sequences (seq_id 0 and seq_id 1), each with
+two tokens. Sequence 0 has a backend sampler configured (a greedy sampler) and
+```console
+(gdb) p sampling.samplers
+$17 = std::unordered_map with 1 element = {[0] = 0x555555f5ab00}
+```
+In this case we need to ensure that there is pinned memory allocated for the
+backend sampler and for the CPU sampler (which needs the logits only).
 
-And we need this map both for the dist sampler but also for when a sampler
-like top-k filters the logit and we need to pass these to the CPU sampler chain
+I run into an issue with the original implementation using the llama-server and
+the webui where decoding with backend samplers works but after changing to cpu
+sampling, this could cause a slot(sequence) to still be using a backend sampler
+which would mean that the logits in output_reserve would not be allocated and
+there would be an error.
 
-1. Backend dist sampler:
-Maps the sampled index [0, k) → actual vocab token ID using ggml_get_rows(filtered_ids, idx)
+The suggested solution for this is to inspect the batch and see what types of
+output are needed, I mean if a token in the batch is set as output and that
+sequence has a backend sampler configure we need to ensure that the output_reserve
+is allocated. And if it does not we have to ensure that logits are allocated
+and are copied back to the host.
 
-2. CPU sampler chain:
-Uses sampled_ids[i] to associate each filtered logit with its corresponding
-vocabulary token ID, so CPU samplers can work with the correct token IDs
+One issue with my initial implementation was that the backend samplers I just had
+two cases and allowed the cpu sampling case to just work as it currently does,
+but this means that when we have mixed sampling we will be copying over all
+the logits to the host even for sequences that have backend samplers configured.
+
+One solution is to pass the batch into output_reserve so that it can inspect the
+batch and see what types of outputs are needed. This way it can allocate only
+what is needed. This is what I have implemented in the PR now.
