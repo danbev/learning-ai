@@ -250,8 +250,496 @@ for a and inforation about each pass.
 - usr set manually by ggml_backend_sched_set_tensor_backend.
 ```
 
+So pass1 assigns backends to the leaf and nodes.
+So just to recap, in pass 1 we iterated over all the leafs and all the nodes in the graph and
+and try to assign backends to them from the current tensor.
+
+A backend is only assigned if the tensor already has a buffer/view buffer, is flagged as graph input
+(defaults to CPU), or an op’s weight buffer dictates a backend. If none of those conditions apply—common
+for unallocated intermediates with no input flag or weight hint— the backend stays -1, and pass 2 is
+what starts filling those gaps.
+
+pass 2:
+So we will again iterate over all the nodes in the graph.
+```c++
+    // expand gpu down
+    {
+        int cur_backend_id = -1;
+        for (int i = 0; i < graph->n_nodes; i++) {
+            struct ggml_tensor * node = graph->nodes[i];
+            if (ggml_is_view_op(node->op)) {
+                continue;
+            }
+
+            int * node_backend_id = &tensor_backend_id(node);
+            // if a backend was assinged in pass 1
+            if (*node_backend_id != -1) {
+                // Don't propagate cpu backend (lowest prio backend)
+                if (*node_backend_id == sched->n_backends - 1) {
+                    // skip cpu (lowest prio backend)
+                    cur_backend_id = -1;
+                } else {
+                    // propagete the current nodes backend as the current backend id
+                    cur_backend_id = *node_backend_id;
+                }
+            } else if (cur_backend_id != -1) {
+                // If the current node does NOT have a backend id assigned we try to assign the current backend
+                // id to it
+                ggml_backend_sched_set_if_supported(sched, node, cur_backend_id, node_backend_id);
+            }
+        }
+    }
+```
+So we are going through all the nodes, and if the current node has a backend id (it is not -1)
+and we skip the CPU backend (the lowest priority backend), which breaks the propagation chain.
+But otherwise this enables nodes that come after each other to have the same backend id assigned to them.
+
+So a node that was assigned a backend in the first pass, will not be changed. But nodes that
+were not assigned a backend might be assigned to the backend "chain" if supported
+
+“?” means unassigned, “G” is a GPU backend, “C” is CPU. Arrows show propagation.
+```
+Initial after pass 1 (example):
+
+idx: 0 1 2 3 4 5 6 7
+     ? ? G ? C ? G ?
+
+Forward scan, GPU-only:
+
+- Start cur = -1
+- idx2 has G → cur = G
+- idx3 is ? → supports? yes → set to G
+- idx4 is C → CPU resets chain → cur = -1
+- idx5 is ? with cur = -1 → stays ?
+- idx6 is G → cur = G
+- idx7 is ? → supports? yes → set to G
+
+After forward:
+
+idx: 0 1 2 3 4 5 6 7
+     ? ? G G C ? G G
+
+Backward scan, GPU-only:
+
+- Start cur = -1
+- idx7 is G → cur = G
+- idx6 is G → cur = G
+- idx5 is ? → supports? yes → set to G
+- idx4 is C → reset cur = -1
+- idx3 is G → cur = G
+- idx2 is G → cur = G
+- idx1 is ? → supports? yes → set to G
+- idx0 is ? → supports? yes → set to G
+
+After backward:
+
+idx: 0 1 2 3 4 5 6 7
+   G G G G C G G G
+```
+If any ? doesn’t support G, it stays ?. The subsequent “rest” scans do the same
+but allow CPU to propagate too, filling remaining ? where supported.
+
+We will then again iterate over all the nodes in the graph:
+```c++
+    // expand rest down
+    {
+        int cur_backend_id = -1;
+        for (int i = 0; i < graph->n_nodes; i++) {
+            struct ggml_tensor * node = graph->nodes[i];
+            if (ggml_is_view_op(node->op)) {
+                continue;
+            }
+
+            int * node_backend_id = &tensor_backend_id(node);
+            // if the current node has a backend id assigned
+            if (*node_backend_id != -1) {
+                // set the current backend id to the current nodes backend id
+                cur_backend_id = *node_backend_id;
+            } else if (cur_backend_id != -1) {
+                // if the current node does not have a backend id assigned we try to assign the current backend
+                ggml_backend_sched_set_if_supported(sched, node, cur_backend_id, node_backend_id);
+            }
+        }
+    }
+```
+
+```c++
+static void ggml_backend_sched_set_if_supported(ggml_backend_sched_t sched,
+    struct ggml_tensor * node, int cur_backend_id, int * node_backend_id) {
+
+    if (ggml_backend_supports_op(sched->backends[cur_backend_id], node)) {
+        *node_backend_id = cur_backend_id;
+        SET_CAUSE(node, "2.sup");
+    }
+}
+```
+
+Pass 3:
+We will again iterate over all the nodes in the graph:
+```c++
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        // skip view nodes
+        if (ggml_is_view_op(node->op)) {
+            continue;
+        }
+
+        int * node_backend_id = &tensor_backend_id(node);
+        // If the current node does not yet have an assigned backend
+        if (*node_backend_id == -1) {
+
+            int n_supported_best = -1;
+            // Iterate over all the backends
+            for (int b = 0; b < sched->n_backends; b++) {
+
+                // if the backend supports the current node op
+                if (ggml_backend_supports_op(sched->backends[b], node)) {
+                    int n_supported = 0;
+                    for (int j = 0; j < GGML_MAX_SRC; j++) {
+                        struct ggml_tensor * src = node->src[j];
+                        // if the op does not have any sources we continue
+                        if (src == NULL) {
+                            continue;
+                        }
+
+                        if ((tensor_backend_id(src) != -1 ||
+                             tensor_backend_id(src->view_src) != -1) &&
+                             ggml_backend_sched_buffer_supported(sched, src, b)) {
+                            n_supported++;
+                        }
+                    }
+                    // Keep track of the best supported backend
+                    if (n_supported > n_supported_best) {
+                        n_supported_best = n_supported;
+                        // update the current nodes backend id (might be updated again later in the loop)
+                        *node_backend_id = b;
+                        SET_CAUSE(node, "3.best");
+                    }
+                }
+            }
+        } else {
+            // assigned node: upgrade to higher prio backend if possible
+            for (int b = 0; b < *node_backend_id; b++) {
+                if (sched->bufts[b] == sched->bufts[*node_backend_id] && ggml_backend_supports_op(sched->backends[b], node)) {
+                    bool supported = true;
+                    for (int j = 0; j < GGML_MAX_SRC; j++) {
+                        struct ggml_tensor * src = node->src[j];
+                        if (src == NULL) {
+                            continue;
+                        }
+
+                        if (!ggml_backend_sched_buffer_supported(sched, src, b)) {
+                            supported = false;
+                            break;
+                        }
+                    }
+                    if (supported) {
+                        *node_backend_id = b;
+                        SET_CAUSE(node, "3.upg");
+                        break;
+                    }
+                }
+            }
+        }
+```
+So the motivation here is to assign nodes to backens that are used the most which
+avoids having to copy data between backends.
+
+This brings us to pass 4.
+
+Pass 4:
+```c++
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        int * cur_backend_id = &tensor_backend_id(node);
+
+        // if the current node is a view and has a backend assigned then we 
+        // set the current backend id.
+        if (node->view_src != NULL && *cur_backend_id == -1) {
+            *cur_backend_id = tensor_backend_id(node->view_src);
+            SET_CAUSE(node, "4.vsrc");
+        }
+
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            struct ggml_tensor * src = node->src[j];
+            if (src == NULL) {
+                continue;
+            }
+
+            int * src_backend_id = &tensor_backend_id(src);
+            if (*src_backend_id == -1) {
+                if (src->view_src != NULL) {
+                    // views are always on the same backend as the source
+                    *src_backend_id = tensor_backend_id(src->view_src);
+                    SET_CAUSE(src, "4.vsrc");
+                } else {
+                    *src_backend_id = *cur_backend_id;
+                    SET_CAUSE(src, "4.cur");
+                }
+            }
+        }
+        // if the node is still unassigned, assign it to the first backend that supports it
+        for (int b = 0; b < sched->n_backends && *cur_backend_id == -1; b++) {
+            ggml_backend_sched_set_if_supported(sched, node, b, cur_backend_id);
+        }
+        GGML_ASSERT(*cur_backend_id != -1);
+    }
+```
+
+Before pass 5 lets take a look at hv_tensor_copies which is a field in the
+scheduler struct:
+```c++
+    struct ggml_tensor ** hv_tensor_copies;      // [hash_set.size][n_backends][n_copies]
+```
+And the following macro:
+```c++
+#define tensor_id_copy(id, backend_id, copy_id)
+  sched->hv_tensor_copies[ (id) * sched->n_backends * sched->n_copies + (backend_id) * sched->n_copies + (copy_id)]
+```
+
+```
+Dimension 1: tensor ID (hash_set.size different tensors)
+Dimension 2: backend ID (n_backends)
+Dimension 3: copy number (n_copies)
+
+(lldb) p sched->hash_set.size
+(size_t) 4099                  // possible tensor ids
+
+(lldb) p sched->n_backends
+(int) 3                        // backend ids 0, 1, 2
+
+(lldb) p sched->n_copies
+(int) 1                        // copy ids 0
+
+tensor_id
+     backend
+0    [0, 1, 2]       ← 3 backend copies of tensor 0
+1    [0, 1, 2]       ← 3 backend copies of tensor 1
+2    [0, 1, 2]       ← 3 backend copies of tensor 2
+...
+4098 [0, 1, 2]       ← 3 backend copies of tensor 4098
+
+Flattened layout:
+[t0_b0, t0_b1, t0_b2, t1_b0, t1_b1, t1_b2, t2_b0, t2_b1, t2_b2, ...]
+
+Index calculation:
+index = tensor_id * (n_backends * n_copies) + backend_id * n_copies + copy_id
+
+Examples:
+index = 0  * (3 * 1) + 0 * 1 + 0 = 0   ← tensor 0, backend 0, copy 0
+inext = 1  * (3 * 1) + 1 * 1 + 0 = 1   ← tensor 0, backend 1, copy 0
+```
+This macro will be used in pass 5.
+
+Pass 5:
+This is where we actually split and create copies if they are required.
+```c++
+    // pass 5: split graph, find tensors that need to be copied
+    {
+        int i_split = 0;
+        struct ggml_backend_sched_split * split = &sched->splits[0];
+        // find the backend of the first split, skipping view ops
+        int i = 0;
+        for (; i < graph->n_nodes; i++) {
+            struct ggml_tensor * node = graph->nodes[i];
+            if (!ggml_is_view_op(node->op)) {
+                split->backend_id = tensor_backend_id(node);
+                break;
+            }
+        }
+        split->i_start = 0;
+        split->n_inputs = 0;
+```
+Notice that we get a pointer to the first split which is of type ggml_backend_sched_split:
+```c++
+struct ggml_backend_sched_split {
+    int backend_id;            // Which backend this split runs on
+    int i_start;               // Start index in graph->nodes
+    int i_end;                 // End index in graph->nodes
+    struct ggml_tensor * inputs[GGML_SCHED_MAX_SPLIT_INPUTS];  // Input tensors needed
+    int n_inputs;              // Number of inputs
+    struct ggml_cgraph graph;  // View into the main graph
+};
+```
+So each split has a `backend_id` where this split will be run. The `i_start` and
+`i_end` are the start and end indices into `graph->nodes`.
+
+The `inputs` array is an array of tensors that are needed by this split and will
+need to be copied:
+```console
+// A graph that runs like this:
+Node1(GPU) -> Node2(GPU) -> Node3(CPU) -> Node4(CPU)
+
+// It might get split into:
+Split1: {
+    backend_id: GPU_BACKEND,
+    i_start: 0,
+    i_end: 2,         // Covers Node1 and Node2
+    inputs: [],       // Empty because all inputs are on GPU
+    n_inputs: 0
+}
+
+Split2: {
+    backend_id: CPU_BACKEND,
+    i_start: 2,
+    i_end: 4,         // Covers Node3 and Node4
+    inputs: [Node2],  // Needs Node2's output from GPU
+    n_inputs: 1
+}
+```
+
+```c++
+        int cur_backend_id = split->backend_id;
+        for (; i < graph->n_nodes; i++) {
+            struct ggml_tensor * node = graph->nodes[i];
+
+            if (ggml_is_view_op(node->op)) {
+                continue;
+            }
+
+            const int node_backend_id = tensor_backend_id(node);
+
+            // check if we should start a new split based on the sources of the current node
+            bool need_new_split = false;
+            // If the current nodes backend is the same as the current split backend but it has inputs
+            if (node_backend_id == cur_backend_id && split->n_inputs > 0) {
+                for (int j = 0; j < GGML_MAX_SRC; j++) {
+                    struct ggml_tensor * src = node->src[j];
+                    if (src == NULL) {
+                        continue;
+                    }
+
+                    // check if a weight is on a different and incompatible backend
+                    // by starting a new split, the memory of the previously offloaded weights can be reused
+                    if (src->buffer != NULL && src->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
+                        int src_backend_id = tensor_backend_id(src);
+                        if (src_backend_id != cur_backend_id && !ggml_backend_sched_buffer_supported(sched, src, cur_backend_id)) {
+                            need_new_split = true;
+                            break;
+                        }
+                    }
+                    // check if the split has too many inputs
+                    // FIXME: count the number of inputs instead of only checking when full
+                    if (split->n_inputs == GGML_SCHED_MAX_SPLIT_INPUTS) {
+                        const size_t id = hash_id(src);
+                        int src_backend_id = sched->hv_tensor_backend_ids[id];
+                        bool supported = ggml_backend_sched_buffer_supported(sched, src, cur_backend_id);
+                        if (src_backend_id != cur_backend_id && tensor_id_copy(id, cur_backend_id, 0) == NULL && !supported) {
+                            need_new_split = true;
+                            break;
+                        }
+                    }
+                }
+            }
+```
+The checks above and later below will break out of the current split if one of
+them is true. 
+
+Next we have the following check:
+```c++
+            // if the current node backend id is different from the current split backend id
+            if (node_backend_id != cur_backend_id || need_new_split) {
+                // we create a new split
+                split->i_end = i;
+                i_split++;
+
+                // ensure we have enough capacity for the split
+                if (i_split >= sched->splits_capacity) {
+                    sched->splits_capacity *= 2;
+                    sched->splits = (ggml_backend_sched_split *)
+                        realloc(sched->splits, sched->splits_capacity * sizeof(struct ggml_backend_sched_split));
+                    GGML_ASSERT(sched->splits != NULL);
+                }
+
+                split = &sched->splits[i_split];
+                split->backend_id = node_backend_id;
+                split->i_start = i;
+                split->n_inputs = 0;
+                cur_backend_id = node_backend_id;
+            }
+```
+
+```c++
+            // find inputs that are not on the same backend
+            for (int j = 0; j < GGML_MAX_SRC; j++) {
+
+                // get the input tensor and check if it is NULL
+                struct ggml_tensor * src = node->src[j];
+                if (src == NULL) {
+                    continue;
+                }
+
+                size_t src_id = hash_id(src);
+                const int src_backend_id = sched->hv_tensor_backend_ids[src_id];
+                GGML_ASSERT(src_backend_id != -1); // all inputs should be assigned by now
+
+                // if the source tensor is marked as an input tensor and we have/need multiple copies
+                if (src->flags & GGML_TENSOR_FLAG_INPUT && sched->n_copies > 1) {
+
+                    // check if we have already created copies for this tensor/backend (see below)
+                    if (tensor_id_copy(src_id, src_backend_id, 0) == NULL) {
+                        // If we have not copied it then we get the backend for this source tensor
+                        ggml_backend_t backend = sched->backends[src_backend_id];
+                        
+                        // for each numberof copies we need, again this is related to pipelining
+                        for (int c = 0; c < sched->n_copies; c++) {
+                            // This is just a tensor but it has the same name as a macro which can
+                            // be a little confusing at first. Perhaps it would be clearer to
+                            // initialize this to nullptr to make it clear?
+                            struct ggml_tensor * tensor_copy;
+
+                            // First can use the original tensor (one of the pipelines can use it)
+                            if (c == sched->cur_copy) {
+                                tensor_copy = src; // use the original tensor as the current copy
+                            } else {
+                                // But for others pipelines we need to create a copy of the tensor
+                                tensor_copy = ggml_dup_tensor_layout(sched->ctx, src);
+                                ggml_format_name(tensor_copy, "%s#%s#%d", ggml_backend_name(backend), src->name, c);
+                            }
+
+                            // This sets the copied tensor as both input and
+                            // output to prevent ggml-alloc from overwriting the tensor
+                            // But notice that the actual check here is not required, we will
+                            // only ever enter this block if n_copies > 1
+                            if (sched->n_copies > 1) {
+                                ggml_set_input(tensor_copy);
+                                ggml_set_output(tensor_copy); // prevent ggml-alloc from overwriting the tensor
+                            }
+
+                            // assign the copy to the tensor id copy array
+                            tensor_id_copy(src_id, src_backend_id, c) = tensor_copy;
+                            SET_CAUSE(tensor_copy, "4.cpy");
+                        }
+
+                        // update the number of inputs
+                        int n_graph_inputs = sched->n_graph_inputs++;
+                        GGML_ASSERT(n_graph_inputs < GGML_SCHED_MAX_SPLIT_INPUTS);
+                        // add the source tensor to teh graph inputs
+                        sched->graph_inputs[n_graph_inputs] = src;
+                    }
+                }
+```
+And here we see the first usage of tensor_id_copy:
+```console
+(lldb) p src_id
+(size_t) 3912
+(lldb) p src_backend_id
+(const int) 1
+
+(lldb) p  sched->hv_tensor_copies[ src_id * sched->n_backends * sched->n_copies + (src_backend_id) * sched->n_copies + 0]
+(ggml_tensor *) nullptr
+```
+
 _wip_
 
+```console
+(lldb) expr sched->backends[0]->iface.get_name(sched->backends[0])
+(const char *) $1 = 0x00000001004bdc7b "Metal"
+(lldb) expr sched->backends[1]->iface.get_name(sched->backends[1])
+(const char *) $2 = 0x000000010008f46a "BLAS"
+(lldb) expr sched->backends[2]->iface.get_name(sched->backends[2])
+(const char *) $3 = 0x000000010039bbae "CPU"
+```
 
 After that we set the inputs for the graph, and then compute the graph:
 ```c++
