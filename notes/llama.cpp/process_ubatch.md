@@ -821,7 +821,16 @@ sched->leaf_backend_ids contain the current arrays we just computed.
     sched->graph.n_nodes = 0;
     sched->graph.n_leafs = 0;
 ```
+
+Next, and this is important and can be easy to miss, we are creating building a
+new graphs here. The graph that is build using build_graph is fixed and does
+not change. We will rebuild the graphs nodes and leafs in this following section.
 ```c++
+    // notice that we are setting n_nodes and n_leafs to 0 before building the graph
+    // The pointers in graph->nodes and graph->leafs are already allocated above
+    sched->graph.n_nodes = 0;
+    sched->graph.n_leafs = 0;
+
     struct ggml_cgraph * graph_copy = &sched->graph;
 
     for (int i = 0; i < sched->n_splits; i++) {
