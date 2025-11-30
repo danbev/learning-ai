@@ -729,6 +729,271 @@ And here we see the first usage of tensor_id_copy:
 (lldb) p  sched->hv_tensor_copies[ src_id * sched->n_backends * sched->n_copies + (src_backend_id) * sched->n_copies + 0]
 (ggml_tensor *) nullptr
 ```
+This will then be set in the above loop using
+```c++
+tensor_id_copy(src_id, src_backend_id, c) = tensor_copy;
+```
+Keep in mind that we are actually not copying anything at this point, we are just
+wiring up the tensor object and recording where copied will live later.
+
+Next, we have:
+```c++
+                // if the input tensor is on a different backend than the current split and
+                // the backend cannot support the source tensor buffer
+                // and the backend does not support the source tensor buffer (for example a CPU backend
+                // cannot read a GPU buffer directly)
+                if (src_backend_id != cur_backend_id && !ggml_backend_sched_buffer_supported(sched, src, cur_backend_id)) {
+                    // check if we have already created copies for this tensor/backend
+                    if (tensor_id_copy(src_id, cur_backend_id, 0) == NULL) {
+                        ggml_backend_t backend = sched->backends[cur_backend_id];
+
+                        // create the number of copies we need.
+                        for (int c = 0; c < sched->n_copies; c++) {
+                            // So we duplicated the source tensor.
+                            struct ggml_tensor * tensor_copy = ggml_dup_tensor_layout(sched->ctx, src);
+                            ggml_format_name(tensor_copy, "%s#%s#%d", ggml_backend_name(backend), src->name, c);
+
+                            // set it as input and output so that it does not get optimized away as
+                            // tensors that are not used as input or outputs can be reused.
+                            if (sched->n_copies > 1) {
+                                ggml_set_input(tensor_copy);
+                                ggml_set_output(tensor_copy); // prevent ggml-alloc from overwriting the tensor
+                            }
+
+                            // set the copy in the tensor id copy array. 
+                            tensor_id_copy(src_id, cur_backend_id, c) = tensor_copy;
+                            SET_CAUSE(tensor_copy, "4.cpy");
+                        }
+                        // update the inputs for this split
+                        int n_inputs = split->n_inputs++;
+                        GGML_ASSERT(n_inputs < GGML_SCHED_MAX_SPLIT_INPUTS);
+                        split->inputs[n_inputs] = src;
+                    }
+                    // Note that the following will re-write the graph! It is updating
+                    // the current nodes input src[j] to point to the copy which is now
+                    // on a different backend. So prior to this the src[j] pointed to the original
+                    // tensor which is on a different backend. It will now instead point to the copy
+                    // which is on the current split backend. The backend does not contain the data
+                    // yet, that happens later.
+                    node->src[j] = tensor_id_copy(src_id, cur_backend_id, sched->cur_copy);
+                }
+            }
+        } // end of for loop over graph nodes
+
+        // update the current splits end index
+        split->i_end = graph->n_nodes;
+        sched->n_splits = i_split + 1;
+    }
+
+    if (sched->debug) {
+        ggml_backend_sched_print_assignments(sched, graph);
+    }
+```
+So we have now gone through the enitre graph, and sched->node_backend_ids and
+sched->leaf_backend_ids contain the current arrays we just computed.
+```c++
+    // swap node_backend_ids and leaf _backend_ids with prevs
+    {
+        int * tmp = sched->node_backend_ids;
+        // set the previous backend ids to the current ones, which will be updated
+        // in the next section.
+        sched->node_backend_ids = sched->prev_node_backend_ids;
+        // store the current backend ids as the previous ones
+        sched->prev_node_backend_ids = tmp;
+
+        tmp = sched->leaf_backend_ids;
+        sched->leaf_backend_ids = sched->prev_leaf_backend_ids;
+        sched->prev_leaf_backend_ids = tmp;
+    }
+```
+
+```c++
+    int graph_size = std::max(graph->n_nodes, graph->n_leafs) + sched->n_splits*GGML_SCHED_MAX_SPLIT_INPUTS*2*sched->n_copies;
+    if (sched->graph.size < graph_size) {
+        sched->graph.size = graph_size;
+        sched->graph.nodes = (ggml_tensor **) realloc(sched->graph.nodes, graph_size * sizeof(struct ggml_tensor *));
+        sched->graph.leafs = (ggml_tensor **) realloc(sched->graph.leafs, graph_size * sizeof(struct ggml_tensor *));
+        GGML_ASSERT(sched->graph.nodes != NULL);
+        GGML_ASSERT(sched->graph.leafs != NULL);
+    }
+    // reset the graph node and leaf counts as we will be going through the graph
+    // again.
+    sched->graph.n_nodes = 0;
+    sched->graph.n_leafs = 0;
+```
+```c++
+    struct ggml_cgraph * graph_copy = &sched->graph;
+
+    for (int i = 0; i < sched->n_splits; i++) {
+        struct ggml_backend_sched_split * split = &sched->splits[i];
+        // create a slice/view of the graph for this split
+        split->graph = ggml_graph_view(graph, split->i_start, split->i_end);
+
+        // Optimize this split of the graph. This needs to happen before we make graph_copy,
+        // so they are in sync.
+        ggml_backend_graph_optimize(sched->backends[split->backend_id], &split->graph);
+```
+```c++
+static void ggml_backend_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+    GGML_ASSERT(backend);
+    if (backend->iface.graph_optimize != NULL) {
+        backend->iface.graph_optimize(backend, cgraph);
+    }
+}
+```
+I've not come accross ggml_optimize before so lets take a look at a concrete 
+implementation. This give each backend a chance to optimize the computation graph
+specifically to the backend in question.
+This can be things like fusing separate ggml operations into single kernels. For
+example if we have multiple separate ggml operations like add, mul, norm in our
+code, these might actually be fused together into a single kernel.
+```c++
+struct ggml_tensor * normalized = ggml_rms_norm(ctx, x, eps);
+struct ggml_tensor * scaled = ggml_mul(ctx, normalized, weight);
+struct ggml_tensor * result = ggml_add(ctx, scaled, bias);
+```
+Metal sees:
+```
+rms_norm → mul → add
+```
+And can fuse into single kernel that does all three operations in one pass.
+* This means the intermediate results can be kept in registers and not written to
+VRAM.
+* Fewer kernel launches which reduces CPU overhead.
+
+This is actually one of the reasons why ggml separates graph construction from
+graph execution so that this kind of optimization can be done.
+
+Looking at the Metal backend:
+```c++
+void ggml_graph_optimize(ggml_cgraph * gf) {
+    constexpr int MAX_FUSE = 16;
+
+    const int n = gf->n_nodes;
+
+    enum ggml_op ops[MAX_FUSE];
+
+    std::vector<node_info> nodes;
+    nodes.reserve(gf->n_nodes);
+
+    // fuse nodes:
+    // we don't want to make reorders that break fusing, so we first pack all fusable tensors
+    //   and perform the reorder over the fused nodes. after the reorder is done, we unfuse
+    for (int i = 0; i < n; i++) {
+        node_info node = {
+            /*.node =*/ gf->nodes[i],
+            /*.fused =*/ {},
+        };
+
+        // fuse only ops that start with these operations
+        // can be expanded when needed
+        if (node.op() == GGML_OP_ADD ||
+            node.op() == GGML_OP_NORM ||
+            node.op() == GGML_OP_RMS_NORM) {
+            ops[0] = node.op();
+
+            int f = i + 1;
+            while (f < n && f < i + MAX_FUSE) {
+                // conservatively allow fusing only these ops
+                // can be expanded when needed
+                if (gf->nodes[f]->op != GGML_OP_ADD &&
+                    gf->nodes[f]->op != GGML_OP_MUL &&
+                    gf->nodes[f]->op != GGML_OP_NORM &&
+                    gf->nodes[f]->op != GGML_OP_RMS_NORM) {
+                    break;
+                }
+                ops[f - i] = gf->nodes[f]->op;
+                f++;
+            }
+
+            f -= i;
+            for (; f > 1; f--) {
+                if (ggml_can_fuse(gf, i, ops, f)) {
+                    break;
+                }
+            }
+
+            // add the fused tensors into the node info so we can unfuse them later
+            for (int k = 1; k < f; k++) {
+                ++i;
+
+                // the .dst() becomes the last fused tensor
+                node.add_fused(gf->nodes[i]);
+            }
+        }
+
+        nodes.push_back(std::move(node));
+    }
+
+#if 1
+    // reorder to improve concurrency
+    const auto order = ggml_metal_graph_optimize_reorder(nodes);
+#else
+    std::vector<int> order(nodes.size());
+    for (size_t i = 0; i < nodes.size(); i++) {
+        order[i] = i;
+    }
+#endif
+
+    // unfuse
+    {
+        int j = 0;
+        for (const auto i : order) {
+            const auto & node = nodes[i];
+
+            gf->nodes[j++] = node.node;
+
+            for (auto * fused : node.fused) {
+                gf->nodes[j++] = fused;
+            }
+        }
+    }
+}
+```
+Again, we are not actually copying tensors or fusing anything at this stage, but
+the graph is arranged so that that backend can later recognize patterns that it
+can fuse together.
+
+After ggml_backend_graph_optimize. 
+```c++
+        // add inputs to the graph copy so that they are allocated by ggml-alloc at the start of the split
+        for (int j = 0; j < split->n_inputs; j++) {
+            assert(graph_copy->size > (graph_copy->n_nodes + 1));
+
+            // get the first input tensor for this split
+            struct ggml_tensor * input = split->inputs[j];
+            const size_t input_id = hash_id(input);
+            struct ggml_tensor * input_cpy = tensor_id_copy(input_id, split->backend_id, sched->cur_copy);
+
+            // add a dependency to the input source so that it is not freed before the copy is done
+            // Recall that we above updated the node src[j] to point to the copy. This
+            // copy tensor node is not part of the split graph and could be freed as it is
+            // seen as unused otherwise. So we create a view tensor to the original input tensor
+            // and set it as the source of the view. This creates a dependency in the graph
+            // so that that ggml-alloc will not free the original input tensor before the copy is done.
+            struct ggml_tensor * input_dep = ggml_view_tensor(sched->ctx, input);
+            input_dep->src[0] = input;
+
+            // Recall that node_backend_ids is an array of ints that stores the backend ids
+            // for nodes in the graph. We are setting index of the current position of 
+            // graph_copy->n_nodes to the backend id of the input tensor.
+            sched->node_backend_ids[graph_copy->n_nodes] = sched->hv_tensor_backend_ids[input_id];
+            graph_copy->nodes[graph_copy->n_nodes++] = input_dep;
+            // Notice the increment of n_nodes above.
+
+            // add a dependency to the input copy so that it is allocated at the start of the split
+            sched->node_backend_ids[graph_copy->n_nodes] = split->backend_id;
+            // Add the input copy to the graph copy
+            graph_copy->nodes[graph_copy->n_nodes++] = input_cpy;
+        }
+
+        for (int j = split->i_start; j < split->i_end; j++) {
+            assert(graph_copy->size > graph_copy->n_nodes);
+            sched->node_backend_ids[graph_copy->n_nodes] = tensor_backend_id(graph->nodes[j]);
+            graph_copy->nodes[graph_copy->n_nodes++] = graph->nodes[j];
+        }
+}
+```
 
 _wip_
 
