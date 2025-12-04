@@ -358,3 +358,55 @@ Or much simpler:
         struct ggml_tensor * logit = ggml_reshape_2d(ctx, data->logits, 1, data->logits->ne[0]);
         data->logits = ggml_get_rows(ctx, logit, max_idx);
 ```
+
+
+### Candidates mapping
+Lets say we havethe case where a previous sampler like top_k, or top_p, or now
+temp(0) has filtered the candidates.
+
+```console
+ Original vocab:     [0, 1, 2, 3, 4, ..., 31999]  (32000 tokens)
+```
+
+After top_k(k=5):
+```console
+    data->candidates: [42,   18,  99,   7, 123]    (5 token IDs)
+    data->logits:     [2.3, 1.8, 4.1, 0.9, 2.0]    (5 logit values)
+```
+
+After dist sampling from these 5 logits:
+```console
+    idx = 2  (sampled index 2 from the 5 candidates)
+    data->candidates: [42,   18,  99,   7, 123]    (5 token IDs)
+                                   ↑
+                                   2
+```
+But notice that 2 here is the index in the filtered candidates array!
+We need to map back: candidates[2] = 99 (the actual token ID in the vocabulary 
+which was the what top_k filtered out)
+```c++
+if (data->candidates != nullptr) {
+    // A previous sampler filtered candidates, so idx is an index into that filtered list
+
+    struct ggml_tensor * candidates = data->candidates;
+    // [42, 18, 99, 7, 123]
+
+    struct ggml_tensor * candidates_reshaped = ggml_view_2d(ctx,
+        candidates,
+        1,                              // width: 1 column
+        ggml_nelements(candidates),     // height: number of candidates (e.g., 5)
+        ggml_type_size(candidates->type), // row stride
+        0);                             // offset
+    // Reshape from [5] to [1, 5] so get_rows can work with it
+
+    // Use the reshaped candidates tensor to get the actual token ID using the
+    // index that this (the dist sampler) sampler produces (not shown above).
+    sampled_token = ggml_get_rows(ctx, candidates_reshaped, idx);
+    // idx = 2 → get row 2 → candidates[2] = 99
+    // This gives us the actual token ID, not the filtered index
+}
+```
+So, top_k filtered the candidates to 20 tokens, dist will select on, but is an
+index into the candidates that top_k filtered. It is not the token id which is
+we need. So we use the index and the candidates reshaped tensor with get_rows to
+get the value.
