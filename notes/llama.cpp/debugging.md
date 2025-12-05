@@ -90,3 +90,63 @@ reserved:
     }
 ```
 This can be placed after set_inputs if you want to see the input tensors.
+
+### Executing one layer at a time
+This can be useful when we want to isolate a layer and inspect and compare the
+logits it output with an original model.
+
+```c++
+    ggml_build_forward_expand(gf, inp->get_attn()->get_k_idxs());
+    ggml_build_forward_expand(gf, inp->get_attn()->get_v_idxs());
+    ggml_build_forward_expand(gf, inp->get_attn()->get_kq_mask());
+
+    ggml_tensor * inp_out_ids = build_inp_out_ids();
+
+    //for (int il = 0; il < n_layer; ++il) {
+    for (int il = 0; il < 1; ++il) {
+        struct ggml_tensor * inpSA = inpL;
+
+        // norm
+        cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, il);
+        cb(cur, "attn_norm", il);
+
+        if (hparams.is_recurrent(il)) {
+            // ssm layer //
+            cur = build_mamba2_layer(inp->get_recr(), cur, model, ubatch, il);
+        } else if (hparams.n_ff(il) == 0) {
+            // attention layer //
+            cur = build_attention_layer(cur, inp->get_attn(), model, n_embd_head, il);
+        } else {
+            cur = build_ffn_layer(cur, model, il);
+        }
+
+        //if (il == n_layer - 1 && inp_out_ids) {
+        if (il == 0) {
+            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+        }
+
+        // add residual
+        cur = ggml_add(ctx0, cur, inpSA);
+        cb(cur, "h_block_out", il);
+
+        // input for next layer
+        inpL = cur;
+    }
+
+    cur = inpL;
+
+    cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
+
+    cb(cur, "result_norm", -1);
+    res->t_embd = cur;
+
+    // lm_head
+    cur = build_lora_mm(model.output, cur);
+    cb(cur, "result_output", -1);
+    res->t_logits = cur;
+
+    ggml_build_forward_expand(gf, cur);
+}
+```
+Adding this here as it can be helpful for debugging.
