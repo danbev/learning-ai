@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to allocate graph\n");
         ggml_backend_sched_free(sched);
         ggml_backend_free(cpu_backend);
+        ggml_free(ctx);
         return 1;
     }
 
@@ -77,6 +78,8 @@ int main(int argc, char **argv) {
         printf("result: %1.f\n", buf[0]);
     }
 
+    ggml_backend_sched_free(sched);
+    ggml_backend_free(cpu_backend);
     ggml_free(ctx);
     return 0;
 }
