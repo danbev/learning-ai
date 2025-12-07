@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
         ggml_backend_get_default_buffer_type(cpu_backend)
     };
 
+
     size_t graph_size = ggml_graph_size(gf);
     ggml_backend_sched_t sched = ggml_backend_sched_new(backends, buffer_types, 1, graph_size, false, false);
     if (!sched) {
@@ -45,6 +46,11 @@ int main(int argc, char **argv) {
         ggml_backend_free(cpu_backend);
         return 1;
     }
+
+    // Just here to show that later in ggml_backend_sched_split_graph how a
+    // tensor can have a user assigned backend before the split graph planning
+    // phase.
+    ggml_backend_sched_set_tensor_backend(sched, a, cpu_backend);
     
     if (!ggml_backend_sched_alloc_graph(sched, gf)) {
         fprintf(stderr, "Failed to allocate graph\n");
