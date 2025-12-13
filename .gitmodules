@@ -4,6 +4,3 @@
 [submodule "fundamentals/llama.cpp/llama.cpp"]
 	path = fundamentals/llama.cpp/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp
-[submodule "fundamentals/pytorch/pybind-example/pybind11"]
-	path = fundamentals/pytorch/pybind-example/pybind11
-	url = https://github.com/pybind/pybind11.git
