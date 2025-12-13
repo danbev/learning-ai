@@ -8,24 +8,24 @@ static float ggml_get_float_value(const uint8_t * data, ggml_type type,
         const size_t * nb, size_t i0, size_t i1, size_t i2, size_t i3) {
     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
     float v;
-    if (type == GGML_TYPE_F16) {
-        v = ggml_fp16_to_fp32(*(const ggml_fp16_t *) &data[i]);
-    } else if (type == GGML_TYPE_F32) {
-        v = *(const float *) &data[i];
-    } else if (type == GGML_TYPE_I64) {
-        v = (float) *(const int64_t *) &data[i];
-    } else if (type == GGML_TYPE_I32) {
-        v = (float) *(const int32_t *) &data[i];
-    } else if (type == GGML_TYPE_I16) {
-        v = (float) *(const int16_t *) &data[i];
-    } else if (type == GGML_TYPE_I8) {
-        v = (float) *(const int8_t *) &data[i];
-    } else if (type == GGML_TYPE_BF16) {
-        v = ggml_compute_bf16_to_fp32(*(const ggml_bf16_t *) &data[i]);
-    } else {
-        GGML_ABORT("fatal error");
+    switch (type) {
+        case GGML_TYPE_F16:
+            return ggml_fp16_to_fp32(*(const ggml_fp16_t *) &data[i]);
+        case GGML_TYPE_F32:
+            return *(const float *) &data[i];
+        case GGML_TYPE_I64:
+            return (float) *(const int64_t *) &data[i];
+        case GGML_TYPE_I32:
+            return (float) *(const int32_t *) &data[i];
+        case GGML_TYPE_I16:
+            return (float) *(const int16_t *) &data[i];
+        case GGML_TYPE_I8:
+            return (float) *(const int8_t *) &data[i];
+        case GGML_TYPE_BF16:
+            return ggml_compute_bf16_to_fp32(*(const ggml_bf16_t *) &data[i]);
+        default:
+            GGML_ABORT("fatal error");
     }
-    return v;
 }
 
 static void print_tensor_ms(ggml_tensor * t) {
