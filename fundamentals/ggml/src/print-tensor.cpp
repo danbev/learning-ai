@@ -7,7 +7,6 @@
 static float ggml_get_float_value(const uint8_t * data, ggml_type type,
         const size_t * nb, size_t i0, size_t i1, size_t i2, size_t i3) {
     size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
-    float v;
     switch (type) {
         case GGML_TYPE_F16:
             return ggml_fp16_to_fp32(*(const ggml_fp16_t *) &data[i]);
@@ -33,7 +32,6 @@ static void print_tensor_ms(ggml_tensor * t) {
         printf("Tensor '%s', type: %s\n", t->name, ggml_type_name(t->type));
         printf("ne = [%lld %lld %lld %lld]\n", (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3]);
 
-        const int64_t d_model = t->ne[0];
         const int64_t total_elements = ggml_nelements(t);
         auto n_bytes = ggml_nbytes(t);
 
@@ -78,11 +76,7 @@ static void print_tensor(const char * name, ggml_backend_sched_t sched, ggml_cgr
     printf("Tensor '%s', type: %s\n", t->name, ggml_type_name(t->type));
     printf("ne = [%lld %lld %lld %lld]\n", (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3]);
 
-    const int64_t d_model = t->ne[0];
-    const int64_t total_elements = ggml_nelements(t);
-
-    auto n_bytes = ggml_nbytes(t);
-    // The tensor data type can be different so we read raw bytes.
+    size_t n_bytes = ggml_nbytes(t);
     std::vector<uint8_t> data_bytes(n_bytes);
 
     ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched, t);
@@ -90,18 +84,18 @@ static void print_tensor(const char * name, ggml_backend_sched_t sched, ggml_cgr
     ggml_backend_tensor_get_async(backend, t, data_bytes.data(), 0, n_bytes);
     ggml_backend_sched_synchronize(sched);
 
-    float tmp = 0.0;
+    float sum_sq = 0.0;
     uint8_t * d = data_bytes.data();
 
-    size_t values_count = 0;
+    size_t v_count = 0;
     for (int64_t i3 = 0; i3 < t->ne[3]; i3++) {
         for (int64_t i2 = 0; i2 < t->ne[2]; i2++) {
             for (int64_t i1 = 0; i1 < t->ne[1]; i1++) {
                 for (int64_t i0 = 0; i0 < t->ne[0]; i0++) {
                     const float v = ggml_get_float_value(d, t->type, t->nb, i0, i1, i2, i3);
-                    tmp += v * v;
+                    sum_sq += v * v;
 
-                    if (values_count++ < n_values_to_print) {
+                    if (v_count++ < n_values_to_print) {
                         printf("Tensor value at [%lld, %lld, %lld, %lld]: %.6f\n",
                             (long long)i3, (long long)i2, (long long)i1, (long long)i0, v);
                     }
@@ -110,7 +104,7 @@ static void print_tensor(const char * name, ggml_backend_sched_t sched, ggml_cgr
         }
     }
 
-    double mean_sq = tmp / (double) total_elements;
+    double mean_sq = sum_sq / (double) ggml_nelements(t);
     printf("%s mean_sq = %.10f\n", t->name, mean_sq);
 }
 
@@ -172,7 +166,7 @@ int main() {
         float data[6] = {6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
         ggml_backend_tensor_set(t, data, 0, ggml_nbytes(t));
 
-        print_tensor(t->name, sched, c_graph, 2);
+        print_tensor(t->name, sched, c_graph, 1);
 
         ggml_backend_buffer_free(b);
         ggml_backend_free(backend);
