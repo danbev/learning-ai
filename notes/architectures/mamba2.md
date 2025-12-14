@@ -259,3 +259,175 @@ So with Mamba-1 we can have different decay rates for each dimension, but in Mam
 we have the same decay rate for all dimensions. But this is per layer so it
 different layer can have different decay rates and with multiple layers say 64
 layers this gives 64 different timescales accross the model.
+
+### repeat vs repeat_interleaved issue
+The grouping in Mamba is done precisely to take advantage of GPU parallelization
+and circumvent the memory and computational constraints associated with
+processing the entire hidden dimension $D$ within a single, coherent SSM block.
+
+By splitting D into G independent groups (4096\8 = 512), the large operation is
+broken into G smaller, completely independent operations. These G operations can
+be executed simultaneously across the thousands of cores of a GPU.
+
+So the hidden dimension D might be 4096, and lets say we have 8 groups so that
+gives us 512 dimensions per group. 
+Now, B and C are not 4096 dimensional tensors. B for example is responsible for
+mixing the current input x with the state update h_t-1.
+
+```
+D       = 4096         // Full hidden dimension
+N       = 64           // State dimension per group
+G       = 8            // Number of groups
+D_group = D / G = 512  // Dimension/features per group
+N_total = 512          // 64 x 8
+```
+
+And the input x is usually 4096 dimensional vector.
+
+X is:
+```console
+x = [x₀, x₁, x₅₁₁, x₅₁₂, x₁₀₂₃, ...,  x₄₀₉₅]  // 4096-dim input vector
+      group 1        group 2        group 8
+```
+
+The GPU executes 8 separate, parallel State Space Model (SSM) recurrences, one
+for each group. Each of these groups only has access to a 512 chuck of the x
+input vector.
+
+The purpose of the B matrix is to project the x vector (4096-dim, D) into the
+state dimension which is 64 dimensions (N). 
+
+For an example of a real model:
+```console
+(gdb) p B->ne
+$3 = {128, 8, 1, 1}
+```
+So that is 8 groups, and the 128 represents the state dimension and the internal
+projection factor, in this case 2 * 64. This projection is done often at the
+same time as the z/gate, B and C, and dt are projected together in a single
+operation which results in a tensor. This tensor is the split into the different
+matrices.
+
+So after the extraction B will have the following shape:
+```console
+shape: [128, 8] (ggml format)
+128 = N = 64 * num_heads (2 heads)
+8   = D / group_size (4096 / 512)
+
+  0 [0................127]
+  1 [0................127]
+  ...
+  7 [0................127]
+```
+So this B matrix is storing weights for each of the 8 groups, and each group
+has 128 dimensions because there are 2 heads. The hidden dimension is 4096 and
+the state dimension is 64.
+
+The B matrix is then exapanded by repeating it for each head.
+```python
+B = B.repeat(1, 1, self.num_heads // self.n_groups, 1)
+             ↑  ↑              ↑                    ↑
+         batch  |       group/head dim            state dim
+              seq
+
+B = B.repeat(1, 1, 2, 1)
+Input B shape:  [batch, seq_len,  8, 128]
+Output B shape: [batch, seq_len, 16, 128]
+```
+So we have the following layout for B before repeating:
+```console
+Group 0: +------+------+-- ... --+------+
+         |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 1  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 2  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 3  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 4  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 5  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 6  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 7  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+```
+And after repeating we have:
+```console
+Group 0: +------+------+-- ... --+------+
+         |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 1  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 2  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 3  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 4  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 5  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 6  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 7  |  W1  |  W2  |   ...   |  W8  |   (Each W is 128-dim)
+         +------+------+-- ... --+------+
+Group 8  |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 1)
+         +------+------+-- ... --+------+
+Group 9  |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 2)
+         +------+------+-- ... --+------+
+Group 10 |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 3)
+         +------+------+-- ... --+------+
+Group 11 |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 4)
+         +------+------+-- ... --+------+
+Group 12 |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 5)
+         +------+------+-- ... --+------+
+Group 13 |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 6)
+         +------+------+-- ... --+------+
+Group 14 |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 7)
+         +------+------+-- ... --+------+
+Group 15 |  W1  |  W2  |   ...   |  W8  |   (Same data as Group 8)
+         +------+------+-- ... --+------+
+```
+
+Now, if we had use repeat_interleaved we would get:
+```console
+Group 0: +------+------+-- ... --+------+
+         |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 8  |  W1  |  W2  |   ...   |  W8  | (Same data as Group 0)
+         +------+------+-- ... --+------+
+Group 1  |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 9  |  W1  |  W2  |   ...   |  W8  | (Same data as Group 1)
+         +------+------+-- ... --+------+
+Group 2  |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 10 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 2)
+         +------+------+-- ... --+------+
+Group 3  |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 11 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 3)
+         +------+------+-- ... --+------+
+Group 4  |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 12 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 4)
+         +------+------+-- ... --+------+
+Group 5  |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 13 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 5)
+         +------+------+-- ... --+------+
+Group 6  |  W1  |  W2  |   ...   |  W8  | 
+         +------+------+-- ... --+------+
+Group 14 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 6)
+         +------+------+-- ... --+------+
+Group 7  |  W1  |  W2  |   ...   |  W8  |
+         +------+------+-- ... --+------+
+Group 15 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 7)
+         +------+------+-- ... --+------+
+```
+The repeated values would be interleaved and this can cause issues. The model
+was trained on one specific format, either repeated or interleaved and if get
+this part wrong the computation will still work but the model will not works as
+expected the values it is using could be the incorrect values for the groups.
