@@ -427,7 +427,9 @@ Group 7  |  W1  |  W2  |   ...   |  W8  |
 Group 15 |  W1  |  W2  |   ...   |  W8  | (Same data as Group 7)
          +------+------+-- ... --+------+
 ```
-The repeated values would be interleaved and this can cause issues. The model
-was trained on one specific format, either repeated or interleaved and if get
-this part wrong the computation will still work but the model will not works as
-expected the values it is using could be the incorrect values for the groups.
+Notice how the groups are now interleaved and this can cause issues. The model
+was trained on one specific format, either repeated or interleaved and breaking
+this can cause issues. The computation itself will be "fine", that is there will
+not be any errors, but the numerical outcome is corrupted because the weights
+used do not correspond to the weights the network was trained on for that
+specific channel.
