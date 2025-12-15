@@ -10,13 +10,46 @@ So chat templates are only about input to the LLM, taking the input from the
 client program transforming the input into a format that matches a format that
 the model in question was trained on. If the client program later wants to use a
 different model only the chat template needs to be updated to match the new
-model but the rest of the client code can stay the same?
+model but the rest of the client code can stay the same.
+
+This is called chat template and is about multi-turn conversation, a list of
+user and assistent messages). The template is basically a set of rules that
+specifies how to take this list of user/assistent list and transform it into
+a single coherent string of text that the LLM can understand.
+
+So, as a user/client we would have a list of chat messages:
+```console
+[
+  {'role': 'user', 'content': 'Hello'},
+  {'role': 'assistant', 'content': 'Hi there'}
+]
+```
+This is feed into the templating engine and the output might be something
+like the following:
+```console
+<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You are a helpful assistant.<|eot_id|>
+<|start_header_id|>user<|end_header_id|>
+What is the capital of France?<|eot_id|>
+<|start_header_id|>assistant<|end_header_id|>
+```
+And this would then be tokenized and passed to llama_decode. So this is purely
+a pre-processing step.
 
 Now, just avoid any potential confusion here with grammars and schemas in
 llama.cpp. These make sure that the tokens that the inference engine outputs
 adhere to the grammar. I'm actually just talking about grammars here as for
 json-schemas they are actually converted into a grammar using
-`json_schema_to_grammar`.
+`json_schema_to_grammar`. So those are about the output of the model and chat
+templates handle the user/client program input to transform the input into a
+format that the model was trained on.
+
+And to clarify, the complete interaction is always parsed with the new
+interactions including past messages so that llama.cpp will see the complete
+prompt each time. This does not mean that it needs to reprocess the prompt but
+it need to check the tokens and positions of those tokens in the batch to know
+if it can reuses existing KV-cache entries for the sequence. But it is good
+keep this in mind when looking into the template processing code.
 
 For example, if we look at the [meta-llama/Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-70B-Instruct/blob/main/tokenizer_config.json) model, we can
 see that it contains the following chat template in its tokenizer_config.json:
@@ -205,8 +238,8 @@ common_chat_templates_ptr common_chat_templates_init(
 ```
 So we can see that we have strings for a default template and one for too usage.
 And `has_explicit_template` is set to true if we pass in a template from 
-`params.chat_template`. TODO: I wonder if this is important with regards to the
-bos token and eos tokens and how they are handled.
+`params.chat_template`. 
+
 In this case the arguments to this function are (including the default parameters
 that we did not pass):
 ```console
@@ -275,7 +308,8 @@ To print out the complete string do:
 ```
 So since we have a template we will set this as the `default_template_src`, and
 this will also set `has_explicit_template` to true.
-Following that we have and notice that we are doing the same thing but this
+
+Following that we have this, and notice that we are doing the same thing but this
 time passing in a name of the template; `tool_use`:
 ```c++
         str = llama_model_chat_template(model, /* name */ "tool_use");
@@ -284,9 +318,9 @@ time passing in a name of the template; `tool_use`:
             has_explicit_template = true;
         }
 ```
-So there might be a default template and or a named template for tool use, in
-both cases the is counted as an explicit template. In this session there is
-not tool use template.
+So there might be a default template or a named template for tool use, in both
+cases the is counted as an explicit template. In this session there is not a tool
+use template.
 
 Following that there is a check if the `default_template_src` is empty or if it
 the source is simply the string 'chatml':
@@ -311,12 +345,11 @@ Next we have the following check:
             "{%- if false %}");
     }
 ```
-So if the the current `default_template_src` contains the string
-`<|channel|>` and also the string `in message.content or` then it will replace
-with `{%- if false %}`.
-TOOD: readup on on gpt-oss channel tags and chat template in general.
+So if the current `default_template_src` contains the string `<|channel|>` and
+also the string `in message.content or` then it will replace with `{%- if false %}`.
+TOOD: read up on gpt-oss channel tags and chat template in general.
 
-Folloing that we have:
+Following that we have:
 ```c++
     std::string token_bos = bos_token_override;
     std::string token_eos = eos_token_override;
@@ -344,6 +377,7 @@ So we have a lambda `get_token` which will take a token id, and name of the toke
 and a jinja variables name. Notice that this will first check that the variable
 is used in the template and log a warning if that is not the case and return
 an empty string.
+
 And it will then call `common_token_to_piece` which will convert the token to
 a `piece` of text representing the token. 
 ```c++
@@ -353,8 +387,7 @@ std::string common_token_to_piece(
                        bool          special = true);
 ```
 So the `get_token` lambda will get the string representation of the token it
-passes into it. Perhaps a name like `token_to_string` or `token_to_text` would
-have been more descriptive.
+passes into it. 
 
 And notice that this will call `llama_token_to_piece` and pass in 0 as the left
 strip argument.
@@ -1467,3 +1500,31 @@ $16 = std::vector of length 1, capacity 1 = {std::vector of length 87, capacity 
     200007, 200006, 1428, 200008, 4827, 382, 290, 9029, 328, 42009, 30, 200007, 200006, 173781}}
 ```
 
+
+### Reasoning 
+Above said that the template processing was a pre-processor step, where the
+list of user/assitent interactions are passed to the templating engine and it
+formats the prompt string that will then be tokenized and sent to llama_decode.
+
+With resoning models hidden tags, which become tokens that are special tokens in
+the language vocab, are injected into the template which the model understands.
+```console
+<...history...>\n<|start_header_id|>user<|end_header_id|>\n
+How many tires are on 15 cars?<|eot_id|>\n
+<|start_header_id|>assistant<|end_header_id|>\n
+<think>
+```
+That is tokenized and the llama_decode is called and the model will work normally
+in an autoregressive manner. The difference is that the this response is not
+the "public" answer but the models internal reasoning process.
+```
+<think>
+I need to multiply,Internal reasoning token 1
+...
+</think> or <end_thought>
+N+1,The answer is 60.
+```
+The complete response is not intended for the end user and we need logit to
+handle/hide the internal part. So the client code might for example check for
+the end of thinking token (</think> or <end_thought>) or perhaps just suppress
+the tokens between <think> and </think>.
