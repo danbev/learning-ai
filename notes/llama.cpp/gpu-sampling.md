@@ -558,3 +558,548 @@ the logits to the host even for sequences that have backend samplers configured.
 One solution is to pass the batch into output_reserve so that it can inspect the
 batch and see what types of outputs are needed. This way it can allocate only
 what is needed. This is what I have implemented in the PR now.
+
+### Updated backend sampling
+A had a few weeks away from this work while working on another task but this
+section will do through the updates that have been made in the mean time.
+
+llama-cli has been replaced with a more interactive cli and the old version is
+now named llama-completion which is what we will be looking at here. The first
+interesting line is the following:
+
+```c++
+    auto llama_init = common_init_from_params(params);
+```
+```c++
+common_init_result_ptr common_init_from_params(common_params & params);
+
+using common_init_result_ptr = std::unique_ptr<common_init_result>;
+```
+
+unit_result looks like this:
+```c++
+struct common_init_result {
+    common_init_result(common_params & params);
+    ~common_init_result();
+
+    llama_model * model();
+    llama_context * context();
+    common_sampler * sampler(llama_seq_id seq_id);
+
+    std::vector<llama_adapter_lora_ptr> & lora();
+
+    void free_context();
+
+private:
+    struct impl;
+    std::unique_ptr<impl> pimpl;
+};
+```
+Notice that there is a sampler method that takes a sequence id and returns the
+sampler for that sequence which we will review later.
+
+Next we create a new common_init_result and use it with the unique pointer
+constructor. I wonder if we should prefer make_unique here instead which cannot
+throw after allocating the memory?
+```c++
+common_init_result_ptr common_init_from_params(common_params & params) {
+    common_init_result_ptr res(new common_init_result(params));
+```
+So lets take a look at the constructor:
+```c++
+common_init_result::common_init_result(common_params & params) : pimpl(new impl{}) {
+```
+We can see that this will create a new unique_ptr (pimpl) which is a pimpl idiom.
+```c++
+    llama_model * model = llama_model_load_from_file(params.model.path.c_str(), mparams);
+    if (model == NULL) {
+        return;
+    }
+
+    pimpl->model.reset(model);
+```
+The implementation struct looks like this:
+```c++
+struct common_init_result::impl {
+    impl() = default;
+    ~impl() = default;
+
+    llama_model_ptr   model;
+    llama_context_ptr context;
+
+    std::vector<llama_adapter_lora_ptr> lora;
+
+    std::vector<common_sampler_ptr> samplers;
+    std::vector<llama_sampler_seq_config> samplers_seq_config;
+};
+```
+So it has a model, a context, lora, samplers, and sampler sequence configs which
+look the same as before but this struct is completely new.
+
+The reset is resetting the model unique pointer nothing else.
+
+Next we have the following which is related to sampling, and recall that we
+are still in common_init_result:
+```c++
+    // updates params.sampling
+    // TODO: fix naming
+    common_init_sampler_from_model(model, params.sampling);
+```
+```c++
+// TODO: move to common/sampling
+static void common_init_sampler_from_model(
+    const llama_model * model,
+    common_params_sampling & sparams) {
+
+    const uint64_t config = sparams.user_sampling_config;
+```
+user_sampling_config is defined as:
+```c++
+    uint64_t user_sampling_config = 0; // bitfield to track user-specified samplers
+```
+
+Next, a few lambda functions are defined:
+```c++
+    auto get_int32 = [&](const char * key, int32_t & dst, uint64_t user_config) {
+        // bitwise and to check if the user has already set this manually, if
+        // so skip.
+        if (config & user_config) {
+            return;
+        }
+
+        char buf[64] = {0};
+        // get value from model metadata to see if it has a recommended value 
+        // for this key.
+        if (llama_model_meta_val_str(model, key, buf, sizeof(buf)) > 0) {
+            char * end = nullptr;
+            int32_t v = strtol(buf, &end, 10);
+            if (end && end != buf) {
+                dst = v;
+            }
+        }
+    };
+
+    auto get_float = [&](const char * key, float & dst, uint64_t user_config) {
+        if (config & user_config) {
+            return;
+        }
+
+        char buf[128] = {0};
+        if (llama_model_meta_val_str(model, key, buf, sizeof(buf)) > 0) {
+            char * end = nullptr;
+            float v = strtof(buf, &end);
+            if (end && end != buf) {
+                dst = v;
+            }
+        }
+    };
+```
+```c++
+enum common_params_sampling_config : uint64_t {
+    COMMON_PARAMS_SAMPLING_CONFIG_SAMPLERS        = 1 << 0,
+    COMMON_PARAMS_SAMPLING_CONFIG_TOP_K           = 1 << 1,
+    COMMON_PARAMS_SAMPLING_CONFIG_TOP_P           = 1 << 2,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIN_P           = 1 << 3,
+    COMMON_PARAMS_SAMPLING_CONFIG_XTC_PROBABILITY = 1 << 4,
+    COMMON_PARAMS_SAMPLING_CONFIG_XTC_THRESHOLD   = 1 << 5,
+    COMMON_PARAMS_SAMPLING_CONFIG_TEMP            = 1 << 6,
+    COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_LAST_N  = 1 << 7,
+    COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_REPEAT  = 1 << 8,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT        = 1 << 9,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_TAU    = 1 << 10,
+    COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_ETA    = 1 << 11,
+};
+```
+```c++
+    // Sampling sequence string of sampler chain to use and the order
+    // same check using a bitwise and to see if the user has set this manually.
+    if (!(config & common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_SAMPLERS)) {
+        char buf[512] = {0};
+
+        if (llama_model_meta_val_str(model, llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_SEQUENCE), buf, sizeof(buf)) > 0) {
+            // the value of the field is a semicolon separated list of sampler names
+            const std::vector<std::string> sampler_names = string_split<std::string>(std::string(buf), ';');
+            if (!sampler_names.empty()) {
+                // set the samplers from the model
+                sparams.samplers = common_sampler_types_from_names(sampler_names, true);
+            }
+        }
+    }
+```
+```c++
+    enum llama_model_meta_key {
+        LLAMA_MODEL_META_KEY_SAMPLING_SEQUENCE,
+        LLAMA_MODEL_META_KEY_SAMPLING_TOP_K,
+        LLAMA_MODEL_META_KEY_SAMPLING_TOP_P,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIN_P,
+        LLAMA_MODEL_META_KEY_SAMPLING_XTC_PROBABILITY,
+        LLAMA_MODEL_META_KEY_SAMPLING_XTC_THRESHOLD,
+        LLAMA_MODEL_META_KEY_SAMPLING_TEMP,
+        LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_LAST_N,
+        LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_REPEAT,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_TAU,
+        LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA,
+    };
+```
+Next we will go through all the rest of the sampling parameters:
+```c++
+    get_int32(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_TOP_K),           sparams.top_k,           common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_TOP_K);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_TOP_P),           sparams.top_p,           common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_TOP_P);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_MIN_P),           sparams.min_p,           common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_MIN_P);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_XTC_PROBABILITY), sparams.xtc_probability, common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_XTC_PROBABILITY);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_XTC_THRESHOLD),   sparams.xtc_threshold,   common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_XTC_THRESHOLD);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_TEMP),            sparams.temp,            common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_TEMP);
+    get_int32(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_LAST_N),  sparams.penalty_last_n,  common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_LAST_N);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_PENALTY_REPEAT),  sparams.penalty_repeat,  common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_PENALTY_REPEAT);
+    get_int32(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT),        sparams.mirostat,        common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_TAU),    sparams.mirostat_tau,    common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_TAU);
+    get_float(llama_model_meta_key_str(LLAMA_MODEL_META_KEY_SAMPLING_MIROSTAT_ETA),    sparams.mirostat_eta,    common_params_sampling_config::COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_ETA);
+}
+```
+So that functio is all about setting sampling parameters from the models.
+
+Back in common_init_result we have:
+```c++
+    if (params.sampling.ignore_eos && llama_vocab_eos(vocab) == LLAMA_TOKEN_NULL) {
+        LOG_WRN("%s: warning: vocab does not have an EOS token, ignoring --ignore-eos\n", __func__);
+        params.sampling.ignore_eos = false;
+    }
+```
+params.sampling.ignore_eos = true tells the sampler that even if it sees the EOS
+token, don't stop, just pick the next most likely token and keep going.
+But if the models vocab does not even have an EOS token this setting does not
+make sense so we warn the user and disable it.
+
+Next we go through all the tokens in the vocabulary and and where it finds stop
+tokens is set the logit bias for that token to -INFINITY:
+```c++
+    // initialize once
+    for (llama_token i = 0; i < llama_vocab_n_tokens(vocab); i++) {
+        // if end of generation token, set logit bias to -infinity
+        if (llama_vocab_is_eog(vocab, i)) {
+            LOG_INF("%s: added %s logit bias = %f\n", __func__, common_token_to_piece(vocab, i).c_str(), -INFINITY);
+            params.sampling.logit_bias_eog.push_back({i, -INFINITY});
+        }
+    }
+
+    if (params.sampling.ignore_eos) {
+        // add EOG biases to the active set of logit biases
+        params.sampling.logit_bias.insert(
+                params.sampling.logit_bias.end(),
+                params.sampling.logit_bias_eog.begin(),
+                params.sampling.logit_bias_eog.end());
+    }
+```
+Next we resize the samplers, and their configurations to the number of sequences
+that can be active:
+```c++
+    // init the backend samplers as part of the context creation
+    pimpl->samplers.resize(cparams.n_seq_max);
+    pimpl->samplers_seq_config.resize(cparams.n_seq_max);
+```
+Next for each sequence we initialize the sampler and set its configuration:
+```c++
+    for (int i = 0; i < (int) cparams.n_seq_max; ++i) {
+        pimpl->samplers[i].reset(common_sampler_init(model, params.sampling));
+        pimpl->samplers_seq_config[i] = { i, common_sampler_get(pimpl->samplers[i].get()) };
+    }
+```
+Recall that samplers is a vector of unique pointers to and we are calling
+common_sampler_init in common/sampling.cpp. And recall the samplers_seq_config
+if just a mapping of a sequence id to a sampler chain.
+```c++
+struct common_sampler * common_sampler_init(const struct llama_model * model, const struct common_params_sampling & params) {
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+
+    llama_sampler_chain_params lparams = llama_sampler_chain_default_params();
+
+    lparams.no_perf = params.no_perf;
+
+    llama_sampler * chain = llama_sampler_chain_init(lparams);
+
+    bool grammar = false;
+    std::vector<llama_sampler *> samplers;
+    ...
+    if (params.has_logit_bias()) {
+        samplers.push_back(
+            llama_sampler_init_logit_bias(llama_vocab_n_tokens(vocab), params.logit_bias.size(), params.logit_bias.data()));
+    }
+```
+And then the rest of the CPU samplers are added to the chain.
+
+So the above was adding the CPU samplers to the chain but no GPU samplers have
+been added yet.
+Next if backend sampling is enabled then we pass the samplers to the context
+params so that they can be used in the llama-context constructor where they are
+needed.
+```c++
+    // TODO: temporarily gated behind a flag
+    if (params.sampling.backend_sampling) {
+        cparams.samplers   = pimpl->samplers_seq_config.data();
+        cparams.n_samplers = pimpl->samplers_seq_config.size();
+    }
+
+    llama_context * lctx = llama_init_from_model(model, cparams);
+```
+Notice that the context parameters samplers is using the same samplers that
+were created above for the CPU samplers.
+
+```c++
+    try {
+        auto * ctx = new llama_context(*model, params);
+        return ctx;
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: failed to initialize the context: %s\n", __func__, err.what());
+    }
+```
+```c++
+llama_context::llama_context(
+        const llama_model & model,
+              llama_context_params params) :
+    model(model),
+    balloc(std::make_unique<llama_batch_allocr>(model.hparams.n_pos_per_embd())) {
+    ...
+
+    // Initialize backend samplers here so they are part of the sampling graph
+    // before the reserve passes run later in this function. This avoids a later
+    // re-reserve when graph nodes change.
+    if (params.samplers != nullptr && params.n_samplers > 0) {
+        for (size_t i = 0; i < params.n_samplers; ++i) {
+            const auto & config = params.samplers[i];
+
+            if (llama_sampler_chain_get(config.sampler, -1) == nullptr) {
+                throw std::runtime_error("the backend samplers must be of type llama_sampler_chain");
+            }
+
+            if (set_sampler(config.seq_id, config.sampler)) {
+                const int n_samplers = llama_sampler_chain_n(config.sampler);
+
+                LLAMA_LOG_INFO("%s: setting backend sampler for seq_id %d (n = %d)\n", __func__, config.seq_id, n_samplers);
+            }
+        }
+    }
+
+```
+set_sampler is new to me:
+```c++
+bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
+    LLAMA_LOG_DEBUG("%s: seq_id = %d, sampler = %p\n", __func__, (int) seq_id, (void *) sampler);
+
+    // So the sampler must not be null, must have the backend functions, and
+    // must have a non-zero number of samplers in the chain.
+    const bool can_offload =
+        sampler &&
+        sampler->iface->backend_init &&
+        sampler->iface->backend_apply &&
+        llama_sampler_chain_n(sampler) > 0;
+
+    if (sampler && can_offload) {
+        // get the backend buffer type of the models output device.
+        ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(model.dev_output());
+        auto * host_buft = ggml_backend_dev_host_buffer_type(model.dev_output());
+        if (host_buft) {
+            buft = host_buft;
+        }
+
+        // initialize the sampler for backend sampling
+        sampler->iface->backend_init(sampler, buft);
+
+        sampling.samplers[seq_id] = sampler;
+
+        return true;
+    }
+
+    if (sampler && !can_offload) {
+        LLAMA_LOG_WARN("%s: sampler '%s' for seq_id = %d, cannot be offloaded to the backend\n", __func__, llama_sampler_name(sampler), seq_id);
+        sampling.samplers.erase(seq_id);
+        return false;
+    }
+
+    sampling.samplers.erase(seq_id);
+
+    return true;
+}
+```
+Notice that this is where `backend_init` is called on the samplers.
+
+All backend samplers inherit from llama_sampler_backend:
+```c++
+struct llama_sampler_logit_bias : public llama_sampler_backend {
+    const int32_t n_vocab;
+
+    const std::vector<llama_logit_bias> logit_bias;
+
+    std::vector<llama_logit_bias> to_search;
+
+    struct ggml_tensor * inp_logit_bias;
+    struct ggml_tensor * inp_logit_idxs;
+
+    ggml_context_ptr        inp_ctx;
+    ggml_backend_buffer_ptr inp_buf;
+};
+```
+```c++
+// common backend sampler functionality
+//
+// +name : means that the sampler is supported and will run on the backend
+// -name : means that a ggml operator is not supported by the backend
+//
+struct llama_sampler_backend {
+    llama_sampler_backend(const char * name) : name(name), name_ext(name), is_init(false), support(false) {}
+
+    const char * get_name() {
+        if (!is_init) {
+            return name.c_str();
+        }
+
+        if (support) {
+            name_ext = "+" + name;
+        } else {
+            name_ext = "-" + name;
+        }
+
+        return name_ext.c_str();
+    }
+
+    void init(bool support) {
+        GGML_ASSERT(this->is_init == false);
+
+        this->is_init = true;
+        this->support = support;
+    }
+
+private:
+    std::string name;
+    std::string name_ext;
+
+    bool is_init;
+    bool support;
+};
+```
+So lets take a look at the llama_sampler_logit_bias backend init function:
+```c++
+static bool llama_sampler_logit_bias_backend_init(
+        struct llama_sampler       * smpl,
+        ggml_backend_buffer_type_t   buft) {
+    auto * sctx = (llama_sampler_logit_bias *) smpl->ctx;
+
+    // This will set is_init and support to true
+    sctx->init(true);
+
+    if (sctx->logit_bias.empty()) {
+        return true;
+    }
+
+    ggml_init_params params = {
+        /*.mem_size   =*/ 2*ggml_tensor_overhead(),
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+
+    sctx->inp_ctx.reset(ggml_init(params));
+
+    const size_t n = sctx->logit_bias.size();
+
+    sctx->inp_logit_bias = ggml_new_tensor_2d(sctx->inp_ctx.get(), GGML_TYPE_F32, 1, n);
+    ggml_set_name(sctx->inp_logit_bias, "logit_bias");
+    ggml_set_input(sctx->inp_logit_bias);
+
+    sctx->inp_logit_idxs = ggml_new_tensor_1d(sctx->inp_ctx.get(), GGML_TYPE_I32, n);
+    ggml_set_name(sctx->inp_logit_idxs, "logit_idxs");
+    ggml_set_input(sctx->inp_logit_idxs);
+
+    // Allocate all tensors from our context to the backend
+    sctx->inp_buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(sctx->inp_ctx.get(), buft));
+
+    return true;
+}
+```
+Notice that the addition of the init function for backend samplers.
+
+And llama_sampler_chain has also been updated to include the is_init flag,
+and a info struct with a boolean to indicate if the sampler is a backend sampler:
+```c++
+struct llama_sampler_chain {
+    llama_sampler_chain_params params;
+
+    // has .backend_init() been called?
+    bool is_init = false;
+
+    struct info {
+        bool is_backend;
+
+        llama_sampler * ptr;
+    };
+
+    std::vector<info> samplers;
+
+    // timing
+
+    mutable int64_t t_sample_us;
+
+    mutable int32_t n_sample;
+};
+```
+So bascially all the CPU samplers are initialized first, and then if there exist
+backend samplers support for them, and backend sampling is enbabled then a 
+backend sampler will be initialized for that sampler and it will set on the
+llama-context sampling_info instance:
+```console
+(gdb) p this.sampling
+$16 = {samplers = std::map with 0 elements, logits = 0x0, logits_size = 0, sampled = 0x0, sampled_size = 0, probs = 0x0, 
+  probs_size = 0, candidates = 0x0, candidates_size = 0, outputs_capacity = 0, logits_count = std::vector of length 0, capacity 0, 
+  probs_count = std::vector of length 0, capacity 0, candidates_count = std::vector of length 0, capacity 0, 
+  token_ids_full_vocab = std::vector of length 0, capacity 0}
+(gdb) p this
+$17 = (llama_context * const) 0x555556443ec0
+```
+And the CPU sampler chain will check this:
+```c++
+static void llama_sampler_chain_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
+    auto * chain = (llama_sampler_chain *) smpl->ctx;
+
+    time_meas tm(chain->t_sample_us, chain->params.no_perf);
+
+    bool is_backend = chain->is_init;
+
+    for (auto & smpl : chain->samplers) {
+        /// smpl is actually of type llama_sampler_chain::info here
+        if (is_backend && smpl.is_backend) {
+            continue;
+        }
+
+        is_backend = false;
+
+        if (smpl.ptr->iface->apply == nullptr) {
+            continue;
+        }
+
+        llama_sampler_apply(smpl.ptr, cur_p);
+    }
+}
+```
+So if the sampler was initialized as a backend sampler we skip it here.
+
+And simliarly for the backend apply function we only process the backend samplers:
+```c++
+static void llama_sampler_chain_backend_apply(
+          struct llama_sampler      * smpl,
+          struct ggml_context       * ctx,
+          struct ggml_cgraph        * gf,
+          struct llama_sampler_data * data) {
+    auto * chain = (llama_sampler_chain *) smpl->ctx;
+
+    GGML_ASSERT(chain->is_init && "llama_sampler_chain_backend_init() not called");
+
+    for (auto & smpl : chain->samplers) {
+        if (!smpl.is_backend) {
+            break;
+        }
+
+        if (smpl.ptr->iface->backend_apply) {
+            smpl.ptr->iface->backend_apply(smpl.ptr, ctx, gf, data);
+        }
+    }
+}
+```
