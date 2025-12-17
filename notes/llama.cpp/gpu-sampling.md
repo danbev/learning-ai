@@ -1103,3 +1103,47 @@ static void llama_sampler_chain_backend_apply(
     }
 }
 ```
+In build_sampling there have also been a few changes:
+```c++
+    // add a dummy row of logits
+    // this trick makes the graph static, regardless of which samplers are activated
+    // this is important in order to minimize graph reallocations
+    ggml_tensor * logits_t = ggml_pad(ctx0, res->t_logits, 0, 1, 0, 0);
+```
+Previously this was just using res->t_logits directly.
+So differenent sequences can have different samplers configured. And all sequences
+might not be active in every ubatch. We might have something like this:
+```console
+ubatch 1: sequences [0, 2, 5] are active
+ubatch 2: sequences [1, 3]    are active
+```
+Without this padding the graph structure would change depending on what sequence
+is currently being processed as t_logit shape would change, it would first
+be [32000, 3] and then [32000, 2].
+So with the padding we go from:
+```
+[32000, n_active_sequences]
+```
+To:
+```
+[32000, n_active_sequences + 1]
+```
+And we process all samplers regardless if that are active or not, active meaining
+that the sequence they belong to is part of the current ubatch.
+And the row idx is determined like this:
+```c++
+        // inactive samplers always work on the first row
+        const auto row_idx = seq_to_logit_row.find(seq_id) != seq_to_logit_row.end() ? it->second : 0;
+```
+If the seq_id of the current sampler being iterated over is not in the current
+ubatch then we use row 0 which is the dummy row we added.
+So lets we have samplers for sequences [0, 1, 2] configured, but only sequences
+[0, 2] are active:
+```console
+logits_t after padding:
+row 0: [dummy data]   ← Sampler for seq_id=1 processes this (inactive)
+row 1: [seq 0 logits] ← Sampler for seq_id=0 processes this (active)
+row 2: [seq 2 logits] ← Sampler for seq_id=2 processes this (active)
+```
+The graph always has 3 sampler operations, but only the results for active
+sequences are used.
