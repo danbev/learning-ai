@@ -66,10 +66,8 @@ Processing chunk with tokens 0 to 512
 Logits shape: torch.Size([1, 6, 131072])
 Last token logits shape: (131072,)
 Vocab size: 131072
-First 10 logits: [-4.78125 -4.78125 -1.25    -4.78125 -4.78125 -4.78125 -4.78125 -4.78125
- -4.78125 -6.5    ]
-Last 10 logits: [-4.03125  -3.46875  -4.5625   -5.625    -4.5      -4.0625   -3.53125
- -5.5      -1.921875 -4.46875 ]
+First 10 logits: [-4.78125  -4.78125 -1.25   -4.78125 -4.78125 -4.78125 -4.78125 -4.78125 -4.78125  -6.5     ]
+Last 10 logits:  [-4.03125  -3.46875 -4.5625 -5.625    -4.5    -4.0625  -3.53125 -5.5     -1.921875 -4.46875 ]
 Top 5 predictions:
   Token 1605 (' not'): 9.812500
   Token 2036 (' my'): 8.437500
@@ -146,7 +144,8 @@ The following package versions are required for the conversion:
 ### Model Conversion
 ```console
 (venv) $ export MODEL_PATH=~/models/Devstral-Small-2-24B-Instruct-2512
-(venv) $ make-convert-model-bf16
+(venv) $ python convert_hf_to_gguf.py --mistral-format --outfile models/ --outtype=bf16 ${MODEL_PATH}
+(venv) $ python convert_hf_to_gguf.py --mistral-format --outfile models/ --mmproj ${MODEL_PATH}
 ```
 
 ```console
@@ -164,7 +163,6 @@ Saving data to data/llamacpp-Devstral-Small-2-24B-Instruct-2512.bin
 First 10 logits: -6.039290 -6.039550 0.213944 -6.042861 -6.039347 -6.043080 -6.039300 -6.039615 -6.039384 -3.323704
 Last 10 logits: -4.996169 -3.164495 -3.793222 -6.617929 -4.842769 -5.592521 -3.666847 -4.626977 -5.998837 -5.684978
 ```
-
 _wip_
 
 ### Model verification
