@@ -48,6 +48,93 @@ Saved bin logits to: data/pytorch-Devstral-Small-2-24B-Instruct-2512.bin
 Saved txt logist to: data/pytorch-Devstral-Small-2-24B-Instruct-2512.txt
 ```
 
+But if I run this using the mistral transformers package I get different logits:
+```console
+(venv) $ python run-devstral.py
+Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'max_position_embeddings'}
+/home/dbevenius/work/llama.cpp-staging/venv/lib/python3.12/site-packages/torch/cuda/__init__.py:285: UserWarning:
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+
+  warnings.warn(
+Loading weights: 100%|█| 1145/1145 [02:51<00:00,  6.68it/s, Materializing param=model.vision_tower.transformer.layers.23.ffn_norm.weig
+Input tokens: tensor([[    1, 22177,  1044,  2036,  2564,  1395]], device='cuda:0')
+Input text: 'Hello, my name is'
+Tokenized: ['<s>', 'Hello', ',', ' my', ' name', ' is']
+Processing chunk with tokens 0 to 512
+Logits shape: torch.Size([1, 6, 131072])
+Last token logits shape: (131072,)
+Vocab size: 131072
+First 10 logits: [-4.78125 -4.78125 -1.25    -4.78125 -4.78125 -4.78125 -4.78125 -4.78125
+ -4.78125 -6.5    ]
+Last 10 logits: [-4.03125  -3.46875  -4.5625   -5.625    -4.5      -4.0625   -3.53125
+ -5.5      -1.921875 -4.46875 ]
+Top 5 predictions:
+  Token 1605 (' not'): 9.812500
+  Token 2036 (' my'): 8.437500
+  Token 1261 (' a'): 8.312500
+  Token 1395 (' is'): 7.468750
+  Token 1278 (' the'): 7.031250
+```
+And notice that the model actually does add a BOS token at the start of the input!
+
+What is different between how our python run script runs the model versus
+the one above?
+This is the python script used above:
+```python
+import torch
+from transformers import (
+    Mistral3ForConditionalGeneration,
+    MistralCommonBackend,
+)
+import numpy as np
+
+model_path = "/home/dbevenius/models/Devstral-Small-2-24B-Instruct-2512"
+
+tokenizer = MistralCommonBackend.from_pretrained(model_path, trust_remote_code=True)
+model = Mistral3ForConditionalGeneration.from_pretrained(model_path, device_map="auto", trust_remote_code=True)
+
+device = next(model.parameters()).device
+prompt = "Hello, my name is"
+input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+
+print(f"Input tokens: {input_ids}")
+print(f"Input text: {repr(prompt)}")
+print(f"Tokenized: {tokenizer.convert_ids_to_tokens(input_ids[0])}")
+
+batch_size = 512
+
+with torch.no_grad():
+    past = None
+    outputs = None
+    for i in range(0, input_ids.size(1), batch_size):
+        print(f"Processing chunk with tokens {i} to {i + batch_size}")
+        chunk = input_ids[:, i:i + batch_size]
+        outputs = model(chunk.to(model.device), past_key_values=past, use_cache=True)
+        past = outputs.past_key_values
+
+    logits = outputs.logits # type: ignore
+
+    # Extract logits for the last token (next token prediction)
+    last_logits = logits[0, -1, :].float().cpu().numpy()
+
+    print(f"Logits shape: {logits.shape}")
+    print(f"Last token logits shape: {last_logits.shape}")
+    print(f"Vocab size: {len(last_logits)}")
+
+    # Print some sample logits for quick verification
+    print(f"First 10 logits: {last_logits[:10]}")
+    print(f"Last 10 logits: {last_logits[-10:]}")
+
+    # Show top 5 predicted tokens
+    top_indices = np.argsort(last_logits)[-5:][::-1]
+    print("Top 5 predictions:")
+    for idx in top_indices:
+        token = tokenizer.decode([idx])
+        print(f"  Token {idx} ({repr(token)}): {last_logits[idx]:.6f}")
+```
+
 ### Model Conversion setup
 The following package versions are required for the conversion:
 ```console
@@ -59,43 +146,8 @@ The following package versions are required for the conversion:
 ### Model Conversion
 ```console
 (venv) $ export MODEL_PATH=~/models/Devstral-Small-2-24B-Instruct-2512
-(venv) $ pushd examples/model-conversion
 (venv) $ make-convert-model-bf16
-Model path: /home/dbevenius/models/Devstral-Small-2-24B-Instruct-2512
-Model name: Devstral-Small-2-24B-Instruct-2512
-Data  type: bf16
-Converted model path:: ../../models/Devstral-Small-2-24B-Instruct-2512.gguf
-
-Metadata override:
-INFO:hf-to-gguf:Loading model: Devstral-Small-2-24B-Instruct-2512
-Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'max_position_embeddings'}
-INFO:hf-to-gguf:Model architecture: Mistral3ForConditionalGeneration
-Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'max_position_embeddings'}
-...
-INFO:hf-to-gguf:Set model parameters
-INFO:hf-to-gguf:gguf: context length = 393216
-INFO:hf-to-gguf:gguf: embedding length = 5120
-INFO:hf-to-gguf:gguf: feed forward length = 32768
-INFO:hf-to-gguf:gguf: head count = 32
-INFO:hf-to-gguf:gguf: key-value head count = 8
-INFO:hf-to-gguf:gguf: rope scaling type = YARN
-INFO:hf-to-gguf:gguf: rope theta = 100000000.0
-INFO:hf-to-gguf:gguf: rms norm epsilon = 1e-05
-INFO:hf-to-gguf:gguf: file type = 32
-...
-DEBUG:hf-to-gguf:chkhsh: 0e9433cbbb161f89e264eb32e8e64bfe69e834973ffca5d41d3948a604a3e2a3
-DEBUG:hf-to-gguf:tokenizer.ggml.pre: 'pixtral'
-DEBUG:hf-to-gguf:chkhsh: 0e9433cbbb161f89e264eb32e8e64bfe69e834973ffca5d41d3948a604a3e2a3
-...
-Writing:   0%|                                                                                         | 0.00/47.1G [00:00<?, ?byte/s]
-/home/dbevenius/work/llama.cpp-staging/examples/model-conversion/../../convert_hf_to_gguf.py:10432:
-UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors.
-This means writing to this tensor will result in undefined behavior. You may want to copy the array
-to protect its data or make it writable before converting it to a tensor. This type of warning will
-be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:213.)
-  return torch.from_numpy(byteswap_tensor(tensor.mmap_bytes(), numpy_dtype)).view(dtype).reshape(tensor.shape)
 ```
-I don't think I've see the above warning before.
 
 ```console
 (venv) $ export CONVERTED_MODEL=/home/dbevenius/work/llama.cpp-staging/models/Devstral-Small-2-24B-Instruct-2512.gguf
@@ -103,119 +155,16 @@ I don't think I've see the above warning before.
 
 ### Run the converted model
 ```console
-(venv) $ make causual-run-converted_model
+(venv) $ make causal-run-converted_model
+...
 Input prompt: "Hello, my name is"
 Tokenized prompt (6 tokens): <s> (1)Hello (22177), (1044) my (2036) name (2564) is (1395)
-```
-Notice that this is using 6 tokens whereas the original model run used 5 tokens.
-So the original version is not adding a beginning of sequence token but our
-converted model is.
-
-### Tokenization
-Like mentioned above the converted model is adding a beginning of sequence token
-but the original model is not. 
-There is no `add_bos` parameter in the models tokenizer_config.json file but
-in the conversion the tokenizer pre type is being set to `pixtral`:
-```console
-DEBUG:hf-to-gguf:tokenizer.ggml.pre: 'pixtral'
-```
-And if we look in src/llama-vocab.cpp we can see the following:
-```c++
-            } else if (
-                    tokenizer_pre == "llama3"   ||
-                    tokenizer_pre == "llama-v3" ||
-                    tokenizer_pre == "llama-bpe"||
-                    tokenizer_pre == "falcon3"  ||
-                    tokenizer_pre == "falcon-h1" ||
-                    tokenizer_pre == "pixtral"  ||
-                    tokenizer_pre == "midm-2.0" ||
-                    tokenizer_pre == "lfm2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_LLAMA3;
-                ignore_merges = true;
-                add_bos = true;
-```
-So this is why the converted model is adding a beginning of sequence token.
-If we add the following line to the conversion script:
-```python
-self.gguf_writer.add_add_bos_token(False)
-```
-Then the converted model will not add the beginning of sequence token and this
-is actually done for at least one other model conversion:
-
-```console
-Input prompt: "Hello, my name is"
-Tokenized prompt (5 tokens): Hello (22177), (1044) my (2036) name (2564) is (1395)
 Vocab size: 131072
 Saving data to data/llamacpp-Devstral-Small-2-24B-Instruct-2512.bin
-First 10 logits: -6.455563 -6.455366  0.609470 -6.458275 -6.455173 -6.458473 -6.455353 -6.455137 -6.455266 -4.424087
-Last 10 logits:  -4.885547 -3.908254 -4.559022 -6.890335 -5.780299 -5.246257 -4.287138 -5.208242 -5.936634 -5.580862
-```
-```console
-Input text: 'Hello, my name is'
-Input tokens: tensor([[22177,  1044,  2036,  2564,  1395]], device='cuda:0')
-First 10 logits: [-7.5     -7.5      2.      -7.5     -7.5     -7.5     -7.5     -7.5     -7.5     -7.09375]
-Last 10 logits:  [-4.90625 -4.90625 -6.40625 -8.4375  -6.78125 -6.15625 -5.0625  -7.09375 -5.375   -6.3125 ]
+First 10 logits: -6.039290 -6.039550 0.213944 -6.042861 -6.039347 -6.043080 -6.039300 -6.039615 -6.039384 -3.323704
+Last 10 logits: -4.996169 -3.164495 -3.793222 -6.617929 -4.842769 -5.592521 -3.666847 -4.626977 -5.998837 -5.684978
 ```
 
+_wip_
 
 ### Model verification
-```console
-🔍 GGML Model Validation for model  Devstral-Small-2-24B-Instruct-2512
-========================================
-PyTorch logits  : data/pytorch-Devstral-Small-2-24B-Instruct-2512.bin
-llama.cpp logits: data/llamacpp-Devstral-Small-2-24B-Instruct-2512.bin
-
-Top 10 PyTorch logits: [5.96875 5.46875 5.125   5.0625  5.      4.90625 4.6875  4.59375 4.34375
- 4.34375]
-Top 10 llama.cpp logits: [7.0536804 6.418002  6.1969543 6.1952853 5.5399556 5.4969754 5.3937917
- 4.834832  4.829475  4.7304   ]
-Max absolute difference: 5.9784
-✅ OK: Lightweight model check successful!
-       Ok to proceed with NMSE check...
-Model name: Devstral-Small-2-24B-Instruct-2512
-PyTorch logits file: data/pytorch-Devstral-Small-2-24B-Instruct-2512.bin
-llama.cpp logits file: data/llamacpp-Devstral-Small-2-24B-Instruct-2512.bin
-📊 NMSE Check for Model Comparison
-==================================================
-Reference (ground truth): data/pytorch-Devstral-Small-2-24B-Instruct-2512.bin
-Test (to evaluate):       data/llamacpp-Devstral-Small-2-24B-Instruct-2512.bin
-
-Loading reference logits...
-  Shape: (131072,), Type: float32
-Loading test logits...
-  Shape: (131072,), Type: float32
-
-✅ Shapes match: (131072,)
-
-📈 METRICS
-==============================
-MSE (Mean Squared Error):     1.178915e+00
-Reference Variance:           2.508655e+00
-NMSE:                         4.699391e-01
-Max Absolute Error:           5.978355
-Mean Absolute Error:          0.864473
-NMSE (dB):                    -3.28 dB
-
-🎯 INTERPRETATION
-==============================
-❌ Poor match
-
-📋 GUIDANCE
-==============================
-❌ PROBLEMATIC: Large differences detected.
-   Check your conversion process for potential issues.
-   Verify you're using the same model weights.
-
-📚 NMSE BENCHMARKS
-==============================
-< 1e-6:  Essentially identical
-< 1e-4:  Excellent (typical for good conversions)
-< 1e-3:  Very good
-< 1e-2:  Good (acceptable for most use cases)
-< 0.1:   Acceptable (may need verification)
-> 1.0:   Poor (worse than random)
-
-❌ RESULT: NEEDS REVIEW (NMSE = 4.70e-01)
-make: *** [Makefile:63: causal-verify-logits] Error 1
-```
-_wip_
