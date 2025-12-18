@@ -1,19 +1,6 @@
 ### Devstral 2 Model conversion
-This model can be found in this Hugging Face model repository:
+This model can be found in this Hugging Face model repository:  
 https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512
-
-
-It is not totally clear to me if this is a new version of Devstral 1 which I think
-is https://huggingface.co/mistralai/Devstral-Small-2505, but this model is
-multimodal which is a significant different. I was able to run this previous
-model and verify the logits (though I did have to make a change in the
-convert_hf_to_gguf.py script to get the conversion to work.
-```console
- 2418         if path_tekken_json.is_file() and not path_tokenizer_json.is_file():
- 2419             self._set_vocab_mistral()
-```
-I needed to add a return to line 2419 so that the script does not continue which
-leads to an error.
 
 
 ### Downloading the model files
@@ -48,7 +35,8 @@ Saved bin logits to: data/pytorch-Devstral-Small-2-24B-Instruct-2512.bin
 Saved txt logist to: data/pytorch-Devstral-Small-2-24B-Instruct-2512.txt
 ```
 
-But if I run this using the mistral transformers package I get different logits:
+But if I run this using the mistral transformers package I get different logits
+and a different number of tokens (the BOS token is added):
 ```console
 (venv) $ python run-devstral.py
 Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'max_position_embeddings'}
@@ -77,8 +65,6 @@ Top 5 predictions:
 ```
 And notice that the model actually does add a BOS token at the start of the input!
 
-What is different between how our python run script runs the model versus
-the one above?
 This is the python script used above:
 ```python
 import torch
@@ -132,6 +118,28 @@ with torch.no_grad():
         token = tokenizer.decode([idx])
         print(f"  Token {idx} ({repr(token)}): {last_logits[idx]:.6f}")
 ```
+I've update our conversion script to match the above and I can get the same
+logits with it now:
+```console
+Model class: Mistral3ForConditionalGeneration
+Input tokens: tensor([[    1, 22177,  1044,  2036,  2564,  1395]], device='cuda:0')
+Input text: 'Hello, my name is'
+Tokenized: ['<s>', 'Hello', ',', ' my', ' name', ' is']
+Processing chunk with tokens 0 to 512
+Logits shape: torch.Size([1, 6, 131072])
+Last token logits shape: (131072,)
+Vocab size: 131072
+First 10 logits: [-4.78125 -4.78125 -1.25   -4.78125 -4.78125 -4.78125 -4.78125 -4.78125 -4.78125  -6.5    ]
+Last 10 logits:  [-4.03125 -3.46875 -4.5625 -5.625   -4.5     -4.0625  -3.53125 -5.5     -1.921875 -4.46875 ]
+Top 5 predictions:
+  Token 1605 (' not'): 9.812500
+  Token 2036 (' my'): 8.437500
+  Token 1261 (' a'): 8.312500
+  Token 1395 (' is'): 7.468750
+  Token 1278 (' the'): 7.031250
+```
+So this matches the original model output now and should be good for verifying
+the converted model later.
 
 ### Model Conversion setup
 The following package versions are required for the conversion:
