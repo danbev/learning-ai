@@ -1528,3 +1528,373 @@ The complete response is not intended for the end user and we need logit to
 handle/hide the internal part. So the client code might for example check for
 the end of thinking token (</think> or <end_thought>) or perhaps just suppress
 the tokens between <think> and </think>.
+
+### PEG Parser
+For some background, most models are trained using Python tools that rely on a
+specific templating language called Jinja2. In llama.cpp we don't use Jinja2 but
+instead minja which is a C++ implementation of a similar templating language.
+
+So my understanding is the the Jinja templates can be processes and do pretty
+advanced things what are not possible with just the declaration of the chat
+template itself.
+
+If we take a look at completion.cpp we first initialize the chat templates:
+```c++
+    auto chat_templates = common_chat_templates_init(model, params.chat_template);
+    ...
+```
+This will load the models chat template if it has one or use the one specified
+by the user.
+```console
+(gdb) p chat_templates->template_default->source_
+$5 = "{%- if tools %}\n    {{- '<|im_start|>system\\n' }}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- messages[0]['content'] }}\n    {%- else %}\n        {{- 'You are Qwen, created by Alibaba Cloud. You are a helpful assistant.' }}\n    {%- endif %}\n    {{- \"\\n\\n# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\\n<tool_call>\\n{\\\"name\\\": <function-name>, \\\"arguments\\\": <args-json-object>}\\n</tool_call><|im_end|>\\n\" }}\n{%- else %}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}\n    {%- else %}\n        {{- '<|im_start|>system\\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- for message in messages %}\n    {%- if (message.role == \"user\") or (message.role == \"system\" and not loop.first) or (message.role == \"assistant\" and not message.tool_calls) %}\n        {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {{- '<|im_start|>' + message.role }}\n        {%- if message.content %}\n", ' ' <repeats 12 times>, "{{- '\\n' + message.content }}\n        {%- endif %}\n        {%- for tool_call in message.tool_calls %}\n", ' ' <repeats 12 times>, "{%- if tool_call.function is defined %}\n", ' ' <repeats 16 times>, "{%- set tool_call = tool_call.function %}\n", ' ' <repeats 12 times>, "{%- endif %}\n", ' ' <repeats 12 times>, "{{- '\\n<tool_call>\\n{\"name\": \"' }}\n", ' ' <repeats 12 times>, "{{- tool_call.name }}\n", ' ' <repeats 12 times>, "{{- '\", \"arguments\": ' }}\n", ' ' <repeats 12 times>, "{{- tool_call.arguments | tojson }}\n", ' ' <repeats 12 times>, "{{- '}\\n</tool_call>' }}\n        {%- endfor %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != \"tool\") %}\n", ' ' <repeats 12 times>, "{{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- message.content }}\n        {{- '\\n</tool_response>' }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \"tool\") %}\n", ' ' <repeats 12 times>, "{{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n' }}\n{%- endif %}\n"
+```
+
+Later the prompt string is created using:
+```c++
+    std::string prompt;
+    {
+        if (params.conversation_mode && params.enable_chat_template) {
+            if (!params.system_prompt.empty()) {
+                chat_add_and_format("system", params.system_prompt);
+            }
+
+            if (!params.prompt.empty()) {
+------->       chat_add_and_format("user", params.prompt);
+            } else {
+                waiting_for_first_input = true;
+            }
+
+            if (!params.system_prompt.empty() || !params.prompt.empty()) {
+                common_chat_templates_inputs inputs;
+                inputs.use_jinja = g_params->use_jinja;
+                inputs.messages = chat_msgs;
+                inputs.add_generation_prompt = !params.prompt.empty();
+
+                prompt = common_chat_templates_apply(chat_templates.get(), inputs).prompt;
+            }
+        } else {
+            // otherwise use the prompt as is
+            prompt = params.prompt;
+        }
+
+        if (params.interactive_first || !prompt.empty() || session_tokens.empty()) {
+            LOG_DBG("tokenize the prompt\n");
+            embd_inp = common_tokenize(ctx, prompt, true, true);
+        } else {
+            LOG_DBG("use session tokens\n");
+            embd_inp = session_tokens;
+        }
+
+        LOG_DBG("prompt: \"%s\"\n", prompt.c_str());
+        LOG_DBG("tokens: %s\n", string_from(ctx, embd_inp).c_str());
+    }
+```
+And the chat_add_and_format lambda is defined as:
+```c++
+    auto chat_add_and_format = [&chat_msgs, &chat_templates](const std::string & role, const std::string & content) {
+        common_chat_msg new_msg;
+        new_msg.role = role;
+        new_msg.content = content;
+        auto formatted = common_chat_format_single(chat_templates.get(), chat_msgs, new_msg, role == "user", g_params->use_jinja);
+        chat_msgs.push_back(new_msg);
+        LOG_DBG("formatted: '%s'\n", formatted.c_str());
+        return formatted;
+    };
+```
+```console
+(gdb) p new_msg
+$7 = {role = "user", content = "Hello my name is?", content_parts = std::vector of length 0, capacity 0, 
+  tool_calls = std::vector of length 0, capacity 0, reasoning_content = "", tool_name = "", tool_call_id = ""}
+```
+So we will be calling common_chat_format_single with the current chat message
+and also passing in the chat template.
+```c++
+std::string common_chat_format_single(
+        const struct common_chat_templates * tmpls,
+        const std::vector<common_chat_msg> & past_msg,
+        const common_chat_msg & new_msg,
+        bool add_ass,
+        bool use_jinja) {
+        ...
+
+    auto fmt_new_msg = common_chat_templates_apply(tmpls, inputs).prompt;
+```
+```c++
+common_chat_params common_chat_templates_apply(
+    const struct common_chat_templates * tmpls,
+    const struct common_chat_templates_inputs & inputs)
+{
+    GGML_ASSERT(tmpls != nullptr);
+    return inputs.use_jinja
+        ? common_chat_templates_apply_jinja(tmpls, inputs)
+        : common_chat_templates_apply_legacy(tmpls, inputs);
+}
+```
+
+```c++
+static common_chat_params common_chat_templates_apply_jinja(
+    const struct common_chat_templates        * tmpls,
+    const struct common_chat_templates_inputs & inputs)
+{
+    ...
+    // Hermes 2/3 Pro, Qwen 2.5 Instruct (w/ tools)
+    if (src.find("<tool_call>") != std::string::npos && params.json_schema.is_null()) {
+        return common_chat_params_init_hermes_2_pro(tmpl, params);
+    }
+```
+In the above code `src` is the template what we showed above and there are a
+number of if statements that search for specific tags in the template to determine
+which model this template belongs to. I guess this is safter than trying to
+match the models name as it is possible for the user to specify the template
+and it might make this more flexible and less brittle as if the tempalte that
+shipped with the model has an issue it can be fixed by the user.
+
+Next lets look at the common_chat_params_init_hermes_2_pro function:
+```c++
+static common_chat_params common_chat_params_init_hermes_2_pro(const common_chat_template & tmpl,
+    const struct templates_params & inputs) {
+    common_chat_params data;
+```
+
+```c++
+struct common_chat_params {
+    common_chat_format                  format = COMMON_CHAT_FORMAT_CONTENT_ONLY;
+    std::string                         prompt;
+    std::string                         grammar;
+    bool                                grammar_lazy = false;
+    bool                                thinking_forced_open = false;
+    std::vector<common_grammar_trigger> grammar_triggers;
+    std::vector<std::string>            preserved_tokens;
+    std::vector<std::string>            additional_stops;
+    std::string                         parser;
+};
+```
+
+```c++
+
+    json extra_context = json {
+        {"enable_thinking", inputs.enable_thinking},
+    };
+    extra_context.update(inputs.extra_context);
+```
+
+```console
+(gdb) pjson extra_context
+{
+    "enable_thinking": true
+}
+```
+Next the template is applied using minja:
+```c++
+    data.prompt = apply(tmpl, inputs, /* messages_override =*/ std::nullopt, /* tools_override= */ std::nullopt, extra_context);
+```
+And this will result in the following string:
+```console
+(gdb) p data.prompt
+$12 = "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nHello my name is?<|im_end|>\n<|im_start|>assistant\n"
+```
+So apply is the minja processing step. This is taking the input messages and
+rendering them according to the template.
+
+Now, if the prompt had ended with `<think>\n` then we would set `thinking_forced_open`
+to true:
+```c++
+    data.format = COMMON_CHAT_FORMAT_HERMES_2_PRO;
+    if (string_ends_with(data.prompt, "<think>\n")) {
+        if (!extra_context["enable_thinking"]) {
+            data.prompt += "</think>";
+        } else {
+            data.thinking_forced_open = true;
+        }
+    }
+```
+Notice that we set the output of the minja template processing as data.prompt.
+
+And if we have tools defined then we build up a PEG grammar. What we are doing
+is not setting `data.grammar` as opposed to the minja template processing step
+where we set `data.prompt`.
+And recall, perhaps, that a grammar is applied after the decoding, before 
+the samplers are applied and enforce that the output tokens conform to the
+grammar. And below is building up the rules for this grammar:
+```c++
+    if (!inputs.tools.is_null()) {
+        // (content)?(<tool_call>{"name": "foo", "arguments": {"a": 1}}</tool_call>)*
+        data.grammar_lazy = inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_REQUIRED;
+
+        // build_grammer is a function which accepts a lambda to build up the grammar string
+        data.grammar = build_grammar([&](const common_grammar_builder & builder) {
+            std::vector<std::string> tool_rules;
+            std::vector<std::string> tool_call_alts;
+            std::vector<std::string> escaped_names;
+
+            // For each tool defined in the inputs
+            foreach_function(inputs.tools, [&](const json & tool) {
+                const auto & function = tool.at("function");
+                std::string name = function.at("name");
+                auto parameters = function.at("parameters");
+                builder.resolve_refs(parameters);
+
+                tool_rules.push_back(builder.add_schema(name + "-call", {
+                    {"type", "object"},
+                    {"properties", json {
+                        {"name", json {{"const", name}}},
+                        {"arguments", parameters},
+                    }},
+                    {"required", json::array({"name", "arguments"})},
+                }));
+
+                tool_call_alts.push_back(builder.add_rule(
+                    name + "-function-tag",
+                    "\"<function\" ( \"=" + name + "\" | \" name=\\\"" + name + "\\\"\" ) \">\" space " +
+                    builder.add_schema(name + "-args", parameters) + " "
+                    "\"</function>\" space"));
+
+                data.grammar_triggers.push_back({
+                    COMMON_GRAMMAR_TRIGGER_TYPE_WORD,
+                    "<function=" + name + ">",
+                });
+                auto escaped_name = regex_escape(name);
+                data.grammar_triggers.push_back({
+                    COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN,
+                    "<function\\s+name\\s*=\\s*\"" + escaped_name + "\"",
+                });
+                escaped_names.push_back(escaped_name);
+            });
+```
+```c++
+            auto any_tool_call = builder.add_rule("any_tool_call", "( " + string_join(tool_rules, " | ") + " ) space");
+            std::vector<std::string> alt_tags {
+                any_tool_call,
+                "\"<tool_call>\" space "     + any_tool_call + " \"</tool_call>\"",
+                // The rest is just to accommodate common "good bad" outputs.
+                "\"<function_call>\" space " + any_tool_call + " \"</function_call>\"",
+                "\"<response>\"  space "     + any_tool_call + " \"</response>\"",
+                "\"<tools>\"     space "     + any_tool_call + " \"</tools>\"",
+                "\"<json>\"      space "     + any_tool_call + " \"</json>\"",
+                "\"<xml>\"      space "     + any_tool_call + " \"</xml>\"",
+                "\"<JSON>\"      space "     + any_tool_call + " \"</JSON>\"",
+            };
+            auto wrappable_tool_call = builder.add_rule("wrappable_tool_call", "( " + string_join(alt_tags, " | ") + " ) space");
+            tool_call_alts.push_back(wrappable_tool_call);
+            tool_call_alts.push_back(
+                "( \"```\\n\" | \"```json\\n\" | \"```xml\\n\" ) space " + wrappable_tool_call + " space \"```\" space ");
+            auto tool_call = builder.add_rule("tool_call", string_join(tool_call_alts, " | "));
+            builder.add_rule("root",
+                std::string(data.thinking_forced_open ? "( \"</think>\" space )? " : "") +
+                (inputs.parallel_tool_calls ? "(" + tool_call + ")+" : tool_call));
+            // Trigger on some common known "good bad" outputs (only from the start and with a json that's about a specific argument name to avoid false positives)
+            data.grammar_triggers.push_back({
+                COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_FULL,
+                // If thinking_forced_open, then we capture the </think> tag in the grammar,
+                // (important for required tool choice) and in the trigger's first capture (decides what is sent to the grammar)
+                std::string(data.thinking_forced_open ? "[\\s\\S]*?(</think>\\s*)" : "(?:<think>[\\s\\S]*?</think>\\s*)?") + (
+                    "\\s*("
+                    "(?:<tool_call>"
+                    "|<function"
+                    "|(?:```(?:json|xml)?\n\\s*)?(?:<function_call>|<tools>|<xml><json>|<response>)?"
+                    "\\s*\\{\\s*\"name\"\\s*:\\s*\"(?:" + string_join(escaped_names, "|") + ")\""
+                    ")"
+                    ")[\\s\\S]*"
+                ),
+            });
+            data.preserved_tokens = {
+                "<think>",
+                "</think>",
+                "<tool_call>",
+                "</tool_call>",
+                "<function",
+                "<tools>",
+                "</tools>",
+                "<response>",
+                "</response>",
+                "<function_call>",
+                "</function_call>",
+                "<json>",
+                "</json>",
+                "<JSON>",
+                "</JSON>",
+                "```",
+                "```json",
+                "```xml",
+            };
+        });
+    }
+
+    return data;
+}
+```
+```console
+(gdb) p data.grammar
+$5 = "any-tool-call ::= ( get-weather-call ) space\nchar ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\nget-weather-args ::= \"{\" space get-weather-args-location-kv ( \",\" space ( get-weather-args-unit-kv ) )? \"}\" space\nget-weather-args-location-kv ::= \"\\\"location\\\"\" space \":\" space string\nget-weather-args-unit ::= (\"\\\"celsius\\\"\" | \"\\\"fahrenheit\\\"\") space\nget-weather-args-unit-kv ::= \"\\\"unit\\\"\" space \":\" space get-weather-args-unit\nget-weather-call ::= \"{\" space get-weather-call-name-kv \",\" space get-weather-call-arguments-kv \"}\" space\nget-weather-call-arguments ::= \"{\" space get-weather-call-arguments-location-kv ( \",\" space ( get-weather-call-arguments-unit-kv ) )? \"}\" space\nget-weather-call-arguments-kv ::= \"\\\"arguments\\\"\" space \":\" space get-weather-call-arguments\nget-weather-call-arguments-location-kv ::= \"\\\"location\\\"\" space \":\" space string\nget-weather-call-arguments-unit ::= (\"\\\"celsius\\\"\" | \"\\\"fahrenheit\\\"\") space\nget-weather-call-arguments-unit-kv ::= \"\\\"unit\\\"\" space \":\" space get-weather-call-arguments-unit\nget-weather-call-name ::= \"\\\"get_weather\\\"\" space\nget-weather-call-name-kv ::= \"\\\"name\\\"\" space \":\" space get-weather-call-name\nget-weather-function-tag ::= \"<function\" ( \"=get_weather\" | \" name=\\\"get_weather\\\"\" ) \">\" space get-weather-args \"</function>\" space\nroot ::= tool-call\nspace ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\nstring ::= \"\\\"\" char* \"\\\"\" space\ntool-call ::= get-weather-function-tag | wrappable-tool-call | ( \"```\\n\" | \"```json\\n\" | \"```xml\\n\" ) space wrappable-tool-call space \"```\" space \nwrappable-tool-call ::= ( any-tool-call | \"<tool_call>\" space any-tool-call \"</tool_call>\" | \"<function_call>\" space any-tool-call \"</function_call>\" | \"<response>\"  space any-tool-call \"</response>\" | \"<tools>\"     space any-tool-call \"</tools>\" | \"<json>\"      space any-tool-call \"</json>\" | \"<xml>\"      space any-tool-call \"</xml>\" | \"<JSON>\"      space any-tool-call \"</JSON>\" ) space\n"
+
+```
+This unreadble mess is the GBNF which clean up looks something like this:
+```console
+root ::= tool-call
+
+tool-call ::=
+      get-weather-function-tag
+    | wrappable-tool-call
+    | ( "```\n" | "```json\n" | "```xml\n" ) space wrappable-tool-call space "```" space
+
+wrappable-tool-call ::=
+    ( any-tool-call
+    | "<tool_call>"     space any-tool-call "</tool_call>"
+    | "<function_call>" space any-tool-call "</function_call>"
+    | "<response>"      space any-tool-call "</response>"
+    | "<tools>"         space any-tool-call "</tools>"
+    | "<json>"          space any-tool-call "</json>"
+    | "<xml>"           space any-tool-call "</xml>"
+    | "<JSON>"          space any-tool-call "</JSON>"
+    ) space
+
+# If we had more tools, they would be listed here like: ( get-weather-call | get-stock-call )
+
+any-tool-call ::= ( get-weather-call ) space
+
+get-weather-call ::= "{" space get-weather-call-name-kv "," space get-weather-call-arguments-kv "}" space
+
+get-weather-call-name-kv      ::= "\"name\"" space ":" space get-weather-call-name
+get-weather-call-name         ::= "\"get_weather\"" space
+
+get-weather-call-arguments-kv ::= "\"arguments\"" space ":" space get-weather-call-arguments
+get-weather-call-arguments    ::= "{" space get-weather-call-arguments-location-kv ( "," space ( get-weather-call-arguments-unit-kv ) )? "}" space
+
+get-weather-call-arguments-location-kv ::= "\"location\"" space ":" space string
+get-weather-call-arguments-unit-kv     ::= "\"unit\""     space ":" space get-weather-call-arguments-unit
+get-weather-call-arguments-unit        ::= ("\"celsius\"" | "\"fahrenheit\"") space
+
+get-weather-function-tag ::= "<function" ( "=get_weather" | " name=\"get_weather\"" ) ">" space get-weather-args "</function>" space
+get-weather-args         ::= "{" space get-weather-args-location-kv ( "," space ( get-weather-args-unit-kv ) )? "}" space
+
+string ::= "\"" char* "\"" space
+char   ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+space  ::= | " " | "\n"{1,2} [ \t]{0,20}
+```
+
+So this common_chat_params will be returned and this is what is then uses to
+set the sparams grammer, grammar_lazy, and grammar_triggers so that when we
+create the sampler chain the grammar will be applied after decoding.
+
+Later in sampler_sampler we have:
+```c++
+    // check if it the sampled token fits the grammar (grammar-based rejection sampling)
+    {
+        llama_token_data       single_token_data       = { id, 1.0f, 0.0f };
+        llama_token_data_array single_token_data_array = { &single_token_data, 1, -1, false };
+
+        llama_sampler_apply(grmr, &single_token_data_array);
+
+        const bool is_valid = single_token_data_array.data[0].logit != -INFINITY;
+        if (is_valid) {
+            return id;
+        }
+    }
+```
+In src/llama-grammar.cpp we have the grammar apply implementation:
+```c++
+void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_data_array * cur_p) {
+    GGML_ASSERT(grammar.vocab != nullptr);
+```
+_wip_
