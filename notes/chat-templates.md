@@ -236,7 +236,7 @@ common_chat_templates_ptr common_chat_templates_init(
 
     bool has_explicit_template = !chat_template_override.empty();
 ```
-So we can see that we have strings for a default template and one for too usage.
+So we can see that we have strings for a default template and one for tool usage.
 And `has_explicit_template` is set to true if we pass in a template from 
 `params.chat_template`. 
 
@@ -319,8 +319,8 @@ time passing in a name of the template; `tool_use`:
         }
 ```
 So there might be a default template or a named template for tool use, in both
-cases the is counted as an explicit template. In this session there is not a tool
-use template.
+cases this is counted as an explicit template. In this session there is no tool
+template.
 
 Following that there is a check if the `default_template_src` is empty or if it
 the source is simply the string 'chatml':
