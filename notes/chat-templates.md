@@ -1734,6 +1734,194 @@ grammar. And below is building up the rules for this grammar:
                 std::string name = function.at("name");
                 auto parameters = function.at("parameters");
                 builder.resolve_refs(parameters);
+```
+So this will iterate over each inputs.tools, which is a json array of tools:
+```console
+(gdb) pjson inputs.tools
+[
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the current weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name"
+                    },
+                    "unit": {
+                        "type": "string",
+                        "enum": [
+                            "celsius",
+                            "fahrenheit"
+                        ],
+                        "description": "Temperature unit"
+                    }
+                },
+                "required": [
+                    "location"
+                ]
+            }
+        }
+    }
+]
+```
+Note that this just looked like a normal json object to me but it is infact
+a json schema,  which is a normal json object but it describes the structure
+of other json objects. It has special keywords defined by the JSON Schema standard
+like "type", "properties", "required", "enum", etc.
+
+And just to be clear tool.at("function") will also return a json object:
+```console
+(gdb) pjson function
+{
+    "name": "get_weather",
+    "description": "Get the current weather for a location",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "location": {
+                "type": "string",
+                "description": "The city name"
+            },
+            "unit": {
+                "type": "string",
+                "enum": [
+                    "celsius",
+                    "fahrenheit"
+                ],
+                "description": "Temperature unit"
+            }
+        },
+        "required": [
+            "location"
+        ]
+    }
+}
+```
+The we have the call to builder.resolve_refs(parameters), we have to first
+look at the build_grammar function to understand how the passed in callback, the
+lambda is actually called.
+This is declared in json-schema-to-grammar.h and has a default parameter for options:
+```c++
+std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb,
+                          const common_grammar_options & options = {});
+```
+And common_grammar_builder is declared in the same file as:
+```c++
+struct common_grammar_builder {
+    std::function<std::string(const std::string &, const std::string &)> add_rule;
+    std::function<std::string(const std::string &, const nlohmann::ordered_json &)> add_schema;
+    std::function<void(nlohmann::ordered_json &)> resolve_refs;
+};
+```
+So this struct contains three function objects so they can store function
+pointers, lambdas, Functors, and std::bind expressions.
+
+```c++
+std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb,
+                          const common_grammar_options & options) {
+    common_schema_converter converter([&](const std::string &) { return json(); }, options.dotall);
+```
+Notice that `json()` will return an empty json object.
+
+The constructor for common_schema_converter is defined as:
+```c++
+public:
+    common_schema_converter(
+        const std::function<json(const std::string &)> & fetch_json,
+            bool dotall) : _fetch_json(fetch_json), _dotall(dotall) {
+        _rules["space"] = SPACE_RULE;
+    }
+```
+Notice that is takes a function object as the first parameter, which above is
+specified as a function that takes a string and returns an empty json object. This
+function object is stored in the `_fetch_json` member variable.
+
+SPACE_RULE is the GBNF rule for whitespaces;
+```c++
+const std::string SPACE_RULE = "| \" \" | \"\\n\"{1,2} [ \\t]{0,20}";
+```
+This allows for compact json like `{"key":"value"}` as well as pretty printed
+json like:
+```json
+{
+    "key": "value"
+}
+```
+Additional rules can be found in json-schema-to-grammar.cpp.
+
+```console
+(gdb) ptype _rules
+type = std::map<std::string, std::string>
+```
+
+The `dotall` parameter is related to regex parsing handles the `.` metacharacter
+when converting a JSON schema pattern to GBNF. If this is false (default) the
+`.` matches any character except for newline. If true, it matches any character
+including newlines.
+
+```c++
+    common_grammar_builder builder {
+        /* .add_rule = */ [&](const std::string & name, const std::string & rule) {
+            return converter._add_rule(name, rule);
+        },
+        /* .add_schema = */ [&](const std::string & name, const nlohmann::ordered_json & schema) {
+            return converter.visit(schema, name == "root" ? "" : name);
+        },
+        /* .resolve_refs = */ [&](nlohmann::ordered_json & schema) {
+            converter.resolve_refs(schema, "");
+        }
+    };
+    cb(builder);
+    converter.check_errors();
+    return converter.format_grammar();
+}
+```
+Now, common_schema_converter is the class that is responsible for converting
+a JSON schema into a GBNF grammar. This grammar is then used to constrain the
+models output to valid JSON that conforms to the original schema.
+So the builder is what is passed to the callback function accepted byx
+build_grammar, so the callback can add rules, add schemas, and resolve
+references.
+
+Adding rules is just adding GBNF rules directly, adding a schema adds a new
+schema which we can see will visit the json schema and convert it to GBNF.
+
+JSON schemas can become complex and repetitive so they can reference other
+schemas to avoid duplication and the standard includes the `$ref` keyword
+which is like a pointer to another part of the schema.
+For example:
+```console
+{
+    "defs": {
+        "address": {
+            "type": "object",
+            "properties": {
+                "street": { "type": "string" },
+                "city": { "type": "string" }
+            },
+            "required": ["street", "city"]
+        }
+    },
+    "properties": {
+        "shipping_address": { "$ref": "#/defs/address" },
+        "billing_address": { "$ref": "#/defs/address" }
+   }
+}
+```
+This is an example of an internal reference where both `shipping_address` and
+`billing_address` reference the same `address` schema defined in `defs`.
+We can also have external references that point to schemas defined in other files
+or URLs. This is where `_fetch_json` comes into play, as it can be used to fetch
+external schemas when resolving `$ref` references.
+
+So resolve_refs is about resolving these `$ref` references in the schema and
+replacing them with the actual schema they point to.
+
+```c++
 
                 tool_rules.push_back(builder.add_schema(name + "-call", {
                     {"type", "object"},
