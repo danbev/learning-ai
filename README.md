@@ -3,7 +3,7 @@ This repository contains notes and code examples related to AI.
 
 ### In-progress
 
-* [llama.cpp backend (GPU) sampling](./notes/llama.cpp/gpu-sampling.md)
+* llama.cpp backend (GPU) sampling: [notes](./notes/llama.cpp/gpu-sampling.md), [pull request](https://github.com/ggml-org/llama.cpp/pull/17004)
 
 ### Topics
 
