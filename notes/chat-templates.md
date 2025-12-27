@@ -1534,9 +1534,12 @@ For some background, most models are trained using Python tools that rely on a
 specific templating language called Jinja2. In llama.cpp we don't use Jinja2 but
 instead minja which is a C++ implementation of a similar templating language.
 
-So my understanding is the the Jinja templates can be processes and do pretty
-advanced things what are not possible with just the declaration of the chat
-template itself.
+So my understanding is that the Jinja templates are used to take the user/agent
+interation messages and format them into a prompt string that follows the format
+the model expects. This is all about the input to the model. The PEG parser
+comes into play when we have featues like tooling where the PEG parse builds
+a grammar that constrains the models output to be valid JSON so that the
+tool calls can be extracted from the models output.
 
 If we take a look at completion.cpp we first initialize the chat templates:
 ```c++
@@ -1921,7 +1924,10 @@ external schemas when resolving `$ref` references.
 So resolve_refs is about resolving these `$ref` references in the schema and
 replacing them with the actual schema they point to.
 
+So if we now turn our attention back to the lambda passed to build_grammar:
 ```c++
+            std::vector<std::string> tool_rules;
+            ...
 
                 tool_rules.push_back(builder.add_schema(name + "-call", {
                     {"type", "object"},
@@ -1931,6 +1937,58 @@ replacing them with the actual schema they point to.
                     }},
                     {"required", json::array({"name", "arguments"})},
                 }));
+```
+Recall that add_schema takes a string and a json object which is constructed
+using nlohmann::json's initializer list syntax which used c++ features like
+std::initializer_list and variadic templates to provide this very intuitive
+API.
+And add_schema looks like this:
+```c++
+        /* .add_schema = */ [&](const std::string & name, const nlohmann::ordered_json & schema) {
+            return converter.visit(schema, name == "root" ? "" : name);
+        },
+```
+
+```console
+(gdb) p name
+$4 = "get_weather-call"
+
+(gdb) pjson schema
+{
+    "type": "object",
+    "properties": {
+        "name": {
+            "const": "get_weather"
+        },
+        "arguments": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "The city name"
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "celsius",
+                        "fahrenheit"
+                    ],
+                    "description": "Temperature unit"
+                }
+            },
+            "required": [
+                "location"
+            ]
+        }
+    },
+    "required": [
+        "name",
+        "arguments"
+    ]
+}
+```
+
+```c++
 
                 tool_call_alts.push_back(builder.add_rule(
                     name + "-function-tag",
@@ -2085,4 +2143,16 @@ In src/llama-grammar.cpp we have the grammar apply implementation:
 void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_data_array * cur_p) {
     GGML_ASSERT(grammar.vocab != nullptr);
 ```
+
+So up until this point we have been looking at constraining the generation of
+output from the model to adhere to a specific grammar. This ensures that the
+output is not malformed and can be correctly parsed as JSON (or whatever format
+the model in questions used, it just happens that the one we are looking at uses
+json.
+
+After valid json output has been generated it is just a string in json format.
+We still need to interpret this json and extract meaningful parts like tool calls
+in this case. This is where the PEG parser comes into play
+
+
 _wip_
