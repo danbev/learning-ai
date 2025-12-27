@@ -78,6 +78,11 @@ logging: src/logging.cpp
 logging-pre: src/logging.cpp
 	$(CXX) $(CXXFLAGS) -E $^
 
+peg-parser-example: src/peg-parser-example.cpp
+	$(CXX) -std=c++17 $(CXXFLAGS) -g -Illama.cpp -Illama.cpp/vendor $< \
+		-Lllama.cpp/build/common -Lllama.cpp/build/bin -lcommon -lllama \
+		-lggml-base -lggml -lggml-cpu -Wl,-rpath,llama.cpp/build/bin -o $@
+
 simple-prompt-cuda: CXXFLAGS += -std=c++11 -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 simple-prompt-cuda: simple-prompt
 run-simple-prompt-cuda: simple-prompt-cuda
@@ -106,7 +111,7 @@ update-llama:
 
 .PHONY clean:
 clean:
-	$(RM) -f simple-prompt simple-prompt-multi finetune tokenize
+	$(RM) -f simple-prompt simple-prompt-multi finetune tokenize peg-parser-example
 
 .PHONY clean-llama:
 clean-llama:
