@@ -8,32 +8,17 @@ int main() {
     // Build a parser that recognizes <name>...</name> and <age>...</age>
     common_peg_parser_builder builder;
 
-    // Define the grammar patterns
-    common_peg_parser name_open  = builder.literal("<name>");
-    common_peg_parser name_close = builder.literal("</name>");
-    common_peg_parser age_open   = builder.literal("<age>");
-    common_peg_parser age_close  = builder.literal("</age>");
-    common_peg_parser any_char   = builder.any();
+    auto name_elem =
+        builder.literal("<name>") +
+        builder.tag("NAME", builder.until("</name>")) +
+        builder.literal("</name>");
 
-    // Match content between tags (any char except the closing tag)
-    common_peg_parser name_content = builder.zero_or_more(
-        builder.sequence({builder.negate(name_close), any_char})
-    );
+    auto age_elem =
+        builder.literal("<age>") +
+        builder.tag("AGE", builder.until("</age>")) +
+        builder.literal("</age>");
 
-    common_peg_parser age_content = builder.zero_or_more(
-        builder.sequence({builder.negate(age_close), any_char})
-    );
-
-    // Tag the content so we can identify it later
-    common_peg_parser name_tag = builder.tag("NAME", name_content);
-    common_peg_parser age_tag  = builder.tag("AGE", age_content);
-
-    // Complete element patterns
-    common_peg_parser name_elem = builder.sequence({name_open, name_tag, name_close});
-    common_peg_parser age_elem  = builder.sequence({age_open, age_tag, age_close});
-
-    // Full pattern: <name>...</name><age>...</age>
-    common_peg_parser root = builder.sequence({name_elem, age_elem});
+    auto root = name_elem + age_elem;
     builder.set_root(root);
 
     common_peg_arena arena = builder.build();
