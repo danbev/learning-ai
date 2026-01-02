@@ -1,7 +1,7 @@
 ## Attention Sink
 When Large language models (LLMs) exceed there context size they often shift out
 old token embeddings from the kv-cache. Usually these are the oldest tokens in
-the sequence (converstation). But it was noticed that this would then lead to
+the sequence (conversation). But it was noticed that this would then lead to
 some models generating incoherent text.
 
 Recall that the [attention](./attention.md) mechanism in LLMs is defined as follows:
@@ -45,10 +45,10 @@ every: 72.95%
 
 Total: 100.00%
 ```
-Now, something that is important to understand is that when the model are trained
+Now, something that is important to understand is that when the models are trained
 they learn to recognize this type of attention pattern.
 
-Lets say we shift out 5 entries from the cache becuase the context size has been
+Lets say we shift out 5 entries from the cache because the context size has been
 reached:
 ```
 goes:  -3.0
@@ -94,14 +94,14 @@ Total: ~100.00%
 ```
 Now the attention pattern matches what the model saw during training! The idea
 is that the low scores that the model exepects to see are still there.
-The tokens that are kept are called sinks, not link an I/0 sink but rather that
+The tokens that are kept are called sinks, not like an I/0 sink but rather that
 it sinks the attention scores to the expected values. This confused me a little
 and I should rather think of this like a heat sink that absorbs heat to keep
 the temperature stable. The attention sink absorbs the attention scores to keep
 the attention distribution stable.
 
-The actual content of these tokens is irrelevant, what matters is that they
-help preserve the pattern that the model expects to see (what it was trained on)
+The actual content of these tokens is irrelevant, what matters is that they help
+preserve the pattern that the model expects to see (what it was trained on)
 
 It's purely about mathematical pattern matching:
 * Training: Model learns "Pattern A" → Predict "day"
