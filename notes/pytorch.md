@@ -256,3 +256,28 @@ Tensor linear(const Tensor& input, const Tensor& weight, const std::optional<Ten
 TODO: Explain how this works with PyBind11.
 
 __wip__
+
+### Debugging
+We can use pdb to step through code.
+```console
+(venv) $ python3 -m pdb convert_hf_to_gguf.py ggml-org/gemma-3-270m --outfile test-bf16.gguf --outtype bf16
+```
+That will break on the first line of the script. Use `?` for help.
+A break point can be set using `b <lineno>` or `b <function>`.
+```console
+(venv) $ python3 -m pdb convert_hf_to_gguf.py ~/work/ai/models/google/gemma-3-270m-it --outfile test-bf16.gguf --outtype bf16
+> /home/danbev/work/ai/llama.cpp/convert_hf_to_gguf.py(4)<module>()
+-> from __future__ import annotations
+(Pdb) b 11083
+Breakpoint 1 at /home/danbev/work/ai/llama.cpp/convert_hf_to_gguf.py:11083
+(Pdb) c
+INFO:hf-to-gguf:Loading model: gemma-3-270m-it
+INFO:hf-to-gguf:Model architecture: Gemma3ForCausalLM
+> /home/danbev/work/ai/llama.cpp/convert_hf_to_gguf.py(11083)main()
+-> model_instance = model_class(dir_model, output_type, fname_out,
+(Pdb)
+```
+The commands are pretty simlar to gdb so most can be guessed. I'm mainly adding
+this as a reference for myself as I forget the command to start pdb and it can
+be useful to be able to step through the conversion script and also pytorch model
+implementation when converting new models to gguf format.
