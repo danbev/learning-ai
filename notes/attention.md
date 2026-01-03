@@ -4,11 +4,11 @@ in deep learning models like Attention (single-head), Multi-Head Attention,
 Grouped Query Attention.
 
 ### Attention (single head)
-Standard attention uses 3 martixes, a query matrix, a key matrix, and a value
+Standard attention uses 3 matrices, a query matrix, a key matrix, and a value
 matrix. 
 
 Let's start with the following input sentence "Dan loves icecream". The first
-step it split this into tokens, so we will have might get 4 tokens:
+step is to split this into tokens, so we will might get 4 tokens:
 ```
 ["Dan", "loves", "ice", "cream"]
 ```
@@ -16,24 +16,26 @@ Next, these words are mapped to token id from the model's vocabulary:
 ```
  [1003]  [82]  [371]  [10004]
 ```
-Now, the model will the take these inputs and map them into embeddings which
-might be of a dimension of say 512. So we will have 4 vectors of 512 dimensions
+Now, the model will the take these inputs and map them into vector embeddings
+which might be of a dimension of say 512. So we will have 4 vectors of 512
+dimensions:
 ```
 'Dan'   1003  [0      ...        512]
 'loves' 82    [0      ...        512]
 'ice'   371   [0      ...        512]
 'cream' 10004 [0      ...        512]
 ```
-If the same word appears multiple times in the input, the same embedding will
-be used for each occurance. So there is currently no context or association
+If the same word appears multiple times in the input, the same vector embedding
+will be used for each occurance. So there is currently no context or association
 between these words/token embeddings. They only contain information about each
-word/token itself, and nothing about the context in which it appears.
+word/token itself, and nothing about the context in which it appears. So the
+word cold could mean that is is cold outside or that someone has a cold.
 
-So with these embeddings the first thing in the model does is to add a
-positional encoding to each of the embeddings. In the original paper this used
-absolute position encoding. I've written about this is
-[embeddings.md](./embeddings.md) but RoPE could also be used but would be
-added to the Query and Key matrices instead.
+So with these embeddings the first thing the model does is to add a positional
+encoding to each of the embeddings. In the original paper this used absolute
+position encoding. I've written about this is [embeddings.md](./embeddings.md)
+but RoPE could also be used but would be added to the Query and Key matrices
+instead.
 
 So we have our input matrix which in our case is a 4x512 matrix, where each
 entry is one of the tokens in the input sentence. Notice that we in this case
