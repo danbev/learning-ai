@@ -1,30 +1,87 @@
 ## Flash Attention
 This is a type of attention which uses information about the GPU hardware to
-optimize the attention mechanism. Is it I/0 aware and also exacte which means
-that it doesn't use any approximation techniques.
+optimize the attention mechanism. It is I/0 aware and also exact which means that
+it doesn't use any approximation techniques.
 
 Specifically [GPU](./gpu.md) hardware and memory transfers can hurt performance
 where data is being copied to and from the GPU's SRAM to its High Bandwidth
 Memory (HBM). So the idea is to minimize the number of memory transfers between
 the GPU's HBM and SRAM.
 
+In attention it is possible, and very likely, that the matrices cannot fit into
+the fast SRAM of the GPU and what happens is that they are instead loaded from
+the large global memory (HBM) to the fast SRAM. Each thread would operate on
+parts of the matrices and the intermediate results would be written back to the
+global memory (because we can't fit it in SRAM).
+
 Most operations in Transformers are bottlenecked not by the compute but by the
 memory transfers between the GPU's SRAM and HBM.
 
 The normal attention mechanism works something like this:
-* Load the Q, K, and V matrices from the GPU's HBM to its SRAM.
-* Compute the S = QKᵀ, and then write S to HBM.
+* Load the Q, K, and V matrices from the GPU's HBM to SRAM (using tiling)
+* Compute the S = QKᵀ, and then write S to HBM. (transfer to global memory which is slow)
 * Load S from HBM to SRAM to compute P = softmax(S), and then write P to HBM.
 * Load P from HBM to SRAM compute O = PV, and then write O to HBM.
 
+I'm simplifiying things a bit here as Q, K, and V cannot fit into SRAM as they
+would most often be too large. So tiling is used for standard attention as well.
+The difference compared to flash attention is that standard attention treats the
+attention as three separate operations (kernels). Since these are separate kernels
+the GPU has to "save its work" to global memory between each step.
+
+Standard attention:
+* Step 1 MatMul Kernel (QK^T)
+Input: Reads blocks of Q and K from HBM to SRAM (Tiling happens here)
+Compute: Calculates a block of scores S
+The Flaw: It writes that block of S (the NxN matrix) back to HBM. It has to,
+because this kernel's job is just "Matrix Multiplication," and it must output
+the result
+
+* Step 2: Softmax Kernel
+Input: Reads the full NxN matrix S from HBM
+Compute: Calculates Softmax
+The Flaw: It writes the full NxN$ probability matrix P back to HBM
+
+* Step 3: MatMul Kernel (PV)
+Input: Reads blocks of P and V from HBM
+Compute: Calculates the output O
+Output: Writes O to HBM.
+
+The Fused Kernel
+* Input: Reads a block of Q, K, V into SRAM
+  Compute: Compute block of S (in SRAM)
+  Compute Softmax on that block (in SRAM)
+  Multiply by block of V (in SRAM)
+  Output: Writes only the accumulated result O to HBM.
+
 And recall that the matrices are of size, sequence length (N) by the embedding
-dimentions. So it might be 4x512 if we have an input sequence length of 4 and
+dimensions. So it might be 4x512 if we have an input sequence length of 4 and
 embedding dimention of 512.
 
-What Flash Attentions purposes is that the loading and storing back and forth
+The GPU spends most of its time waiting to read/write these huge matrices to HBM
+rather than doing math, it is "memory bound."
+
+What Flash Attentions proposes is that the loading and storing back and forth
 be minimized. So instead of storing S back to HBM, just use it straight away
 to compute P and then compute the softmax. But this imposes an issue with
-regards to softmax. TODO: add notes
+regards to softmax.
+
+In flash attention something like the following is done:
+* Load a small block of Q, K, V into SRAM
+* Compute the attention scores (QKᵀ) for that just this block in SRAM
+* Compute the softmax (using "online softmax") for this block in SRAM
+* Multiply by V to get the output for this block in SRAM
+* Write only the accumulated output O back to HBM.
+
+The huge NxN matrix is never fully created in HBM. It is computed on-the-fly in
+SRAM and then discarded.
+So how does this actually work, when we compute the softmax we need the entire
+matrix S to compute the softmax normalization (the denominator needs the sum of
+all the exponentiated values)?  
+This is solved by using "Online Softmax" which allows us to compute the softmax
+incrementally as we load blocks of the S matrix. We can calculate the "local"
+sum of exponentials for the current block, and when you load the next block, we
+can mathematically update the running sum and rescale the previous results.
 
 ### Tiling
 This involves restructuring algorithms to load block by block from GPU High
@@ -35,10 +92,51 @@ the size of the L1 cache for each Streaming Multiprocessor (SM) on my card), and
 I have 46 SMs on my card. So the total SRAM is 128 * 46 = 5888 KB (I'm not
 totally sure about these numbers).
 
+### Online softmax
+The softmax function is defined as follows:
+```
+x = [x1, x2, ..., xn]
+
+softmax(x₁) =                exp(x₁-max)
+               ----------------------------------
+               (exp(x₁-max) + exp(x₂-max) + ... + exp(xₙ-max))
+
+max = global max
+```
+If we only see a small block of the row (a tile), we don't know the global max
+we only know the local max of the current block.
+As we see new blocks (and potentially find a new "max" value that is larger than
+the old one), we retroactively correct our previous partial results by
+multiplying them by a scaling factor. Like lets say the first block sees a max
+of 10, the softmax for this block is computed using 10 as the local max. If the
+next block has 20 as its max then the first blocks computation is not correct.
+So for block 1 we should actually have calculated (x^(10-20)) instead of
+(x^(10-10)). We can rescale block 1 result by multiplying it by exp(10-20), and
+then add block 2 result to it and the accumulate sum will be correct.
+
+Flow in the kernel:
+1. Load Q_block from global memory to SRAM
+2. Initialize registers:
+   This creates accumulators that live in registers:
+   running_max: stores the maximum value seen so far for each row
+   running_sum: stores the sum of exponentials for each row
+   running_output: stores the accumulated output for each row
+3. The loop over K and V blocks:
+   Load K_block and V_block from global memory to SRAM
+   Compute scores: S_block = Q_block * K_blockᵀ in registers(?)
+   Online softmax correction:
+     Compare local max vs running_max
+     Update running_max
+     Rescale running_sum and running_output if running_max changed (using e^(old_max - new_max))
+   Accumulate: add the new contributions to running_output.
+4. Final write back (after loop has completed)
+   Write running_output to global memory.
+
 ### Flash Attention Algorithm
 Now, recall that the Q, K, and V matrices are of size N (sequence length) x D
-(embedding dim) and these will be stored in the GPU's HBM initially.
-Lets say we sequence length of 4 and embedding dimention of 512 so imaging
+(embedding dim) and these will be stored in the GPU's HBM initially (global
+memory).
+Lets say we have a sequence length of 4 and embedding dimention of 512 so imagine
 something like this:
 ```
                      D
@@ -97,7 +195,7 @@ now just know that these vectors are stored and updated during the attention
 processing.
 
 To recap, the operations on the Q and K matrices is matrix multiplication:
-and I think it is useful to remember that the K matrix is transposed:
+(remember that the K matrix is transposed)
 ```
    +----------------+   +-------+
    |      Q         |   |  Key  |
