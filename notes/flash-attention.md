@@ -379,3 +379,298 @@ exact, that is there is no approximation involved.
 ### Flash Attention 2
 TODO: 
 
+
+### Debugging
+Build with `-G -g` and DCMAKE_BUILD_TYPE=Debug, for example:
+```console
+cmake --fresh -S . -B build -DCMAKE_BUILD_TYPE=Debug\
+    -DCMAKE_CUDA_FLAGS="-G -g" \
+    -DLLAMA_BUILD_TESTS=ON \
+    -DLLAMA_BUILD_TOOLS=ON \
+    -DLLAMA_BUILD_EXAMPLES=ON \
+    -DLLAMA_BUILD_SERVER=ON \
+    -DLLAMA_SANITIZE_THREAD=OFF \
+    -DLLAMA_LLGUIDANCE=ON \
+    -DGGML_OPENMP=ON
+cmake --build build -j8
+```
+
+Debugging session:
+```console
+(cuda-gdb) br fattn-mma-f16.cuh:1540
+(cuda-gdb) br fattn-common.cuh:984
+(cuda-gdb) br fattn-mma-f16.cuh:1352
+Note: breakpoint 2 also set at pc 0x7fff9529e040.
+Breakpoint 3 at 0x1140: fattn-mma-f16.cuh:1352. (2 locations)
+```
+
+Just to understand how we end up in the kernel, when the operation GGML_OP_FLASH_ATTN_EXT
+is executed this will be done by the CUDA backend in this case. The tensors below
+have their buffers allocated on the GPU and not the host. So they exist in the
+GPUs global memory (HBM) at this stage.
+```c++
+void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * KQV = dst;
+    const int id = ggml_cuda_get_device();
+    const int cc = ggml_cuda_info().devices[id].cc;
+    ...
+
+    launch_fattn<DV, ncols1, ncols2>
+        (ctx, dst, fattn_kernel, nwarps, nbytes_shared_total, nbatch_fa, true, true, true);
+```
+We can find `launch_fattn` in ggml/src/ggml-cuda/fattn-common.cuh:
+```c++
+template <int DV, int ncols1, int ncols2>
+void launch_fattn(
+    ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel, const int nwarps, const size_t nbytes_shared,
+    const int nbatch_fa, const bool need_f16_K, const bool need_f16_V, const bool stream_k, const int warp_size = WARP_SIZE
+) {
+    constexpr int ncols = ncols1 * ncols2;
+
+    const bool is_mla = DV == 512; // TODO better parameterization
+
+    const ggml_tensor * Q = dst->src[0];
+    const ggml_tensor * K = dst->src[1];
+    const ggml_tensor * V = dst->src[2];
+```
+Lets take a look at `dst`, `Q`, `K`, and `V`:
+```console
+(cuda-gdb) p *dst
+$9 = {type = GGML_TYPE_F32, buffer = 0x555557312840, ne = {64, 14, 7, 1}, nb = {4, 256, 3584, 25088}, op = GGML_OP_FLASH_ATTN_EXT,
+  op_params = {1040187392, 0, 0, 10, 0 <repeats 12 times>}, flags = 0, src = {0x555558b79a20, 0x555558b79b90, 0x555558b79d00,
+    0x555558b77a80, 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+    0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+    0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+    0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+    0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+    0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>},
+  view_src = 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>, view_offs = 0, data = 0x7fff4d60ca00,
+  name = "__fattn__-0", '\000' <repeats 52 times>, extra = 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+  padding = "\000\000\000\000\000\000\000"}
+
+cuda-gdb) p Q->ne
+$10 = {64, 7, 14, 1}
+
+(cuda-gdb) p K->ne
+$11 = {64, 256, 2, 1}
+
+(cuda-gdb) p V->ne
+$12 = {64, 256, 2, 1}
+```
+```c++
+    const ggml_tensor * mask  = dst->src[3];
+    const ggml_tensor * sinks = dst->src[4];
+
+    ggml_tensor * KQV = dst;
+```
+```console
+(cuda-gdb) p mask->ne
+$16 = {256, 7, 1, 1}
+```
+And just to clarify these tensors are all on the GPU, in global memory so if we
+pass a pointer to them to a kernel it will work as expected, the kernel can read
+write to these tensors in global memory.
+
+```c++
+    const int ntiles_x = ((Q->ne[1] + ncols1 - 1) / ncols1);
+    const int ntiles_total = ntiles_x * (Q->ne[2] / ncols2) * Q->ne[3];
+```
+
+```console
+(cuda-gdb) p ntiles_x    
+$19 = 1
+(cuda-gdb) p ntiles_total
+$20 = 14
+```
+
+```c++
+    const dim3 block_dim(warp_size, nwarps, 1);
+    int max_blocks_per_sm = 1;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared);
+    int parallel_blocks = max_blocks_per_sm;
+```
+```console
+(cuda-gdb) p block_dim
+$22 = {x = 32, y = 4, z = 1}
+
+(cuda-gdb) p max_blocks_per_sm
+$23 = 2
+
+(cuda-gdb) p nsm
+$24 = 46
+```
+
+The following block is setting the blocks_num for Stream-K mode:
+```c++
+    dim3 blocks_num;
+    if (stream_k) {
+        // For short contexts it can be faster to have the SMs work on whole tiles because this lets us skip the fixup.
+        const int max_blocks = max_blocks_per_sm*nsm;
+        const int tiles_nwaves = (ntiles_total + max_blocks - 1) / max_blocks;
+        const int tiles_efficiency_percent = 100 * ntiles_total / (max_blocks*tiles_nwaves);
+
+        const int nblocks_stream_k = max_blocks;
+
+        const bool use_stream_k = cc >= GGML_CUDA_CC_ADA_LOVELACE || tiles_efficiency_percent < 75;
+
+        blocks_num.x = use_stream_k ? nblocks_stream_k : ntiles_total;
+        blocks_num.y = 1;
+        blocks_num.z = 1;
+
+        if (ntiles_total % blocks_num.x != 0) { // Fixup is only needed if the SMs work on fractional tiles.
+            dst_tmp_meta.alloc((size_t(blocks_num.x) * ncols * (2 + DV/2)));
+        }
+```
+```console
+(cuda-gdb) p max_blocks
+$25 = 92
+```
+
+Then we have the rest of the parameters being setup for the kernel launch:
+```c++
+    float scale         = 1.0f;
+    float max_bias      = 0.0f;
+    float logit_softcap = 0.0f;
+
+    memcpy(&scale,         (const float *) KQV->op_params + 0, sizeof(float));
+    memcpy(&max_bias,      (const float *) KQV->op_params + 1, sizeof(float));
+    memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
+
+    if (logit_softcap != 0.0f) {
+        scale /= logit_softcap;
+    }
+
+    const uint32_t n_head      = Q->ne[2];
+    const uint32_t n_head_log2 = 1u << uint32_t(floorf(log2f(float(n_head))));
+
+    const float m0 = powf(2.0f, -(max_bias       ) / n_head_log2);
+    const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_head_log2);
+
+    // TODO other tensor dimensions after removal of WMMA kernel:
+    const uint3 ne01 = init_fastdiv_values(Q->ne[1]);
+
+    GGML_ASSERT(block_dim.x % warp_size == 0);
+    fattn_kernel<<<blocks_num, block_dim, nbytes_shared, main_stream>>>(
+        (const char *) Q->data,
+        K_data,
+        V_data,
+        mask ? ((const char *) mask->data) : nullptr,
+        sinks ? ((const char *) sinks->data) : nullptr,
+        KV_max.ptr,
+        !stream_k && parallel_blocks > 1 ? dst_tmp.ptr : (float *) KQV->data, dst_tmp_meta.ptr,
+        scale, max_bias, m0, m1, n_head_log2, logit_softcap,
+        Q->ne[0], ne01,     Q->ne[2], Q->ne[3], Q->nb[1], Q->nb[2], Q->nb[3],
+        K->ne[0], K->ne[1], K->ne[2], K->ne[3], nb11, nb12, nb13,
+        nb21, nb22, nb23,
+        mask ? mask->ne[1] : 0, mask ? mask->ne[2] : 0, mask ? mask->ne[3] : 0,
+        mask ? mask->nb[1] : 0, mask ? mask->nb[2] : 0, mask ? mask->nb[3] : 0
+    );
+```
+
+The third argument is the function pointer to the kernel:
+```console
+(cuda-gdb) p fattn_kernel
+$21 = (fattn_kernel_t) 0x7fffdbc1b329 <flash_attn_ext_f16<64, 64, 8, 1, false, false>>
+```
+
+In ggml/src/ggml-cuda/fattn-mma-f16.cuh we have the following function:
+```c++
+template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap, bool mla>
+__launch_bounds__(ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2),
+                  ggml_cuda_fattn_mma_get_occupancy(DKQ, DV, ncols1*ncols2))
+static __global__ void flash_attn_ext_f16(
+        const char * __restrict__ Q,
+        const char * __restrict__ K,
+        const char * __restrict__ V,
+        const char * __restrict__ mask,
+        const char * __restrict__ sinks,
+        const int  * __restrict__ KV_max,
+        float      * __restrict__ dst,
+        float2     * __restrict__ dst_meta,
+        const float scale,
+        const float max_bias,
+        const float m0,
+        const float m1,
+        const uint32_t n_head_log2,
+        const float logit_softcap,
+        const int32_t ne00, const uint3   ne01, const int32_t ne02, const int32_t ne03,
+                            const int32_t nb01, const int32_t nb02, const int32_t nb03,
+        const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
+                            const int32_t nb11, const int32_t nb12, const int64_t nb13,
+                            const int32_t nb21, const int32_t nb22, const int64_t nb23,
+                            const int32_t ne31, const int32_t ne32, const int32_t ne33,
+                        const int32_t nb31, const int32_t nb32, const int64_t nb33) {
+        ...
+```
+This is the is "outer loop" which calculates coordinates, and tells the GPU
+threads which specific tiles to work on. The actual attention computation is then
+done in flash_attn_ext_f16_process_tile.
+
+```c++
+            const int iter_k = (ne11   + (nbatch_fa - 1)) / nbatch_fa;
+```
+This is the number of block we need to split K into.
+```console
+(cuda-gdb) p iter_k
+$2 = 2
+```
+
+_wip_
+
+```c++
+    const int kbc_stop = int64_t(blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+
+    // If the seams of 2 CUDA blocks fall within an output tile their results need to be combined.
+    // For this we need to track both the block that starts the tile (needs_fixup) and the block that finishes the tile (is_fixup).
+    // In the most general case >2 seams can fall into the same tile.
+
+    // kb0 == k start index when in the output tile.
+    int kb0_start = kbc % iter_k;
+    int kb0_stop  = min(iter_k, kb0_start + kbc_stop - kbc);
+
+    while (kbc < kbc_stop && kb0_stop == iter_k) {
+        const int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
+        const int zt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j); // head in units of ncols2
+        const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*zt) / iter_k; // j index of current tile.
+
+        const int head0 = zt * ncols2;
+
+        const float2 * Q_f2   = (const float2 *) (Q + nb03*sequence + nb02* head0);
+        const half2  * K_h2   = (const half2  *) (K + nb13*sequence + nb12*(head0 / gqa_ratio));
+```
+So this is iterating over the K blocks. And we can see that Q_f2 and K_h2 are
+pointer to global memory.
+
+```c++
+template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup>
+static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+        const float2 * const __restrict__ Q_f2,
+        const half2  * const __restrict__ K_h2,
+        const half2  * const __restrict__ V_h2,
+        const half   * const __restrict__ mask_h,
+        const float  * const __restrict__ sinks_f,
+        float2       * const __restrict__ dstk,
+        float2       * const __restrict__ dstk_fixup,
+        const float scale,
+        const float slope,
+        const float logit_softcap,
+        const uint3 ne01,
+        const int ne02,
+        const int ne11,
+        const int stride_Q1,
+        const int stride_Q2,
+        const int stride_K,
+        const int stride_V,
+        const int stride_mask,
+        const int jt,
+        const int kb0_start,
+        const int kb0_stop) {
+        ...
+
+    extern __shared__ half2 tile_Q[];
+    half2 * tile_K    = Q_in_reg              ? tile_Q                             : tile_Q + ncols     * stride_tile_Q;
+    half2 * tile_V    =           nstages > 1 ? tile_K + nbatch_fa * stride_tile_K : tile_K;
+    half  * tile_mask = (half *) (nstages > 1 ? tile_V + nbatch_fa * stride_tile_V : tile_V + nbatch_fa * stride_tile_KV_max);
+```
+
+
