@@ -61,7 +61,7 @@ three for now:
 ```
 The attention function looks like this:
 ```
-Attention(Q, K, V) = softmax((Q x Kᵗ)/√embedding_dim) x V
+Attention(Q, K, V) = softmax((Q x Kᵗ)/√dₖ) x V
 
 embedding_dim = 512 in our example
 ```
@@ -77,6 +77,11 @@ Q and K transposed:
                         |       |
                         +-------+
 ```
+So there is one row in Q for each token with a a dimension of 512.  And each
+column in K represents one token (I usually think of matrix multiplication as
+the rows in Q being the functions, and the columns in K being the inputs, so
+we have 4 funtions in Q each taking 512 inputs from K).
+
 So, lets just think about this for a second. We know we copied the input
 matrix to Q and K. So I think we can visualize the attention score matrix like
 this:
@@ -95,6 +100,7 @@ cream (D) |DA | DB  | DC | DD |
 So AB is the dot product of the embeddings for word "Dan" and the embeddings for
 the word "loves". Notice how we are "comparing" the word "Dan" with all the
 other words in the sentence. And we do this for all words/tokens as well.
+
 The dot product will give us some value that indicates how similar the two words
 are (how far apart they are in the embedding space).
 Once again I'd like to point out that if we had a longer sequence the QK matrix
@@ -132,7 +138,7 @@ give us the attention scores for each of the words/tokens.
 I just want to point out that this was using a single Q, K, and V matrix which
 could be called `single head attention`. And also notice that there were no
 learnable parameters in this case. We only used the input matrix which was
-copied into Q, K, and V. In actual implementation what is used is something
+copied into Q, K, and V. In actual implementations what is used is something
 called `multi-head attention` which I'll try to explain now.
 
 ### Multi-Head Attention (MHA)
@@ -193,12 +199,16 @@ dₖ      = d_model / h         For example 4 heads and d_model = 512, dₖ = 12
 ```
 If we look at the Attention function it is the same as we saw earlier. What is
 new is that we are going to split the matrices Q', K', and V' into smaller
-matrices. This is the number of heads that we have.
+matrices. This is the number of heads that we have. So the head part is just this
+splitting of the matrices into smaller matrices. So why would we want to do this?
+Well this is similar to how CNNs have multiple filters that learn specific
+features during training. Each head will have its own learned weights which will
+be specialized to learn different things about the input sequence.
 
 So for example, if we want to have 4 heads and the embedding dimension size is
-512, then we will have 4 4x128 matrices. Each one of these are called a head and
-they are separate from each other, and are used to perform the single-head
-attention function that we went through above. 
+512, then we will have 4, 4x128 matrices. Each one of these are called a head and
+they are separate from each other, and each one goes through the single-head
+operation attention function that we went through above. 
 ```
  +--------+          +-------+    +-------+    +-------+
  | Input  | -------> | Query | X  | W^q   | =  |   Q'  |
@@ -255,7 +265,7 @@ Notice that we have `h` number of heads and each head has its own query, key,
 and value matrices. So each query has a corresponding key matrix.
 
 So for example, if we want to have 4 heads and the embedding dimension size is
-512, then we will have 4 4x128 matrices. Each one of these are called a head and
+512, then we will have 4, 4x128 matrices. Each one of these are called a head and
 they are separate from each other, and are used to perform the single-head
 attention function that we went through above. 
 ```
@@ -304,7 +314,8 @@ model.
 In this case we have multiple matrices that have to be loaded into memory and
 this can cause memory bandwidth issues.
 Each attention head requires its own set of key and value matrices which have to
-be stored in memory during the forward pass.
+be stored in memory during the forward pass. So this is memory intensive and can
+be a bottleneck for performance.
 
 ### Multi-Query Attention (MQA)
 This was proposed in the paper "Fast Transformer Decoding: One Write-Head is
@@ -313,7 +324,7 @@ multi-head attention. Instead of having a key and value matrix for each head
 we have only a single key and value matrix which is shared between all heads.
 Fewer matrices means less memory to store intermediate.
 
-In multi-head attention (MHA) we have multiple heads and each head has its own
+In multi-head attention (MHA) we had multiple heads and each head has its own
 query, key, and value matrices like we saw above:
 ```
              Multi-Head Attention
@@ -339,9 +350,8 @@ query, key, and value matrices like we saw above:
      +-----+   +-----+  +-----+   +-----+
 ```
 
-In multi-query attention we still have k
-We will still have a number of query heads (h) but only a single key and values
-vector:
+In multi-query attention we still have the same number of query heads (h) but
+only a single key and values vector:
 ```
              Multi-Query Attention
      +-----+   +-----+  +-----+   +-----+
@@ -366,8 +376,8 @@ vector:
                    +-----+ 
 ```
 The downside of this is that sharing the same K and V matrices between all
-heads means that the model can't learn different things about the input
-sequence. This is because the attention scores are calculated using the same
+heads means that the model can't learn different things about the input sequence.
+This is because the attention scores are calculated using the same
 key and value matrices for all heads. This is a tradeoff between memory usage
 and the ability to learn different things about the input sequence.
 
