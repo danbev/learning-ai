@@ -294,7 +294,9 @@ llm_build_qwen2::llm_build_qwen2(const llama_model & model, const llm_graph_para
     ...
     auto * inp_attn = build_attn_inp_kv();
 ```
-
+Notice that this function returns llm_graph_input_attn_kv is a type of
+llm_graph_input_i and not a tensor which is what most of the other build_input_xxx
+functions return. This is important later when this input is passed to build_attn.
 ```c++
 llm_graph_input_attn_kv * llm_graph_context::build_attn_inp_kv() const {
     const auto * mctx_cur = static_cast<const llama_kv_cache_context *>(mctx);
@@ -439,13 +441,285 @@ K tensor shape: [128, 32768, 1]
    32767 [0  ... 127]
 ```
 Now, there can be multiple sequences in the batch and they are all stored in the
-same K tensor above. What we are calculating above is the actual real indices
-into the K tensor for each token in the ubatch. If we had multiple sequences
-than and lets say we have a context size of 512, the first sequence would use
-0-511 and the second sequence would use 512-1023 and so on.
+same K tensor above. What we are calculating is the actual real indices into the
+K tensor for each token in the ubatch. If we had multiple sequences than and
+lets say we have a context size of 512, the first sequence would use 0-511 and
+the second sequence would use 512-1023 and so on.
+
+Something similar happens for the V tensor so I won't repeat that here.
+Then we have:
+```c++
+    mctx->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn);
+```
+Lets start by looking at the shape of self_kq_mask:
+```console
+(gdb) p dst->ne
+$5 = {256, 36, 1, 1}
+```
+So we have 36 tokens in this ubatch and 256 is the size of the kv-cache.
+```
+  0   [0  ...       256]
+  1   [0  ...       256]
+  ...     ...
+  35  [0  ...       256]
+```
+This was created by:
+```c++
+    inp->self_kq_mask = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, n_kv, n_tokens/n_stream, 1, n_stream);
+    ggml_set_input(inp->self_kq_mask);
+```
+So now, lets see what happens in set_input_kq_mask:
+```c++
+void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
+    const uint32_t n_tokens = ubatch->n_tokens; // 36 in this example
+
+    GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
+    float * data = (float *) dst->data;
+
+    const int64_t n_kv     = dst->ne[0]; // size of the kv-cache which is 256 in this example
+    const int64_t n_stream = dst->ne[3]; // num streams in the current ubatch, 1 in this example
+
+    // n_tps == n_tokens_per_stream
+    const int64_t n_tps = n_tokens/n_stream;
+
+    std::fill(data, data + ggml_nelements(dst), -INFINITY);
+```
+So this start by filling the entire mask with -infinity:
+```console
+  0  [ -inf  ...   -inf ]
+  1  [ -inf  ...   -inf ]
+  ...        ...
+  34 [ -inf  ...   -inf ]
+        0           255
+```
+So we start off by masking out everything. A 0 will mean that the token is
+allowed and -infinity means that the token is masked out. The rows are the
+queries (tokens in the ubatch) and the columns are the keys. Column 0 co
+to slot 0 of the kv-cache. This tensor is not the keys themselves.
+We have 256 keys in the cache, but in this case we are only using this tensor as
+a mask and we are figuring out which keys in the actual Keys matrix to use for
+the attention score calculation. Later when we calculate the attention scores we
+will do:
+```console
+Raw Scores    = Queries x Keys^T
+Masked Scores = Raw Scores + Mask
+```
+
+The main part of this function looks like this. Note that using 1 for h is just
+to clarify intent that we are only processing a single head:
+```c++
+    for (uint32_t h = 0; h < 1; ++h) {
+        // for each stream
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            // for each token in the stream
+            for (uint32_t ii = 0; ii < n_tps; ++ii) {
+                const uint32_t i = s*n_tps + ii;
+
+                // get the sequence id this token belongs to.
+                const llama_seq_id seq_id = ubatch->seq_id[i][0];
+
+                const auto & cells = v_cells[seq_to_stream[seq_id]];
+
+                // which position is this token at?
+                const llama_pos p1 = ubatch->pos[i];
+
+                // for M-RoPE
+                const bool is_2d = ubatch->is_pos_2d();
+                const llama_pos p1_x = is_2d ? ubatch->pos[i + ubatch->n_tokens*2] : 0;
+                const llama_pos p1_y = is_2d ? ubatch->pos[i + ubatch->n_tokens]   : 0;
+
+                // where in the memory buffer this token mask row begins
+                const uint64_t idst = n_kv*(h*n_stream*n_tps + s*n_tps + ii);
+
+                // for each of the kv-cache dimensions
+                for (uint32_t j = 0; j < n_kv; ++j) {
+                    if (cells.is_empty(j)) {
+                        continue;
+                    }
+
+                    // mask the token if not the same sequence
+                    if (!cells.seq_has(j, seq_id)) {
+                        continue;
+                    }
+
+                    const llama_pos p0 = cells.pos_get(j);
+
+                    // mask future tokens
+                    if (causal_attn && p0 > p1) {
+                        continue;
+                    }
+
+                    // M-RoPE causal mask
+                    if (causal_attn && is_2d && p0 == p1) {
+                        const auto & p0_ext = cells.ext_get(j);
+                        if (p0_ext.is_2d_gt(p1_x, p1_y)) {
+                            continue;
+                        }
+                    }
+
+                    // apply SWA if any
+                    if (is_masked_swa(p0, p1)) {
+                        continue;
+                    }
+
+                    data[idst + j] = hparams.use_alibi ? -std::abs(p0 - p1) : 0.0f;
+                }
+            }
+        }
+    }
+```
+
+So to recap a bit here, the actual K and V tensor were created by the model's
+`create_memory` function when the llama-context was created. Then when the model's
+graph is built we create the attention input for the kv-cache and recall that this
+returns llm_graph_input_attn_kv. This input will then be passed to each attention
+layer when build_attn is called:
+```c++
+    auto * inp_attn = build_attn_inp_kv();
+
+    ggml_tensor * inp_out_ids = build_inp_out_ids();
+
+    for (int il = 0; il < n_layer; ++il) {
+        ...
+            cur = build_attn(inp_attn,
+                    model.layers[il].wo, model.layers[il].bo,
+                    Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
+```
+```c++
+ggml_tensor * llm_graph_context::build_attn(
+        llm_graph_input_attn_kv * inp,
+        ggml_tensor * wo,
+        ggml_tensor * wo_b,
+        ggml_tensor * q_cur,
+        ggml_tensor * k_cur,
+        ggml_tensor * v_cur,
+        ggml_tensor * kq_b,
+        ggml_tensor * sinks,
+        ggml_tensor * v_mla,
+            float     kq_scale,
+            int       il) const {
+    // these nodes are added to the graph together so that they are not reordered
+    // by doing so, the number of splits in the graph is reduced
+    // expand k later to enable rope fusion which directly writes into k-v cache
+    ggml_build_forward_expand(gf, q_cur);
+    ggml_build_forward_expand(gf, v_cur);
+    ggml_build_forward_expand(gf, k_cur);
+
+    const auto * mctx_cur = inp->mctx;
+
+    // store to KV cache
+    {
+        const auto & k_idxs = inp->get_k_idxs();
+        const auto & v_idxs = inp->get_v_idxs();
+
+        ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
+        ggml_build_forward_expand(gf, mctx_cur->cpy_v(ctx0, v_cur, v_idxs, il));
+    }
+```
+Notice that the above is calling `cpy_k` and `cpy_v` to copy the current k and v.
+```c++
+ggml_tensor * llama_kv_cache_context::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il) const {
+    return kv->cpy_k(ctx, k_cur, k_idxs, il, sinfos[i_cur]);
+}
+```
+```c++
+ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il, const slot_info & sinfo) const {
+    const int32_t ikv = map_layer_ids.at(il);
+
+    ggml_tensor * k = layers[ikv].k;
+
+    const int64_t n_embd_head = k_cur->ne[0];
+    const int64_t n_head      = k_cur->ne[1];
+    const int64_t n_tokens    = k_cur->ne[2];
+
+    const int64_t n_embd_gqa = n_embd_head*n_head;
+
+    k_cur = ggml_view_2d(ctx, k_cur, n_embd_gqa, n_tokens, k_cur->nb[2], 0);
+
+    const int64_t n_stream = k->ne[2];
+
+    if (n_stream > 1) {
+        const int64_t kv_size = get_size();
+
+        // merge the buffer across all streams because the idxs are global
+        k = ggml_reshape_2d(ctx, k, n_embd_gqa, kv_size*n_stream);
+    }
+
+    // store the current K values into the cache
+    return ggml_set_rows(ctx, k, k_cur, k_idxs);
+}
+```
+Notice that `ggml_set_rows` is the operation that will get the rows from k and
+set them in k_cur based on the indices in k_idxs (which was populated earlier by
+set_input_k_idxs). This is what will be forward_expended.
+
+Next we get the key query mask:
+```c++
+
+    const auto & kq_mask = inp->get_kq_mask();
+
+    ggml_tensor * q = q_cur;
+    ggml_tensor * k = mctx_cur->get_k(ctx0, il);
+    ggml_tensor * v = mctx_cur->get_v(ctx0, il);
+
+    ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
+    cb(cur, "kqv_out", il);
+```
+```c++
+ggml_tensor * llm_graph_context::build_attn_mha(
+         ggml_tensor * q,
+         ggml_tensor * k,
+         ggml_tensor * v,
+         ggml_tensor * kq_b,
+         ggml_tensor * kq_mask,
+         ggml_tensor * sinks,
+         ggml_tensor * v_mla,
+               float   kq_scale,
+                 int   il) const {
+    const bool v_trans = v->nb[1] > v->nb[2];
+
+    // split the batch into streams if needed
+    const auto n_stream = k->ne[3];
+
+    q = ggml_view_4d(ctx0, q, q->ne[0], q->ne[1], q->ne[2]/n_stream, n_stream, q->nb[1], q->nb[2], q->nb[3]/n_stream, 0);
+    ...
+```
+
 
 _wip_
 TODO: continue with set_input_kq_mask explanation...
+
+If we take a look at how the query matrix is built for a layer it looks like this:
+```c++
+            ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
+```
+Where cur is the input embeddings (if this is the first layer, otherwise the
+output. If we have 7 tokens in the ubatch and an embedding size of 896 we have:
+```console
+(gdb) p Qcur->ne
+$28 = {896, 7, 1, 1}
+```
+Now, we only have one wq matrix for the weights but be have multiple heads. This
+is where an implementation differs from reading papers. We only have one large
+matrix for all the heads which was learned during training. So instead of having
+multiple smaller matrices (one per head) we have one large matrix that covers
+all heads. So we still get the benefits of multi-head attention and have weights
+that learned specific concepts for each head.
+
+This is then reshaped in to a 3d tensor for multi-head attention:
+```c++
+            Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
+```
+So in this case each head has a dimension of 64 (896/14) and we have 14 heads
+and 7 tokens:
+```console
+(gdb) p Qcur->ne
+$29 = {64, 14, 7, 1}
+```
+So we "split" the matrix into multiple heads by reshaping it. We still pass the
+whole matrix to the attention function but we need ensure that it is treated
+correctly. So we first did the matrix multiplication of Q using the large wq
+and now we separate the heads by reshaping it.
 
 
 ### llm_graph_input_attn_kv
