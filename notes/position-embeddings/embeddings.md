@@ -752,3 +752,77 @@ Rows = query tokens, Columns = key/value tokens
  5:  ∞ ∞ ∞ ∞ 0 0 0
  6:  ∞ ∞ ∞ ∞ ∞ 0 0
 ```
+
+### Late Interaction Models
+There are models like https://huggingface.co/LiquidAI/LFM2-ColBERT-350M which use
+something called late interaction. How this works is that we use the embeddings
+are we normally would in llama.cpp, for example:
+```console
+./build/bin/llama-embedding -m models/LFM2-ColBERT-350M.gguf -p "Hello world today" --pooling none --embd-normalize -1
+...
+batch_decode: n_tokens = 4, n_seq = 1
+
+embedding 0:  3.956538  4.565637  0.665844  ... -1.282995  3.684453  3.013499 
+embedding 1:  5.020997  3.513428 -0.382252  ... -0.476009  1.109715  3.843809 
+embedding 2:  4.341805  2.081467  1.026007  ... -0.938215  3.985719  2.788224 
+embedding 3:  4.500803  2.187851 -0.308470  ...  0.234649  2.836646  3.167321 
+```
+So this will generate a reduces embedding space, instead of the normal 1024 for
+this model each token embedding is just 128 dimensions. This is handled by the
+1_Dense layer of the sentence_transformer in the original model:
+```console
+$ cat ~/work/ai/models/LFM2-ColBERT-350M/1_Dense/config.json 
+{"in_features": 1024, "out_features": 128, "bias": false, "activation_function": "torch.nn.modules.linear.Identity"}
+```
+This is a down projection which is performed after the transformer layers. This
+tensor is converted into a gguf tensor as part of the model conversion and they
+are then applied to the model's computation graph in llama-model.cpp:
+```c++
+    llm->build_dense_out(dense_2_out_layers, dense_3_out_layers);
+
+    llm->res->set_outputs();
+
+    return llm->res->get_gf();
+}
+```
+
+Now, normally for embeddings we would apply some type of pooling and the output
+we get would be just a single embedding vector for the entire input sequence.
+This is easy to handle but for long documents we might loose important information
+when compressing the entire document into a single vector. The ColBERT solution
+is to keep all the token embeddings (one per token) but instead of storing 1024
+floats per token it stores only 128.
+
+And normally we would also compare a query embedding against the document
+embedding to figure out how similar they are. Instead we have multiple tokens
+and we compare them like this:
+```console
+Query   : "Hello world"                   (2 tokens -> 2 vectors: Q_1, Q_2)
+Document: "Greetings to the entire world" (5 tokens -> 5 vectors: D_1...D_5)
+
+1. Take Q_1 and compare it to all document vectors D_1...D_5
+   Does "Hello" match "Greetings"? (Score: 0.8)
+   Does "Hello" match "world"? (Score: 0.1)
+   ...
+   Keep the Max: The best match for "Hello" is "Greetings" (0.8).
+
+2. Take Q_2 and compare it to all document vectors D_1...D_5
+   Does "world" match "Greetings"? (Score: 0.2)
+   Does "world" match "world"? (Score: 0.9)
+   ...
+   Keep the Max: The best match for "world" is "world" (0.9).
+
+3. Sum the Maxes: Total Score = $0.8 + 1.0 = 1.8$.
+```
+This algorithm is called Maximum Similarity (MaxSim).
+
+In practice the vector embeddings are stored something like this:
+```console
+Document Id     Original text           Token Embeddings
+doc_42      	"Hello world today..."	[[0.1, ...], [0.5, ...], [0.2, ...]]
+doc_43	        "The weather is..."	    [[0.9, ...], [0.1, ...], [0.8, ...]]
+```
+So when we want to find documents similar to a query we first generate the query
+embedding. We then compare each token a specific document id row above and get
+the maxsim score for that document.We repeat this for all documents in the
+database/index and then return the top N documents with the highest scores.
