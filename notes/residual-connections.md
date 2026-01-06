@@ -58,7 +58,6 @@ Gradient = 0.1 * 0.1 * 0.1 = 0.001
 
 With a skip connection this becomes:
 ```console
-```console
 x_1 = x_0 + F(x_0)
 x_2 = x_1 + G(x_1)
 x_3 = x_2 + H(x_2)
@@ -86,6 +85,7 @@ Total Gradient = (1 + 0.1) * (1 + 0.1) * (1 + 0.1)
 Total Gradient = 1.1 * 1.1 * 1.1 = 1.331
 ```
 Instead of shrinking to 0.001, the signal stayed strong at 1.331.
+```
 
 (1 + H'(x_2)) * (1 + G'(x_1)) * (1 + F'(x_0))
     ↓
