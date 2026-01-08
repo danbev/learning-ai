@@ -25,41 +25,29 @@ The normal attention mechanism works something like this:
 
 I'm simplifiying things a bit here as Q, K, and V cannot fit into SRAM as they
 would most often be too large. So tiling is used for standard attention as well.
+
 The difference compared to flash attention is that standard attention treats the
 attention as three separate operations (kernels). Since these are separate kernels
 the GPU has to "save its work" to global memory between each step.
 
 Standard attention:
 * Step 1 MatMul Kernel (QK^T)
-Input: Reads blocks of Q and K from HBM to SRAM (Tiling happens here)
+Input: Reads blocks of Q and K from HBM to SRAM (using tiling)
 Compute: Calculates a block of scores S
-The Flaw: It writes that block of S (the NxN matrix) back to HBM. It has to,
+The issue: It writes that block of S (the NxN matrix) back to HBM. It has to,
 because this kernel's job is just "Matrix Multiplication," and it must output
 the result
 
 * Step 2: Softmax Kernel
-Input: Reads the full NxN matrix S from HBM
+Input: Reads the full NxN matrix S from HBM (using tiling)
 Compute: Calculates Softmax
-The Flaw: It writes the full NxN$ probability matrix P back to HBM
+The issue: It writes the full NxN probability matrix P back to HBM. So have
+have a NxN matrix in HBM now.
 
 * Step 3: MatMul Kernel (PV)
 Input: Reads blocks of P and V from HBM
 Compute: Calculates the output O
 Output: Writes O to HBM.
-
-The Fused Kernel
-* Input: Reads a block of Q, K, V into SRAM
-  Compute: Compute block of S (in SRAM)
-  Compute Softmax on that block (in SRAM)
-  Multiply by block of V (in SRAM)
-  Output: Writes only the accumulated result O to HBM.
-
-And recall that the matrices are of size, sequence length (N) by the embedding
-dimensions. So it might be 4x512 if we have an input sequence length of 4 and
-embedding dimention of 512.
-
-The GPU spends most of its time waiting to read/write these huge matrices to HBM
-rather than doing math, it is "memory bound."
 
 What Flash Attentions proposes is that the loading and storing back and forth
 be minimized. So instead of storing S back to HBM, just use it straight away
@@ -78,15 +66,16 @@ SRAM and then discarded.
 So how does this actually work, when we compute the softmax we need the entire
 matrix S to compute the softmax normalization (the denominator needs the sum of
 all the exponentiated values)?  
-This is solved by using "Online Softmax" which allows us to compute the softmax
-incrementally as we load blocks of the S matrix. We can calculate the "local"
-sum of exponentials for the current block, and when you load the next block, we
-can mathematically update the running sum and rescale the previous results.
+This is solved by using "Online Softmax" (see below) which allows us to compute
+the softmax incrementally as we load blocks of the S matrix. We can calculate
+the "local" sum of exponentials for the current block, and when you load the next
+block, we can mathematically update the running sum and rescale the previous
+results.
 
 ### Tiling
 This involves restructuring algorithms to load block by block from GPU High
 Bandwidth Memory (HBM) to the GPU SRAM to compute the attention. So the idea is
-to load blocks of Q, K, V from the HBM to the SRAM. The on-chip SRAM is defined
+to load blocks of Q, K, and V from the HBM to the SRAM. The on-chip SRAM is defined
 as variable `M` in the paper, which I think in my case would be 128 KB which is
 the size of the L1 cache for each Streaming Multiprocessor (SM) on my card), and
 I have 46 SMs on my card. So the total SRAM is 128 * 46 = 5888 KB (I'm not
@@ -103,24 +92,27 @@ softmax(x₁) =                exp(x₁-max)
 
 max = global max
 ```
-If we only see a small block of the row (a tile), we don't know the global max
+If we only see a small block of the row (a tile), we don't know the global max,
 we only know the local max of the current block.
+
 As we see new blocks (and potentially find a new "max" value that is larger than
 the old one), we retroactively correct our previous partial results by
-multiplying them by a scaling factor. Like lets say the first block sees a max
-of 10, the softmax for this block is computed using 10 as the local max. If the
-next block has 20 as its max then the first blocks computation is not correct.
-So for block 1 we should actually have calculated (x^(10-20)) instead of
-(x^(10-10)). We can rescale block 1 result by multiplying it by exp(10-20), and
-then add block 2 result to it and the accumulate sum will be correct.
+multiplying them by a scaling factor.
 
-Flow in the kernel:
+Lets say the first block sees a max of 10, the softmax for this block is
+computed using 10 as the local max. If the next block has 20 as its max then the
+first blocks computation is not correct. So for block 1 we should actually have
+calculated `(x^(10-20))` instead of `(x^(10-10))`. We can rescale block 1 result
+by multiplying it by `exp(10-20)`, and then add block 2 result to it and the
+accumulate sum will be correct.
+
+Flow in the kernel (TODO: add links to ggml-cuda functions):
 1. Load Q_block from global memory to SRAM
 2. Initialize registers:
    This creates accumulators that live in registers:
-   running_max: stores the maximum value seen so far for each row
-   running_sum: stores the sum of exponentials for each row
-   running_output: stores the accumulated output for each row
+     running_max: stores the maximum value seen so far for each row
+     running_sum: stores the sum of exponentials for each row
+     running_output: stores the accumulated output for each row
 3. The loop over K and V blocks:
    Load K_block and V_block from global memory to SRAM
    Compute scores: S_block = Q_block * K_blockᵀ in registers(?)
@@ -136,7 +128,8 @@ Flow in the kernel:
 Now, recall that the Q, K, and V matrices are of size N (sequence length) x D
 (embedding dim) and these will be stored in the GPU's HBM initially (global
 memory).
-Lets say we have a sequence length of 4 and embedding dimention of 512 so imagine
+
+Lets say we have a sequence length of 4 and embedding dimension of 512 so imagine
 something like this:
 ```
                      D
@@ -180,7 +173,7 @@ O = (0)NxD ε ℝᴺˣᴰ
          3 [0, 0, ..., 0, 0]
 ```
 
-And the we initialize the m and ℓ vectors in the GPU's HBM:
+And then we initialize the m and ℓ vectors in the GPU's HBM:
 ```
 m = (-inf)N ε ℝᴺ
             0       1     2     3
@@ -397,7 +390,7 @@ cmake --build build -j8
 
 Debugging session:
 ```console
-(cuda-gdb) br fattn-mma-f16.cuh:1540
+(cuda-gdb) br fattn-mma-f16.cuh:1540  (ggml_cuda_flash_attn_ext_mma_f16_case, before kernel launch).)
 (cuda-gdb) br fattn-common.cuh:984
 (cuda-gdb) br fattn-mma-f16.cuh:1352
 Note: breakpoint 2 also set at pc 0x7fff9529e040.
@@ -406,8 +399,54 @@ Breakpoint 3 at 0x1140: fattn-mma-f16.cuh:1352. (2 locations)
 
 Just to understand how we end up in the kernel, when the operation GGML_OP_FLASH_ATTN_EXT
 is executed this will be done by the CUDA backend in this case. The tensors below
-have their buffers allocated on the GPU and not the host. So they exist in the
-GPUs global memory (HBM) at this stage.
+have their buffers allocated on the GPU, not the host. So they exist in the GPUs
+global memory (HBM) at this stage.
+
+This should hit a break point when we run the program:
+```console
+Thread 1 "llama-completio" hit Breakpoint 3.76, ggml_cuda_flash_attn_ext_mma_f16_case<64, 64, 8, 1> (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/template-instances/../fattn-mma-f16.cuh:1540
+1540	    launch_fattn<DV, ncols1, ncols2>
+```
+And to see how we got here:
+```console
+
+(cuda-gdb) bt
+#0  ggml_cuda_flash_attn_ext_mma_f16_case<64, 64, 8, 1> (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/template-instances/../fattn-mma-f16.cuh:1540
+#1  0x00007fffdaa22ab8 in ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<64, 64, 1> (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/fattn.cu:16
+#2  0x00007fffdaa216a8 in ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<64, 64> (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/fattn.cu:78
+#3  0x00007fffdaa20176 in ggml_cuda_flash_attn_ext_mma_f16 (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/fattn.cu:91
+#4  0x00007fffdaa21042 in ggml_cuda_flash_attn_ext (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/fattn.cu:372
+#5  0x00007fffdaa43140 in ggml_cuda_compute_forward (ctx=..., dst=0x555556df6980)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:2712
+#6  0x00007fffdaa483f8 in evaluate_and_capture_cuda_graph (cuda_ctx=0x555556dc9680, cgraph=0x555556dc6e18,
+    graph_evaluated_or_captured=@0x7fffffff6538: false, use_cuda_graph=@0x7fffffff652a: false,
+    cuda_graph_update_required=@0x7fffffff652b: true) at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:3677
+#7  0x00007fffdaa48d14 in ggml_backend_cuda_graph_compute (backend=0x555556dc40b0, cgraph=0x555556dc6e18)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:3809
+#8  0x00007ffff7eef4f1 in ggml_backend_graph_compute_async (backend=0x555556dc40b0, cgraph=0x555556dc6e18)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-backend.cpp:364
+#9  0x00007ffff7ef4610 in ggml_backend_sched_compute_splits (sched=0x555556d82050)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-backend.cpp:1580
+#10 0x00007ffff7ef55d5 in ggml_backend_sched_graph_compute_async (sched=0x555556d82050, graph=0x555556dd2620)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-backend.cpp:1803
+#11 0x00007ffff7a7a612 in llama_context::graph_compute (this=0x555556dc4310, gf=0x555556dd2620, batched=true)
+    at /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:2070
+#12 0x00007ffff7a759a5 in llama_context::process_ubatch (this=0x555556dc4310, ubatch=..., gtype=LLM_GRAPH_TYPE_DECODER,
+    mctx=0x555556ef8260, ret=@0x7fffffffad44: GGML_STATUS_SUCCESS) at /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:1094
+#13 0x00007ffff7a77a2a in llama_context::decode (this=0x555556dc4310, batch_inp=...)
+    at /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:1532
+#14 0x00007ffff7a7fae4 in llama_decode (ctx=0x555556dc4310, batch=...) at /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:3438
+#15 0x000055555566dd93 in main (argc=16, argv=0x7fffffffd648) at /home/danbev/work/ai/llama.cpp/tools/completion/completion.cpp:679
+```
+Now, we are still on the host as we can see. When we later switch to the device
+the backtrace will only be for the frames on the device.
+
 ```c++
 void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * KQV = dst;
@@ -418,7 +457,9 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     launch_fattn<DV, ncols1, ncols2>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared_total, nbatch_fa, true, true, true);
 ```
-We can find `launch_fattn` in ggml/src/ggml-cuda/fattn-common.cuh:
+We can find `launch_fattn` in ggml/src/ggml-cuda/fattn-common.cuh and this is
+still on the host side. Notice that the kernel is passed as a parameter to this
+function (`fattn_kernel`):
 ```c++
 template <int DV, int ncols1, int ncols2>
 void launch_fattn(
@@ -436,19 +477,21 @@ void launch_fattn(
 Lets take a look at `dst`, `Q`, `K`, and `V`:
 ```console
 (cuda-gdb) p *dst
-$9 = {type = GGML_TYPE_F32, buffer = 0x555557312840, ne = {64, 14, 7, 1}, nb = {4, 256, 3584, 25088}, op = GGML_OP_FLASH_ATTN_EXT,
-  op_params = {1040187392, 0, 0, 10, 0 <repeats 12 times>}, flags = 0, src = {0x555558b79a20, 0x555558b79b90, 0x555558b79d00,
+$9 = {type = GGML_TYPE_F32, buffer = 0x555557312840, ne = {64, 14, 7, 1}, nb = {4, 256, 3584, 25088},
+op = GGML_OP_FLASH_ATTN_EXT, op_params = {1040187392, 0, 0, 10, 0 <repeats 12 times>}, flags = 0,
+src = {0x555558b79a20, 0x555558b79b90, 0x555558b79d00,
     0x555558b77a80, 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
     0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
     0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
     0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
     0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
     0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>},
-  view_src = 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>, view_offs = 0, data = 0x7fff4d60ca00,
-  name = "__fattn__-0", '\000' <repeats 52 times>, extra = 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
-  padding = "\000\000\000\000\000\000\000"}
+view_src = 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>, view_offs = 0,
+data = 0x7fff4d60ca00, name = "__fattn__-0", '\000' <repeats 52 times>,
+extra = 0x0 <_INTERNAL_aedbb58d_7_norm_cu_9a3dffe9::min(unsigned int, int)>,
+padding = "\000\000\000\000\000\000\000"}
 
-cuda-gdb) p Q->ne
+(cuda-gdb) p Q->ne
 $10 = {64, 7, 14, 1}
 
 (cuda-gdb) p K->ne
@@ -457,6 +500,12 @@ $11 = {64, 256, 2, 1}
 (cuda-gdb) p V->ne
 $12 = {64, 256, 2, 1}
 ```
+So dst is the GGML_OP_FLASH_ATTN_EXT which as created using:
+```c++
+        cur = ggml_flash_attn_ext(ctx0, q, k, v, kq_mask, kq_scale, hparams.f_max_alibi_bias,
+                                  hparams.attn_soft_cap ? hparams.f_attn_logit_softcapping : 0.0f);
+```
+
 ```c++
     const ggml_tensor * mask  = dst->src[3];
     const ggml_tensor * sinks = dst->src[4];
@@ -467,9 +516,10 @@ $12 = {64, 256, 2, 1}
 (cuda-gdb) p mask->ne
 $16 = {256, 7, 1, 1}
 ```
-And just to clarify these tensors are all on the GPU, in global memory so if we
-pass a pointer to them to a kernel it will work as expected, the kernel can read
-write to these tensors in global memory.
+And just to clarify these tensor buffers are all on the GPU, in global memory so
+if we pass a pointer to them to a kernel it will work as expected, the kernel
+can read write to these tensors in global memory. And trying to access them on
+the host side would not work as expected.
 
 ```c++
     const int ntiles_x = ((Q->ne[1] + ncols1 - 1) / ncols1);
@@ -600,11 +650,41 @@ static __global__ void flash_attn_ext_f16(
                             const int32_t nb21, const int32_t nb22, const int64_t nb23,
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
                         const int32_t nb31, const int32_t nb32, const int64_t nb33) {
-        ...
+#if defined(FLASH_ATTN_AVAILABLE) && (defined(VOLTA_MMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE))
+
+    // Skip unused kernel variants for faster compilation:
+    // Note that this uses template parameters so this is a compile time check.
+    // This could use if constexpr for clarity but this works too.
+    if (use_logit_softcap && !(DKQ == 128 || DKQ == 256)) {
+        NO_DEVICE_CODE;
+        return;
+    }
 ```
 This is the is "outer loop" which calculates coordinates, and tells the GPU
 threads which specific tiles to work on. The actual attention computation is then
 done in flash_attn_ext_f16_process_tile.
+```c++
+    constexpr int ncols     = ncols1 * ncols2;
+    constexpr int nbatch_fa = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
+    constexpr int nthreads  = ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols);
+    constexpr int nwarps    = nthreads / WARP_SIZE;
+
+    const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
+                     nr_q_heads/nr_kv_heads
+                             14/2
+```
+```console
+(cuda-gdb) p ncols
+$3 = 8
+(cuda-gdb) p nbatch_fa
+$4 = 128
+(cuda-gdb) p nthreads
+$5 = 128
+(cuda-gdb) p nwarps
+$6 = 4
+(cuda-gdb) p gqa_ratio
+$7 = 7
+```
 
 ```c++
             const int iter_k = (ne11   + (nbatch_fa - 1)) / nbatch_fa;
@@ -614,8 +694,9 @@ This is the number of block we need to split K into.
 (cuda-gdb) p iter_k
 $2 = 2
 ```
-
-_wip_
+One thing to keep in mind is that the thread that the break point triggered on
+might not have any work to do, so setting a breakpoint in the while loop migth
+be a better option.
 
 ```c++
     const int kbc_stop = int64_t(blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
@@ -638,9 +719,16 @@ _wip_
         const float2 * Q_f2   = (const float2 *) (Q + nb03*sequence + nb02* head0);
         const half2  * K_h2   = (const half2  *) (K + nb13*sequence + nb12*(head0 / gqa_ratio));
 ```
-So this is iterating over the K blocks. And we can see that Q_f2 and K_h2 are
-pointer to global memory.
+So this is iterating over the whole K blocks/chunks. And we have another
+call to flash_attn_ext_f16_process_tile which handles the leftovers which we
+will look at later.
+And we can see that Q_f2 and K_h2 are pointer to global memory.
 
+_wip_
+
+The following function is what processes on tile of Q. So it handles one block
+of Q and then iterates over all blocks of K and V to compute the attention for
+that block of Q.
 ```c++
 template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup>
 static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
@@ -651,9 +739,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float  * const __restrict__ sinks_f,
         float2       * const __restrict__ dstk,
         float2       * const __restrict__ dstk_fixup,
-        const float scale,
+        const float scale, // kq_scale from the operation tensor param
         const float slope,
-        const float logit_softcap,
+        const float logit_softcap, // from the operation tenors param
         const uint3 ne01,
         const int ne02,
         const int ne11,
@@ -666,11 +754,140 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int kb0_start,
         const int kb0_stop) {
         ...
+```
+First, `__force_inline__` is a directive in CUDA that is significantly stronger
+than `__inline__` in C/C++. This instructs the nvcc to inline this function
+into the calling code no matter what (unless it's recursive).
+In GPU kernels, Register Pressure is critical. Function calls involve
+pushing/popping the stack and moving data, which consumes registers and
+instructions.
 
+
+The shared memory allocation is done like this
+```c++
     extern __shared__ half2 tile_Q[];
+```
+Next we define pointers to the other tiles in shared memory:
+```c++
     half2 * tile_K    = Q_in_reg              ? tile_Q                             : tile_Q + ncols     * stride_tile_Q;
     half2 * tile_V    =           nstages > 1 ? tile_K + nbatch_fa * stride_tile_K : tile_K;
     half  * tile_mask = (half *) (nstages > 1 ? tile_V + nbatch_fa * stride_tile_V : tile_V + nbatch_fa * stride_tile_KV_max);
 ```
 
+```c++
+    // Load Q data into tile_Q, either temporarily (in a register) or permanently
+    // (left in shared memory).
+    // Q in registers is faster, but register pressure is the biggest bottleneck.
+    // The loading is done with decreasing granularity for D for better memory bandwidth.
 
+    // This is the kq_scale from the operation parameters. This will be used
+    // further down to scale the Query vectors as they are loaded from global
+    // memory into shared memory. In the attention forumula we have:
+    // Attention(Q, K, V) = softmax( (Q * K^T) / sqrt(d_k) ) * V
+    // The scaling is the, / sqrt(d_k). Instead for first doing the matrix multiplication
+    // (Q *K^T) and then dividing every element of the resulting matrix by sqrt(d_k),
+    // we can scale the Q matrix first which is mathematically equivalent and more efficient.
+    // Doing (Q / sqrt(d_k)) * K^T gives the same result as (Q * K^T) / sqrt(d_k).
+    const half2 scale_h2 = make_half2(scale, scale);
+    // So the scale is a float which is 32-bit precision. half/fp16 is 16-bit half-precision.
+    // half2 is a special CUDA data type that packs two half-precision floating-point
+    // Now, scale like we said comes from kq_scale and this is actually already the square root
+    // this was done before calling build_attn:
+    //      cur = build_attn(inp_attn,
+    //              model.layers[il].wo, model.layers[il].bo,
+    //              Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
+    // So we calculate the reciprocal of the square root of the embedding dimension per head
+    // before we call build_attn. This is then passed as kq_scale to the flash attention.
+    // And recall we do this because dot products grow with the dimension and can
+    // become very large. This can cause problems for softmax and also for the
+    // vanishing/exploding gradient problem. So we want to preserve the relative
+    // information between the dot prod scores, but scaled down.
+    // The scale is duplicated in both halves of the half2 because this allows
+    // us to later perform scale_h2 * make_half2(tmp.x, tmp.y) which will scale
+    // tmp.x with the first half of scale_h2 and tmp.y with the second half of scale_h2
+    // but this can be performed as one single operation/instruction.
+
+    // range-based loop of using initializer list {32, 16, 8}
+    for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
+        const int k0_start  = stride_k == WARP_SIZE ? 0 : DKQ/2 - (DKQ/2) % (2*stride_k);
+        const int k0_stop   =                             DKQ/2 - (DKQ/2) % (1*stride_k);
+        const int stride_jc = WARP_SIZE / stride_k;
+
+        if (k0_start == k0_stop) {
+            continue;
+        }
+
+        for (int jc0 = 0; jc0 < ncols; jc0 += nwarps*stride_jc) {
+            const int jc = jc0 + threadIdx.y*stride_jc + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+
+            if (jc0 + nwarps*stride_jc > ncols && jc >= ncols) {
+                break;
+            }
+
+            const int j = jc / ncols2;
+            const int c = jc % ncols2;
+
+            // uint3 is a built-in CUDA type that holds three unsigned integers
+            // (x, y, z). Here .z is the number tokens in the sequence.
+            if (jt*ncols1 + j < int(ne01.z)) {
+                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                    // Q_f2 is in global memory and was passed in as a parameter.
+                    const float2 tmp = Q_f2[(jt*ncols1 + j)*stride_Q1 + c*stride_Q2 + k];
+                    // float2 is a built-in CUDA type that holds two single-precision, so two 32-bit
+                    // and is therefore 64-bits in total. Think of is a s struct like:
+                    // struct float2 {
+                    //     float x;
+                    //     float y;
+                    // };
+                    // This where the scaling of Q actually happens, before we store
+                    // it in shared memory.
+                    tile_Q[jc*stride_tile_Q + k] = scale_h2 * make_half2(tmp.x, tmp.y);
+                }
+            } else {
+                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                    // this is padding for out of bounds Q
+                    tile_Q[jc*stride_tile_Q + k] = make_half2(0.0f, 0.0f);
+                }
+            }
+        }
+    }
+
+    // sync the block so that we know that the shared memory loads are done
+    __syncthreads();
+```
+
+```console
+(cuda-gdb) p ne01
+$8 = {x = 613566757, y = 3, z = 7}
+```
+
+Next we handle the case where the Query tile is stored in registers:
+```c++
+    // If the compiler has determined that Q can fit in registers do so using ldmatrix.
+    // So it does not have to be re-read from shared memory later.
+    if (Q_in_reg) {
+        const int j0 = (threadIdx.y / np) * cols_per_warp;
+
+        for (int k0 = 0; k0 < DKQ/2; k0 += T_B_KQ::J) {
+            load_ldmatrix(Q_B[k0/T_B_KQ::J], tile_Q + j0*stride_tile_Q + k0, stride_tile_Q);
+            //               register        shared memory address
+        }
+    }
+
+    __syncthreads();
+```
+In normal CUDA if we want to move data from shared memory into registers we can
+just use normal assignment (=), but for tensor cores we need something else.
+The hardware reads the rectangular tile from Shared Memory and automatically
+distributes the correct bytes to the correct threads' registers to form a valid
+Tensor Core Fragment.
+
+Global to Shared: Load Q from VRAM to Shared Memory (done in previous block).
+Barrier 1: Wait for load to finish.
+Shared to Registers: Use ldmatrix to move Q into private storage (the block above).
+Barrier 2: Wait for everyone to finish reading Q so we can recycle the Shared Memory.
+Recycle: Use the now-empty Shared Memory to load K.
