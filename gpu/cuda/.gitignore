@@ -19,3 +19,4 @@ pinned
 *.nsys-rep
 vmm
 ldmatrix
+cp_async

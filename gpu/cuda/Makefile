@@ -68,6 +68,9 @@ pinned: src/pinned.cu
 ldmatrix: src/ldmatrix.cu
 	nvcc -arch=sm_89 -o $@ $<
 
+cp_async: src/cp_async.cu
+	nvcc -arch=sm_89 -o $@ $<
+
 run-pinned: pinned
 	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
 	#nsys stats --report cuda_api_sum --force-overwrite true --force-export true $<.nsys-rep
