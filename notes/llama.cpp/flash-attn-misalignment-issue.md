@@ -100,6 +100,8 @@ compute-sanitizer --tool memcheck --target-processes all \
 =========     Host Frame:_start [0x94844]
 =========                in /home/danbev/work/ai/llama.cpp/./build-cuda-89-debug/bin/llama-batched-bench
 ```
+
+
 And if we step through the code we will end up in this section of `fattn-vec.cuh`:
 ```c++
         for (int j = 0; j < ncols; ++j) {
@@ -113,6 +115,10 @@ And if we step through the code we will end up in this section of `fattn-vec.cuh
                 }
             }
 ```
+Set the following breakpoint to step through the code:
+```console
+(cuda-gdb) br fattn-vec.cuh:226
+```
 Lets inspect the destination and source pointers (for ggml_cuda_memcpy_1):
 ```console
 (cuda-gdb) p Q_j
@@ -120,9 +126,9 @@ $1 = (const @generic float2 * @register) 0x7fff4ac18500
 (cuda-gdb) p &Q_reg
 $3 = (@local float2 (*)[1][4]) 0xfffc88
 ```
-So we can see here that `Q_reg` is not aligned on a 16-byte boundary. We could try
-alignas(16) but my understanding is that doing so would only align the starting
-address of Q_reg, not each element within it.
+So we can see here that `Q_reg` is not aligned on a 16-byte boundary. We could
+try alignas(16) but my understanding is that doing so would only align the
+starting address of Q_reg, not each element within it.
 
 If we step into `ggml_cuda_memcpy_1`:
 ```c++
