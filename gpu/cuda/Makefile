@@ -71,6 +71,12 @@ ldmatrix: src/ldmatrix.cu
 cp_async: src/cp_async.cu
 	nvcc -arch=sm_89 -o $@ $<
 
+fastmod: src/fastmod.cu
+	nvcc -arch=sm_89 -o $@ $<
+
+misalign: src/misalign.cu
+	nvcc -arch=sm_89 -o $@ $<
+
 run-pinned: pinned
 	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
 	#nsys stats --report cuda_api_sum --force-overwrite true --force-export true $<.nsys-rep
