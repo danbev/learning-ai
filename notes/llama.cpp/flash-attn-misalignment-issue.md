@@ -1,6 +1,10 @@
 ### Flash Attention batched-bench issue
-Currently when running the llama-batch-bench example with flash attention enabled
-(the default) it fails with the following error:
+Currently when running the llama-batch-bench example using a debug build and with
+flash attention enabled, the default, it fails with a "CUDA Exception: Warp
+Misaligned Address". 
+
+To reproduce, build llama.cpp with CUDA and debug symbols, and then run 
+llama-batched-bench with the following command:
 ```console
 export CUDA_LAUNCH_BLOCKING=1
 cuda-gdb --args ./${build_dir}/bin/llama-batched-bench \
@@ -55,54 +59,10 @@ compute-sanitizer --tool memcheck --target-processes all \
 =========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
 =========     Host Frame:__device_stub__Z18flash_attn_ext_vecILi64ELi1EL9ggml_type1ELS0_1ELb0EEvPKcS2_S2_S2_S2_PKiPfP6float2ffffjfi5uint3iiiiiiiiiiiliiliiiiil(char const*, char const*, char const*, char const*, char const*, int const*, float*, float2*, float, float, float, float, unsigned int, float, int, uint3 const&, int, int, int, int, int, int, int, int, int, int, int, long, int, int, long, int, int, int, int, int, long) in /tmp/tmpxft_0001c607_00000000-6_fattn-vec-instance-f16-f16.cudafe1.stub.c:43 [0xc4d7bd]
 =========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:void __wrapper__device_stub_flash_attn_ext_vec<64, 1, (ggml_type)1, (ggml_type)1, false>(char const* restrict&, char const* restrict&, char const* restrict&, char const* restrict&, char const* restrict&, int const* restrict&, float* restrict&, float2* restrict&, float const&, float const&, float const&, float const&, unsigned int const&, float const&, int const&, uint3 const&, int const&, int const&, int const&, int const&, int const&, int const&, int const&, int const&, int const&, int const&, int const&, long const&, int const&, int const&, long const&, int const&, int const&, int const&, int const&, int const&, long const&) in /tmp/tmpxft_0001c607_00000000-6_fattn-vec-instance-f16-f16.cudafe1.stub.c:44 [0xc4da3e]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:void flash_attn_ext_vec<64, 1, (ggml_type)1, (ggml_type)1, false>(char const*, char const*, char const*, char const*, char const*, int const*, float*, float2*, float, float, float, float, unsigned int, float, int, uint3, int, int, int, int, int, int, int, int, int, int, int, long, int, int, long, int, int, int, int, int, long) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/template-instances/../fattn-vec.cuh:42 [0xc55e60]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:void launch_fattn<64, 1, 1>(ggml_backend_cuda_context&, ggml_tensor*, void (*)(char const*, char const*, char const*, char const*, char const*, int const*, float*, float2*, float, float, float, float, unsigned int, float, int, uint3, int, int, int, int, int, int, int, int, int, int, int, long, int, int, long, int, int, int, int, int, long), int, unsigned long, int, bool, bool, bool, int) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/template-instances/../fattn-common.cuh:986 [0xc3d465]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:void ggml_cuda_flash_attn_ext_vec_case_impl<64, 1, (ggml_type)1, (ggml_type)1, false>(ggml_backend_cuda_context&, ggml_tensor*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/template-instances/../fattn-vec.cuh:523 [0xc572e5]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:void ggml_cuda_flash_attn_ext_vec_case<64, (ggml_type)1, (ggml_type)1>(ggml_backend_cuda_context&, ggml_tensor*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/template-instances/../fattn-vec.cuh:538 [0xc56fa9]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context&, ggml_tensor*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/fattn.cu:196 [0x220682]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:ggml_cuda_flash_attn_ext(ggml_backend_cuda_context&, ggml_tensor*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/fattn.cu:366 [0x221057]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:ggml_cuda_compute_forward(ggml_backend_cuda_context&, ggml_tensor*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:2712 [0x24317f]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context*, ggml_cgraph*, bool, bool) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:3677 [0x248431]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:ggml_backend_cuda_graph_compute(ggml_backend*, ggml_cgraph*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:3773 [0x248bd8]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-cuda.so.0
-=========     Host Frame:ggml_backend_graph_compute_async in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-backend.cpp:364 [0x704f0]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-base.so.0
-=========     Host Frame:ggml_backend_sched_compute_splits(ggml_backend_sched*) in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-backend.cpp:1580 [0x7560f]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-base.so.0
-=========     Host Frame:ggml_backend_sched_graph_compute_async in /home/danbev/work/ai/llama.cpp/ggml/src/ggml-backend.cpp:1803 [0x765d4]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libggml-base.so.0
-=========     Host Frame:llama_context::graph_compute(ggml_cgraph*, bool) in /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:2070 [0x47d325]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libllama.so.0
-=========     Host Frame:llama_context::process_ubatch(llama_ubatch const&, llm_graph_type, llama_memory_context_i*, ggml_status&) in /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:1094 [0x4786b8]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libllama.so.0
-=========     Host Frame:llama_context::decode(llama_batch const&) in /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:1532 [0x47a73d]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libllama.so.0
-=========     Host Frame:llama_decode in /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:3438 [0x4827f7]
-=========                in /home/danbev/work/ai/llama.cpp/build-cuda-89-debug/bin/libllama.so.0
-=========     Host Frame:main::{lambda(llama_context*, llama_batch&, int, bool)#1}::operator()(llama_context*, llama_batch&, int, bool) const in /home/danbev/work/ai/llama.cpp/tools/batched-bench/batched-bench.cpp:90 [0x94d4d]
-=========                in /home/danbev/work/ai/llama.cpp/./build-cuda-89-debug/bin/llama-batched-bench
-=========     Host Frame:main in /home/danbev/work/ai/llama.cpp/tools/batched-bench/batched-bench.cpp:210 [0x95d5d]
-=========                in /home/danbev/work/ai/llama.cpp/./build-cuda-89-debug/bin/llama-batched-bench
-=========     Host Frame:__libc_start_call_main in ../sysdeps/nptl/libc_start_call_main.h:58 [0x2a1c9]
-=========                in /lib/x86_64-linux-gnu/libc.so.6
-=========     Host Frame:__libc_start_main in ../csu/libc-start.c:360 [0x2a28a]
-=========                in /lib/x86_64-linux-gnu/libc.so.6
-=========     Host Frame:_start [0x94844]
-=========                in /home/danbev/work/ai/llama.cpp/./build-cuda-89-debug/bin/llama-batched-bench
+...
 ```
 
-
-And if we step through the code we will end up in this section of `fattn-vec.cuh`:
+If we step through the code we will end up in this section of `fattn-vec.cuh`:
 ```c++
         for (int j = 0; j < ncols; ++j) {
             const float2 * Q_j = (const float2 *) (Q + j*nb01);
@@ -126,9 +86,31 @@ $1 = (const @generic float2 * @register) 0x7fff4ac18500
 (cuda-gdb) p &Q_reg
 $3 = (@local float2 (*)[1][4]) 0xfffc88
 ```
-So we can see here that `Q_reg` is not aligned on a 16-byte boundary. We could
-try alignas(16) but my understanding is that doing so would only align the
-starting address of Q_reg, not each element within it.
+So we can see here that `Q_reg` is not aligned on a 16-byte boundary.
+
+We can find the definition of Q_reg in ggml/src/ggml-cuda/fattn-vec.cuh:
+```c++
+    float2 Q_reg[ncols][(D/2)/nthreads_KQ] = {{{0.0f, 0.0f}}}; // May be only partially initialized.
+```
+A float2, which is a struct that contains 2 32-bit floats (64 bits, 8 bytes). The
+GPU would use LD.64 instruction to load a float2 which requires 8-byte alignment.
+
+We could try alignas(16) for Q_reg but my understanding is that doing so would
+only align the startof the array, but Q_req is a 2d array so while the first
+entry would be 16-byte aligned the following row would not be. For example:
+```console
+int ncols   = 2;
+int row_len = 3;
+alignas(16) float2 Q_reg[ncols][row_len] = {{...}};
+
+Address of Q_reg[0][0]  = 0x1000 (16-byte aligned, divisible by 16)
+
+Address of Q_reg[1][0]  = 0x1000 + (1 * row_len * sizeof(float2))
+                        = 0x1000 + (1 *   3     * 8)
+                        = 0x1000 + 24
+                        = 0x1018 (hex 18 (decimal 24) is not divisible by 16, 24/16=1.5)
+                                 so this is misaligned.
+```
 
 If we step into `ggml_cuda_memcpy_1`:
 ```c++
@@ -149,12 +131,17 @@ static __device__ __forceinline__ void ggml_cuda_memcpy_1(void * __restrict__ ds
         } else if constexpr (nb_per_cpy == 8) {
             ((int2 *) dst)[i] = ((const int2 *) src)[i];
         } else if constexpr (nb_per_cpy == 16) {
------>      ((int4 *) dst)[i] = ((const int4 *) src)[i];
+            ((int4 *) dst)[i] = ((const int4 *) src)[i]; <-- crash happens at this line
         } else {
             static_assert(nbytes == 0 && nbytes == -1, "bad nbytes");
         }
     }
 ```
+int4 is a struct that contains 4 32-bit integers (128 bits, 16 bytes). The GPU
+would use the LD.128 instruction to load an int4 which requires 16-byte alignment
+and this is where the error is triggered.
+
+We can step through to the line that causes the error and inspect the values:
 ```console
 (cuda-gdb) n
 692	            ((int4 *) dst)[i] = ((const int4 *) src)[i];
@@ -163,8 +150,7 @@ $4 = (const @generic void * @register) 0x7fff4ac18500
 (cuda-gdb) p dst
 $5 = (@generic void * @register) 0x7fff9bfffc88
 ```
-And the cast to int4 and dereference is what is causing the misaligned address
-error.
+And if we step over the line we get the error:
 ```console
 (cuda-gdb) n
 
@@ -178,7 +164,7 @@ _INTERNAL_7bc1cc71_29_fattn_vec_instance_f16_f16_cu_a1d0f301_123442::ggml_cuda_m
 682	    for (int i = 0; i < nbytes/nb_per_cpy; ++i) {
 ```
 
-A possible fix could be to split the 16-byte copy into two 8-byte copies:
+The proposed fix is to split the 16-byte copy into two 8-byte copies:
 ```c++
             ((int2 *) dst)[2*i]     = ((const int2 *) src)[2*i];
             ((int2 *) dst)[2*i + 1] = ((const int2 *) src)[2*i + 1];
