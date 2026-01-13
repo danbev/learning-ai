@@ -20,3 +20,5 @@ pinned
 vmm
 ldmatrix
 cp_async
+fastmod
+misalign
