@@ -2,8 +2,8 @@
 This repository contains notes and code examples related to AI.
 
 ### In-progress
+* CUDA FA exploration: [notes](./notes/flash-attention.md)
 
-* llama.cpp backend (GPU) sampling: [notes](./notes/llama.cpp/gpu-sampling.md), [pull request](https://github.com/ggml-org/llama.cpp/pull/17004)
 
 ### Topics
 
@@ -15,6 +15,7 @@ This repository contains notes and code examples related to AI.
 * [GPUs](./gpu/README.md)
 * [Vector Databases](./notes/vector-databases.md)
 * [Vision](./notes/vision)
+* llama.cpp backend sampling: [notes](./notes/llama.cpp/gpu-sampling.md), [pull request](https://github.com/ggml-org/llama.cpp/pull/17004)
 
 ### Examples/Exploration code
 
