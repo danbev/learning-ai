@@ -886,8 +886,75 @@ The hardware reads the rectangular tile from Shared Memory and automatically
 distributes the correct bytes to the correct threads' registers to form a valid
 Tensor Core Fragment.
 
-Global to Shared: Load Q from VRAM to Shared Memory (done in previous block).
-Barrier 1: Wait for load to finish.
-Shared to Registers: Use ldmatrix to move Q into private storage (the block above).
-Barrier 2: Wait for everyone to finish reading Q so we can recycle the Shared Memory.
-Recycle: Use the now-empty Shared Memory to load K.
+Next we have:
+```c++
+    // Preload mask and K data for first iteration when using cp_async with multiple stages:
+    if constexpr (nstages > 1) {
+        static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi-stage pipeline");
+        // Enables async copy from global memory to shared memory (using cp.async).
+        constexpr bool use_cp_async = true;
+        // We don't need to check for out-of-bounds accesses the first tile.
+        constexpr bool oob_check    = false;
+        // batch size limit for this tile
+        constexpr int  k_VKQ_sup    = nbatch_fa;
+
+        if (ncols2 > 1 || mask_h) {
+            flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async, oob_check>
+                (mask_h + kb0*nbatch_fa, tile_mask, stride_mask, k_VKQ_sup, jt*ncols1, ne01);
+        }
+
+        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async, oob_check>
+            (K_h2 + int64_t(kb0)*nbatch_fa*stride_K, tile_K, nbatch_K2, stride_K, k_VKQ_sup);
+    }
+```
+Now, `mask_h` is a parameter of this function and is declared as:
+```c++
+const half   * const __restrict__ mask_h,
+```
+This is the pointer to the mask data in global memory and tile_mask is the pointer
+to shared memory.
+
+Normally when moving data from global memory to shared memory requires two steps:
+1. Read from global memory into registers
+2. Write from registers into shared memory
+
+`cp_async` was introduced to avoid the intermediate step of using registers, and
+instead allows direct transfer from global memory to shared memory. And the thread
+can continue doing other work while the transfer is in progress.
+
+_wip_
+
+Lets take a look at `flash_attn_ext_f16_load_mask`:
+```c++
+
+```
+
+
+```c++
+template <int preload>
+static __device__ __forceinline__ void cp_async_cg_16(const unsigned int dst, const void * src) {
+    static_assert(preload == 0 || preload == 64 || preload == 128 || preload == 256, "bad preload");
+#ifdef CP_ASYNC_AVAILABLE
+#if CUDART_VERSION >= 11040
+    if (preload == 256) {
+        asm volatile("cp.async.cg.shared.global.L2::256B [%0], [%1], 16;"
+            : : "r"(dst), "l"(src));
+    } else if (preload == 128) {
+        asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], 16;"
+            : : "r"(dst), "l"(src));
+    } else if (preload == 64) {
+        asm volatile("cp.async.cg.shared.global.L2::64B [%0], [%1], 16;"
+            : : "r"(dst), "l"(src));
+    } else
+#endif // CUDART_VERSION >= 11040
+    {
+        asm volatile("cp.async.cg.shared.global [%0], [%1], 16;"
+            : : "r"(dst), "l"(src));
+    }
+#else
+    GGML_UNUSED(dst);
+    GGML_UNUSED(src);
+    NO_DEVICE_CODE;
+#endif // CP_ASYNC_AVAILABLE
+}
+```
