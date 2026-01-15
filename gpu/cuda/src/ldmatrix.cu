@@ -6,6 +6,10 @@
 
 // This example demonstrates how to use the ldmatrix instruction which I came
 // accross in ggml-cuda which is used in the CUDA flash attention implementation.
+// This instruction is not just about loading data into registers, that is already
+// possible for nvcc to do, anytime we use a local variables that happens. Instead
+// this is about loading data in a specific format that is optimal for Tensor Core
+// operations.
 
 // This mimics types like T_B_KQ and is a 16x16 tile of FP16 elements = 256 elements.
 // Distributed across 32 threads in a warp. Each thread holds:
@@ -39,11 +43,10 @@ __global__ void ldmatrix_kernel(const half* global_in, float* global_out) {
     
     extern __shared__ half tile_smem[];
 
-    //Load from Global Memory -> Shared Memory
     const int tid = threadIdx.x;
     
     // Each thread loads 8 elements (using int4 = 16 bytes copy)
-    // We cast to int4 to copy faster
+    // We cast to int4 to copy faster which is a built-in CUDA type.
     if (tid < 32) {
         const int4* src = reinterpret_cast<const int4*>(global_in);
         int4* dst = reinterpret_cast<int4*>(tile_smem);
@@ -93,7 +96,9 @@ int main() {
     float* h_out = (float*)malloc(bytes_out);
     
     // Fill input with 1.0
-    for(int i=0; i<N; i++) h_in[i] = __float2half(1.0f);
+    for(int i=0; i < N; i++) {
+        h_in[i] = __float2half(1.0f);
+    }
 
     half* d_in;
     float* d_out;
