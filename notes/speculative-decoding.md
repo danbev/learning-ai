@@ -43,3 +43,25 @@ and output X as the next predicted token from the target model:
 ```console
 [A, B, X]
 ```
+
+### Self-Speculative decoding
+So the above speculative decoding technique requires two models: a draft model
+and a target which both need to loaded into VRAM. And these models also need to
+share the same tokenizer/vocab.
+
+Self-speculative decoding is a technique where the insight is that we don't need
+all of the model layers to get a useful draft prediction but can get away with
+only using a few. So instead of processing the full say 42 layers of the model
+it might exit early after say 8 layers to get a draft prediction. It takes the
+output of the hidden state at layer 8, and applies a classification head.
+
+### n-gram Speculative Decoding
+n-gram in this context refers to a simplified "drafting" method that uses pattern
+matching instead of a neural network to generate draft tokens. So this works by
+looking backwards through the tokens that have already been generated (or the
+initial prompt) and finding sequences of n tokens (n-grams) that have occurred
+together previously. It then selects the prediction of those n-grams as the next
+token(s) to draft.
+
+In certains scenarious like coding where we often have repeated patterns this
+can work quite well.
