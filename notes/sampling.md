@@ -120,7 +120,7 @@ probabilities of already-appeared tokens.
 
 
 ### Frequency penalty
-This is a hyperparameter that is simlar to the repetition penalty but instead
+This is a hyperparameter that is similar to the repetition penalty but instead
 controls the likelihood of generating tokens that are inherently frequent in the
 language model's training data, whereas repetition penalty is about the tokens
 in the generated text.
@@ -172,6 +172,7 @@ the PresencePenalty value.
 * Add the token to the current context and repeat the process.
 
 ### Min-p
+
 ```console
 p("the")    = 0.6
 p("a")      = 0.2
@@ -180,24 +181,25 @@ p("house")  = 0.02
 p("banana") = 0.0001
 ... and so on for thousands of other words.
 ```
-Find the max probability, the token with the highest probability, so this wold
+Find the max probability, the token with the highest probability, so this would
 be 'the' with a probability of 0.6.
+
 Next we calculate a cutoff threshold which is what the min_p parameter is used
-for which is a user defined value between 0 and 1.
-```
+for, which is a user defined value between 0 and 1.
+```console
 threshold = p_max * min_p
 ```
 If we choose min_p = 0.1, then threshold = 0.6 * 0.1 = 0.06.
 
-Go through the list of all possible probabilites and discard any the probablities
-that are less than the threshold.
-```
+Go through the list of all possible probabilites and discard any of the
+probablities that are less than the threshold.
+```console
 p("the")    = 0.6 (Keep, it's >= 0.06)
 p("a")      = 0.2 (Keep, it's >= 0.06)
 p("it")     = 0.15 (Keep, it's >= 0.06)
 p("house")  = 0.02 (Discard, it's < 0.06)
 p("banana") = 0.0001 (Discard, it's < 0.06)
-``
+```
 
 So the float p that this sampler accepts, this is a value between 0 and 1 which
 we use to multiply by the maxium probablity in the set of logits. This gives us
@@ -219,13 +221,13 @@ s is a float scale factor.
 b is a float bias to be added.
 ```
 Lets plug in the values:
-```
+```console
 a = mask (our tensor of 1.0s and 0.0s)
 s = -large_neg_val = -(-1e9f) = 1e9f
 b = large_neg_val = -1e9f
 ```
 So the formula becomes:
-```
+```console
 punishment = (mask * 1e9f) + (-1e9f)
 ```
 Now, let's see what happens for the two different values inside the mask tensor:
@@ -234,6 +236,7 @@ Now, let's see what happens for the two different values inside the mask tensor:
 The mask value for this token is 1.0f.
 The calculation is: (1.0f * 1e9f) + (-1e9f)
 This simplifies to: 1e9f - 1e9f = 0.0f
+
 Result:
 The punishment is 0.0f. When we add this to the original logit, the logit is
 unchanged. This is exactly what we want for tokens we keep.
@@ -260,4 +263,4 @@ only values that are to be kept will:
 punishment = (mask * 1e9f) + (-1e9f)
               0    * 1e9f + (-1e9f) = -1e9f (bascially -infinity, we discard this token)
               1    * 1e9f + (-1e9f) = 0     (nothing happend to tokens we keep)
-
+```
