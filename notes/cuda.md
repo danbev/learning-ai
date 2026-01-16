@@ -22,14 +22,15 @@ Drivers:       Linux and Windows device drivers and runtime (no mac?)
 `CUB` (CUDA UnBound) is a library of high-performance primitives for CUDA.
 `AMG-X` (Adaptive General Matrix eXponentiation)
 `NCCL` (NVIDIA Collective Communications Library) is a library that provides
-`multi-GPU` and `multi-node` collective communication primitives.
+multi-GPU and multi-node collective communication primitives.
 
 ### Compilation units
 A CUDA program would have a `.cu` suffix. The nvcc compiler will separate out
 the host (CPU) code from the device (GPU) code. The host code is compiled by
 the host compiler (gcc, clang, etc.) and the device code is compiled by the
-NVIDIAS proprietary backend compiler named PTXAS into an intermediate
-representation (PTX) which is later converted into binary code for the GPU.
+NVIDIAs proprietary backend compiler named PTXAS (PTX ASsembler) into an
+intermediate representation (PTX) which is later converted into binary code for
+the GPU.
 
 The host will call code on the GPU using something that is called kernel calls.
 A kernel is a function that is executed on the GPU. Each kernel functions runs
@@ -55,9 +56,9 @@ above example.
 
 ### Parallel Thread Execution (PTX)
 When you compile CUDA code with nvcc, the device code doesn't immediately get
-translated to machine code. Instead, it first gets compiled to this intermediate
-PTX format. This abstraction allows CUDA code to be compiled and then later
-be translated into the binary code of a specific GPU.
+translated to machine code. Instead, it first gets compiled to an intermediate
+PTX format. This abstraction allows CUDA code to be compiled and then later be
+translated into the binary code of a specific GPU.
 
 ```console
 $ cd gpu/cuda
@@ -184,56 +185,6 @@ for defining macros and include/library paths, and for steering the compilation
 process. nvcc also accepts a range of CUDA-specific options for defining the
 virtual architecture targeting which the CUDA program is compiled, and for
 defining the memory model used, and for steering the compilation process.
-
-### Questions
-So when we are going to train a large language model on a GPU we first need to
-load the model weights into the host's memory, then copy them over to the GPU's
-memory, and then call a kernel function to execute. Is this how it is done in
-practice or are there ways to avoid the memory copying?
-
-When training large language models (or any deep learning models) on GPUs, the
-model's weights and the data do need to reside in the GPU's memory. However, the
-process is a bit more nuanced than just loading everything into the host's
-memory and then copying it to the GPU's memory. Here's a breakdown of how it
-typically works in practice:
-
-Model Initialization:
-
-When you initialize a model using deep learning frameworks like TensorFlow or
-PyTorch, and you've set the device to a GPU, the model's weights are often
-directly initialized in the GPU's memory. There's no need to first initialize
-them on the CPU and then transfer them.
-When you instruct these frameworks to initialize tensors (or model parameters)
-on the GPU, a series of steps occur:
-
-* The framework communicates with the GPU through a driver API (e.g., CUDA for
-NVIDIA GPUs).
-* Memory on the GPU is allocated to store the tensor.
-* Initialization operations (like random number generation for weight
-initialization) are executed as GPU kernels. These operations fill the allocated
-memory with the initial values.
-
-The key takeaway is that these operations occur directly on the GPU without the
-need for an intermediary step on the CPU.
-
-
-Data Loading and Batching:
-
-
-Training data is usually read in batches. Instead of loading the entire dataset
-into the host's memory and then transferring it to the GPU, data is typically
-loaded batch-by-batch. Each batch is transferred to the GPU just before it's
-needed for training.
-Modern deep learning frameworks and data loaders handle this process
-efficiently, often using asynchronous operations to overlap data loading on the
-CPU with computation on the GPU.
-
-Once the model's weights are on the GPU, they typically stay there throughout
-the training process. Forward passes, backward passes, and weight updates all
-happen on the GPU. The weights aren't constantly moved back and forth between
-the host and the GPU.
-It's only if you need to save the model's weights or inspect them on the CPU
-that you'd transfer them back to the host's memory.
 
 ### Streams
 A stream in CUDA is a sequence of commands that execute in order. It is like a
@@ -437,11 +388,11 @@ threads.
    |                                              |
    +----------------------------------------------+
 
-blockDim is how many elementes we have in the x dimension of a block, in this
+blockDim is how many elements we have in the x dimension of a block, in this
 case we have 4 threads.
 
-blockIdx is the of the block in the grid, in this case we have two blocks
-to the index can be 0 or 1.
+blockIdx is the id of the block in the grid, in this case we have two blocks
+so the blockIdx can be 0 or 1.
 
 threadIdx.x is the thread index within the block.
 
@@ -918,3 +869,24 @@ cudaMallocManaged(&unified_ptr, size);  // Can be accessed by both CPU/GPU
 ```
 There is no need for explicit `cudaMemcpy` calls to transfer data between the
 CPU and GPU with VVM.
+
+
+### Debug demotion
+In CUDA if we declare an array inside a kernel function like this:
+```c++
+float2 Q_reg[ncols][row_len] = {{...}};
+```
+This will be 8-byte aligned because float2 is 8 bytes (2 * 4 byte floats). Now,
+when build a release bulid with optimizations enabled the compiler can store
+the values of this array in separate registers instead of storing them on the
+stack. Now, we ran into an issue where this array was used in a copy operation
+and as a performance it was copied as a int4 which requires 16-byte alignment.
+So with the individual elements in register the compiler can also handle the int4
+operation as register-to-register moved operations. And registers have names, not
+addresses so alignment concepts don't apply in this case.
+
+But when we build using a debug build these values are stored on the stack as
+we need obervability into the values. When the code executes *(int4*)ptr this
+emits an `LD.E.128` (load 128 bit) instruction which requires 16-byte alignment
+which causes the "Misaligned Address" error.
+
