@@ -1,6 +1,5 @@
 ## SentencePiece
 This is tokenizer/detokenizer used a by a number of NLP libraries.
-by gglm for example.
 
 SentencePiece can use different tokenization algorithms like BPE, Unigram.
 

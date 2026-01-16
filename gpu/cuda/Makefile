@@ -66,7 +66,7 @@ pinned: src/pinned.cu
 	nvcc -lnppc -o $@ $<
 
 ldmatrix: src/ldmatrix.cu
-	nvcc -arch=sm_89 -o $@ $<
+	nvcc -arch=sm_89 -o $@ $< -Xptxas -v
 
 cp_async: src/cp_async.cu
 	nvcc -arch=sm_89 -o $@ $<
