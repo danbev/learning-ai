@@ -33,6 +33,14 @@ __global__ void dp4a_example_kernel(const int* vec_a, const int* vec_b, int* vec
         int b_local = vec_b[idx];
 
         int result = compute_dp4a(a_local, b_local, 0);
+        // I'm using zero as the initial accumulator, but this can be useful
+        // when we have larger vectors and want to calculate the dot product
+        // for all of them. We can do that in a loop:
+        // int acc = 0;
+        // for (int i = 0; i < num_packets; ++i) {
+        //   acc = compute_dp4a(vec_a[i], vec_b[i], acc);
+        // }
+        // Simliar to a fused multiply-add operation.
 
         vec_out[idx] = result;
     }
