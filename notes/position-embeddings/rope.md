@@ -26,9 +26,137 @@ rotating them. The idea is to make the dot product of the query
 and key vectors position-aware, encoding the relative positions of tokens into
 the attention mechanism.
 
+Lets take the following sequence "Dan loves ice".
+```console
+Input: "Dan loves ice"
+Tokens: [Dan, loves, ice] -> indices [0, 1, 2]
+Embeddings: matrix:
+Row 0: Dan                  (but these would be embedding factors of some size)
+Row 1: loves
+Row 2: ice
+```
+So lets say the the embedding matrix is `inp_emb`
+We know multiply a learned weight matrix `W_q` to get the query matrix:
+```
+query = wq * inp_emb
+```
+And we do the same for the key matrix:
+```
+key = wk * inp_emb
+```
+Let's focus on the vector for "loves" (Position 1). We have a query vector loves
+and a key vector loves.
+Lets imaging the query vector like this with 6 dimensions:
+```
+query = [x1, y1, x2, y2, x3, y3]
+```
+RoPE will treat this as three pairs.
+For Token 1:
+```
+("loves"):
+Pair 1 (x1, y1): Rotates by 1 * theta_fast   (e.g., 10 degrees).
+Pair 2 (x2, y2): Rotates by 1 * theta_medium (e.g., 1 degree).
+Pair 3 (x3, y3): Rotates by 1 * theta_slow   (e.g., 0.1 degrees).
+```
+For Token 2:
+```
+("ice"):
+Pair 1 (x1, y1): Rotates by 2 * theta_fast   (e.g., 20 degrees).
+Pair 2 (x2, y2): Rotates by 2 * theta_medium (e.g., 2 degrees).
+Pair 3 (x3, y3): Rotates by 2 * theta_slow   (e.g., 0.2 degrees).
+```
+Now, the attention mechanism calculates the similarity (dot product) between
+"ice" (Query at pos 2) and "loves" (Key at pos 1).
+
+The dot product sums up the overlaps of these pairs.
+```
+Pair 1 overlap: Depends on the angle difference (20  - 10  = 10).
+Pair 2 overlap: Depends on the angle difference (2   - 1   = 1).
+Pair 3 overlap: Depends on the angle difference (0.2 - 0.1 = 0.1).
+```
+Notice that the absolute positions (1 and 2) are gone. The result only depends
+on the relative distance ($2 - 1 = 1$).
+
+This seemed a bit strange to as I have a mental model of the attention mechanism
+where I think of the vectors as arrows in the embedding space. But we can also
+view the attention like this:
+```
+q = [q_0, q_1, q_2, q_3]
+k = [k_0, k_1, k_2, k_3]
+```
+So normally we would calculate the dot product like this:
+```
+attention_score = q_0 * k_0 + q_1 * k_1 + q_2 * k_2 + q_3 * k_3
+```
+But we could also view this as:
+```
+attention_score = (q_0 * k_0 + q_1 * k_1) + (q_2 * k_2 + q_3 * k_3)
+```
+The total attention score is simply the score of Pair 1 plus the score of
+Pair 2.
+Lets look at one pair, for example the first pair:
+```
+(q_0*k_0 + q_1*k_1)
+```
+This what it looks like before RoPE, but after RoPE we treat these are complex
+numbers:
+```
+pair score = Magnitude(q) * Magnitude(k) * cos(θpos_diff)
+```
+The magnitude is how "strong" this feature is. This not changed by RoPE.
+cos(θpos_diff) is the cosine of the angle difference between the query and key
+and it the rotation part.
+
+If the relative rotation between two tokens is 0 then they are the same position
+, cos(0) = 1 and the attention score is maximized for this pair.
+
+If the relative rotation between two tokens is 90 degrees, they are far apart,
+cos(90) = 0, then this pair contributes nothing (we will be multiplying by 0).
+
+If the relative rotation is 180 degrees, they are opposite positions,
+cos(180) = -1, then this pair contributes negatively to the attention score.
+
+
+So a high frequency might mean "I only contribute a high score if we are 0, 5,
+or 10 tokens apart.
+
+```
+Total Score = (Pair 1 score) + (Pair 2 score) + (Pair 3 score)
+```
+The model learns to use these slots strategically. It puts "local grammar"
+information into the vector slots corresponding to Pair 1 (because those slots
+are sensitive to small position changes). It puts "topic" information into the
+slots for Pair 3 (because those slots stay stable over long distances).
+This is done as part of the Wq and Wk learnt weight matrices. This multiplication
+actually moves the embeddings into these different "frequency" slots.
+
+You can think of the W_Q (and W_K) matrix as a sorting machine or a switchboard
+operator. Before the multiplication, your input vector (the embedding) is just a
+"bag of features."
+
+The multiplication X * W_Q$ reshuffles and combines these features into the
+specific slots that RoPE expects.
+The matrix effectively says:
+"Okay, I see 'Plural' and 'Noun' features. Those are grammar rules. I need to
+move a combination of those into indices 0 and 1 (the Fast Rotation slots) so
+they can track immediate neighbors."
+
+"I see 'Cooking' and 'Food' features. Those are topic rules. I need to move those
+into indices 126 and 127 (the Slow Rotation slots) so they stay active for the
+whole document."
+
+After the multiplication (but before RoPE is applied), your vector is now sorted
+by frequency sensitivity.
+* The top of the vector contains data that needs to expire quickly (local context).
+* The bottom of the vector contains data that needs to last a long time (global context).
+
 When rotating the query and key vectors they are rotated in a certain way that
 is not caotic like the absolute positioning. For each position they are
 rotated a certain "fixed" amount of degrees (theta).
+
+So the matrix that rope operates on is the one that has been sorted by
+frequency sensitivity by the Wq and Wk matrices. The rotations in rope are
+fixed.
 
 Rotation:
 ```
