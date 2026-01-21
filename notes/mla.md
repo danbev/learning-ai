@@ -271,6 +271,8 @@ content:
 $46 = {512, 1, 1, 1}
 ```
 
+And then we create a view into the kv_cmpr_pe tensor which holds the rope
+information:
 ```c++
             // and {n_embd_head_qk_rope, 1, n_tokens}
             ggml_tensor * k_pe = ggml_view_3d(ctx0, kv_cmpr_pe, n_embd_head_qk_rope, 1, n_tokens,
@@ -284,60 +286,79 @@ $46 = {512, 1, 1, 1}
 $47 = {64, 1, 1, 1}
 ```
 
+And then we apply RoPE to the query position embedding.
 ```c++
             q_pe = ggml_rope_ext(ctx0, q_pe, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
                                  ext_factor, attn_factor, beta_fast, beta_slow);
             cb(q_pe, "q_pe", il);
 ```
+So this is where we apply the rotation passing in the query position embedding
+tensor and the input position tensor.
+
+And then we also apply RoPE for the key position embedding:
 ```c++
 
             k_pe = ggml_rope_ext(ctx0, k_pe, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
                                  ext_factor, attn_factor, beta_fast, beta_slow);
             cb(k_pe, "k_pe", il);
 ```
+
+Next we apply normalization to the compressed kv tensor:
 ```c++
 
             kv_cmpr = build_norm(kv_cmpr, model.layers[il].attn_kv_a_norm, nullptr, LLM_NORM_RMS, il);
             cb(kv_cmpr, "kv_cmpr", il);
-
+```
+And then we get to the MLA part:
+```c++
             if (is_mla) {
-                // {n_embd_head_qk_nope, n_tokens, n_head}
                 q_nope = ggml_permute(ctx0, q_nope, 0, 2, 1, 3);
                 cb(q_nope, "q_nope_perm", il);
+```
 
-                // {n_embd_head_qk_nope, kv_lora_rank, n_head} x {n_embd_head_qk_nope, n_tokens, n_head}
+Following that we have the absorption part where we multiply the query nope tensor
+with the unzip matrix to incorporate the expansion into the query:
+```c++
                 ggml_tensor * q_nope_absorbed = ggml_mul_mat(ctx0, model.layers[il].wk_b, q_nope);
                 cb(q_nope_absorbed, "q_nope_absorbed", il);
 
                 // {kv_lora_rank, n_head, n_tokens}
                 q_nope_absorbed = ggml_permute(ctx0, q_nope_absorbed, 0, 2, 1, 3);
                 cb(q_nope_absorbed, "q_nope_absorbed_perm", il);
-
-                // {n_embd_head_qk_rope + kv_lora_rank, n_head, n_tokens}
-                // note: rope must go first for in-place context shifting in build_rope_shift()
+```
+And then we concatenate the rope and nope parts of the query together:
+```c++
                 ggml_tensor * Qcur = ggml_concat(ctx0, q_pe, q_nope_absorbed, 0);
                 cb(Qcur, "Qcur", il);
-
+```
+And then we do the same concatenation for the key:
+```c++
                 kv_cmpr = ggml_reshape_3d(ctx0, kv_cmpr, kv_lora_rank, 1, n_tokens);
                 cb(kv_cmpr, "kv_cmpr_reshape", il);
 
-                // {n_embd_head_qk_rope + kv_lora_rank, 1, n_tokens}
                 ggml_tensor * Kcur = ggml_concat(ctx0, k_pe, kv_cmpr, 0);
                 cb(Kcur, "Kcur", il);
+```
+And notice that Vcur is just the compressed kv tensor:
+```c++
 
                 // {kv_lora_rank, 1, n_tokens}
                 ggml_tensor * Vcur = kv_cmpr;
                 cb(Vcur, "Vcur", il);
+```
+And if the model has temperature scaling that is applied here:
+```c++
 
                 if (inp_attn_scale) {
                     // apply llama 4 temperature scaling
                     Qcur = ggml_mul(ctx0, Qcur, inp_attn_scale);
                     cb(Qcur, "Qcur_attn_temp_scaled", il);
                 }
-
+```
+And then we finally have the attention operation itself:
+```c++
                 // note: MLA with the absorption optimzation converts into MQA (ie: GQA with 1 group)
                 cur = build_attn(inp_attn,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, nullptr, nullptr, model.layers[il].wv_b, kq_scale, il);
-
 ```
