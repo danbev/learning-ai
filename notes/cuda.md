@@ -890,3 +890,83 @@ we need obervability into the values. When the code executes *(int4*)ptr this
 emits an `LD.E.128` (load 128 bit) instruction which requires 16-byte alignment
 which causes the "Misaligned Address" error.
 
+
+### MMQ (Matrix Multipliation Quantized)
+This is used for prefill/prompt processing in llama.cpp. When the batch size is
+greater than 1.
+
+```c++
+    bool use_mul_mat_q = ggml_is_quantized(src0->type) && !bad_padding_clear
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+```
+
+### MMVQ (Matrix Multiplication Vector Quantized)
+This is for token generation when the batch size is 1.
+```c++
+    bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
+        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
+```
+
+### MMVF (Matrix Multiplication Vector Float)
+This is also for token generation when the batch size is 1, but uses unquantized
+floating point values.
+
+```c++
+    bool use_mul_mat_vec_f = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+```
+
+In ggml-cuda.cu we might find something like the following:
+```c++
+    bool use_mul_mat_vec_f = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+    bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+    bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
+        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
+    bool use_mul_mat_q     = ggml_is_quantized(src0->type) && !bad_padding_clear
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+```
+
+```console
+#1  0x00007fffdac419a6 in ggml_cuda_mul_mat (ctx=..., src0=0x555559b86370, src1=0x5555575901c0, dst=0x555557590330)
+    at /home/danbev/work/ai/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:2247
+2247	        ggml_cuda_mul_mat_f(ctx, src0, src1, nullptr, dst);
+```
+So recall that this is for matrix multiplication with floating point values.
+```c++
+void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx,
+                         const ggml_tensor * src0,
+                         const ggml_tensor * src1,
+                         const ggml_tensor * ids,  // nullptr in our case
+                         ggml_tensor * dst) {
+    GGML_ASSERT(        src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(!ids ||  ids->type == GGML_TYPE_I32);
+    GGML_ASSERT(         dst->type == GGML_TYPE_F32);
+```
+ids would be used for mixtures of experts models.
+```console
+(cuda-gdb) p src0->name
+$1 = "blk.0.attn_q.weight", '\000' <repeats 44 times>
+```
+These are the attention query weights for a specific transformer block/layer and
+are static. This will contain all the weights, including all experts if experts
+are used. This is why the ids tensor is needed which tells use which expert to
+use for which token embedding.
+
+```console
+(cuda-gdb) p src1->name
+$4 = "attn_norm-0", '\000' <repeats 52 times>
+```
+These are the input token embeddings which have been normalized.
+
+And dst is just the operation itself which src0 and src1 are input tensors for:
+```console
+(cuda-gdb) p dst->op
+$6 = GGML_OP_MUL_MAT
+```
+```
+[ Token A ]  x  [ Weight Matrix ]  =  [ Result ]
+```
