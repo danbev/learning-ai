@@ -398,7 +398,53 @@ $39 = 224
 ncols                     = 448 columns
 stride                    = 7 * 32 = 224
 ```
-This thread will process:
+
+Matrix Multiplication Dimensions:
+```
+For the operation C = A × B:
+
+A: M × K  (M rows, K columns)
+B: K × N  (K rows, N columns)
+C: M × N  (M rows, N columns)
+
+      A          B          C
+   [     ]     [   ]     [     ]
+M    ...    K   ...    M   ...
+     ...       [   ]       ...
+   [     ]               [     ]
+      K          N          N
+```
+To get a better understanding of what is going on below lets take a look at the
+matrices that we will be multiplying:
+And the current matrices look like this:
+```console
+(cuda-gdb) p dst->src[0]->name
+$3 = "blk.0.attn_q.weight", '\000' <repeats 44 times>
+(cuda-gdb) p dst->src[0]->ne
+$4 = {896, 896, 1, 1}
+
+$5 = "attn_norm-0", '\000' <repeats 52 times>
+(cuda-gdb) p dst->src[1]->ne
+$6 = {896, 7, 1, 1}
+
+src0 is our A matrix, and src1 is our B matrix:
+```console
+   C(896,7) = A(896,896) * B^T(896,7)
+               A                          B^T
+   0   [0       ...         895]      0 [0 ... 6]
+   1   [0       ...         895]      1 [0 ... 6]
+   2   [0       ...         895]      2 [0 ... 6]
+   3   [0       ...         895]  *   3 [0 ... 6]
+   4   [0       ...         895]      4 [0 ... 6]
+   5   [0       ...         895]      5 [0 ... 6]
+   6   [0       ...         895]      6 [0 ... 6]
+   ...          ...                       ...
+   859 [0       ...         895]    895 [0 ... 6]
+```
+Now, B is not transposed explicitly but as we will discuss later the values are
+extracted in a "transposed order".
+
+The current thread (thread 0) will process:
 ```console
 Iteration 0: col = 0
 Iteration 1: col = 224
@@ -486,6 +532,28 @@ If we demangle ILi16ELi8E7__half2LNS_11data_layoutE0EEE we get:
 
 So the tile of matrix A would be something like this:
 ```console
+               A
+   0   [0     15           ...         895]
+   1   [0     15           ...         895]
+   2   [0     15           ...         895]
+   3   [0     15           ...         895]
+   4   [0     15           ...         895]
+   5   [0     15           ...         895]
+   6   [0     15           ...         895]
+   7   [0     15           ...         895]
+   8   [0     15           ...         895]
+   9   [0     15           ...         895]
+   10  [0     15           ...         895]
+   11  [0     15           ...         895]
+   12  [0     15           ...         895]
+   13  [0     15           ...         895]
+   14  [0     15           ...         895]
+   15  [0     15           ...         895]
+   ...                     ...
+   859 [0                  ...         895]
+
+And one tile from this matrix would look like this::
+
     0 [H H H H H H H H H H H H H H H H]
     1 [H H H H H H H H H H H H H H H H]
     2 [H H H H H H H H H H H H H H H H]
@@ -796,16 +864,33 @@ C is 896×7   (output)
 And just recall this is happening inside the outer loop, so we are currently
 processing one tile of A.
 
+The mma instruction, mma.sync.aligned.m16n8k16, is the core of the computation,
+and it operates on small fragments of the matrices:
 ```console
-        B
-  0 [0  .... 895]
-  1 [0  .... 895]
-  2 [0  .... 895]
-  3 [0  .... 895]
-  4 [0  .... 895]
-  5 [0  .... 895]
-  6 [0  .... 895]
+  C_frag(16,8) += A_frag(16,16) * B_frag(16,8)
+
+  0 [0 ... 15]    0 [0 ... 7]
+  1 [0 ... 15]    1 [0 ... 7]
+  2 [0 ... 15]    2 [0 ... 7]
+  3 [0 ... 15]    3 [0 ... 7]
+  4 [0 ... 15]    4 [0 ... 7]
+  5 [0 ... 15]    5 [0 ... 7]
+  6 [0 ... 15]    6 [0 ... 7]
+  7 [0 ... 15]    7 [0 ... 7]
+  8 [0 ... 15]    8 [0 ... 7]
+  9 [0 ... 15]    9 [0 ... 7]
+ 10 [0 ... 15]   10 [0 ... 7]
+ 11 [0 ... 15]   11 [0 ... 7]
+ 12 [0 ... 15]   12 [0 ... 7]
+ 13 [0 ... 15]   13 [0 ... 7]
+ 14 [0 ... 15]   14 [0 ... 7]
+ 15 [0 ... 15]   15 [0 ... 7]
+                           ↑
+                         padding so all columns are zero.
 ```
+The mma instruction requires a B fragment of size 16x8 but we only have 7 columns
+as B is 896x7. So we will pad the B fragment to 16x8 by adding an extra column of
+zeros.
 
 For reference, y2 is a pointer to B in global memory and is of type, but y is
 a float * pointer so it points to FP32 values):
@@ -853,7 +938,6 @@ Instead the indexing pattern y2[j*stride_col_y + col] reads the data in a way
 that logically transposes it. So the data in shared memory has the transposed
 layout the matrix multiplication needs.
 
-
 ```console
 Iteration j0=0, itB=0: j = 0 + 0*16 = 0
                          y2[0*448 + col]
@@ -882,76 +966,131 @@ B in memory (row-major, 896×7):
   Address 896:  [row2_col0, row2_col1, ..., row2_col6]
 ```
 This is again doing the strided access pattern to get coalesced memory reads.
-B transposed:
-```console
-    0   [0  1  2  3  4  5  6]
-    1   [7  8  9 10 11 12 13]
-    2   [14 15 16 17 18 19 20]
-    3   [21 22 23 24 25 26 27]
-    4   [28 29 30 31 32 33 34]
-    5   [35 36 37 38 39 40 41]
-    6   [42 43 44 45 46 47 48]
-    7   [49 50 51 52 53 54 55]
-    8   [56 57 58 59 60 61 62]
-    9   [63 64 65 66 67 68 69]
-    10  [70 71 72 73 74 75 76]
-    11  [77 78 79 80 81 82 83]
-    12  [84 85 86 87 88 89 90]
-    13  [91 92 93 94 95 96 97]
-    14  [98 99 100 101 102 103 104]
-    15  [105 106 107 108 109 110 111]
-    16  [112 113 114 115 116 117 118]
-    17  [119 120 121 122 123 124 125]
-    18  [126 127 128 129 130 131 132]
-    19  [133 134 135 136 137 138 139]
-    20  [140 141 142 143 144 145 146]
-    21  [147 148 149 150 151 152 153]
-    22  [154 155 156 157 158 159 160]
-    23  [161 162 163 164 165 166 167]
-    24  [168 169 170 171 172 173 174]
-    25  [175 176 177 178 179 180 181]
-    26  [182 183 184 185 186 187 188]
-    27  [189 190 191 192 193 194 195]
-    28  [196 197 198 199 200 201 202]
-    29  [203 204 205 206 207 208 209]
-    30  [210 211 212 213 214 215 216]
-    31  [217 218 219 220 221 222 223]
-    32  [224 225 226 227 228 229 230]
-    33  [231 232 233 234 235 236 237]
-    34  [238 239 240 241 242 243 244]
-    35  [245 246 247 248 249 250 251]
-    36  [252 253 254 255 256 257 258]
-    37  [259 260 261 262 263 264 265]
-    38  [266 267 268 269 270 271 272]
-    39  [273 274 275 276 277 278 279]
-    40  [280 281 282 283 284 285 286]
-    41  [287 288 289 290 291 292 293]
-    42  [294 295 296 297 298 299 300]
-    43  [301 302 303 304 305 306 307]
-    44  [308 309 310 311 312 313 314]
-    45  [315 316 317 318 319 320 321]
-    46  [322 323 324 325 326 327 328]
-    47  [329 330 331 332 333 334 335]
-    48  [336 337 338 339 340 341 342]
-    49  [343 344 345 346 347 348 349]
-    50  [350 351 352 353 354 355 356]
-    51  [357 358 359 360 361 362 363]
-    52  [364 365 366 367 368 369 370]
-    53  [371 372 373 374 375 376 377]
-    54  [378 379 380 381 382 383 384]
-    55  [385 386 387 388 389 390 391]
-    56  [392 393 394 395 396 397 398]
-    57  [399 400 401 402 403 404 405]
-    58  [406 407 408 409 410 411 412]
-    59  [413 414 415 416 417 418 419]
-    60  [420 421 422 423 424 425 426]
-    61  [427 428 429 430 431 432 433]
-    62  [434 435 436 437 438 439 440]
-    63  [441 442 443 444 445 446 447]
-    64  [448 449 450 451 452 453 454]
-    ...
-    896 [895 896 897 898 899 900 901]
-```
+
 So we are reading from the first column of the transposed B matrix.
+
+After we have loaded the tile of B into shared memory we then load it into
+registers in the format that mma expects and also perform the mma operation:
+```c++
+            for (int k0 = 0; k0 < warp_size; k0 += tile_B::J) {
+                tile_B B;
+                load_ldmatrix(B, tile_xy + k0, tile_k_padded);
+
+                for (int itA = 0; itA < ntA; ++itA) {
+                    mma(C[itA][itB], A[itA][k0/tile_B::J], B);
+                }
+            }
+```
+And the mma implementation is as follows (in mma.cuh). Notice that we are passing
+in C, A, and B tiles:
+```c++
+    static __device__ __forceinline__ void mma(
+            tile<16, 8, float> & D, const tile<16, 8, half2> & A, const tile<8, 8, half2> & B) {
+#ifdef TURING_MMA_AVAILABLE
+        const int * Axi = (const int *) A.x;
+        const int * Bxi = (const int *) B.x;
+        int       * Dxi = (int       *) D.x;
+#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+---->   asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
+            : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
+#else
+        // On Turing m16n8k16 mma is not available, use 2x m8n8k8 mma instead:
+        asm("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
+            : "r"(Axi[0]), "r"(Axi[1]), "r"(Bxi[0]));
+        asm("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
+            : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[1]));
+#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
+#endif // TURING_MMA_AVAILABLE
+    }
+```
+
+```console
+                                     
+               A rows           D type    B type
+                  ↓               ↓       ↓
+mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32
+                     ↑                 ↑       ↑
+                   cols
+                                    A type   C type
+      {%0, %1, %2, %3},           // D (output) - 4 × 32-bit registers
+      {%4, %5, %6, %7},           // A (input)  - 4 × 32-bit registers
+      {%8, %9},                   // B (input)  - 2 × 32-bit registers
+      {%0, %1, %2, %3};           // C (accumulator) - same as D
+
+row = A layout is row-major
+col = B layout is column-major
+```
+Notice that the this is specifying a constract with the hardware and we are
+telling the tensor core that we are providing the A fragment in row-major layout,
+and the B fragment in column-major layout. So that would mean that it expects the
+B fragment to be transposed. But I think that B is actually also in row-major
+in global memory so how does this work?  
+The data for the B tile is first loaded from global memory into shared memory (
+into tile_xy), and still row-major.
+The `load_ldmatrix` instruction is specifically designed to read a tile from
+shared memory and distribute it across the registers of all 32 threads in a
+warp in the exact format the `mma` instruction requires. It reads the row-major
+data from tile_xy and shuffles it into the registers of the 32 threads in a way
+that, when the mma instruction executes, the hardware sees a coherent 16x8
+column-major matrix.
+
+To understand this we should consider that the ldmatrix (Load Matrix) and mma
+(Matrix Multiply-Accumulate) were introduced together as a pair with NVIDIA's
+Tensor Cores (starting with the Volta architecture).
+
+So what would happen if I was not aware of this and thought that I need to transpose
+the B fragment before calling mma?  If I did that I'd get incorrect results as
+ldmatrix would still load the data in the same way as before. But there are
+other flavours of the mma instruction:
+```console
+* mma ... .row.col ... (A is row-major, B is col-major) -> Computes A * B^T
+* mma ... .row.row ... (A is row-major, B is row-major) -> Computes A * B
+* mma ... .col.row ... (A is col-major, B is row-major) -> Computes A^T * B
+* mma ... .col.col ... (A is col-major, B is col-major) -> Computes A^T * B^T
+```
+And there is a flavor/version of the ldmatrix instruction that can transpose
+which we would also have to use in this case:
+```console
+ldmatrix.sync.aligned.m8n8.x4.b16.trans {%r0, %r1, ...}, [%rN];
+```
+This tells the hardware to load the matrix from shared memory and transpose it
+as it moves into the registers. And in ggml-cuda there is a load_ldmatrix_trans
+function that does this.
+
+
+
+```
+         A                B                   C/D
+  0 [0    ...   15]    0 [0 ... 7]       0 [0 ... 7]
+  1 [0    ...   15]    1 [0 ... 7]       1 [0 ... 7]
+  2 [0    ...   15]    2 [0 ... 7]       2 [0 ... 7]
+  3 [0    ...   15]    3 [0 ... 7]       3 [0 ... 7]
+  4 [0    ...   15]    4 [0 ... 7]       4 [0 ... 7]
+  5 [0    ...   15]    5 [0 ... 7]       5 [0 ... 7]
+  6 [0    ...   15]    6 [0 ... 7]       6 [0 ... 7]
+  7 [0    ...   15]    7 [0 ... 7]       7 [0 ... 7]
+  8 [0    ...   15]    8 [0 ... 7]       8 [0 ... 7]
+  9 [0    ...   15]    9 [0 ... 7]       9 [0 ... 7]
+  10[0   ...    15]   10 [0 ... 7]      10 [0 ... 7]
+  11[0   ...    15]   11 [0 ... 7]      11 [0 ... 7]
+  12[0   ...    15]   12 [0 ... 7]      12 [0 ... 7]
+  13[0   ...    15]   13 [0 ... 7]      13 [0 ... 7]
+  14[0   ...    15]   14 [0 ... 7]      14 [0 ... 7]
+  15[0   ...    15]   15 [0 ... 7]      15 [0 ... 7]
+```
+The warp collectively executes this as a single Tensor Core operation:
+1. All 32 threads invoke mma simultaneously
+2. Each thread provides its A, B, C fragments
+3. The Tensor Core hardware performs the full 16×16×8 matrix multiply
+4. Each thread's D registers are updated with its result fragment
+
+So thread 0 will contribute 4 half2 values (8 FP16 values) from tile A and 4
+half2 values from tile B.
 
 __wip__
