@@ -419,53 +419,30 @@ It is not possible for thread synchronization to happen between blocks.
 The maxium number of threads in a block is 1024 for most GPUs. So for optimal
 performace we want a block size that is a multiple of 32 (the size of a warp).
 
-Now, we can more dimensions, for example we can have a 2D block:
+Now, we can have more dimensions, for example we can have a 2D block:
+```console
+        +-------------------+-------------------+
+block 0 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 1
+        |----|----|----|----|----|----|----|----|
+        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |
+        +-------------------+-------------------+
+block 2 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 3
+        |----|----|----|----|----|----|----|----|
+        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |
+        +-------------------+-------------------+
+block 4 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 5
+        |----|----|----|----|----|----|----|----|
+        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |
+        +-------------------+-------------------+
+
+gridDim.x  = 2, gridDim.y  = 3
+blockDim.x = 4, blockDim.y = 2
+
+blockIdx.x, blockIdx.y  : which block we are currently in.
+threadIx.x, threadIdx.y : which thread we are currently in within the block.
 ```
-blockDim.x = 4, blockDim.y = 2, total threads per block = 8
 
-   +--------------------------------------------------------------+
-   |                           GRID                               |
-   | +---------------------------+ +---------------------------+  |
-   | |         BLOCK 0           | |         BLOCK 1           |  |
-   | | threadIdx.y=1             | | threadIdx.y=1             |  |
-   | | +----+----+----+----+     | | +----+----+----+----+     |  |
-   | | |T4  |T5  |T6  |T7  |     | | |T4  |T5  |T6  |T7  |     |  |
-   | | +----+----+----+----+     | | +----+----+----+----+     |  |
-   | | threadIdx.y=0             | | threadIdx.y=0             |  |
-   | | +----+----+----+----+     | | +----+----+----+----+     |  |
-   | | |T0  |T1  |T2  |T3  |     | | |T0  |T1  |T2  |T3  |     |  |
-   | | +----+----+----+----+     | | +----+----+----+----+     |  |
-   | |threadIdx.x: 0  1  2  3    | |threadIdx.x: 0  1  2  3    |  |
-   | +---------------------------+ +---------------------------+  |
-   +--------------------------------------------------------------+
 
-Total: 16 threads
-```
-We still have 4 elements in each block, but how we have an additional "row" or
-4 elements in each block. And notice how this effected the threadidx which now
-has a y component that is either 0 or 1.
-```
-1D block
-dim3(32)        blockDim.x=32, blockDim.y=1, blockDim.z=1
-                threadIdx.x: 0-31, threadIdx.y: always 0, threadIdx.z: always 0
-
-[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
-All 32 threads active.
-
-2D block
-dim3(4, 2)      blockDim.x=4, blockDim.y=2, blockDim.z=1
-                threadIdx.x: 0-3, threadIdx.y: 0-1, threadIdx.z: always 0
-
-[0, 1, 2, 3, 4, 5, 6, 7, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x]
-Only 8 active threads, 24 masked out.
-
-3D block
-dim3(4, 2, 2)   blockDim.x=4, blockDim.y=2, blockDim.z=2
-                threadIdx.x: 0-3, threadIdx.y: 0-1, threadIdx.z: 0-1
-
-[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x]
-Only 16 active threads, 16 masked out.
-```
 So the warp scheduler always schedules warps of 32 threads and it views the
 threads as a flat array.
 
