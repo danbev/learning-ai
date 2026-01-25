@@ -442,6 +442,48 @@ blockIdx.x, blockIdx.y  : which block we are currently in.
 threadIx.x, threadIdx.y : which thread we are currently in within the block.
 ```
 
+And we can also have a third dimension. I'm only showing a third dimension for
+the grid as I believe this is the most common use case in llama.cpp:
+```console
++-----------------------------------------------------------+  "Batch = 0"
+|        +-------------------+-------------------+          |
+|block 0 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 1  |
+|        |----|----|----|----|----|----|----|----|          |
+|        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |          |
+|        +-------------------+-------------------+          |
+|block 2 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 3  |
+|        |----|----|----|----|----|----|----|----|          |
+|        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |          |
+|        +-------------------+-------------------+          |
+|block 4 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 5  |
+|        |----|----|----|----|----|----|----|----|          |
+|        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |          |
+|        +-------------------+-------------------+          |
++-----------------------------------------------------------+
+
++-----------------------------------------------------------+  "Batch = 1"
+|        +-------------------+-------------------+          |
+|block 0 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 1  |
+|        |----|----|----|----|----|----|----|----|          |
+|        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |          |
+|        +-------------------+-------------------+          |
+|block 2 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 3  |
+|        |----|----|----|----|----|----|----|----|          |
+|        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |          |
+|        +-------------------+-------------------+          |
+|block 4 |T0  |T1  |T2  |T3  |T0  |T1  |T2  |T3  | block 5  |
+|        |----|----|----|----|----|----|----|----|          |
+|        |T4  |T5  |T6  |T7  |T4  |T5  |T6  |T7  |          |
+|        +-------------------+-------------------+          |
++-----------------------------------------------------------+
+
+gridDim.x  = 2, gridDim.y  = 3, gridDim.z = 2
+blockDim.x = 4, blockDim.y = 2
+
+blockIdx.x, blockIdx.y  : which block we are currently in.
+threadIx.x, threadIdx.y : which thread we are currently in within the block.
+```
+
 
 So the warp scheduler always schedules warps of 32 threads and it views the
 threads as a flat array.
