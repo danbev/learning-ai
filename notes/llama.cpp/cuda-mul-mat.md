@@ -441,8 +441,7 @@ src0 is our A matrix, and src1 is our B matrix:
    ...          ...                       ...
    859 [0       ...         895]    895 [0 ... 6]
 ```
-Now, B is not transposed explicitly but as we will discuss later the values are
-extracted in a "transposed order".
+Now, B is not transposed explicitly but as we will discuss later.
 
 The current thread (thread 0) will process:
 ```console
@@ -834,9 +833,9 @@ k0 = 24: load_ldmatrix(A[itA][3], tile_xy + 24, tile_k_padded)
 ```
 
 So at this point, before the B loop. We have only loaded a tile of the A matrix,
-and now we are doing to load the corresponding values from the B matrix (transposed)
-so that we can perform the dot product on those elements. And we add the dot
-products to the C matrix.
+and now we are doing to load the corresponding values from the B matrix so that
+we can perform the dot product on those elements. And we add the dot products to
+the C matrix.
 
 ```console
 A is loaded into registers
@@ -934,9 +933,6 @@ Each FP32 to FP16 conversion:
 * Saves memory and enables tensor core usage
 
 Now there is no explicit transpose operation of B. It stays in its original form.
-Instead the indexing pattern y2[j*stride_col_y + col] reads the data in a way
-that logically transposes it. So the data in shared memory has the transposed
-layout the matrix multiplication needs.
 
 ```console
 Iteration j0=0, itB=0: j = 0 + 0*16 = 0
@@ -966,8 +962,6 @@ B in memory (row-major, 896×7):
   Address 896:  [row2_col0, row2_col1, ..., row2_col6]
 ```
 This is again doing the strided access pattern to get coalesced memory reads.
-
-So we are reading from the first column of the transposed B matrix.
 
 After we have loaded the tile of B into shared memory we then load it into
 registers in the format that mma expects and also perform the mma operation:
@@ -1062,8 +1056,6 @@ ldmatrix.sync.aligned.m8n8.x4.b16.trans {%r0, %r1, ...}, [%rN];
 This tells the hardware to load the matrix from shared memory and transpose it
 as it moves into the registers. And in ggml-cuda there is a load_ldmatrix_trans
 function that does this.
-
-
 
 ```
          A                B                   C/D
