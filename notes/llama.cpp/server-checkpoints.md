@@ -474,3 +474,26 @@ is transposed or not:
         }
     }
 ```
+So my current task is to remove the logits and some other information from the
+session file in llama-completion. The logits were previously restored and
+available to sampling when llama-completion was started with a session file (and
+using the flag to enable this). For a normal kv-cache we can simply replay the
+previous token, but for a recurrent/hybrid model that does not work right. Is
+there a way to get the logits for the last token in someway. Like we have the
+prompt, perhaps when we store the state we store the second to last state, and
+then "replay" it upon session resuming.
+So we could just store the second to last states and then restore the memory
+upon session resuming and then replay the last token get get the logits.
+
+Note, that in the following call we are writing the memory to the destination
+which is in this case is the checkpoint data buffer:
+```c++
+llama_state_seq_get_data_ext(ctx, cur.data.data(), checkpoint_size, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+```
+So this function is called get, because it is getting data from the memory and
+writing it to the destination buffer. For some reason I felt this was kind of
+backwards from what I expected. I was thinking that it would be write data but
+get does also make sense here.
+
+
+_wip_
