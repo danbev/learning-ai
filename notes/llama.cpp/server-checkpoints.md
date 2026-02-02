@@ -1,7 +1,7 @@
 ### llama-server checkpoints
 In llama-context.cpp, update_slots we have the following:
 ```console
-(gdb) (gdb) f
+(gdb) f
 #0  server_context_impl::update_slots (this=0x555555eda220)
     at /home/danbev/work/ai/llama.cpp-debug/tools/server/server-context.cpp:2491
 2491                        do_checkpoint = do_checkpoint && (
@@ -43,7 +43,7 @@ So for a recurrent model do_checkpoints will be true
 ```
 TODO: do a separate walkthough of LoRA and Asymmetric LoRA (Alora).
 
-Next we will add each token to the batch using following code where the
+Next, we will add each token to the batch using following code where the
 input_tokens are:
 ```console
 (gdb) p input_tokens 
@@ -196,7 +196,7 @@ void llama_memory_hybrid::state_write(llama_io_write_i & io, llama_seq_id seq_id
 }
 ```
 And here we can see that it is using the LLAMA_STATE_SEQ_FLAG_PARTIAL_ONLY flag
-so we are skipping the attnention memory and only writing the recurrent memory.
+so we are skipping the attention memory and only writing the recurrent memory.
 
 `llama_state_seq_get_data_ext`:
 ```console
@@ -315,7 +315,7 @@ void llama_memory_recurrent::state_write_meta(llama_io_write_i & io, const std::
             io.write(&pos,      sizeof(pos));   // writes the position
             io.write(&n_seq_id, sizeof(n_seq_id)); // writes the number of sequences that follow this one
 
-            // if we are writing all sequences, then we need to write the sequence IDs
+            // if we are writing all sequences, then we need to write all the sequence IDs
             if (n_seq_id) {
                 for (auto seq_id : cell.seq_id) {
                     io.write(&seq_id, sizeof(seq_id));
@@ -335,8 +335,43 @@ And the we have the writing of the actual tensor data:
     state_write_data(io, cell_ranges);
 ```
 Now, recall that recurrent memory stores two types of tensors per layer which
-are r_l[il] and s_l[il]. R is the recurrent state like the hidden state in 
-LSTM/Mamba and S is the state in LSTM or SSM state in Mamba.
+are r_l[il] and s_l[il]. R is the convolutional state, which is used in the
+mamab2 layer like this:
+```c++
+    ggml_tensor * conv_states_all = mctx_cur->get_r_l(il);
+
+    ggml_tensor * conv = build_rs(inp, conv_states_all, hparams.n_embd_r(), n_seqs);
+    conv               = ggml_reshape_3d(ctx0, conv, d_conv - 1, d_inner, n_seqs);
+
+    cur = ggml_reshape_3d(ctx0, cur, cur->ne[0], n_seq_tokens, n_seqs);
+```
+And S is the hidden state.
+```c++
+    ggml_tensor * ssm_states_all  = mctx_cur->get_s_l(il);
+```
+Recall that the convolution is run/applied prior to the ssm_scan operation and
+is used to incorporate some local context tokens and also to enable B and C to
+be influenced by the input. If we didn't allow for some local context the
+selective scan would only be handling long-range dependencies.
+
+Alright, so R is applied first and then the S is the actual hidden state so my
+initial thought was why would we need to store R and not just S?  
+```console
+Input -> Conv1d (R) -> SSM Scan (S) -> Output
+```
+I think I've been thinking about this completely incorrectly. So my naive
+thinking was that we just store the hidden state S and because it is the restored
+the complete hidden state is available for the tokens up to that point, it
+contains the compressed history and there is no need to "replay" the tokens as
+we know the state updates they would apply. So we have the complete state in S
+and we don't need to replay them, but to generate a new token we still have to
+perform:
+```console
+Input to SSM = Conv(..., x_{t-2}, x_{t-1}, x_t} )
+```
+So we need the previous R states to compute the convolution for the new token.
+Without them we don't have the operands to compute the convolution.
+
 ```c++
 void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const {
     const uint32_t s_trans = 0;
