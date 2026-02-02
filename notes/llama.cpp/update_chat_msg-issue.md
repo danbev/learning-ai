@@ -281,6 +281,9 @@ So the model is producing invalid UTF-8 sequences which is likely causing the
 peg-parser to fail. This would likely not happen with a trained modle and the
 reason we are seeing this is because the model is using random weights.
 
+To run a model with random weighs we can use `-no-jinja` which does not use the
+peg-parser.
+
 And the caught exception for this:
 ```console
 [danbev] Parser error during generation]
@@ -295,5 +298,3 @@ Since this is only reporting the start position (pos 1 above) this was a bit
 confusing at first. Perhaps we could add a debug logging line to peg-parser.cpp to
 clarify this.
 
-To run a model with random weighs we can use `-no-jinja` which does not use the
-peg-parser.
