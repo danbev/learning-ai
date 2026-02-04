@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
     int active_operation_idx = 1; // change to 0 for addition operation and see different result
 
     // Notice that in contrast to ggml_build_forward_expand this function returns
-    // the selected "active" tensor, whereas ggml_build_forward_expand does not return void.
+    // the selected "active" tensor, whereas ggml_build_forward_expand returns void.
     struct ggml_tensor * result = ggml_build_forward_select(c_graph, tensors, n_tensors, active_operation_idx);
 
     enum ggml_status st = ggml_graph_compute_with_ctx(ctx, c_graph, 1);
