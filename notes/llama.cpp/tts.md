@@ -1,13 +1,13 @@
 ## Text To Speech (TTS)
 In llama.cpp there a new feature has been added that enabled text to speech
-and there is an accompanying example named tts.
+and there is an accompanying tool named tts.
 
 ### Background
 The model OuteTTS-0.2-500M, where Oute just stand for the company/org which
 produced the model, is described as:
 ```
 An experimental text-to-speech model that uses a pure language modeling approach
-to generate speech, without architectural changes to the foundation model itself
+to generate speech, without architectural changes to the foundation model itself.
 ```
 
 Lets take a look at the models (there are two) used in the example, starting
@@ -60,23 +60,37 @@ INFO:gguf-dump:* Loading: ../llama.cpp-debug/models/outetts-0.2-0.5B-q8_0.gguf
      42: UINT32     |        1 | general.quantization_version = 2
      43: UINT32     |        1 | general.file_type = 7
 ```
-So this is a multi-modal LLM model, `qwen2`, it has 157696 tokens which I
-believe contains text token, special tokens, and audio tokens (and vision/vision
-tokens also but those are not related to this example).
+So this is a multi-modal LLM model, `qwen2`, it has 157696 tokens in its vocab
+which I believe contains text token, special tokens, and audio tokens (and
+vision/vision tokens also but those are not related to this example).
 
-
-For an overview of this we can imagine that if we passing the prompt
-"Hello World" this will be processed something like this:
+For an overview of this we can imagine that if we pass the prompt "Hello World"
+this will be processed something like this:
 ```console
 Input: "Hello World" ---> "hello<|text_sep|>world"
 Output: logits [0 ... 157695]
 ```
-In the case where audio is being generated/predicted all the text tokens will
-be zero or very close to zero, as will other tokens that are not related to
-audio. The audio tokens will have non-zero values and these are the tokens that
-will be sampled. So one of these audio tokens will be the ouput from the LLM.
+The output from this model will be a sequence of audio code tokens (integers fro
+a codebook. This model is called text-to-codes (model_ttc).
 
-This token which represents and audio code (I think) will be passed to the
+The other model, the WavTokenizer decoder, is a codes-to-speech model (model_cts),
+it takes as input the code tokens from above and produces an audio waveform
+(PCM samples at 24kHz).
+
+Just to recap one thing about the input to models in llama.cpp, we have two types
+of input, tokens and embeddings.
+* tokens are token ids (just integers)
+* embeddngs are precomputed embeddings (float vectors) used by embedding models
+  vision encoders, and in this case the WavTokenizer decoder.
+
+```console
+WavTokenizer architecture:
+Token ID → tok_embd lookup [512] → conv1d → [768] → posnet/convnext [768] → output [1282]
+           ↑ This is n_embd_features          ↑ intermediate                ↑ This is n_embd
+```
+
+
+This token which represents an audio code (I think) will be passed to the
 WavTokenizer model and will be looked up, simliar to how text tokens are looked
 up to get their embedding, by using the tensor `token_embd` of the WavTokenizer
 model.
@@ -204,9 +218,9 @@ respectively:
 ```
 So we have a model and a context for each of them.
 
-Now, in a "normal" LLM we process a prompt be splitting it into tokens and then
+Now, in a "normal" LLM we process a prompt by splitting it into tokens and then
 generating embeddings (looking them up) and that is what is passed to the model.
-But for a text to speech model it needs to keep the words in tact, no subword
+But for a text to speech model it needs to keep the words intact, no subword
 splitting, it requires that there is a token to separate the words. For example,
 if we have a prompt like "What is LoRA?" this would get changed into:
 ```
@@ -312,8 +326,8 @@ And likewise `<|257|>` is also a token:
 
 
 This is also prompt conditioning and it is used to give the model some context
-about the rhythm of speech and how words are pronounced. It give it a sense of
-how long each word should take to pronounce. What audio tokens  create natural
+about the rhythm of speech and how words are pronounced. It gives it a sense of
+how long each word should take to pronounce. What audio tokens create natural
 sounding speech. This is teaching the model about timing and audio generation
 patterns rather than just text formatting.
 In the code this is actually commented out and the actual tokens are added to
