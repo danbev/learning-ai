@@ -12,7 +12,7 @@ consumer devices. This is where MLA comes in.
 
 The idea is that instead of storing the full matrices for the keys and values
 they are projected down into a smaller latent space (hence latent in the name).
-So when the model processes a token embedding it projects the Key and Value into
+So when the model processes a token embedding, it projects the Key and Value into
 a low-dimensional latent vector using a down projection. And this vector is what
 is stored.
 
@@ -24,7 +24,7 @@ In a Standard Transformer (MHA), the Attention block works like this:
    previous step, in the KV Cache.
 4. Attend: Calculates attention scores using Q and the cached K.
 
-In MLA the Attention block works like this:
+In MLA the Attention blocks work like this:
 1. Input: Takes the vector from the previous layer (h).
 2. Compress (Down-Project): Multiplies h by a small "Compression Matrix" (W_Down)
    to create a small latent vector (c_KV).
@@ -64,7 +64,7 @@ score = Query * (W_down * (R_pos * Key))
 Now, like we mentioned earlier we want to use the absorption trick to avoid and
 that was possible because we could merge the W_unzip matrix into the Query matrix
 and then perform the multiplication with the compressed key. But now we have
-the rope information in R_pos which is position dependent, that is is it different
+the rope information in R_pos which is position dependent, that is it is different
 for each token embedding in the sequence. So before we could use Query * W_unzip
 and then multiply by the compressed key because W_unzip was fixed. But now with
 R_pos it would mean that we would have to include this position information in
@@ -162,9 +162,9 @@ $1 = 64
 (gdb) p n_embd_head_qk_nope
 $2 = 128
 ```
-The rope sidecare which is stored non-compressed has a dimension of 64.
+The rope sidecar which is stored non-compressed has a dimension of 64.
 
-Next we build the input embeddings, kv cache input, outputs, etc like we normall
+Next we build the input embeddings, kv cache input, outputs, etc like we normally
 would for most transformer model graphs.
 Then we will iterate over all the layers:
 ```c++
@@ -195,15 +195,15 @@ from for this layer from the model.
 $38 = {2048, 3072, 1, 1}
 ```
 The weight matrix Wq actually contains two concatenated matrices, one for W_nope
-and one for W_rope (the fused query projection matrix). This is save from having
+and one for W_rope (the fused query projection matrix). This is to avoid having
 to do two separate matrix multiplications.
 
 ```console
 (gdb) p q->ne
 $15 = {3072, 1, 1, 1}
 ```
-Next, we will create a view into this the query tensor which will hold/view
-the non-rope part of the query:
+Next, we will create a view into this the query tensor which will hold/view the
+non-rope part of the query:
 ```c++
             // split into {n_embd_head_qk_nope, n_head, n_tokens}
             ggml_tensor * q_nope =
