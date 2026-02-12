@@ -136,3 +136,119 @@ In Kimi Linear, by multiplying S_{t-1} by q_t, we are doing all of those lookups
 at once in a single matrix-vector multiplication. The 2D matrix S has effectively
 "pre-summed" all the past information, and q_t simply extracts what is relevant
 right now.
+
+
+And similar to Mamba which as a fixed size state/memory this is also true for
+Kimi linear.
+So this is like compressing down the entire history of a sequence into a single
+matrix and over time this is going to become a "blurry" mess of data. But this
+model does not exclusively rely on these types of layers, but it also has MLA
+layers interleaved and those layers do have KV-caches that grow over time (but
+not as much as traditional attention).
+
+And because we pass along the output from one layer as the input to the next we
+are actually feeding the output for the interleaved MLA layers to the KDA layers
+and therefor the KDA layers states get updated as well. So in a way the MLA layer
+can look back long into the past and then the KDA layer can use that information
+to update its state. It might "notice" a specific detail from 500,000 tokens ago
+that the KDA layers had started to "blur."
+
+KDA (like Mamba) uses a Parallel Scan or Convolutional Form. During training,
+since we already know the whole sentence, we can actually calculate all the S_t
+updates for the entire token sequence simultaneously.
+
+### Chunking
+So because KDA is recurrent if we have a sequence of 1000 tokens we would need
+a loop of 1000 iterations which would be inefficient. Instead we chunk this into
+64x64 chunks and process each them sequentialy.
+```c++
+    ggml_tensor * chunked_causal_mask =
+        ggml_tri(ctx0, ggml_fill_inplace(ctx0, ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, CHUNK_SIZE, CHUNK_SIZE), 1.0f),
+                    GGML_TRI_TYPE_LOWER);
+```
+This is creating a new 2d tensor with the size of CHUNK_SIZE x CHUNK_SIZE and
+filling it with 1.0f. And that is then passed to ggml_tri which creates a lower
+triagular matrix. So the resulting chunked_causal_mask is a 64x64 matrix that
+looks like something like this (though not to scale):
+```
+[ 1  0  0  0 ] Token 0 sees itself
+[ 1  1  0  0 ] Token 1 sees token 0 and itself
+[ 1  1  1  0 ] Token 2 sees token 0, token 1, and itself
+[ 1  1  1  1 ] Token 3 sees token 0, token 1, token 2, and itself
+
+chunk size = 4
+```
+
+```c++
+    ggml_tensor * chunked_identity = ggml_diag(ctx0, ggml_fill_inplace(ctx0, ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, CHUNK_SIZE), 1.0f));
+```
+So this is creating a 1d vector of size CHUNK_SIZE (64) and then filling it with
+1.0f. This tensor is then passed to ggml_diag which turns this into an Identity
+Matrix.
+```
+[ 1  0  0  0 ]
+[ 0  1  0  0 ]
+[ 0  0  1  0 ]
+[ 0  0  0  1 ]
+
+chunk size = 4
+```
+We then add these two matrices together:
+```c++
+    ggml_tensor * chunked_diag_mask = ggml_add(ctx0, chunked_causal_mask, chunked_identity);
+```
+
+```
+[ 2  0  0  0 ]
+[ 1  2  0  0 ]
+[ 1  1  2  0 ]
+[ 1  1  1  2 ]
+
+chunk size = 4
+```
+So normally I would only expect to see 1s and 0s in a mask, but here we have 2s
+as well. The ones usually indicate that tokens can attent to previous tokens.
+In this case it has to do with the delta correction that we discussed above. But
+above we were looking at a single token, but in practice we are processing chunks
+of tokens at once. So instead of updating he state four times we just perform
+one operation and by having having 2 on the diagonal (the tokens that attend
+to them selves) we build in the delta correction, the subtraction, into the matrix.
+
+So for token 2 we have:
+```
+ [1 1 2 0]
+1 = history of Token 0
+1 = history of Token 1
+2 = 1 (history of tokens current self) + 1 (correction factor)
+```
+So we have one 1 that indicates that this token should attend to itself and then
+we have the additional one for the subtraction, just because otherwise a 1 in the
+beta vector for this position would cancel out.
+
+
+For each kda layer we have:
+```c++
+ggml_tensor * conv_state_all = build_rs(inp_rs, conv_states_all, hparams.n_embd_r(), n_seqs);
+```
+So the memory for this layer is storing the tail of the previous sequence and
+this is used for the convolutions that follow which allow the model to blend with
+its immediate neighbors, the 3-4 tokens behind it.
+```c++
+ggml_tensor * Qcur = causal_conv1d(gf,
+    ctx0,
+    conv_states_all,
+    conv_state_all,
+    0,
+    cur,
+    layer.wq,
+    layer.ssm_q_conv,
+    d_conv,
+    head_dim,
+    n_head,
+    n_seq_tokens,
+    n_seqs,
+    n_tokens,
+    kv_head);
+```
+So initially I just thought that this was doing a ggml_conv_1d operation but this
+is a function in the same file.
