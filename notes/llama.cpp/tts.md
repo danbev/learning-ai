@@ -1591,3 +1591,115 @@ $ source venv/bin/activate
 ```
 This is not completely implements, most notably `embd_to_audio` which we covered
 above in c++ is not implemented in the python version.
+
+### QuteTTS Version v3
+```console
+$ build-cpu-debug/bin/llama-tts -hf OuteAI/OuteTTS-0.3-500M-GGUF -hff OuteTTS-0.3-500M-Q8_0.gguf -hfv ggml-org/WavTokenizer -p "Hello world" --tts-speaker-file en-female-1-neutral.json
+```
+The [tts-speaker-file](https://github.com/edwko/OuteTTS/blob/0.4.2/outetts/version/v3/default_speakers/json/en-female-1-neutral.json) for v3 is different from v1 and v2 as far as I understand it. For example,
+running the above in the latest master of llama.cpp results in the following error:
+```console
+main: loading done
+main: loading speaker ..
+/home/danbev/work/ai/llama.cpp/common/../vendor/nlohmann/json.hpp:22188: GGML_ASSERT(it != m_data.m_value.object->end()) failed
+
+Thread 1 "llama-tts" received signal SIGABRT, Aborted.
+__pthread_kill_implementation (no_tid=0, signo=6, threadid=<optimized out>) at ./nptl/pthread_kill.c:44
+warning: 44	./nptl/pthread_kill.c: No such file or directory
+```
+Going up the stackframes we find:
+```console
+(gdb) up
+#8  0x000055555561c464 in audio_data_from_speaker (speaker=..., tts_version=OUTETTS_V0_3)
+    at /home/danbev/work/ai/llama.cpp/tools/tts/tts.cpp:521
+521	            std::vector<int> codes = word["codes"].get<std::vector<int>>();
+```
+If we take a look at the `word` json object we find:
+```console
+(gdb) pjson word
+{
+    "word": "The",
+    "duration": 0.2,
+    "c1": [
+        720,
+        720,
+        474,
+        691,
+        607,
+        126,
+        597,
+        607,
+        897,
+        288,
+        362,
+        903,
+        333,
+        1009,
+        79
+    ],
+    "c2": [
+        658,
+        663,
+        237,
+        915,
+        74,
+        74,
+        966,
+        721,
+        893,
+        722,
+        630,
+        516,
+        861,
+        385,
+        149
+    ],
+    "features": {
+        "energy": 10,
+        "spectral_centroid": 15,
+        "pitch": 45
+    }
+}
+```
+Notice that this does not have a `codes` field but instead has to codebook
+element `c1` and `c2`. I think this is version 1 and 2 used a single codebook
+but later models starting from v3 use multi-codebook. So this is a dual-codebook
+audio codec (Descript Audio Codec).
+
+In v0.3, the audio is processed using a Residual Vector Quantization (RVQ) system.
+Instead of representing a sound with a single integer (a "code"), it uses
+multiple layers of codes to capture increasing levels of detail.
+* c1 represents the coarsest level of detail, capturing the most basic features of the sound.
+* c2 represents a finer level of detail, capturing more subtle features that c1 misses.
+
+
+```console
+$3 = "<|audio_start|>\nThe<|t_0.20|><|c1_720|><|c2_658|><|c1_720|><|c2_663|><|c1_474|><|c2_237|><|c1_691|><|c2_915|><|c1_607|><|c2_74|><|c1_126|><|c2_74|><|c1_597|><|c2_966|><|c1_607|><|c2_721|><|c1_897|><|c2_893|><|c1_288|><|c2_722|><|c1_362|><|c2_630|><|c1_903|><|c2_516|><|c1_333|><|c2_861|><|c1_1009|><|c2_385|><|c1_79|><|c2_149|><|space|>\n"
+```
+
+```console
+    at /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:1535
+1535	    GGML_ASSERT(n_tokens_all <= cparams.n_batch);
+(gdb) p n_tokens_all
+$5 = 13760
+(gdb) p cparams.n_batch
+$6 = 8192
+(gdb) f
+#6  0x00007ffff7aa992b in llama_context::decode (this=0x555555ef3100, batch_inp=...)
+    at /home/danbev/work/ai/llama.cpp/src/llama-context.cpp:1535
+1535	    GGML_ASSERT(n_tokens_all <= cparams.n_batch);
+```
+The context size and batch size are set in llama-tts.cpp:
+```console
+    params.n_predict = 4096;
+    params.n_batch   = 8192;
+    params.n_ctx     = 8192;
+```
+With v3 the number of tokens generated is 13760 which is greater than the
+batch size of 8192 so we will need a larger size for these when running v3. We
+can override these values by specifying them on the command line instead:
+```console
+-c 16384 -b 16384
+```
+This might be difficult for user to know about. Perhaps we should create a preset
+for v3 and include the correct models and also these values?
