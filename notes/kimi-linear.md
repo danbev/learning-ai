@@ -23,16 +23,16 @@ S_t = S_{t-1} + beta_t(v_t - S_{t-1} q_t) k_t
 Where:
 - S_t is the updated memory/state at time t
 - S_{t-1} is the previous memory/state
-- beta_t is a scalar (between 0 and 1) which acts like a write enable write enable
-         switch. Similar to a forget gate in an LSTM.
+- beta_t is a scalar (between 0 and 1) which acts like a write enable switch. Similar to a forget gate in an LSTM.
 - v_t is the value vector at time t (the current input's value representation)
 - q_t is the query vector at time t (the current input's query representation)
 - k_t is the key vector at time t   (the current input's key representation)
 ```
-So this first multiplying the previous state (s_{t-1}) with the query (q_t) which
-is the models prediction. S_{t-1} is everything that the models knows this far,
-and q_t is the current query. By multiplying them together, we get a measure of
-how much of the current query is already captured in the memory. This is the "similarity" or "overlap"
+So this is first multiplying the previous state (s_{t-1}) with the query (q_t)
+which is the models prediction. S_{t-1} is everything that the models knows this
+far, and q_t is the current query. By multiplying them together, we get a measure
+of how much of the current query is already captured in the memory. This is the
+"similarity" or "overlap".
 
 So we have S_{t-1} which is the current state which is like a key-value lookup
 table that has been squashed into a single grid. But how can we "look up"
@@ -56,7 +56,7 @@ v X k^T.  So looking at the above equation:
 ```
 S_t = S_{t-1} + beta_t(v_t - S_{t-1} q_t) k_t
 ```
-Lets start with the inner most expression (v_t - S_{t-1} q_t) where we perform
+Lets start with the inner most expression (v_t - (S_{t-1} q_t)) where we perform
 the multiplication of the current state with the query vector:
 ```
 
@@ -81,8 +81,8 @@ Now, this is where the delta part comes into play. Imaging that the sequence
 ```
 v_t = "Blue" [0 7 0 0]
 ```
-The model will has "Red" as its color (the feature in the state [5 0 0 0]).
-The subtraction in (v_t - S_{t-1} q_t):
+The model has "Red" as its color (the feature in the state [5 0 0 0]).
+The subtraction in (v_t - (S_{t-1} q_t)):
 ```
    [0]   [5]   [-5]   // delete Red
    [7] - [0] = [ 7]   // add Blue
@@ -109,17 +109,16 @@ beta = [1 1 1 1]
 ```
 So this enables selectively updating some features while leaving others unchanged.
 
-
 And then we compute the outer product with the key vector k_t:
 ```
 (Error) x k_t (color):
 
    [-5]               [-5 0 0 0]
-   [ 7] x [1 0 0 0] = [ 7 0 0 0]
+   [ 7] (x) [1 0 0 0] = [ 7 0 0 0]
    [ 0]               [ 0 0 0 0]
    [ 0]               [ 0 0 0 0]
 
-x = outer product operator.
+(x) = outer product operator.
 ```
 And the last part is the addition:
 S_t = S_{t-1} + Update
@@ -137,7 +136,6 @@ at once in a single matrix-vector multiplication. The 2D matrix S has effectivel
 "pre-summed" all the past information, and q_t simply extracts what is relevant
 right now.
 
-
 And similar to Mamba which as a fixed size state/memory this is also true for
 Kimi linear.
 So this is like compressing down the entire history of a sequence into a single
@@ -150,7 +148,7 @@ And because we pass along the output from one layer as the input to the next we
 are actually feeding the output for the interleaved MLA layers to the KDA layers
 and therefor the KDA layers states get updated as well. So in a way the MLA layer
 can look back long into the past and then the KDA layer can use that information
-to update its state. It might "notice" a specific detail from 500,000 tokens ago
+to update its state. It might "notice" a specific detail from 500000 tokens ago
 that the KDA layers had started to "blur."
 
 KDA (like Mamba) uses a Parallel Scan or Convolutional Form. During training,
@@ -207,10 +205,10 @@ We then add these two matrices together:
 chunk size = 4
 ```
 So normally I would only expect to see 1s and 0s in a mask, but here we have 2s
-as well. The ones usually indicate that tokens can attent to previous tokens.
+as well. The ones usually indicate that tokens can attend to previous tokens.
 In this case it has to do with the delta correction that we discussed above. But
 above we were looking at a single token, but in practice we are processing chunks
-of tokens at once. So instead of updating he state four times we just perform
+of tokens at once. So instead of updating the state four times we just perform
 one operation and by having having 2 on the diagonal (the tokens that attend
 to them selves) we build in the delta correction, the subtraction, into the matrix.
 
@@ -225,14 +223,13 @@ So we have one 1 that indicates that this token should attend to itself and then
 we have the additional one for the subtraction, just because otherwise a 1 in the
 beta vector for this position would cancel out.
 
-
 For each kda layer we have:
 ```c++
 ggml_tensor * conv_state_all = build_rs(inp_rs, conv_states_all, hparams.n_embd_r(), n_seqs);
 ```
 So the memory for this layer is storing the tail of the previous sequence and
 this is used for the convolutions that follow which allow the model to blend with
-its immediate neighbors, the 3-4 tokens behind it.
+its immediate neighbours, the 3 tokens behind it.
 ```c++
 ggml_tensor * Qcur = causal_conv1d(
     gf,
@@ -254,9 +251,9 @@ ggml_tensor * Qcur = causal_conv1d(
 So initially I just thought that this was doing a ggml_conv_1d operation but this
 is a function in the same file.
 
-This is handling the the short term memory by mixing in the previous 3 tokens.
-which is this is what conv_states_all contains. It contains the previous 3 states
-for Q, K and V.
+This is handling the short term memory by mixing in the previous 3 tokens, which
+is what conv_states_all contains. It contains the previous 3 states for Q, K and
+V.
 ```c++
 static ggml_tensor * causal_conv1d(
     ggml_cgraph * gf,
@@ -276,9 +273,9 @@ static ggml_tensor * causal_conv1d(
     int64_t kv_head) {
 ```
 And above we are passing in 0 as the value for `qkv` which is acting/used like
-an index/offset into the state.
+an offset into the state.
 
-So first we createa a view into the conv_states_all tensor which is a 3d tensor
+So first we create a view into the conv_states_all tensor which is a 3d tensor
 that contains the previous 3 states for Q, K and V and in this case the offset
 is  (qkv):
 ```c++
@@ -298,7 +295,7 @@ $2 = {2304, 1, 1, 1}
 (gdb) p proj_w->ne
 $5 = {2304, 4096, 1, 1}
 ```
-The we project the cur tensor (x) to a higher dimension:
+Then we project the cur tensor (x) to a higher dimension:
 ```c++
     ggml_tensor * x_proj = ggml_mul_mat(ctx0, proj_w, x);
 ```
@@ -317,14 +314,14 @@ Shorlty after we have the ssm_conv operation:
 ```
 The kernel is conv_weight which is specific to each layer and conv_x is what
 the kernel will convolve over. So this is enabling the model to blend the past
-3 token featurs together with the current token embedding being processed. This
+3 token features together with the current token embedding being processed. This
 creates a form of context for the tokens.
 
 Now, this is actually one part of the reason that Kimi Linear does not need
 positional encoding like RoPE. Because the kernel is a vector [w_3, w_2, w_1, w_0]
 it treats the token that just arrived, t_0, differently than the token that
 arrived 3 steps ago, t_3. So the model can distinguish between "Dog bites" and
-"Bites dog". And with standard attention there is no such distinction without
+"Bites dog". With standard attention there is no such distinction without
 positional encoding. But the other part of this is the KDA recurrence which acts
 as a sequential chain.
 
@@ -357,12 +354,12 @@ $20 = {4096, 512, 1, 1}
 So the above down projection followed by the up project is like a low-rank
 bottleneck that is done to avoid the full large matrix multiplication.
 
-So the g1 (gate) holds the raw instructions for how memory/state should be
-updated. But the raw output from the above operations can be any number, positive
+So g1 (gate) holds the raw instructions for how memory/state should be updated.
+But the raw output from the above operations can be any number, positive
 negative, or zero. To be useful as a forget gate we need to have them in a stable
 usable range.
-ssm_dt_b is a learned vector of 4096 numbers that acts as the "baseline forget rate"
-and this is applied to the calculated gate (which becomes like an offset from the
+ssm_dt_b is a learned vector of 4096 that acts as the "baseline forget rate" and
+this is applied to the calculated gate (which becomes like an offset from the
 base):
 ```c++
             g1 = ggml_add(ctx0, g1, layer.ssm_dt_b);
@@ -370,7 +367,8 @@ base):
 ```
 Softplus is used because we need stictly positive values for the forget gate. It
 is like a forward only update (timestep).
-After these operations the g1 is a vector of step sizes, a high value in g1 means
+
+After these operations g1 is a vector of step sizes, a high value in g1 means
 that this channel/feature will update very rapidly (forgetting past information
 in favour of immediate input) and a low value means that this channel/feature
 will update very slowly, it will hold on to past information for a long time.
@@ -389,14 +387,14 @@ $25 = {128, 32, 512, 1}
 $26 = {128, 32, 512, 1}
 ```
 layer.ssm_a is a static parameter learned during training and represents a
-base forget rate. The previous part we say above is a dynamic value (it changes
+base forget rate. The previous part we saw above is a dynamic value (it changes
 for every token).
 So head_1 might have a very small value for A which would be a long-term memory
-head. It will rememember things for hundres of thousands of tokens.
+head. It will rememember things for hundreds of thousands of tokens.
 And head_32 might have a very high value for A which would be a short-term
 memory head. It might clears its grid almost immediately and only remember the
 last few tokens.
-This is a reason that Kimi-linear doesn't need RoPE, because the the "strenght"
+This is a reason that Kimi-linear doesn't need RoPE, because the the "strength"
 of the memory in the 2D grid naturally tells the model how far back in time that
 token is from.
 
@@ -590,10 +588,134 @@ Next we apply the beta gating:
 
     gk    = ggml_cont_4d(ctx0, gk, S_k, chunk_size, n_chunks, HB);
     beta = ggml_cont_4d(ctx0, beta, 1, chunk_size, n_chunks, HB);
+```
+Next we are going to calculate the cumulative sum for the dynamic forget gate
+which determines how much the memory/hidden state should leak or evaporate at
+each time step.
+In a normal RNN we would update the state like this:
+```console
+S_t = (e^(-g_t)) * S_{t-1} + new_input_t
+```
+If we want to know what the state looks like after 3 steps it would become:
+```
+S_3 = (e^(-g_3) * e^(-g_2) * e^(-g_1) * S_0 + ...
+```
+And `(e^(-g_3) * e^(-g_2) * e^(-g_1)` is the same as `e^-(g_3 + g_2 + g_1)`.
+Now, we are not iterating over the tokens but procesing them as a chunk so we
+actually need to have these values precomputed and available to the kernel. Like
+if we did not the token 64 would have to wait for token 63 to be processed.
 
+```c++
     // switch for cumsum
     gk = ggml_cont_4d(ctx0, ggml_permute(ctx0, gk, 1, 0, 2, 3), chunk_size, S_k, n_chunks, HB);
     cb(gk, "gk", il);
     ggml_tensor * gk_cumsum = ggml_cumsum(ctx0, gk);
     cb(gk_cumsum, "gk_cumsum", il);
 ```
+```console
+(gdb) p gk_cumsum->ne
+$29 = {64, 128, 8, 32}
+```
+```c++
+    const int64_t CHB = n_chunks * H_k * n_seqs;
+    ggml_tensor * gkcs_i = ggml_reshape_4d(ctx0, gk_cumsum, chunk_size, 1, S_k, CHB);
+    ggml_tensor * gkcs_j = ggml_reshape_4d(ctx0, gkcs_i, 1, chunk_size, S_k, CHB);
+
+    ggml_tensor * gkcs_j_bc = ggml_repeat_4d(ctx0, gkcs_j, chunk_size, chunk_size, S_k, CHB);
+```
+```console
+(gdb) p gkcs_i->ne
+$31 = {64, 1, 128, 256}
+(gdb) p gkcs_j->ne
+$32 = {1, 64, 128, 256}
+(gdb) p gkcs_j_bc->ne
+$33 = {64, 64, 128, 256}
+```
+Next we have a subtraction operation using:
+```c++
+    ggml_tensor * decay_mask = ggml_sub(ctx0, gkcs_j_bc, gkcs_i);
+```
+So lets just break this down a bit and simplify to understand what is going on.
+Lets say our chunk size is 3 and that gk_cumsum is:
+```
+[10 15 20]
+```
+We will take this same vector and reshape it into gkcs_i and gkcs_j:
+```
+gkcs_i:
+[10]
+[15]
+[20]
+
+gkcs_j:
+[10 15 20]
+```
+When we subtract broadcasting will happen:
+```
+stretched gkcs_i:
+[10 10 10]
+[15 15 15]
+[20 20 20]
+
+stretch gkcs_j:
+[10 15 20]
+[10 15 20]
+[10 15 20]
+
+[(10-10), (15-10), (20-10)]      [  0,  5, 10 ]
+[(10-15), (15-15), (20-15)]  =>  [ -5,  0,  5 ]
+[(10-20), (15-20), (20-20)]      [ -10, -5, 0 ]
+```
+This matrix is like a lookup table for the decay between any two tokens in the
+chunk where each (j, i) position is (Target token j, Target token i).
+For example, (0, 2) is 10 tells the model exactly how much the signal from Token
+0 has faded by the time it reaches token 2. This is looking backwards which is
+perfectly alright for a causual model.
+
+The diagonal is all zeros which is the decay of a token to itself which is just
+e^0 = 1. No information is lost, the tokens sees itself with 100% strength.
+
+The lower triangle has negative values. These value represent looking forward
+and in a causal model this is not allowed hence the negative values (?).
+
+Next in the code we have:
+```c++
+    decay_mask = ggml_mul(ctx0, decay_mask, diag_mask);
+    cb(decay_mask, "decay_masked", il);
+```
+Recall that the diag_mask is a matrix of 1s in the upper triangle and 0s in the
+lower triangle. So this multiplication becomes:
+```
+     [0, 5, 10]
+     [0, 0,  5]
+     [0, 0,  0]
+```
+We then perform the exponential to get the actual decay values, which is part
+of the decay calculation for the forget gate:
+```c++
+    decay_mask = ggml_exp(ctx0, decay_mask);
+```
+This might produce something like:
+```console
+[  1, 148, 22026 ]
+[  1,   1,   148 ]
+[  1,   1,     1 ]
+```
+Notice that our lower triangle which were zeros are now 1s becasue e^0=1.
+But we can clean this up by another multiplication with the diag_mask:
+```
+    decay_mask = ggml_mul(ctx0, decay_mask, diag_mask);
+```
+```console
+[  1, 148, 22026 ]
+[  0,   1,   148 ]
+[  0,   0,     1 ]
+```
+```c++
+    decay_mask = ggml_cont_4d(ctx0, ggml_permute(ctx0, decay_mask, 2, 1, 0, 3), S_k, chunk_size, chunk_size, CHB);
+```
+```console
+(gdb) p ggml_permute(ctx0, decay_mask, 2, 1, 0, 3)->ne
+$35 = {128, 64, 64, 256}
+```
+_wip_
