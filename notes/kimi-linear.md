@@ -1,43 +1,7 @@
 ## Kimi Linear
 
-### Linear attention
-Standard attention uses softmax which links every token to every other token which
-causes the cost of calculation to grow quadratically with the sequence length.
-```console
-output = softmax(QK^T/sqrt(d))V
-```
-Linear attention removes the softmax:
-```console
-output = (Q * ∅(K)^T) * V
-
-∅ = simple activation function like Silu or just a normalization.
-```
-We can write this in a different way:
-```c++
-output = Q * (∅(K)^T * V)
-             [2D state S]
-
-S = ∅(K)^T * V
-```
-`S` is a 2D matrix that acts as a state/memory that gets updated at each time step.
-
-Linear attention usually implies that that we are looking at the whole sequence
-at a time, while recurrence implies that we are processing one token at a time
-and updating the state.
-
-Plain linear attention has been around since about 2020, but it sufferred from
-poor memory, it treated every token equally and just kept adding new information
-to the state until it became a "blurry" mess of data:
-```
-S_t = S_{t-1} + (K_t * V_t^T)
-```
-What we will see is that Kimi Linear addresses this by introducing gates:
-```
-S_t = forget(g1) * S_{t-1} + β(error correction)
-```
-
 ### Background
-SO Kimi-linear is a recurrent, or really a hybrid recurrent/transformer model
+So Kimi-linear is a recurrent, or really a hybrid recurrent/transformer model
 like Nemotron or Granite etc. But I want to focus on the recurrent part and look
 back at some previous architectures to understand the motivation for Kimi-linear.
 
@@ -74,26 +38,39 @@ KDA uses a Data-Dependent Update (The Delta Rule). Before adding new information
 to the memory, it calculates how much of the existing memory is already similar
 to the new input.
 
+This is what the state update looks like (keep in mind that since we don't use
+softmax the query is not involved at this stage. This is only the write part to
+memory. The read part is where the query vector comes in):
 ```
-S_t = S_{t-1} + beta_t(v_t - S_{t-1} q_t) k_t
+S_t = (Forget_Gate * S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) (x) k_t^T
 
 Where:
-- S_t is the updated memory/state at time t
-- S_{t-1} is the previous memory/state
-- beta_t is a scalar (between 0 and 1) which acts like a write enable switch. Similar to a forget gate in an LSTM.
-- v_t is the value vector at time t (the current input's value representation)
-- q_t is the query vector at time t (the current input's query representation)
-- k_t is the key vector at time t   (the current input's key representation)
+(Forget_Gate * S_{t-1}) Is what allows the model to forget/shrink the state overtime 
+(S_{t-1} k_t)           Is "what the model already knows about this key"
+(v_t - (S_{t-1} k_t))   This is the error (1d vector). It is the diff between what
+                        the actual value and what the model thought the value was.
+(..) k_t                This is the update.
 ```
-So this is first multiplying the previous state (s_{t-1}) with the query (q_t)
-which is the models prediction. S_{t-1} is everything that the models knows this
-far, and q_t is the current query. By multiplying them together, we get a measure
-of how much of the current query is already captured in the memory. This is the
-"similarity" or "overlap".
+So we first use the key to see/read what is in memory, we then calculate the error
+using the value, and then use the key again to save the update. 
+
+So we first shrink the memory using the forget gate, and we have the decay gate
+(Delta Rule) that allows the model to selectively correct information. And the
+forget gate enables us to flush old irrelevant information.
+
+The output is then computed using the query vector:
+```console
+output = S_t q_t
+```
+
+So just to recap before moving forward into the code:
+* Forget gate: a_t * S_t             Stability: Flushes old irrelevant information
+* Delta error: (v_t - (S_{t-1} k_t)) Precision: Find exacltly what the memory got wrong
+* Beta gate  : β_t (...)             Control: Decides if the current token is worth writing
 
 So we have S_{t-1} which is the current state which is like a key-value lookup
 table that has been squashed into a single grid. But how can we "look up"
-something in this grid, like we can just use [row][column] right. Instead the
+something in this grid, we can just use [row][column] right. Instead the
 "indices" are directions of the vectors.
 ```
       S_{t-1}        Q_t
@@ -111,10 +88,10 @@ v = concept of Red represented by a vector      : [5 0 0 0]
 In linear attention state a "key-value" pair is stored as an outer product of
 v X k^T.  So looking at the above equation:
 ```
-S_t = S_{t-1} + beta_t(v_t - S_{t-1} q_t) k_t
+S_t = S_{t-1} + beta_t(v_t - S_{t-1} k_t) k_t
 ```
-Lets start with the inner most expression (v_t - (S_{t-1} q_t)) where we perform
-the multiplication of the current state with the query vector:
+Lets start with the inner most expression (v_t - (S_{t-1} k_t)) where we perform
+the multiplication of the current state with the key vector:
 ```
 
           [5 0 0 0]    [1]
@@ -123,7 +100,7 @@ S_{t-1}   [0 0 0 0] x  [0]
           [0 0 0 0]    [0]
 ```
 If we were to ask for the feature of index (0,0) the answer will be 5.
-Now, imaging a new sequence "What is the color?" comes in. The query vector for
+Now, imaging a new sequence "What is the color?" comes in. The key vector for
 color could be [1 0 0 0] which is the same as the key vector for color.
 ```
           [5 0 0 0]  [1]    [5]
@@ -139,7 +116,7 @@ Now, this is where the delta part comes into play. Imaging that the sequence
 v_t = "Blue" [0 7 0 0]
 ```
 The model has "Red" as its color (the feature in the state [5 0 0 0]).
-The subtraction in (v_t - (S_{t-1} q_t)):
+The subtraction in (v_t - (S_{t-1} k_t)):
 ```
    [0]   [5]   [-5]   // delete Red
    [7] - [0] = [ 7]   // add Blue
