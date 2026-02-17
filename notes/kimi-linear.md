@@ -1,5 +1,62 @@
 ## Kimi Linear
 
+### Linear attention
+Standard attention uses softmax which links every token to every other token which
+causes the cost of calculation to grow quadratically with the sequence length.
+```console
+output = softmax(QK^T/sqrt(d))V
+```
+Linear attention removes the softmax:
+```console
+output = (Q * ∅(K)^T) * V
+
+∅ = simple activation function like Silu or just a normalization.
+```
+We can write this in a different way:
+```c++
+output = Q * (∅(K)^T * V)
+             [2D state S]
+
+S = ∅(K)^T * V
+```
+`S` is a 2D matrix that acts as a state/memory that gets updated at each time step.
+
+Linear attention usually implies that that we are looking at the whole sequence
+at a time, while recurrence implies that we are processing one token at a time
+and updating the state.
+
+Plain linear attention has been around since about 2020, but it sufferred from
+poor memory, it treated every token equally and just kept adding new information
+to the state until it became a "blurry" mess of data:
+```
+S_t = S_{t-1} + (K_t * V_t^T)
+```
+What we will see is that Kimi Linear addresses this by introducing gates:
+```
+S_t = forget(g1) * S_{t-1} + β(error correction)
+```
+
+### Background
+SO Kimi-linear is a recurrent, or really a hybrid recurrent/transformer model
+like Nemotron or Granite etc. But I want to focus on the recurrent part and look
+back at some previous architectures to understand the motivation for Kimi-linear.
+
+So we had Mamba (1) which uses 1d vector for its state. It does have a gating
+mechanism which is dynamic, this is the step size which uses the input token. One
+issue was that Mamba struggled with associative recall, it was not good at
+remembering specific details from the past.
+
+Mamba2 introduced Structured State Space Duality and simplified the gating to
+make it faster on GPUs. It proved that SSMs and Attention are mathematically
+duals of each other. This allows this model to act like linear attention but
+it still uses a 1d vector for its state/memory. The main focus was on making
+the selection process more hardware friendly.
+
+
+### Misc
+* Gating/decay mechanism
+* Delta rule for memory updates
+
 ```c++
         case LLM_ARCH_KIMI_LINEAR:
             {
@@ -532,7 +589,7 @@ $7 =  {128, 32, 512, 1}
 $16 = {128, 512, 32, 1}
 ```
 And because the strides are changes we use ggml_cont_4d which will create a new
-tensor and copy and reorder the elements in memory so that they are contiguous.
+tensor and copies and reorders the elements in memory so that they are contiguous.
 This is a requirement of the kernel (I think) so that it can efficiently access
 the data in memory (coalesced memory access).
 
@@ -541,7 +598,7 @@ And after the ggml_cont_4d operation:
 (gdb) p q->ne
 $17 = {128, 512, 32, 1}
 ```
-This is because we only have one sequance, n_seqs is 1.
+This is because we only have one sequence, n_seqs is 1.
 The we do the same with the beta tensor:
 ```c++
     beta  = ggml_cont(ctx0, ggml_permute(ctx0, beta, 2, 0, 1, 3));
@@ -603,7 +660,7 @@ S_3 = (e^(-g_3) * e^(-g_2) * e^(-g_1) * S_0 + ...
 And `(e^(-g_3) * e^(-g_2) * e^(-g_1)` is the same as `e^-(g_3 + g_2 + g_1)`.
 Now, we are not iterating over the tokens but procesing them as a chunk so we
 actually need to have these values precomputed and available to the kernel. Like
-if we did not the token 64 would have to wait for token 63 to be processed.
+if we did not, token 64 would have to wait for token 63 to be processed.
 
 ```c++
     // switch for cumsum
@@ -711,9 +768,11 @@ But we can clean this up by another multiplication with the diag_mask:
 [  0,   1,   148 ]
 [  0,   0,     1 ]
 ```
+
 ```c++
     decay_mask = ggml_cont_4d(ctx0, ggml_permute(ctx0, decay_mask, 2, 1, 0, 3), S_k, chunk_size, chunk_size, CHB);
 ```
+
 ```console
 (gdb) p ggml_permute(ctx0, decay_mask, 2, 1, 0, 3)->ne
 $35 = {128, 64, 64, 256}
