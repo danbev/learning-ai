@@ -73,7 +73,7 @@ table that has been squashed into a single grid. But how can we "look up"
 something in this grid, we can just use [row][column] right. Instead the
 "indices" are directions of the vectors.
 ```
-      S_{t-1}        Q_t
+      S_{t-1}        k_t
  0  [0  ...   d]     [0]      [0]
     [0  ...   d]     [0]    = [0]
     [0  ...   d]     [0]      [0]
@@ -147,10 +147,10 @@ And then we compute the outer product with the key vector k_t:
 ```
 (Error) x k_t (color):
 
-   [-5]               [-5 0 0 0]
+   [-5]                 [-5 0 0 0]
    [ 7] (x) [1 0 0 0] = [ 7 0 0 0]
-   [ 0]               [ 0 0 0 0]
-   [ 0]               [ 0 0 0 0]
+   [ 0]                 [ 0 0 0 0]
+   [ 0]                 [ 0 0 0 0]
 
 (x) = outer product operator.
 ```
@@ -165,9 +165,9 @@ S_t = S_{t-1} + Update
 Notice that the Red has been cancelled out, and the Blue has been written into
 memory.
 
-In Kimi Linear, by multiplying S_{t-1} by q_t, we are doing all of those lookups
+In Kimi Linear, by multiplying S_{t-1} by k_t, we are doing all of those lookups
 at once in a single matrix-vector multiplication. The 2D matrix S has effectively
-"pre-summed" all the past information, and q_t simply extracts what is relevant
+"pre-summed" all the past information, and k_t simply extracts what is relevant
 right now.
 
 And similar to Mamba which as a fixed size state/memory this is also true for
@@ -347,7 +347,7 @@ Shorlty after we have the ssm_conv operation:
     ggml_tensor * Xcur = ggml_ssm_conv(ctx0, conv_x, conv_weight);
 ```
 The kernel is conv_weight which is specific to each layer and conv_x is what
-the kernel will convolve over. So this is enabling the model to blend the past
+the kernel will convolv over. So this is enabling the model to blend the past
 3 token features together with the current token embedding being processed. This
 creates a form of context for the tokens.
 
@@ -361,20 +361,34 @@ as a sequential chain.
 
 And the above is also done for the K and V tensors as well.
 
-Following that we have the forget gate:
+Following that we have a down projection of the current input:
 ```c++
-            // this is a down projection to a latent state
             ggml_tensor * f_a = ggml_mul_mat(ctx0, layer.ssm_f_a, cur);
 ```
+The original tensor looks like this:
 ```console
-(gdb) p cur->ne
-$16 = {2304, 512, 1, 1}
+$ ./scripts/utils/tensor-info.py -m ~/work/models/moonshotai/Kimi-Linear model.layers.0.self_attn.f_a_proj.weight
+Tensor: model.layers.0.self_attn.f_a_proj.weight
+File:   model-00001-of-00020.safetensors
+Shape:  [128, 2304]
+```
+And the shape of cur and layer.ssm_f_a are:
+```console
 (gdb) p layer.ssm_f_a->ne
 $17 = {2304, 128, 1, 1}
+
+(gdb) p cur->ne
+$16 = {2304, 512, 1, 1}
+```
 
 (gdb) p f_a->ne
 $18 = {128, 512, 1, 1}
 ```
+Notice that this is getting multiplied with the current tensor (cur) which is
+the input token embedding that has been processed by the conv1d and projected
+up to 512. So this is a down projection from 2304 to 128.
+
+Following that we have an up projection:
 ```c++
             ggml_tensor * g1 = ggml_mul_mat(ctx0, layer.ssm_f_b, f_a);
 ```
@@ -385,6 +399,9 @@ $19 = {128, 4096, 1, 1}
 (gdb) p g1->ne
 $20 = {4096, 512, 1, 1}
 ```
+Now, this is done to avoid a full large matrix multiplication. TODO: like to
+notes about this that I've written before.
+
 So the above down projection followed by the up project is like a low-rank
 bottleneck that is done to avoid the full large matrix multiplication.
 
@@ -392,6 +409,7 @@ So g1 (gate) holds the raw instructions for how memory/state should be updated.
 But the raw output from the above operations can be any number, positive
 negative, or zero. To be useful as a forget gate we need to have them in a stable
 usable range.
+
 ssm_dt_b is a learned vector of 4096 that acts as the "baseline forget rate" and
 this is applied to the calculated gate (which becomes like an offset from the
 base):
@@ -402,15 +420,121 @@ base):
 Softplus is used because we need stictly positive values for the forget gate. It
 is like a forward only update (timestep).
 
+So g1 is what we referred to as "Forget_Gate" in the equation above:
+```console
+S_t = (Forget_Gate * S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) (x) k_t^T
+```
+
 After these operations g1 is a vector of step sizes, a high value in g1 means
 that this channel/feature will update very rapidly (forgetting past information
 in favour of immediate input) and a low value means that this channel/feature
 will update very slowly, it will hold on to past information for a long time.
-Next, we will use the g1 tensor and multiply it by layer.ssm_a
+
+Next, we will use the g1 tensor and multiply it by layer.ssm_a:
 ```c++
             ggml_tensor * A = ggml_reshape_3d(ctx0, layer.ssm_a, 1, n_head, 1);
             g1 = ggml_mul(ctx0, g1, A);
 ```
+Now, layer.ssm_a is actually a tensor that is modified during conversion:
+```python
+        if name.endswith(".A_log"):
+            data_torch = -torch.exp(data_torch)
+```
+So this is the negative exponential of the original parameter, so we can just
+multiply this by g1 to get the gate values in log space.
+
+This is what the values look like before the conversion (the original models tensor):
+```console
+(glm-venv) spark $ ./scripts/utils/tensor-info.py -m ~/work/models/moonshotai/Kimi-Linear model.layers.0.self_attn.A_log -n 32
+Tensor: model.layers.0.self_attn.A_log
+File:   model-00001-of-00020.safetensors
+Shape:  [1, 1, 32, 1]
+Dtype:  torch.float32
+Values: [
+ 1.103968620300293,
+-0.20674507319927216,
+ 0.06409236788749695,
+ 2.277034282684326,
+ 3.3999674320220947,
+ 4.209522724151611,
+ 1.915040135383606,
+ 3.1779892444610596,
+ 3.0966317653656006,
+ 1.5971810817718506,
+ 4.7506303787231445,
+-0.4733889102935791,
+ 2.5522594451904297,
+ 5.304281234741211,
+-0.31161242723464966,
+ 2.7692441940307617,
+ 2.7018637657165527,
+ 2.3136250972747803,
+ 1.659307837486267,
+ 3.121227741241455,
+-1.488243579864502,
+ 2.63500714302063,
+-0.8697880506515503,
+ 3.5412185192108154,
+ 2.9536848068237305,
+ 2.9326748847961426,
+ 2.8871192932128906,
+ 2.265052080154419,
+ 3.379794120788574,
+ 2.962221622467041,
+ 3.7428195476531982,
+ 3.0271267890930176]
+```
+We can inspect the values in this tensor using llama-debug:
+```console
+common_debug_cb_eval:   blk.0.ssm_a (reshaped) = (f32)    RESHAPE(blk.0.ssm_a{1, 32, 1, 1}, }) = {1, 32, 1, 1}
+    [
+        [
+            [     -3.0161  ],
+            [     -0.8132  ],
+            [     -1.0662  ],
+            ...,
+            [    -19.3409  ],
+            [    -42.2169  ],
+            [    -20.6378  ],
+        ],
+    ]
+    sum = -795.903503
+```
+And we can verify the first value:
+```console
+exp(1.103968) ≈ 3.01614$
+Apply the negative sign: -3.01614
+```
+We we consider head 1, which has the value -0.8132 this is a gentle decay meaning
+that when we multiply this by g1 this will produce a small negative value and
+exp(-small) will be a value close to 1.0. This head is most likely for long term
+memory.
+
+So to recap:
+```c++
+    // g1 = -exp(A_log) * softplus(f_b(f_a(x)) + dt_bias)
+    ggml_tensor * f_a = ggml_mul_mat(ctx0, layer.ssm_f_a, cur);
+    ggml_tensor * g1 = ggml_mul_mat(ctx0, layer.ssm_f_b, f_a);
+    cb(g1, "g1 f_b(f_a(cur))", il);
+    g1 = ggml_add(ctx0, g1, layer.ssm_dt_b);
+    g1 = ggml_softplus(ctx0, g1);
+    g1 = ggml_reshape_3d(ctx0, g1, head_dim, n_head, n_tokens);
+
+    // A_log shape is [1, n_head] or [1, n_head, 1, 1], need to broadcast to [head_dim, n_head, n_tokens]. No need to -exp(a_log) because it was done in convert_hf_to_gguf.py
+    // Reshape to [1, n_head, 1] for broadcasting with g1 [head_dim, n_head, n_tokens]
+    ggml_tensor * A = ggml_reshape_3d(ctx0, layer.ssm_a, 1, n_head, 1);
+    g1 = ggml_mul(ctx0, g1, A);
+```
+With the A tensor we have 32 heads and each is the negative exponential of the
+original parameter. We then multiply this by g1, which is the dynamic step size
+(delta ∆) calculated for each channel/feature, to get the final forget gate values.
+
+```console
+log_decay = Softplus(Bottlenecked Projection + Bias) * (-exp(A_log)))
+            [             g1                       ]   [   A        ]
+                    (always positive)                  (always negative)
+```
+
 ```console
 (gdb) p A->ne
 $24 = {1, 32, 1, 1}
