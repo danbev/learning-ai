@@ -42,7 +42,10 @@ This is what the state update looks like (keep in mind that since we don't use
 softmax the query is not involved at this stage. This is only the write part to
 memory. The read part is where the query vector comes in):
 ```
-S_t = (Forget_Gate * S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) (x) k_t^T
+S_t = (Forget_Gate * S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) ⊚ k_t^T
+                                          [            ]
+                                   [Delta Error        ]
+                                [                      ]
 
 Where:
 (Forget_Gate * S_{t-1}) Is what allows the model to forget/shrink the state overtime 
@@ -51,16 +54,56 @@ Where:
                         the actual value and what the model thought the value was.
 (..) k_t                This is the update.
 ```
+
+The forget gate is a vector [128], and the state is a matrix [128, 128] and
+doing an element wise multiplication (hadamard) of these produces a [128, 128]
+matrix.
+```console
+F = [0.1]        S = [10 20 30]
+    [0.5]            [40 50 60]
+    [0.9]            [70 80 90]
+
+    F * S =  [0.1]   [10 20 30]   [0.1*10  0.1*20 0.1*30]   [1   2  3]
+             [0.5] * [40 50 60] = [0.5*40  0.5*50 0.5*60] = [20 25 30]
+             [0.9]   [70 80 90]   [0.9*70  0.9*80 0.9*90]   [63 72 81]
+``` 
+We will later see that this is performed using `state = ggml_mul(ctx0, state, gk_t);`
+
+And the other term of the addition, β_t(v_t - (S_{t-1} k_t)) ⊚ k_t^T, will be
+the outer product of a [128] vector, and a [128] vector which also produces a
+[128, 128] matrix.
+```
+e = [2]  k^T = [1 0 4]
+    [1]
+    [3]
+
+e ⊚ k^T = [2]            [(2*1) (2*0) (2*4)]   [2 0  8]
+          [1]  [1 0 4] = [(1*1) (1*0) (1*4)] = [1 0  4]
+          [3]            [(3*1) (3*0) (3*4)]   [3 0 12]
+```
+So the overall picture is this:
+1) Read: S_{t-1} k_t  Read the state to see what we already know.
+2) Compare: (v_t - (S_{t-1} k_t))  Compare the read value with the actual value to get the error/surprise.
+3) Scale: Forget_gate * S_{t-1}  Earase the old state slightly.
+4) Write: Error ⊚ k_t^T  Create a new matrix of the suprise/error.
+5) Merge: Add the scaled old state and the new write together to get the new state S_t.
+
+```
+S_{t-1]     = [128, 128]  Current state
+Forget_gate = [128]       Forget gate values for each feature
+v_t         = [128]       The new value we want to write to memory
+k_t         = [128]       The key vector for the current input token
+β_t         = [128]       The importance score for the current input token
+```
+
 So we first use the key to see/read what is in memory, we then calculate the error
 using the value, and then use the key again to save the update. 
 
-So we first shrink the memory using the forget gate, and we have the decay gate
-(Delta Rule) that allows the model to selectively correct information. And the
-forget gate enables us to flush old irrelevant information.
-
-The output is then computed using the query vector:
+And we later use the state and the query vector to compute the output:
 ```console
 output = S_t q_t
+
+ggml_tensor * core_attn_out = ggml_mul_mat(ctx0, state_t, q);
 ```
 
 So just to recap before moving forward into the code:
@@ -68,10 +111,13 @@ So just to recap before moving forward into the code:
 * Delta error: (v_t - (S_{t-1} k_t)) Precision: Find exacltly what the memory got wrong
 * Beta gate  : β_t (...)             Control: Decides if the current token is worth writing
 
-So we have S_{t-1} which is the current state which is like a key-value lookup
-table that has been squashed into a single grid. But how can we "look up"
-something in this grid, we can just use [row][column] right. Instead the
-"indices" are directions of the vectors.
+So when we perform (S_{t-1} * k_t) we said we are reading the state that the model
+currently knows about. Now, k_t is the embedding vector and we can think of this
+as a concept vector, for example the concept of "color" might be represented by
+this key vector. When we do the matrix-vector multiplication of the current
+state it is like transforming/moving the k_t vector to point to a location the
+embedding vector space that the model currently thinks the concept of "color" is.
+
 ```
       S_{t-1}        k_t
  0  [0  ...   d]     [0]      [0]
@@ -365,6 +411,13 @@ Following that we have a down projection of the current input:
 ```c++
             ggml_tensor * f_a = ggml_mul_mat(ctx0, layer.ssm_f_a, cur);
 ```
+The tensor layer.ssm_f_a is a learned weight tensor that projects the high
+dimensional embedding (2304) into a much smaller "latent" space of 128. This is
+compressing the most imporatant information from the input token embedding into
+a dense vector. So this forces the model to decide which of the 2304 features
+actually matter. And the result (f_a) will then directly be used to calculate
+the g1 values (further down).
+
 The original tensor looks like this:
 ```console
 $ ./scripts/utils/tensor-info.py -m ~/work/models/moonshotai/Kimi-Linear model.layers.0.self_attn.f_a_proj.weight
@@ -379,16 +432,31 @@ $17 = {2304, 128, 1, 1}
 
 (gdb) p cur->ne
 $16 = {2304, 512, 1, 1}
-```
 
-(gdb) p f_a->ne
-$18 = {128, 512, 1, 1}
+           ssm_f_a                 cur^T                  f_a
+0   [0       ...     2303]    [0    ...   511]    0    [0...127]
+    [        ...         ]  * [     ...      ]         [ ...   ]
+127 [0       ...     2303]    [     ...      ]  =      [ ...   ]
+                              [     ...      ]    511  [0...127]     
+                              [     ...      ]
+2303                          [0    ...   511]
 ```
 Notice that this is getting multiplied with the current tensor (cur) which is
 the input token embedding that has been processed by the conv1d and projected
 up to 512. So this is a down projection from 2304 to 128.
+```console
+(gdb) p f_a->ne
+$18 = {128, 512, 1, 1}
+```
+While this does not match the output of my logical diagram above but this is how
+ggml produces the output. This way when we perform the next multiplication which
+will again transpose the b matrix it will work correctly. Without this there
+would be transpose/reshape operations littered through the code. TODO: link to
+ggml_mul_mat notes/examples on the details about this.
 
-Following that we have an up projection:
+Following that we have an up projection which uses the down projected f_a tensor.
+So the model has determined which features of the current token embeddings are
+the most important and will now up project this up to 4096:
 ```c++
             ggml_tensor * g1 = ggml_mul_mat(ctx0, layer.ssm_f_b, f_a);
 ```
@@ -399,33 +467,68 @@ $19 = {128, 4096, 1, 1}
 (gdb) p g1->ne
 $20 = {4096, 512, 1, 1}
 ```
-Now, this is done to avoid a full large matrix multiplication. TODO: like to
-notes about this that I've written before.
+Now, this is done to avoid a full large matrix multiplication. TODO: link to
+notes about this that I've written before. So the above down projection followed
+by the up project is like a low-rank bottleneck that is done to avoid the full
+large matrix multiplication.
 
-So the above down projection followed by the up project is like a low-rank
-bottleneck that is done to avoid the full large matrix multiplication.
+So g1 (gate) holds the raw instructions for how memory/state should be updated
+for this token embedding (token).
 
-So g1 (gate) holds the raw instructions for how memory/state should be updated.
 But the raw output from the above operations can be any number, positive
 negative, or zero. To be useful as a forget gate we need to have them in a stable
 usable range.
 
-ssm_dt_b is a learned vector of 4096 that acts as the "baseline forget rate" and
-this is applied to the calculated gate (which becomes like an offset from the
-base):
+ssm_dt_b (dt_bias) is a learned vector of 4096 that acts as the "baseline forget
+rate" and this is applied to the calculated gate (which becomes like an offset
+from the base):
 ```c++
             g1 = ggml_add(ctx0, g1, layer.ssm_dt_b);
             g1 = ggml_softplus(ctx0, g1);
 ```
 Softplus is used because we need stictly positive values for the forget gate. It
 is like a forward only update (timestep).
-
-So g1 is what we referred to as "Forget_Gate" in the equation above:
+```c++
+            g1 = ggml_reshape_3d(ctx0, g1, head_dim, n_head, n_tokens);
 ```console
-S_t = (Forget_Gate * S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) (x) k_t^T
+(gdb) p g1->ne
+$24 = {128, 32, 512, 1}
+```
+So each token (embedding), n_tokens is 512 in this case, we will have 32 heads
+(rows) each with 128 values.  Lets just step back and think about this for a
+bit. The heads are like specialists that are storing different types of
+information in the state, and each one has 128 values. 
+
+Each head has its own gate value.
+```
+Head 0 [0 ... 127]
+Head 1 [0 ... 127]  
+...
+Head 31[0 ... 127]
+```
+Now, the state itself is also organized by heads, but notice that each head
+as/is a 128x128 matrix
+```console
+(gdb) p state->ne
+$26 = {128, 128, 32, 1}
+```
+So each head has a [128, 128] matrix which is the state/memory for that head.
+
+So for each head we have g1 which is a vector of 128 values (one for each head)
+which is used to control the update of the 128 features for this head's
+state/memory (the [128, 128] matrix. We can think of the values in the state
+as coefficeints for a function and this is what we are updating. The coefficients
+are later used in matrix multiplication where we can imaging each row being the
+function body where these coefficients are used. So how does 128 values control
+the update of a [128, 128] (16384 values) matrix?  
+
+
+So g1 is what we referred to as the "Forget_Gate" in the equation above:
+```console
+S_t = (Forget_Gate ⊚ S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) ⊚ k_t^T
 ```
 
-After these operations g1 is a vector of step sizes, a high value in g1 means
+After these operations g1 is a matrix of step sizes, a high value in g1 means
 that this channel/feature will update very rapidly (forgetting past information
 in favour of immediate input) and a low value means that this channel/feature
 will update very slowly, it will hold on to past information for a long time.
@@ -534,6 +637,120 @@ log_decay = Softplus(Bottlenecked Projection + Bias) * (-exp(A_log)))
             [             g1                       ]   [   A        ]
                     (always positive)                  (always negative)
 ```
+This will later be used in build_kda_autoregressive or build_kda_chunking:
+```c++
+    g1 = ggml_reshape_4d(ctx0, g1, head_dim, n_head, n_seq_tokens, n_seqs);
+    ...
+    std::pair<ggml_tensor *, ggml_tensor *> attn_out = n_seq_tokens == 1 ?
+        build_kda_autoregressive(Qcur, Kcur, Vcur, g1, beta, state, il) :
+        build_kda_chunking(Qcur, Kcur, Vcur, g1, beta, state, chunked_causal_mask, chunked_identity, chunked_diag_mask, il);
+```
+The following is from build_kda_autoregressive:
+```c++
+    gk = ggml_reshape_4d(ctx0, gk, S_k, 1, H_k, n_seqs);
+    ggml_tensor * gk_t = ggml_cont(ctx0, ggml_transpose(ctx0, gk));
+
+    // Apply exponential to gk_t
+    gk_t = ggml_exp(ctx0, gk_t);
+    // Apply the gated delta rule for the single timestep
+    // last_recurrent_state = last_recurrent_state * gk_t
+    // S = S * g_i[..., None].exp()
+    state = ggml_mul(ctx0, state, gk_t);
+```
+And this is applying the following part of the equation
+```console
+S_t = (Forget_Gate * S_{t-1}) + β_t (v_t - (S_{t-1} k_t)) (x) k_t^T
+      [         ↑           ]
+      ggml_mul(ctx0, state, gk_t)
+```
+So we have been through this part of the computation.
+
+Next we have the beta (β):
+```c++
+    ggml_tensor * beta = ggml_mul_mat(ctx0, layer.ssm_beta, cur);
+```
+Recall that that the beta tensor is a learned tensor, a weight tensor, and we
+multiply it with input to this layer to get the dynamic values for this specific
+input. Is like an importance score of the current tokens we are processing.
+This is what allows for a different learning rate per token and not a fixed
+rate for all tokens which is what a standard Delta Net provides (non-gated).
+So the above operation produces an importance score.
+
+This beta tensor will also be passed to:
+```c++
+    std::pair<ggml_tensor *, ggml_tensor *> attn_out = n_seq_tokens == 1 ?
+        build_kda_autoregressive(Qcur, Kcur, Vcur, g1, beta, state, il) :
+        build_kda_chunking(Qcur, Kcur, Vcur, g1, beta, state, chunked_causal_mask, chunked_identity, chunked_diag_mask, il);
+```
+And then we have the following operations:
+```c++
+std::pair<ggml_tensor *, ggml_tensor *> llm_build_kimi_linear::build_kda_autoregressive(
+    ...
+    // the raw score can be any value, but here we want to squash it to be
+    // between 0 and 1 so we apply sigmoid
+    beta = ggml_sigmoid(ctx0, beta);
+    ggml_tensor * beta_t = ggml_reshape_4d(ctx0, ggml_transpose(ctx0, beta), 1, 1, H_k, n_seqs);
+    ggml_tensor * k_beta = ggml_mul(ctx0, k, beta_t);
+    state = ggml_add(ctx0, state, ggml_mul_mat(ctx0, ggml_cont(ctx0,
+        ggml_transpose(ctx0, v_diff)), ggml_cont(ctx0, ggml_transpose(ctx0, k_beta))));
+```
+So in my notes I have the following:
+```console
+S_t = (Forget_Gate * S_{t-1}) + β_t (v_t - (S_{t-1} k_t)) (x) k_t^T
+
+```c++
+    // Forget_Gate * S_{t-1}
+    state = ggml_mul(ctx0, state, gk_t);
+
+    // S_{t-1} k_t
+    ggml_tensor * k_state = ggml_mul_mat(ctx0, state_t, k);
+
+    // (v_t - (S_{t-1} k_t)) == (v_t - k_state)
+    ggml_tensor * v_diff = ggml_sub(ctx0, v, k_state);
+
+    // So above we have
+    // β_t (v_t - (S_{t-1} k_t)) (x) k_t^T
+    // We could also write this as:
+    // (v_t - (S_{t-1} k_t)) (x) (β k_t^T)
+    // And the latter is what we are computing here:
+    ggml_tensor * k_beta = ggml_mul(ctx0, k, beta_t);
+
+    // (Forget_Gate * S_{t-1}) + v_diff (x) (βk)^T
+    state = ggml_add(ctx0, state, ggml_mul_mat(ctx0,
+        ggml_cont(ctx0, ggml_transpose(ctx0, v_diff)),
+        ggml_cont(ctx0, ggml_transpose(ctx0, k_beta))));
+```
+
+```console
+    state = ggml_mul(ctx0, state, gk_t);
+
+    state matrix [12,8 128, 1, 1]
+
+0   [0  ...  127]
+    [   ...     ]
+127 [0  ...  127]
+
+    gk_t is a vector of size 128 [128, 1, 1, 1]
+    [0 ... 127]
+```
+
+We perform a multiplication of the state matrix and the key vector, which has
+been scaled by the beta gate. This is effectively performing the lookup in the state
+to find out what we already know about the current token:
+```console
+0   [0  ...  127]    [.]
+    [   ...     ] x  [.] = [0 ... 127] (predicted value)
+127 [0  ...  127]    [.]
+    
+ggml_tensor * k_state = ggml_mul_mat(ctx0, state_t, k);
+```
+
+
+The Forget Gate Resolution:
+A (Static): Defines the "Baseline Memory" for the whole head (32 values).
+g1 (Dynamic): Fine-tunes that memory for every individual feature (4096 values) based on the token.
+The exp Result: A 4096-slot "Mask." Each slot is a value between 0 and 1 that
+tells the 2D grid exactly how much "ink" to leave on that specific feature's memory.
 
 ```console
 (gdb) p A->ne
@@ -547,6 +764,7 @@ $26 = {128, 32, 512, 1}
 layer.ssm_a is a static parameter learned during training and represents a
 base forget rate. The previous part we saw above is a dynamic value (it changes
 for every token).
+
 So head_1 might have a very small value for A which would be a long-term memory
 head. It will rememember things for hundreds of thousands of tokens.
 And head_32 might have a very high value for A which would be a short-term
