@@ -12,9 +12,9 @@ is passed to the draft model and it is set to predict 5 tokens, which it actuall
 samples and all.
 
 These 5 tokens are then passed (including the tokens embeddings for the initial
-prompt) are then passed to the target model. The target model will process these
-as it would normally process a prompt, the additional 5 tokens at the end are
-just normal prompt tokens as far as the target model is concerned.
+prompt) to the target model. The target model will process these as it would
+normally process a prompt, the additional 5 tokens at the end are just normal
+prompt tokens as far as the target model is concerned.
 
 And recall that the when a model processes a prompt it calculates the predictions
 for every position simultaneously in a single pass.
@@ -50,7 +50,7 @@ and a target which both need to loaded into VRAM. And these models also need to
 share the same tokenizer/vocab.
 
 Self-speculative decoding is a technique where the insight is that we don't need
-all of the model layers to get a useful draft prediction but can get away with
+all of the model layers to get a useful draft prediction, but can get away with
 only using a few. So instead of processing the full say 42 layers of the model
 it might exit early after say 8 layers to get a draft prediction. It takes the
 output of the hidden state at layer 8, and applies a classification head.
