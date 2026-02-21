@@ -1,4 +1,4 @@
-## Eagle speculative decoding
+## Eagle speculative decoding (Extrapolation Algorithm for Greater Language-model Efficiency)
 Framework for Lightweight Autoregressive Decoding.
 
 ### Eagle 1
@@ -10,6 +10,42 @@ autoregressive so how is this different?
 Standard speculative decoding is just like a smaller model, that predicts the
 next token. It works in "token" space so it outputs token ids. Eagle 1 changes
 this and instead predicts the next hidden state for the next token.
+
+So compared to [Medusa](./medusa.md) which has separate lm_heads for each
+token that is predicted Eagle only has one lm_head. The process looks something
+like the following:
+```
+            main_model: predicts h_t
+                           |
+            eagle heads(N) +--------------------------------+
+                           ↓                                |
+                        lm_head(h_t) -> l_t     (logits)    |
+                           ↓                                |
+                        sample(l_t) -> x_{t+1}  (token id)  |
+                           ↓                                |
+                        inp_embd = tok_emb(x_{t+1})         |
+                           ↓                                |
+                        inp_eagle = [h_t + inp_embd]        |
+                           ↓                                |
+                        eagle layer predicts h_{t+1}        |
+                           ↓                                |
+                           ------------h_{t+1}--------------+
+                           |    prediction table:
+                           |    x{t+1} : l_t[x_{t+1}]
+                           |    x{t+2} : l_t[x_{t+2}]
+                           ↓    x{t+3} : l_t[x_{t+3}]
+                        batch
+                           |tokens[:
+                           |  prompt
+                           |  x_{t+1}
+                           |  x_{t+2}
+                           |  x_{t+3}
+                           |]
+                           ↓
+           main_model: processes batch and verify
+```
+
+_wip_
 
 ```console
 Standard speculative decoding:
