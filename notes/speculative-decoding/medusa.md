@@ -51,3 +51,7 @@ information about the other tokens that are being predicted. This is in contrast
 to the standard speculative decoding where the draft model can see the previous
 tokens it has predicted and can use that information to make better predictions
 for the next tokens.
+
+So the above is just predicting a single token for each position, but in Medusa
+that support a top-k prediction for each head, so it forms as tree structure.
+TODO: add notes out this or link to tree in eagle.md (Eagle 1).

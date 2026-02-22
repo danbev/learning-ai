@@ -44,6 +44,48 @@ like the following:
                            ↓
            main_model: processes batch and verify
 ```
+Above is just a simple diagram to try to get an overview of the process. One
+major difference is that Eagle 1 uses a static tree structure and often predicts
+more than a single token. For example for each iteration of the eagle head we
+might do N predictions.
+```
+Tree Key:
+k = 2
+( ) = Hidden State [Vector]
+[ ] = Token ID [Sampled]
+
+           (h_t) <-- Main model prediction
+             |
+      +------+------+
+      ↓             ↓
+    [cat]         [the]    <-- Top-2 Tokens (x_{t+1})
+      |             |
+    (h_t+1)       (h_t+1') <-- Eagle Predictions
+      |             |
+   +--+--+       +--+--+
+   ↓     ↓       ↓     ↓
+ [sat] [ran]   [end] [sun] <-- Top-2 for x_{t+2}
+```
+Instead of a single chain we now have an array with this tree. Now if the
+prediction is "cat->sat", but the real model wanted "cat-ran" the we would loose
+the second prediction. With a tree structure we can keep the "ran" prediction:
+```
+[cat, dog, sat, ran, end, sun]
+```
+
+```
+Draft chain: ["The", "cat", "sat", "on"]
+Real Models: ["The", "cat", "slept", "..."]
+```
+Here "sat" is rejected so the rest of the draft model predictions are also
+rejected. BUt perhaps the real model would have accepted "on" after "slept" but
+with the simple chain we would never get to see that prediction.
+
+Also the tree is not just a simple list, each node contains the cumulative log
+probability of the token that was predicted. So it is easy to add to the tree,
+we just add the log(probability) of the new token to the cumulative log
+probability of the parent.
+
 
 _wip_
 
