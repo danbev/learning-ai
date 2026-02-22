@@ -37,9 +37,12 @@ struct common_params {
     ...
 };
 ```
+
+```c++
 struct common_params_speculative {
     common_speculative_type type = COMMON_SPECULATIVE_TYPE_NONE; // type of speculative decoding
 ```
+
 ```c++
 struct common_params_speculative {
     common_speculative_type type = COMMON_SPECULATIVE_TYPE_NONE; // type of speculative decoding
@@ -267,6 +270,49 @@ struct common_speculative_state_ngram_mod : public common_speculative_state {
             mod.reset();
         }
     }
+```
+So at the moment the ngram_mod is hooked up to llama-server and we can step
+through it in a debugger is we specify `--spec-type ngram-mod
+```console
+(lldb) p n
+(const size_t) 12
+(lldb) p prompt.size()
+(std::vector<int>::size_type) 36
+```
+So this function is iterating over all 36-12=24 (and only < 24) so this will
+iterate over 23 token ids. So we are calling this with a pointer to the first
+token id in the prompt which will hash the first 12 tokens. For the next iteration
+it will do the same for the second token id and the following 12 tokens. This is
+like a sliding window of size 12 moving across the prompt.
+```c++
+        for (size_t i = 0; i < prompt.size() - n; ++i) {
+            mod.add(prompt.data() + i);
+        }
+```
+```c++
+void common_ngram_mod::add(const entry_t * tokens) {
+    const size_t i = idx(tokens);
+
+    if (entries[i] == EMPTY) {
+        used++;
+    }
+
+    entries[i] = tokens[n];
+}
+```
+So first idx is called which is what hashes the passed in tokens
+```c++
+size_t common_ngram_mod::idx(const entry_t * tokens) const {
+    size_t res = 0;
+
+    for (size_t i = 0; i < n; ++i) {
+        res = res*6364136223846793005ULL + tokens[i];
+    }
+
+    res = res % entries.size();
+
+    return res;
+}
 ```
 
 _wip_
