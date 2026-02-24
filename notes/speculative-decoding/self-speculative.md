@@ -314,9 +314,12 @@ size_t common_ngram_mod::idx(const entry_t * tokens) const {
     return res;
 }
 ```
+This above is using LCG (linear congruential generator) as a way of blending
+the token ids togther and  the magic number is from Donald Knuth's MMIX LCG
+and is used as it has good mixing properties. The result is then taken modulo the
+size of the entries to get a valid index into the entries vector.
 
 _wip_
-
 
 ### n-gram simple
 TODO: 

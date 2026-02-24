@@ -25,7 +25,7 @@ like the following:
                            ↓                                |
                         inp_embd = tok_emb(x_{t+1})         |
                            ↓                                |
-                        inp_eagle = [h_t + inp_embd]        |
+                        inp_eagle = concat(h_t, inp_embd)   |
                            ↓                                |
                         eagle layer predicts h_{t+1}        |
                            ↓                                |
@@ -48,6 +48,10 @@ Above is just a simple diagram to try to get an overview of the process. One
 major difference is that Eagle 1 uses a static tree structure and often predicts
 more than a single token. For example for each iteration of the eagle head we
 might do N predictions.
+
+Notice that h_t and inp_embd are actually concatenated together so this will be
+a larger vector that the original hidden space.
+
 ```
 Tree Key:
 k = 2
@@ -87,24 +91,55 @@ we just add the log(probability) of the new token to the cumulative log
 probability of the parent.
 
 
-_wip_
+### Eagle 2
+Is very similar to Eagle 1 but the token tree is not static but dynamic and can
+be pruned if the cumulative log probability of a branch is too low.
 
+TODO: expand on this.
+
+### Eagle 3
+So if we think about the two prior version above we saw that the take the
+predicted hidden state h_t and the concatenate it with the token embedding of
+the predicted token. In Eagle3 instead of taking just the models output (h_t)
+they also take a hidden state from the lower level, a mid level, and a later
+level (might be the last but I'm not sure yet).
+For example, there is a "extract_layers" parameter that specifies which hidden
+states to take:
 ```console
-Standard speculative decoding:
-Input tokens ->  Draft model -> softmax -> Token x_{t+1}
-
-Medusa:
-Head 0  Takes h_t -> Predicts x_{t+1}
-Head 1: Takes h_t -> Predicts x_{t+2}
-Head 2: Takes h_t -> Predicts x_{t+3}
-
-Eagle 1:
-Input embedding ->  Eagle Head -> Predicted hidden state h_{t+1} ->
-h_{t+1}         ->  Eagle Head -> Predicted hidden state h_{t+2} ->
-h_{t+2}         ->  Eagle Head -> Predicted hidden state h_{t+3} ->
+(venv) spark $ gguf-dump models/EAGLE3-LLaMA3.1-Instruct-8B_fp16.gguf
+INFO:gguf-dump:* Loading: models/EAGLE3-LLaMA3.1-Instruct-8B_fp16.gguf
+* File is LITTLE endian, script is running on a LITTLE endian host.
+* Dumping 37 key/value pair(s)
+      1: UINT32     |        1 | GGUF.version = 3
+      2: UINT64     |        1 | GGUF.tensor_count = 14
+      3: UINT64     |        1 | GGUF.kv_count = 34
+      4: STRING     |        1 | general.architecture = 'eagle3'
+      5: [INT32]    |        3 | eagle3.extract_layers = [2, 16, 29]
 ```
-Comparing Eagle 1 with Medusa we can see that the heads in Eagle 1 are not
-independent of each other, but instead they are chained together. So the second
-head can use the information from the first head to make a better prediction for
-the second token. This is guessing the next word's features, then using that
-guess to imagine the features of the word after it etc.
+And this is set in:
+```c++
+         case LLM_ARCH_EAGLE3:
+             {
+                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+                 // EAGLE3 layer extraction configuration
+                 // Use array<int, 4> (has template instantiation), then copy first 3 elements
+                 std::array<int, 4> extract_layers_tmp = {};
+                 if (!ml.get_key_or_arr(LLM_KV_EAGLE3_EXTRACT_LAYERS, extract_layers_tmp, 3, false)) {
+                     throw std::runtime_error("EAGLE3 model requires 'extract_layers' in GGUF metadata");
+                 }
+                 std::copy_n(extract_layers_tmp.begin(), 3, hparams.eagle3_extract_layers.begin());
+                 LLAMA_LOG_INFO("%s: EAGLE3 extract_layers = [%d, %d, %d]\n", __func__,
+                                hparams.eagle3_extract_layers[0],
+                                hparams.eagle3_extract_layers[1],
+                                hparams.eagle3_extract_layers[2]);
+```
+
+Now, if they are concatenating all of these together then the input this will be
+very large and unpractical. What is done instead is these are merged/fused
+together. This is done using a separate encoder in llama.cpp. Then we have the
+decoder which is the actual speculator itself, the one that generates draft
+tokens.
+
+
+
+_wip_
