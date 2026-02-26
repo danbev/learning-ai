@@ -20,6 +20,9 @@ int main(int argc, char** argv) {
     struct ggml_tensor * op_add = ggml_add(ctx, one, two);
     ggml_set_name(op_add, "op_add");
 
+    struct ggml_tensor * op_sub = ggml_sub(ctx, two, one);
+    ggml_set_name(op_sub, "op_sub");
+
     struct ggml_tensor * op_mul = ggml_mul(ctx, one, two);
     ggml_set_name(op_mul, "op_mul");
 
@@ -27,9 +30,9 @@ int main(int argc, char** argv) {
 
     // Create an array with all the tensors that we want to have included in
     // in the graph, though only one will be active.
-    struct ggml_tensor * tensors[] = {op_add, op_mul};
-    int n_tensors = 2;
-    int active_operation_idx = 1; // change to 0 for addition operation and see different result
+    struct ggml_tensor * tensors[] = {op_add, op_mul, op_sub};
+    int n_tensors = 3;
+    int active_operation_idx = 1; // change to 0 (add) or 2(sub) for addition operation and see different result
 
     // Notice that in contrast to ggml_build_forward_expand this function returns
     // the selected "active" tensor, whereas ggml_build_forward_expand returns void.
