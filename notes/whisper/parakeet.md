@@ -639,14 +639,76 @@ So the first layer will be:
 Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
 ```
 This will downsample 2x because the stride is (2, 2), it skips every other time
-frame and frequency bin. So we will go from 1101 -> 551 frames, and from 128 ->
-64 mel bins. And the (1, 256) is the number of input and output channels for the
-convolution. So one input channel will be projected to 256 different feature
-maps.
+frame and frequency bin.So we will go from 1101 -> 551 frames, and from 128 ->
+64 mel bins.
+And the (1, 256) is the number of input and output channels for the convolution.
+So one input channel will be projected to 256 different feature maps.
 ```console
 (Pdb) p x.shape
 torch.Size([1, 256, 551, 64])
 ```
+Now the weight used for this operation are from the model:
+```console
+Processing: encoder.pre_encode.conv.0.weight [256, 3, 3]
+Processing: encoder.pre_encode.conv.0.bias [256]
+```
+```console
+(Pdb) p layer.weight.shape
+torch.Size([256, 1, 3, 3])
+```
+So we have 256 output channels, like unique feature detectors. 1 is the number
+of input channels it looks at. 3 is the vertical size of the kernel, so this will
+look accross 3 mel bins at a go. And the last 3 is the horizontal size which is
+over the time frames, so this will look accross 3 time frames at a time.
+
+So in ggml this would become [3, 3, 1, 256]
+```console
+0
+   0
+       0 [0 1 2]
+       1 [0 1 2]
+       2 [0 1 2]
+...
+
+255
+   0
+       0 [0 1 2]
+       1 [0 1 2]
+       2 [0 1 2]
+```
+So each of these 3x3 are specific feature detectors that the model has been
+trained to detect. All 256 will be applied to the first 3x3 "boxes" of the
+input. The kernel then moves 2 positions to the right to process an entire row
+and then moves 2 positions down to process the next row.
+And this will pass over x which has the shape [1, 1, 1101, 128]:
+```
+pytorch: [1, 1, 1101, 128]:
+ggml   : [128, 1101, 1, 1]:
+
+     0 [0 1 2   ...   127]
+     1 [0 1 2   ...   127]
+     ...
+   1100[0 1 2   ...   127]
+```
+The shape of x will be the following after this layer, which becasuse we used
+a step size of 2 for both the mel bins and the time frame these will be havled:
+```console
+(Pdb) p x.shape
+torch.Size([1, 256, 551, 64])
+```
+And notice that the is padding being applied as 1101/2=550.5, and we can see
+the padding is 1 on both sides so that the output is 551.
+```console
+(Pdb) p layer.padding
+(1, 1)
+(Pdb) p layer.kernel_size
+(3, 3)
+(Pdb) p layer.stride
+(2, 2)
+(Pdb) p layer.padding
+(1, 1)
+```
+
 The second layer will a non-linear layer which does not change the shape:
 ```console
 (Pdb) p layer
@@ -655,22 +717,82 @@ ReLU(inplace=True)
 (Pdb) p x.shape
 torch.Size([1, 256, 551, 64])
 ```
-The next layer is:
+The third layer is another 2D convolution but notice that this time it has a
+groups parameter which is set to 256::
 ```console
 (Pdb) p layer
 Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+```
+So we have 256 output and input channels. And like the previous convolution we
+have a 3x3 kernel, the stride is also the same, as it the padding.
+```console
+(Pdb) p layer.weight.shape
+torch.Size([256, 1, 3, 3])
+```
+So we still have the same of the actual weight tensor for this convolution as
+the first, that is 246 3x3 kernels (feature detectors). But the groups parameter
+changes the operation. So recall that we said that the kernel was like a feature
+detector and that convolution created 256 different results for the feature
+that it detected accross the entire mel spectrogram. But now there will be 3x3
+kernels applied to each individual detecte feature (map) that was created.
 
+So he output from the first convolution was:
+```console
+x = [1, 256, 551, 64]
+x = [64, 551, 256, 1]
+0
+    0  [0  .... 63]        <--- unique kernel for this channel (feature map)
+    1  [0  .... 63]
+    ...
+    550[0  .... 63]
+...
+255
+    0  [0  .... 63]        <--- unique kernel for this channel (feature map)
+    1  [0  .... 63]
+    1  [0  .... 63]
+    ...
+    550[0  .... 63]
+```
+So the first convolution was more general and looked at the whole input to detect
+features. And in this second convolution the kernels are specialized to refine
+the features but only for a specific "category", like how this specific feature
+evolves over time.
+
+The resulting shape will be:
+```console
 (Pdb) p x.shape
 torch.Size([1, 256, 276, 32])
 ```
-Next we have:
+And again we now have approximately half the time frames and half the mel bins.
+
+Next we have another convolution but this time it is a pointwise (the kernel size
+is 1x1) and the stride is also (1, 1)::
 ```console
 (Pdb) p layer
 Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
 
+(Pdb) p layer.weight.shape
+torch.Size([256, 256, 1, 1])
+
 (Pdb) p x.shape
 torch.Size([1, 256, 276, 32])
+```console
+x = [1,  256,  276, 32]
+x = [32, 276,  256,  1]
+
+We could also flatten this to:
+x = [(32 * 276),  256]
+x = [8832, 256]
+
+    0   [0             ...                          8831]
+    1   [0             ...                          8831]
+    ...
+    255 [0             ...                          8831]
 ```
+And we multiply these columns by the 256x256 matrix. So we are using the same
+kernel here for all features. The kernel has learned things like "output feature
+42 should be 70% of input feature 7, minus 30% of input feature 183..."
+
 Then we have another non-linear layer:
 ```console
 (Pdb) p layer
@@ -679,7 +801,7 @@ ReLU(inplace=True)
 (Pdb) p x.shape
 torch.Size([1, 256, 276, 32])
 ```
-Following that we have:
+Following that we have another 2d convolution:
 ```console
 (Pdb) p layer
 Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
@@ -687,6 +809,7 @@ Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
 (Pdb) p x.shape
 torch.Size([1, 256, 138, 16])
 ```
+And following that we will have another pointwise convolution:
 ```console
 (Pdb) p layer
 Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
@@ -694,6 +817,11 @@ Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
 (Pdb) p x.shape
 torch.Size([1, 256, 138, 16])
 ```
+We can think of these various convolutions as a way to progressively reduce the
+dimension and at the same time go from more detail to more abstract features.
+Each block sees a coarser time resolution but the features it's detecting are
+more abstract.
+
 ```console
 (Pdb) p layer
 ReLU(inplace=True)
