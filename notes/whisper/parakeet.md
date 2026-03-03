@@ -8,6 +8,14 @@ The Parakeet model uses a Conformer based encoder named
 [Fast Conformer](https://arxiv.org/pdf/2305.05084) and a TDT (Token-and-Duration
 Transducer) decoder.
 
+### Download the model
+```console
+$ python3 -m venv venv
+$ source venv/bin/activate
+$ pip install hf
+$ hf download nvidia/parakeet-tdt-0.6b-v3 --local-dir parakeet-tdt-0.6b-v3
+```
+
 ### Model conversion
 This following it the output from the initial conversion script:
 ```console
@@ -91,7 +99,7 @@ Processing: encoder.layers.0.feed_forward2.linear1.weight [4096, 1024]
 Processing: encoder.layers.0.feed_forward2.linear2.weight [1024, 4096]
 Processing: encoder.layers.0.norm_out.weight [1024]
 Processing: encoder.layers.0.norm_out.bias [1024]
-29
+29 per layer (and we have 24 layers in this model)
 ...
 Processing: encoder.layers.23.norm_feed_forward1.weight [1024]
 Processing: encoder.layers.23.norm_feed_forward1.bias [1024]
@@ -146,13 +154,29 @@ Conversion complete!
 Output file: models/whisper-parakeet/ggml-model.bin
 File size: 1197.11 MB
 ```
-2 + 14 + (29 * 24) + 9 + 6 = 727
+So the total number of tensors is:
+```console
+Total nu2 + 14 + (29 * 24) + 9 + 6 = 727
+```
+TODO: add this to the output of the conversion script as it might be useful.
+
+### Debug the original model
+```console
+(venv) $ pip install -U nemo_toolkit['asr']
+(venv) $ python -m pdb test-model.py
+```
 
 ### pre_encode
-In Parakeet they have the following layer called `pre_encode`:
+In Parakeet they have a layer called `pre_encode` which is equivalent to
+`whisper_build_graph_conv` but the operations differ and this is what this
+section is focused on.
+
+If we set a break point in:
 ```console
 (Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/models/rnnt_models.py:698
-
+```
+We can see that the input shape is:
+```console
 (Pdb) p input_signal.shape
 torch.Size([1, 176000])
 ```
@@ -677,4 +701,16 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
     Based on this paper:
     'Conformer: Convolution-augmented Transformer for Speech Recognition' by Anmol Gulati et al.
     https://arxiv.org/abs/2005.08100
+```
+
+### Python Example
+This is the python example that I've used for debugging/exploring the original
+model.
+```python
+import nemo.collections.asr as nemo_asr
+
+asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-tdt-0.6b-v3")
+output = asr_model.transcribe(['jfk.wav'])
+print(output[0].text)
+
 ```
