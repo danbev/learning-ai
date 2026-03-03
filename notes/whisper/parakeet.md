@@ -166,7 +166,7 @@ TODO: add this to the output of the conversion script as it might be useful.
 (venv) $ python -m pdb test-model.py
 ```
 
-### pre_encode
+### preprosssor (mel spectrogram transformation)
 In Parakeet they have a layer called `pre_encode` which is equivalent to
 `whisper_build_graph_conv` but the operations differ and this is what this
 section is focused on.
@@ -175,21 +175,536 @@ If we set a break point in:
 ```console
 (Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/models/rnnt_models.py:698
 ```
-We can see that the input shape is:
+```python
+class EncDecRNNTModel(ASRModel, ASRModuleMixin, ExportableEncDecModel, ASRTranscriptionMixin):
+    """Base class for encoder decoder RNNT-based models."""
+    ...
+
+    @typecheck()
+    def forward(
+        self, input_signal=None, input_signal_length=None, processed_signal=None, processed_signal_length=None
+        has_input_signal = input_signal is not None and input_signal_length is not None
+        has_processed_signal = processed_signal is not None and processed_signal_length is not None
+        ...
+        if not has_processed_signal:
+            processed_signal, processed_signal_length = self.preprocessor(
+                input_signal=input_signal,
+                length=input_signal_length,
+            )
+
+        # Spec augment is not applied during evaluation/testing
+        if self.spec_augmentation is not None and self.training:
+            processed_signal = self.spec_augmentation(input_spec=processed_signal, length=processed_signal_length)
+
+        encoded, encoded_len = self.encoder(audio_signal=processed_signal, length=processed_signal_length)
+        return encoded, encoded_len
+```
+We can inspect the `input_signal` shape:
 ```console
 (Pdb) p input_signal.shape
 torch.Size([1, 176000])
 ```
-And this matches n_samples in whisper.cpp:
+And this matches `n_samples` in whisper.cpp so we can see that these have the
+same number of samples as input:
 ```console
 (gdb) p n_samples
 $1 = 176000
 ```
-And lets set a break point in the pre_encode layer:
+The first thing that happens in the model is that the preprocessor is called so
+lets try to figure out where this class is defined:
+```console
+(Pdb) p self.preprocessor
+AudioToMelSpectrogramPreprocessor(
+  (featurizer): FilterbankFeatures()
+)
+```
+This is initialized in the constructor:
+```python
+        self.preprocessor = EncDecRNNTModel.from_config_dict(self.cfg.preprocessor)
+```
+And there is a section in the model_config.yaml for the preprocessor:
+```yaml
+preprocessor:
+  _target_: nemo.collections.asr.modules.AudioToMelSpectrogramPreprocessor
+  sample_rate: 16000
+  normalize: per_feature
+  window_size: 0.025
+  window_stride: 0.01
+  window: hann
+  features: 128
+  n_fft: 512
+  log: true
+  frame_splicing: 1
+  dither: 1.0e-05
+  pad_to: 0
+  pad_value: 0.0
+```
+And this file can be found in `venv/lib/python3.13/site-packages/nemo/collections/asr/modules/audio_preprocessing.py`:
+```python
+class AudioToMelSpectrogramPreprocessor(AudioPreprocessor, Exportable):
+    """Featurizer module that converts wavs to mel spectrograms.
+```
+Now, this is very similar if not the same as what is done in whisper, apart from
+the number of mel bins is 128 instead of 80.
+
+After this preprocessing the shape of the processed signal is:
+```console
+(Pdb) p processed_signal.shape
+torch.Size([1, 128, 1101])
+```
+Now, we we inspect the mel tensor in whisper.cpp we see that it is not the same
+size:
+```console
+(lldb) p mel->ne
+(int64_t[4])  ([0] = 3000, [1] = 80, [2] = 1, [3] = 1)
+```
+Notice that there is a difference in the number of frames (1101 vs 3000) and the
+number of mel bins (128 vs 80).
+This is because whisper.cpp will always pad the audio to 30s.
+At 16kHz and a stride of 160 samples (10ms) we get 3000 frames:
+```console
+30s * 16000Hz = 480000 samples
+48000/160 = 3000 frames
+```
+But Parakeet does not seems to pad and just takes the 176000 samples and also
+uses a stride of 160:
+```console
+176000/160 = 1100 frames
++ 1 frame for the initial frame?
+```
+_Question_: Should we pad the audio or not for Parakeet?
+
+So the actual mel transformation seems to be the same as whisper.cpp, so lets
+move on to focus on the convolution subsampling steps that follow this.
+
+### pre_encode
+In whisper this is implemented in `whisper_build_graph_conv` and in Parakeet
+in the encoder (I think, but we'll find out):
+```python
+encoded, encoded_len = self.encoder(audio_signal=processed_signal, length=processed_signal_length)
+return encoded, encoded_len
+```
+```python
+        self.encoder = EncDecRNNTModel.from_config_dict(self.cfg.encoder)
+```
+And this also has a section in the config:
+```yaml
+encoder:
+  _target_: nemo.collections.asr.modules.ConformerEncoder
+  feat_in: 128
+  feat_out: -1
+  n_layers: 24
+  d_model: 1024
+  use_bias: false
+  subsampling: dw_striding
+  subsampling_factor: 8
+  subsampling_conv_channels: 256
+  causal_downsampling: false
+  reduction: null
+  reduction_position: null
+  reduction_factor: 1
+  ff_expansion_factor: 4
+  self_attention_model: rel_pos
+  n_heads: 8
+  att_context_size:
+  - -1
+  - -1
+  att_context_style: regular
+  xscaling: false
+  untie_biases: true
+  pos_emb_max_len: 5000
+  conv_kernel_size: 9
+  conv_norm_type: batch_norm
+  conv_context_size: null
+  dropout: 0.1
+  dropout_pre_encoder: 0.1
+  dropout_emb: 0.0
+  dropout_att: 0.1
+  stochastic_depth_drop_prob: 0.0
+  stochastic_depth_mode: linear
+  stochastic_depth_start_layer: 1
+```
+Notice that this model uses relative position encoding, and the subsampling method
+is `dw_striding` (depthwise striding). And the subsampling factor is 8.
+
+And this can be found in venv/lib/python3.13/site-packages/nemo/collections/asr/modules/conformer_encoder.py and the class is `ConformerEncoder`:
+```python
+class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+```
+
+And lets set a break point in the in the forward method:
 ```console
 (Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:569
 ```
+```python
+    def forward(
+        self,
+        audio_signal,
+        length,
+        cache_last_channel=None,
+        cache_last_time=None,
+        cache_last_channel_len=None,
+        bypass_pre_encode=False,
+        ...
+        if bypass_pre_encode:
+            self.update_max_seq_length(seq_length=audio_signal.size(1), device=audio_signal.device)
+        else:
+            self.update_max_seq_length(seq_length=audio_signal.size(2), device=audio_signal.device)
+        return self.forward_internal(
+            audio_signal,
+            length,
+            cache_last_channel=cache_last_channel,
+            cache_last_time=cache_last_time,
+            cache_last_channel_len=cache_last_channel_len,
+            bypass_pre_encode=bypass_pre_encode,
+        )
+    ):
+```
+The audio_signal is the mel spectrogram:
+```console
+(Pdb) p audio_signal.shape
+torch.Size([1, 128, 1101])
+(Pdb) p length
+tensor([1100])
+(Pdb) p bypass_pre_encode
+False
+```
+```python
+    def forward_internal(
+        self,
+        audio_signal,
+        length,
+        cache_last_channel=None,
+        cache_last_time=None,
+        cache_last_channel_len=None,
+        bypass_pre_encode=False,
+    ):
+    ...
+        if not bypass_pre_encode:
+            audio_signal = torch.transpose(audio_signal, 1, 2)
 
+            if isinstance(self.pre_encode, nn.Linear):
+                audio_signal = self.pre_encode(audio_signal)
+            else:
+                audio_signal, length = self.pre_encode(x=audio_signal, lengths=length)
+                length = length.to(torch.int64)
+                # `self.streaming_cfg` is set by setup_streaming_cfg(), called in the init
+                if self.streaming_cfg.drop_extra_pre_encoded > 0 and cache_last_channel is not None:
+                    audio_signal = audio_signal[:, self.streaming_cfg.drop_extra_pre_encoded :, :]
+                    length = (length - self.streaming_cfg.drop_extra_pre_encoded).clamp(min=0)
+```
+So first we have a transpose:
+```console
+(Pdb) p audio_signal.shape
+torch.Size([1, 1101, 128])
+(Pdb) p isinstance(self.pre_encode, nn.Linear)
+False
+```
+So this will be calling:
+```console
+                audio_signal, length = self.pre_encode(x=audio_signal, lengths=length)
+```
+In the constructor we have:
+```python
+                self.pre_encode = ConvSubsampling(
+                    subsampling=subsampling,
+                    subsampling_factor=subsampling_factor,
+                    feat_in=feat_in,
+                    feat_out=d_model,
+                    conv_channels=subsampling_conv_channels,
+                    subsampling_conv_chunking_factor=subsampling_conv_chunking_factor,
+                    activation=nn.ReLU(True),
+                    is_causal=causal_downsampling,
+                )
+```
+We can find this class in venv/lib/python3.13/site-packages/nemo/collections/asr/parts/submodules/subsampling.py.
+```python
+class ConvSubsampling(torch.nn.Module):
+    def __init__(
+        self,
+        subsampling,
+        subsampling_factor,
+        feat_in,
+        feat_out,
+        conv_channels,
+        subsampling_conv_chunking_factor=1,
+        activation=nn.ReLU(),
+        is_causal=False,
+    ):
+        ...
+        if subsampling == 'vggnet':
+            ...
+        elif subsampling == 'dw_striding':
+            self._stride = 2
+            self._kernel_size = 3
+            self._ceil_mode = False
+
+            if self.is_causal:
+                self._left_padding = self._kernel_size - 1
+                self._right_padding = self._stride - 1
+                self._max_cache_len = subsampling_factor + 1
+            else:
+                self._left_padding = (self._kernel_size - 1) // 2
+                self._right_padding = (self._kernel_size - 1) // 2
+                self._max_cache_len = 0
+
+            # Layer 1
+            if self.is_causal:
+                layers.append(
+                    CausalConv2D(
+                        in_channels=in_channels,
+                        out_channels=conv_channels,
+                        kernel_size=self._kernel_size,
+                        stride=self._stride,
+                        padding=None,
+                    )
+                )
+            else:
+                layers.append(
+                    torch.nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=conv_channels,
+                        kernel_size=self._kernel_size,
+                        stride=self._stride,
+                        padding=self._left_padding,
+                    )
+                )
+            in_channels = conv_channels
+            layers.append(activation)
+
+            for i in range(self._sampling_num - 1):
+                if self.is_causal:
+                    layers.append(
+                        CausalConv2D(
+                            in_channels=in_channels,
+                            out_channels=in_channels,
+                            kernel_size=self._kernel_size,
+                            stride=self._stride,
+                            padding=None,
+                            groups=in_channels,
+                        )
+                    )
+                else:
+                    layers.append(
+                        torch.nn.Conv2d(
+                            in_channels=in_channels,
+                            out_channels=in_channels,
+                            kernel_size=self._kernel_size,
+                            stride=self._stride,
+                            padding=self._left_padding,
+                            groups=in_channels,
+                        )
+                    )
+
+                layers.append(
+                    torch.nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=conv_channels,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                        groups=1,
+                    )
+                )
+                layers.append(activation)
+                in_channels = conv_channels
+                ...
+
+        self.conv = MaskedConvSequential(*layers)
+```
+Let set a breakpoint int the forward method:
+```console
+(Pdb) b /Users/danbev/work/ai/whisper-models/nvidia/parakeet-tdt-0.6b-v3/venv/lib/python3.13/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:386
+```
+
+```python
+    def forward(self, x, lengths):
+        out_lengths = calc_length(
+            lengths,
+            all_paddings=self._left_padding + self._right_padding,
+            kernel_size=self._kernel_size,
+            stride=self._stride,
+            ceil_mode=self._ceil_mode,
+            repeat_num=self._sampling_num,
+        )
+```
+```console
+(Pdb) p lengths
+tensor([1100])
+(Pdb) p self._left_padding
+1
+(Pdb) p self._right_padding
+1
+(Pdb) p self._kernel_size
+3
+(Pdb) p self._stride
+2
+(Pdb) p self._sampling_num
+3
+(Pdb) p self._ceil_mode
+False
+(Pdb) p out_lengths
+tensor([138], dtype=torch.int32)
+```
+```python
+            if need_to_split:
+                ...
+            else:
+                x, lengths = self.conv(x, lengths)
+```
+And this is the main convolution for the subsampling I think:
+```console
+(Pdb) p self.conv
+MaskedConvSequential(
+  (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+  (1): ReLU(inplace=True)
+  (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+  (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+  (4): ReLU(inplace=True)
+  (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+  (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+  (7): ReLU(inpla
+```
+So lets remind ourselves of the input shape which has [batch, time, features]:
+```console
+(Pdb) p x.shape
+torch.Size([1, 1101, 128])
+(Pdb) p lengths
+tensor([1100])
+```
+
+MaskedConvSequential is in the same file, that is subsampling.py.
+```console
+(Pdb) b /Users/danbev/work/ai/whisper-models/nvidia/parakeet-tdt-0.6b-v3/venv/lib/python3.13/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:728
+```
+In the constructor of ConvSubsampling we have:
+```python
+        self.conv = MaskedConvSequential(*layers)
+```
+And if we look back there actual layers are the ones that were added in the
+constructor. This was not obvious to me at first but this is how they can
+enumerate this instance:
+```python
+class MaskedConvSequential(nn.Sequential):
+    def forward(self, x, lengths):
+        # Convert input (batch, time, features) to conv format
+        x = x.unsqueeze(1)  # (batch, 1, time, features)
+        current_lengths = lengths.clone().float()
+        mask = self._create_mask(x, current_lengths.long())
+```
+So first x will be unsqueezed to add a channel dimension:
+```console
+(Pdb) p x.shape
+torch.Size([1, 1, 1101, 128])
+(Pdb) p mask.shape
+torch.Size([1, 1101, 128])
+```
+The 2D convolution expects a 4D tensor [batch, channels, height, width]. 
+
+Next all the layers will be applied in sequence and the mask will be updated
+after each layer to match the new lengths after convolution.
+```python
+        # Process through each layer with mask propagation
+        for i, layer in enumerate(self):
+            # Apply current mask before layer
+            x = apply_channel_mask(x, mask)
+
+            # Apply layer
+            x = layer(x)
+
+            # Update lengths for stride operations with proper padding
+            if hasattr(layer, 'stride') and layer.stride != (1, 1):
+                if hasattr(layer, "_left_padding"):
+                    padding = (layer._left_padding, layer._right_padding)  # CausalConv2D
+                else:
+                    padding = layer.padding
+                current_lengths = calculate_conv_output_size(
+                    current_lengths, layer.kernel_size[0], layer.stride[0], padding
+                )
+                mask = self._create_mask(x, current_lengths.long())
+
+        # Final masking
+        x = apply_channel_mask(x, mask)
+        return x, current_lengths.long()
+
+    def _create_mask(self, tensor, lengths):
+        """Create mask matching tensor dimensions."""
+        batch_size, channels, time, features = tensor.shape
+        time_mask = torch.arange(time, device=tensor.device).expand(batch_size, time) < lengths.unsqueeze(1)
+        return time_mask.unsqueeze(-1).expand(batch_size, time, features).to(tensor.dtype)
+```
+So the first layer will be:
+```console
+(Pdb) p layer
+Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+```
+This will downsample 2x because the stride is (2, 2), it skips every other time
+frame and frequency bin. So we will go from 1101 -> 551 frames, and from 128 ->
+64 mel bins. And the (1, 256) is the number of input and output channels for the
+convolution. So one input channel will be projected to 256 different feature
+maps.
+```console
+(Pdb) p x.shape
+torch.Size([1, 256, 551, 64])
+```
+The second layer will a non-linear layer which does not change the shape:
+```console
+(Pdb) p layer
+ReLU(inplace=True)
+
+(Pdb) p x.shape
+torch.Size([1, 256, 551, 64])
+```
+The next layer is:
+```console
+(Pdb) p layer
+Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+
+(Pdb) p x.shape
+torch.Size([1, 256, 276, 32])
+```
+Next we have:
+```console
+(Pdb) p layer
+Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+
+(Pdb) p x.shape
+torch.Size([1, 256, 276, 32])
+```
+Then we have another non-linear layer:
+```console
+(Pdb) p layer
+ReLU(inplace=True)
+
+(Pdb) p x.shape
+torch.Size([1, 256, 276, 32])
+```
+Following that we have:
+```console
+(Pdb) p layer
+Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+
+(Pdb) p x.shape
+torch.Size([1, 256, 138, 16])
+```
+```console
+(Pdb) p layer
+Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+
+(Pdb) p x.shape
+torch.Size([1, 256, 138, 16])
+```
+```console
+(Pdb) p layer
+ReLU(inplace=True)
+```
+And the final output shape after the convolutional subsampling is:
+```console
+(Pdb) p x.shape
+torch.Size([1, 256, 138, 16])
+(Pdb) p current_lengths
+tensor([138.])
+```
 _wip_
 
 (Pdb) b ~/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:89
