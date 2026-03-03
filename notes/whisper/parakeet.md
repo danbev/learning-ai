@@ -9,6 +9,7 @@ The Parakeet model uses a Conformer based encoder named
 Transducer) decoder.
 
 ### Model conversion
+This following it the output from the initial conversion script:
 ```console
 (venv) $ ./convert-parakeet.sh 
 Extracting /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo to /tmp/tmp215lcam3
@@ -45,6 +46,7 @@ Generating mel filterbank: n_mels=128, n_fft=512, sample_rate=16000
 Converting model weights...
 Processing: preprocessor.featurizer.window [400]
 Processing: preprocessor.featurizer.fb [128, 257]
+2
 
 Processing: encoder.pre_encode.out.weight [1024, 4096]
 Processing: encoder.pre_encode.out.bias [1024]
@@ -58,6 +60,7 @@ Processing: encoder.pre_encode.conv.5.weight [256, 3, 3]
 Processing: encoder.pre_encode.conv.5.bias [256]
 Processing: encoder.pre_encode.conv.6.weight [256, 256]
 Processing: encoder.pre_encode.conv.6.bias [256]
+14
 
 Processing: encoder.layers.0.norm_feed_forward1.weight [1024]
 Processing: encoder.layers.0.norm_feed_forward1.bias [1024]
@@ -88,6 +91,7 @@ Processing: encoder.layers.0.feed_forward2.linear1.weight [4096, 1024]
 Processing: encoder.layers.0.feed_forward2.linear2.weight [1024, 4096]
 Processing: encoder.layers.0.norm_out.weight [1024]
 Processing: encoder.layers.0.norm_out.bias [1024]
+29
 ...
 Processing: encoder.layers.23.norm_feed_forward1.weight [1024]
 Processing: encoder.layers.23.norm_feed_forward1.bias [1024]
@@ -128,6 +132,7 @@ Processing: decoder.prediction.dec_rnn.lstm.weight_ih_l1 [2560, 640]
 Processing: decoder.prediction.dec_rnn.lstm.weight_hh_l1 [2560, 640]
 Processing: decoder.prediction.dec_rnn.lstm.bias_ih_l1 [2560]
 Processing: decoder.prediction.dec_rnn.lstm.bias_hh_l1 [2560]
+9
 
 Processing: joint.pred.weight [640, 640]
 Processing: joint.pred.bias [640]
@@ -135,18 +140,128 @@ Processing: joint.enc.weight [640, 1024]
 Processing: joint.enc.bias [640]
 Processing: joint.joint_net.2.weight [8198, 640]
 Processing: joint.joint_net.2.bias [8198]
+6
 
 Conversion complete!
 Output file: models/whisper-parakeet/ggml-model.bin
 File size: 1197.11 MB
 ```
+2 + 14 + (29 * 24) + 9 + 6 = 727
 
 ### pre_encode
 In Parakeet they have the following layer called `pre_encode`:
 ```console
-(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:615
-(Pdb) c
+(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/models/rnnt_models.py:698
 
+(Pdb) p input_signal.shape
+torch.Size([1, 176000])
+```
+And this matches n_samples in whisper.cpp:
+```console
+(gdb) p n_samples
+$1 = 176000
+```
+And lets set a break point in the pre_encode layer:
+```console
+(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:569
+```
+
+_wip_
+
+(Pdb) b ~/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:89
+(Pdb) c
+```
+```python
+class ConvSubsampling(torch.nn.Module):
+    def __init__(
+        self,
+        subsampling,
+        subsampling_factor,
+        feat_in,
+        feat_out,
+        conv_channels,
+        subsampling_conv_chunking_factor=1,
+        activation=nn.ReLU(),
+        is_causal=False,
+    ):
+        ...
+        elif subsampling == 'dw_striding':
+            self._stride = 2
+            self._kernel_size = 3
+            self._ceil_mode = False
+
+            if self.is_causal:
+                self._left_padding = self._kernel_size - 1
+                self._right_padding = self._stride - 1
+                self._max_cache_len = subsampling_factor + 1
+            else:
+                self._left_padding = (self._kernel_size - 1) // 2
+                self._right_padding = (self._kernel_size - 1) // 2
+                self._max_cache_len = 0
+
+            # Layer 1
+            if self.is_causal:
+                layers.append(
+                    CausalConv2D(
+                        in_channels=in_channels,
+                        out_channels=conv_channels,
+                        kernel_size=self._kernel_size,
+                        stride=self._stride,
+                        padding=None,
+                    )
+                )
+            else:
+                layers.append(
+                    torch.nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=conv_channels,
+                        kernel_size=self._kernel_size,
+                        stride=self._stride,
+                        padding=self._left_padding,
+                    )
+                )
+            in_channels = conv_channels
+            layers.append(activation)
+
+            for i in range(self._sampling_num - 1):
+                if self.is_causal:
+                    layers.append(
+                        CausalConv2D(
+                            in_channels=in_channels,
+                            out_channels=in_channels,
+                            kernel_size=self._kernel_size,
+                            stride=self._stride,
+                            padding=None,
+                            groups=in_channels,
+                        )
+                    )
+                else:
+                    layers.append(
+                        torch.nn.Conv2d(
+                            in_channels=in_channels,
+                            out_channels=in_channels,
+                            kernel_size=self._kernel_size,
+                            stride=self._stride,
+                            padding=self._left_padding,
+                            groups=in_channels,
+                        )
+                    )
+
+                layers.append(
+                    torch.nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=conv_channels,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                        groups=1,
+                    )
+                )
+                layers.append(activation)
+                in_channels = conv_channels
+```
+
+```console
 (Pdb) p self.pre_encode
 ConvSubsampling(
   (out): Linear(in_features=4096, out_features=1024, bias=True)
@@ -563,29 +678,3 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
     'Conformer: Convolution-augmented Transformer for Speech Recognition' by Anmol Gulati et al.
     https://arxiv.org/abs/2005.08100
 ```
-
-Perfect! Now I can explain the encoder flow. The encoder being called is ConformerEncoder located at
-/home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:62
-
-  Call chain for inference:
-
-  1. rnnt_models.py:716 - self.encoder(audio_signal=processed_signal, length=processed_signal_length)
-  2. conformer_encoder.py:549-591 - ConformerEncoder.forward()
-    - Validates input shape
-    - Calls forward_internal()
-  3. conformer_encoder.py:593-759 - forward_internal() - Main encoder processing:
-    - Line 628: Transpose input from (B, D, T) → (B, T, D)
-    - Line 630-633: Pre-encode/subsampling via self.pre_encode (your model has ConvSubsampling)
-    - Line 656: Positional encoding via self.pos_enc (RelPositionalEncoding)
-    - Line 659-665: Create attention masks
-    - Line 675-708: Loop through 24 ConformerLayers (self.layers)
-    - Line 738-739: Optional output projection
-    - Line 745: Transpose back to (B, D, T)
-    - Line 759: Return audio_signal, length
-
-  For debugging in pdb, set breakpoints at:
-  - conformer_encoder.py:549 - encoder entry point
-  - conformer_encoder.py:633 - after subsampling (reduces time dimension by 8x)
-  - conformer_encoder.py:656 - positional encoding
-  - conformer_encoder.py:683 - inside layer loop to step through each of the 24 ConformerLayers
-
