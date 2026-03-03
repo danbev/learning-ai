@@ -192,7 +192,6 @@ it performs the windowing, FFT.
 
 ```c++
 #define WHISPER_SAMPLE_RATE 16000
-#define WHISPER_SAMPLE_RATE 16000
 #define WHISPER_N_FFT       400
 #define WHISPER_HOP_LENGTH  160
 #define WHISPER_CHUNK_SIZE  30
@@ -2136,3 +2135,145 @@ especially on systems that don't have floating point units. uint64_t is 8 bytes
 so it is the same size as a double but it is more cache friendly. Also floating
 point arithmetic can vary slightly between different CPU architectures and
 compilers.
+
+### Convolution
+```c++
+static struct ggml_cgraph * whisper_build_graph_conv(
+        whisper_context & wctx,
+          whisper_state & wstate) {
+    ...
+    if (!whisper_encode_external(wstate)) {
+        // convolution + gelu
+        {
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_1_w, mel, 1, 1);
+            cur = ggml_add(ctx0, cur, model.e_conv_1_b);
+
+            cur = ggml_gelu(ctx0, cur);
+
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_2_w, cur, 2, 1);
+            cur = ggml_add(ctx0, cur, model.e_conv_2_b);
+
+            cur = ggml_gelu(ctx0, cur);
+        }
+```
+```console
+#0  whisper_build_graph_conv (wctx=..., wstate=...) at /home/danbev/work/ai/whisper.cpp/src/whisper.cpp:2006
+2006	            cur = ggml_conv_1d_ph(ctx0, model.e_conv_1_w, mel, 1, 1);
+
+(gdb) p mel->ne
+$3 = {3000, 80, 1, 1}
+```
+So at this stage we have processed the raw audio samples into a mel spectrogram,
+we have 3000 time frames (rows), and 80 columns) mel frequency bins.
+```console
+  0    [0           2999]
+  ...
+  79   [0           2999]
+```
+
+The kernel looks like this:
+```console
+(gdb) p model.e_conv_1_w->ne
+$6 = {3, 80, 512, 1}
+0
+  0  [0 1 2]
+  1  [0 1 2]
+  ...
+  79 [0 1 2]
+
+1
+  0  [0 1 2]
+  1  [0 1 2]
+  ...
+  79 [0 1 2]
+
+...
+
+511
+  0  [0 1 2]
+  1  [0 1 2]
+  ...
+  79 [0 1 2]
+```
+So each of the 512 kernels has 3 rows and 80 columns, so the kernal will use
+3 columns at once.
+
+Filter 0 (one of 512) slides across time, grabbing 3 columns at a time, all 80 rows:
+```console
+Step t=0  : grab columns 0,1,2 across all 80 rows
+            dot product with kernel[0] weights → single number: out[0][t=0]
+
+Step t=1  : grab columns 1,2,3 across all 80 rows
+            dot product with kernel[0] weights → single number: out[0][t=1]
+...
+
+Step t=2999: grab columns 2999,3000,3001 (padded) → out[0][t=2999]
+```
+So each kernel produes a single output value for each time step, and we have 512
+kernels so we end up with an output of shape (3000, 512) which is what we see in
+the debug output:
+```console
+(gdb) p cur->ne
+$8 = {3000, 512, 1, 1}
+```
+The kernel in question is a learned tensor that has been trained to detect
+features in the mel spectrogram, like rising pitch etc. This is like asking "given
+the frequency content accross the frames t-1, t, and t+1, which of the 512 features
+patterns does this match.
+We then add a bias:
+```c++
+            cur = ggml_add(ctx0, cur, model.e_conv_1_b);
+```
+Then we have the GELU activation function:
+```c++
+            cur = ggml_gelu(ctx0, cur);
+```            
+This is applied element-wise to the output of the convolution.
+
+Then we have:
+```c++
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_2_w, cur, 2, 1);
+```
+Notice that we are now using a stride of 2 which will cause a reduction.
+```console
+cur {3000, 512, 1, 1}:
+
+0   [0                        2999]
+1   [0                        2999]
+...
+...
+511 [0                        2999]
+
+Kernel:
+(gdb) p model.e_conv_2_w->ne
+$12 = {3, 512, 512, 1}
+0  
+  0   [0 1 2]
+      ...
+  511 [0 1 2]
+
+1
+  0   [0 1 2]
+      ...
+  511 [0 1 2]
+
+...
+511
+  0   [0 1 2]
+      ...
+  511 [0 1 2]
+```
+And the output of this convolution will be a down sampled version that is
+what the transformer will use as input:
+```console
+(gdb) p cur->ne
+$13 = {1500, 512, 1, 1}
+```
+Think about what Conv 1 produced 512 channels of "is this pattern present at
+this moment?". Many of those detections are redundant across adjacent frames
+because speech changes slowly. A vowel doesn't last 10ms, it lasts 50-200ms, so
+frames t=100 and t=101 contain very similar information.
+Following that we have bias and a GELU. And the state is updated:
+```c++
+        wstate.embd_conv = cur;
+```
