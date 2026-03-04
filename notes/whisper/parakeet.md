@@ -8,6 +8,27 @@ The Parakeet model uses a Conformer based encoder named
 [Fast Conformer](https://arxiv.org/pdf/2305.05084) and a TDT (Token-and-Duration
 Transducer) decoder.
 
+### Initial spike/exploration
+I've done an initial spike on this to understand how Parakeet works and what might
+be need to add support for it in whisper.cpp. For this I've simply added a new
+model for Parakeet along side whisper_model in whisper_context just to be able
+to explore this model.
+
+The are a few significant differences:
+* Pre-processing convolutions are 2D depthwise striding convolutions instead of 1D striding convolutions.
+  I've implemented this as a ggml graph as part of the exploration work and got
+  it to compile but it needs to be tested with the rest of the model, see below points.
+* Relative positional encodings are used instead of absolute positional encodings.
+  TBD
+* Use the positional encodig with the attention mechanism.
+  TBD
+* Decoder uses RNNT/DTD.
+  TBD
+
+The differences are significant enough that I think a new model, like parakeet_model
+similar to whisper_model. Or at least a proper look at how to be support this
+new model.
+
 ### Download the model
 ```console
 $ python3 -m venv venv
@@ -833,7 +854,65 @@ torch.Size([1, 256, 138, 16])
 (Pdb) p current_lengths
 tensor([138.])
 ```
+
+So this will return us to conformer_encoder.py and its forward_internal method::
+```python
+           audio_signal, length = self.pre_encode(x=audio_signal, lengths=length)
+           ...
+           max_audio_length = audio_signal.size(1)
+
+           padding_length = length
+           cache_last_channel_next = None
+           cache_len = 0
+           offset = None
+
+        audio_signal, pos_emb = self.pos_enc(x=audio_signal, cache_len=cache_len)
+
+```
+And the shape of the audio_signal is now:
+```console
+(Pdb) p audio_signal.shape
+torch.Size([1, 138, 1024])
+(Pdb) p audio_signal.size(1)
+138
+```
+So this brings us to the position encoding:
+```console
+(Pdb) p self.pos_enc
+RelPositionalEncoding(
+  (dropout): Dropout(p=0.1, inplace=False)
+)
+
+```
+Looking back at the constructor we find the following:
+```console
+        # Positional encodings
+        self.pos_emb_max_len = pos_emb_max_len
+        if self_attention_model == "rel_pos":
+            self.pos_enc = RelPositionalEncoding(
+                d_model=d_model,
+                dropout_rate=dropout_pre_encoder,
+                max_len=pos_emb_max_len,
+                xscale=self.xscale,
+                dropout_rate_emb=dropout_emb,
+            )
+```
+We can find this class in venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/multi_head_attention.py
+```console
+(Pdb) p pos_emb.shape
+torch.Size([1, 275, 1024])
+```
+So this does not add potional encodings to the input but rather creates a separate
+tensor with a table of positional encodings.
+
 _wip_
+
+```console
+(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:627
+Breakpoint 1 at /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:627
+
+```
+
 
 (Pdb) b ~/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:89
 (Pdb) c
