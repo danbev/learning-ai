@@ -14,20 +14,31 @@ be need to add support for it in whisper.cpp. For this I've simply added a new
 model for Parakeet along side whisper_model in whisper_context just to be able
 to explore this model.
 
-The are a few significant differences:
-* Pre-processing convolutions are 2D depthwise striding convolutions instead of 1D striding convolutions.
-  I've implemented this as a ggml graph as part of the exploration work and got
-  it to compile but it needs to be tested with the rest of the model, see below points.
-* Relative positional encodings are used instead of absolute positional encodings.
-  TBD
-* Use the positional encodig with the attention mechanism.
-  TBD
-* Decoder uses RNNT/DTD.
-  TBD
+Key differences to whisper:
+* Pre-processor: Uses a 2D convolutional pre-processor.
+* Encoder : Uses Fast-Conformer using 2D depthwise striding convolutions.
+* Positional Encoding: Relative positional encodings.
+* Decoder: uses a RNN-T/DTD (prediction network + joint network).
 
-The differences are significant enough that I think a new model, like parakeet_model
-similar to whisper_model. Or at least a proper look at how to be support this
-new model.
+What has been done:
+* A conversion script has been created to convert the model to GGML format.
+* Implemented parakeet_build_graph_conv for encoder pre processor similar to
+  whisper_build_graph_conv.
+
+What needs to be done:
+* Full encoder (parakeet_build_graph_encoder)
+* Decoder (parakeet_build_graph_decoder)
+* Joint network (new to me so I can really tell yet what is needed here)
+* Refactoring to support an addition model to integrate this cleanly into whisper.cpp.
+* ?
+
+Git branch: https://github.com/danbev/whisper.cpp/tree/parakeet-support
+
+Conclusion:
+The differences are significant enough that I think a new model, like parakeet_model,
+similar to whisper_model might be needed. Or at least a proper look at how to
+support this new model in a good way. It does not look like it will be as easy
+as we might have thought before we looked at this model.
 
 ### Download the model
 ```console
