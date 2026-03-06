@@ -1447,3 +1447,85 @@ output = asr_model.transcribe(['jfk.wav'])
 print(output[0].text)
 
 ```
+
+### Connectionist Temporal Classification (CTC)
+In ASR (Automatic Speech Recognition) the audio signal is much longer than the
+resulting transcript. Like 10s of audio might produce 1000 frames by the encoder
+but only 15 letters of text.
+
+Process flow:
+1. Preprocessing: convert .wav to mel-spectrograms
+2. Encoder: series of convolutions or transformers to compress the time dimension.
+3. Linear layer: Takes the encoder output and passes it through a linear layer
+   to produce a probability distribution over the vocabulary for each time step.
+
+So instead of feeding the mel spectrogram to a decoder like we do in whisper.cpp
+the CTC model will process the mel spectrogram directly into a probability
+distribution over the vocabulary.
+
+Lets say that the linear layer for the word "Hi" produced:
+```console
+Frame   Top prediction           Probability
+1          H                        0.9
+2          H                        0.7
+3          - (blank)                0.8
+4          I                        0.9
+5          I                        0.8
+```
+The greedy decoder would:
+* Iterate through each frame [H, H, -, I, I]
+* Collapse repeats [H, -, I]
+* Remove blanks [H I]
+
+So where whisper.cpp would generate a sequence token by token, CTC models
+generate the logits for all time frames at once, there is no loop. And then it
+performs the above steps on the logits to produce the final text.
+output:
+```console
+frame 0 [0           n_vocab]
+frame 1 [0           n_vocab]
+...
+frame N [0           n_vocab]
+```
+A CTC depends on the Encoder to a good job on determining the features, to
+"compensate" for not having attention or being able looking back as it processes
+the whole audio chunk at once.
+
+### Token-and-Duration Transducer (TDT)
+The TDT model is a variant of the RNN-T (Recurrent Neural Network Transducer). A
+RNN-T would process the output frames from the encoder one by one, checking if
+there is a letter here? But it might spend a considerable amount of time for blank
+spaces (no sound because human speech is sparse).
+When a TDT processes a frame it will also inspect one by one but it will produce
+two outputs:
+1. The token (letter) to predict
+2. The duration to predict (how long to hold that token)
+
+It then uses the duration to skip ahead that number of frames in the mel
+spectrogram before processing the next frame.
+
+The output will be a shorted list:
+```console
+Index   Source Frame   Predicted Token   Duration   Logit/Prob
+0       frame 0        'H'               4          0.98
+1       frame 4        'E'               2          0.95
+2       frame 6        'L'               3          0.92
+...
+```
+
+### Joint-Network
+So in a TDT we have three components:
+* Encoder       : processes the mel spectrogram
+* Predictor     : like a small LLM that looks at the previous text that was transcribed
+* Joint Network : takes one vector from the encoder and one from the predictor and combines them
+
+The joint network is a simple neural network that combines the encoder and
+predictor, something like this:
+```console
+enc_proj + pred_proj → ReLU → linear → [frames+vocab]
+```
+In whisper.cpp this is taken care of by the decoder so there is no separate
+component/layer for this.
+
+### pre-emphasis
+TODO:
