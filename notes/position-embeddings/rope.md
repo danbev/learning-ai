@@ -36,7 +36,7 @@ Row 1: loves
 Row 2: ice
 ```
 So lets say the the embedding matrix is `inp_emb`
-We know multiply a learned weight matrix `W_q` to get the query matrix:
+We multiply a learned weight matrix, `W_q`, to get the query matrix:
 ```
 query = wq * inp_emb
 ```
@@ -77,7 +77,7 @@ Pair 3 overlap: Depends on the angle difference (0.2 - 0.1 = 0.1).
 Notice that the absolute positions (1 and 2) are gone. The result only depends
 on the relative distance ($2 - 1 = 1$).
 
-This seemed a bit strange to as I have a mental model of the attention mechanism
+This seemed a bit strange as I have a mental model of the attention mechanism
 where I think of the vectors as arrows in the embedding space. But we can also
 view the attention like this:
 ```
@@ -96,14 +96,14 @@ The total attention score is simply the score of Pair 1 plus the score of
 Pair 2.
 Lets look at one pair, for example the first pair:
 ```
-(q_0*k_0 + q_1*k_1)
+(q_0 * k_0 + q_1 * k_1)
 ```
 This what it looks like before RoPE, but after RoPE we treat these are complex
 numbers:
 ```
 pair score = Magnitude(q) * Magnitude(k) * cos(θpos_diff)
 ```
-The magnitude is how "strong" this feature is. This not changed by RoPE.
+The magnitude is how "strong" this feature is. This is not changed by RoPE.
 cos(θpos_diff) is the cosine of the angle difference between the query and key
 and it the rotation part.
 
@@ -259,7 +259,7 @@ is a parameter named `freq_base` I think.
    = 1.004507364
 ```
 And then if we do a few more using
-[rope-rotations.py](../fundamentals/python/src/rope-rotations.py)]:
+[rope-rotations.py](../../fundamentals/python/src/rope-rotations.py)]:
 ```
 1.0045073642544624
 1.0
@@ -366,7 +366,7 @@ cosine part and the imaginary part is the sine part. So, if we have a complex
 number `a + bi` we can represent it as `r(cos(θ) + i sin(θ))` where `r` is the
 magnitude of the complex number and `θ` is the angle of the complex number.
 
-And just to clarify this for myself, we can have a varable like m in the
+And just to clarify this for myself, we can have a variable like m in the
 exponentiation:
 ```
 e^imΘ = cos(m * Θ) + i sin(m * Θ)
