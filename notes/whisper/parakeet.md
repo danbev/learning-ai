@@ -196,14 +196,169 @@ TODO: add this to the output of the conversion script as it might be useful.
 ```console
 (venv) $ pip install -U nemo_toolkit['asr']
 (venv) $ python -m pdb test-model.py
+(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/models/rnnt_models.py:698
 ```
 
-### preprosssor (mel spectrogram transformation)
-In Parakeet they have a layer called `pre_encode` which is equivalent to
-`whisper_build_graph_conv` but the operations differ and this is what this
-section is focused on.
+### Model Overview
+```console
+(Pdb) p self
+EncDecRNNTBPEModel(
+  (preprocessor): AudioToMelSpectrogramPreprocessor(
+    (featurizer): FilterbankFeatures()
+  )
+  (encoder): ConformerEncoder(
+    (pre_encode): ConvSubsampling(
+      (out): Linear(in_features=4096, out_features=1024, bias=True)
+      (conv): MaskedConvSequential(
+        (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (1): ReLU(inplace=True)
+        (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+        (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+        (4): ReLU(inplace=True)
+        (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+        (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+        (7): ReLU(inplace=True)
+      )
+    )
+    (pos_enc): RelPositionalEncoding(
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (layers): ModuleList(
+      (0-23): 24 x ConformerLayer(
+        (norm_feed_forward1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (feed_forward1): ConformerFeedForward(
+          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+          (activation): Swish()
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+        )
+        (norm_conv): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (conv): ConformerConvolution(
+          (pointwise_conv1): Conv1d(1024, 2048, kernel_size=(1,), stride=(1,), bias=False)
+          (depthwise_conv): CausalConv1D(1024, 1024, kernel_size=(9,), stride=(1,), groups=1024, bias=False)
+          (batch_norm): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (activation): Swish()
+          (pointwise_conv2): Conv1d(1024, 1024, kernel_size=(1,), stride=(1,), bias=False)
+        )
+        (norm_self_att): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (self_attn): RelPositionMultiHeadAttention(
+          (linear_q): Linear(in_features=1024, out_features=1024, bias=False)
+          (linear_k): Linear(in_features=1024, out_features=1024, bias=False)
+          (linear_v): Linear(in_features=1024, out_features=1024, bias=False)
+          (linear_out): Linear(in_features=1024, out_features=1024, bias=False)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear_pos): Linear(in_features=1024, out_features=1024, bias=False)
+        )
+        (norm_feed_forward2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (feed_forward2): ConformerFeedForward(
+          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+          (activation): Swish()
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+        )
+        (dropout): Dropout(p=0.1, inplace=False)
+        (norm_out): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+      )
+    )
+  )
+  (decoder): RNNTDecoder(
+    (prediction): ModuleDict(
+      (embed): Embedding(8193, 640, padding_idx=8192)
+      (dec_rnn): LSTMDropout(
+        (lstm): LSTM(640, 640, num_layers=2, dropout=0.2)
+        (dropout): Dropout(p=0.2, inplace=False)
+      )
+    )
+  )
+  (joint): RNNTJoint(
+    (pred): Linear(in_features=640, out_features=640, bias=True)
+    (enc): Linear(in_features=1024, out_features=640, bias=True)
+    (joint_net): Sequential(
+      (0): ReLU(inplace=True)
+      (1): Dropout(p=0.2, inplace=False)
+      (2): Linear(in_features=640, out_features=8198, bias=True)
+    )
+    (_loss): RNNTLoss(
+      (_loss): TDTLossNumba()
+    )
+    (_wer): WER()
+  )
+  (loss): RNNTLoss(
+    (_loss): TDTLossNumba()
+  )
+  (spec_augmentation): SpectrogramAugmentation(
+    (spec_augment): SpecAugment()
+  )
+  (wer): WER()
+)
+```
 
-If we set a break point in:
+### preprocessor
+In Parakeet they have a layer called `preprocessor` which is equivalent to
+`whisper_pcm_to_mel_with_state` which convertes the audio signal to a mel
+spectrogram.
+
+### Encoder
+Here is an overview of the encoder layers:
+```console
+(encoder): ConformerEncoder(
+    (pre_encode): ConvSubsampling(
+      (out): Linear(in_features=4096, out_features=1024, bias=True)
+      (conv): MaskedConvSequential(
+        (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (1): ReLU(inplace=True)
+        (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+        (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+        (4): ReLU(inplace=True)
+        (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+        (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+        (7): ReLU(inplace=True)
+      )
+    )
+    (pos_enc): RelPositionalEncoding(
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (layers): ModuleList(
+      (0-23): 24 x ConformerLayer(
+        (norm_feed_forward1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (feed_forward1): ConformerFeedForward(
+          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+          (activation): Swish()
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+        )
+        (norm_conv): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (conv): ConformerConvolution(
+          (pointwise_conv1): Conv1d(1024, 2048, kernel_size=(1,), stride=(1,), bias=False)
+          (depthwise_conv): CausalConv1D(1024, 1024, kernel_size=(9,), stride=(1,), groups=1024, bias=False)
+          (batch_norm): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (activation): Swish()
+          (pointwise_conv2): Conv1d(1024, 1024, kernel_size=(1,), stride=(1,), bias=False)
+        )
+        (norm_self_att): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (self_attn): RelPositionMultiHeadAttention(
+          (linear_q): Linear(in_features=1024, out_features=1024, bias=False)
+          (linear_k): Linear(in_features=1024, out_features=1024, bias=False)
+          (linear_v): Linear(in_features=1024, out_features=1024, bias=False)
+          (linear_out): Linear(in_features=1024, out_features=1024, bias=False)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear_pos): Linear(in_features=1024, out_features=1024, bias=False)
+        )
+        (norm_feed_forward2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (feed_forward2): ConformerFeedForward(
+          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+          (activation): Swish()
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+        )
+        (dropout): Dropout(p=0.1, inplace=False)
+        (norm_out): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+      )
+    )
+  )
+```
+
+If we set a break point before the encoder is called:
 ```console
 (Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/models/rnnt_models.py:698
 ```
@@ -276,8 +431,9 @@ And this file can be found in `venv/lib/python3.13/site-packages/nemo/collection
 class AudioToMelSpectrogramPreprocessor(AudioPreprocessor, Exportable):
     """Featurizer module that converts wavs to mel spectrograms.
 ```
-Now, this is very similar if not the same as what is done in whisper, apart from
-the number of mel bins is 128 instead of 80.
+Now, this is very similar if not the same as what is done in whisper by
+`whisper_pcm_to_mel_with_state`, apart from the number of mel bins is 128
+instead of 80.
 
 After this preprocessing the shape of the processed signal is:
 ```console
@@ -299,7 +455,7 @@ At 16kHz and a stride of 160 samples (10ms) we get 3000 frames:
 48000/160 = 3000 frames
 ```
 But Parakeet does not seems to pad and just takes the 176000 samples and also
-uses a stride of 160:
+it uses a stride of 160:
 ```console
 176000/160 = 1100 frames
 + 1 frame for the initial frame?
@@ -925,150 +1081,6 @@ Breakpoint 1 at /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/v
 ```
 
 
-(Pdb) b ~/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:89
-(Pdb) c
-```
-```python
-class ConvSubsampling(torch.nn.Module):
-    def __init__(
-        self,
-        subsampling,
-        subsampling_factor,
-        feat_in,
-        feat_out,
-        conv_channels,
-        subsampling_conv_chunking_factor=1,
-        activation=nn.ReLU(),
-        is_causal=False,
-    ):
-        ...
-        elif subsampling == 'dw_striding':
-            self._stride = 2
-            self._kernel_size = 3
-            self._ceil_mode = False
-
-            if self.is_causal:
-                self._left_padding = self._kernel_size - 1
-                self._right_padding = self._stride - 1
-                self._max_cache_len = subsampling_factor + 1
-            else:
-                self._left_padding = (self._kernel_size - 1) // 2
-                self._right_padding = (self._kernel_size - 1) // 2
-                self._max_cache_len = 0
-
-            # Layer 1
-            if self.is_causal:
-                layers.append(
-                    CausalConv2D(
-                        in_channels=in_channels,
-                        out_channels=conv_channels,
-                        kernel_size=self._kernel_size,
-                        stride=self._stride,
-                        padding=None,
-                    )
-                )
-            else:
-                layers.append(
-                    torch.nn.Conv2d(
-                        in_channels=in_channels,
-                        out_channels=conv_channels,
-                        kernel_size=self._kernel_size,
-                        stride=self._stride,
-                        padding=self._left_padding,
-                    )
-                )
-            in_channels = conv_channels
-            layers.append(activation)
-
-            for i in range(self._sampling_num - 1):
-                if self.is_causal:
-                    layers.append(
-                        CausalConv2D(
-                            in_channels=in_channels,
-                            out_channels=in_channels,
-                            kernel_size=self._kernel_size,
-                            stride=self._stride,
-                            padding=None,
-                            groups=in_channels,
-                        )
-                    )
-                else:
-                    layers.append(
-                        torch.nn.Conv2d(
-                            in_channels=in_channels,
-                            out_channels=in_channels,
-                            kernel_size=self._kernel_size,
-                            stride=self._stride,
-                            padding=self._left_padding,
-                            groups=in_channels,
-                        )
-                    )
-
-                layers.append(
-                    torch.nn.Conv2d(
-                        in_channels=in_channels,
-                        out_channels=conv_channels,
-                        kernel_size=1,
-                        stride=1,
-                        padding=0,
-                        groups=1,
-                    )
-                )
-                layers.append(activation)
-                in_channels = conv_channels
-```
-
-```console
-(Pdb) p self.pre_encode
-ConvSubsampling(
-  (out): Linear(in_features=4096, out_features=1024, bias=True)
-  (conv): MaskedConvSequential(
-    (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-    (1): ReLU(inplace=True)
-    (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-    (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-    (4): ReLU(inplace=True)
-    (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-    (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-    (7): ReLU(inplace=True)
-  )
-)
-```
-In whisper.cpp we have:
-```c++
-static struct ggml_cgraph * whisper_build_graph_conv(
-        whisper_context & wctx,
-          whisper_state & wstate) {
-          ...
-
-    struct ggml_tensor * mel = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 2*n_ctx, n_mels);
-    ggml_set_name(mel, "mel");
-    ggml_set_input(mel);
-
-    struct ggml_tensor * cur = nullptr;
-
-    if (!whisper_encode_external(wstate)) {
-        // convolution + gelu
-        {
-            cur = ggml_conv_1d_ph(ctx0, model.e_conv_1_w, mel, 1, 1);
-            cur = ggml_add(ctx0, cur, model.e_conv_1_b);
-
-            cur = ggml_gelu(ctx0, cur);
-
-            cur = ggml_conv_1d_ph(ctx0, model.e_conv_2_w, cur, 2, 1);
-            cur = ggml_add(ctx0, cur, model.e_conv_2_b);
-
-            cur = ggml_gelu(ctx0, cur);
-        }
-
-        ggml_set_name(cur, "embd_conv");
-        wstate.embd_conv = cur;
-```
-So for the Parakeet model we would need to enable it to handle this in a was
-specific to that model.
-
-So the tensor that are involved in this step are:
-
 ### Encoder
 The following is taken from the model_config.json file:
 ```console
@@ -1194,147 +1206,8 @@ layer previously):
     )
   )
 ```
-```
-~/work/whisper-models/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/subsampling.py
-```
 
 ```console
-(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:615
-(Pdb) c
-
-(Pdb) p self.pre_encode
-ConvSubsampling(
-  (out): Linear(in_features=4096, out_features=1024, bias=True)
-  (conv): MaskedConvSequential(
-    (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-    (1): ReLU(inplace=True)
-    (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-    (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-    (4): ReLU(inplace=True)
-    (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-    (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-    (7): ReLU(inplace=True)
-  )
-)
-
-(Pdb) l
-627  	        if not bypass_pre_encode:
-628  ->	            audio_signal = torch.transpose(audio_signal, 1, 2)
-629
-630  	            if isinstance(self.pre_encode, nn.Linear):
-631  	                audio_signal = self.pre_encode(audio_signal)
-632  	            else:
-633  	                audio_signal, length = self.pre_encode(x=audio_signal, lengths=length)
-
-(Pdb) p audio_signal.shape
-torch.Size([1, 128, 1101])
-
-(Pdb) p audio_signal.shape
-torch.Size([1, 1101, 128])
-```
-
-```console 
-(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/subsampling.py:385
-```
-```console
-(Pdb) l
-380  	        return [1, self.subsampling_factor]
-381  	
-382  	    def get_streaming_cache_size(self):
-383  	        return [0, self.subsampling_factor + 1]
-384  	
-385  ->	    def forward(self, x, lengths):
-386  	        out_lengths = calc_length(
-387  	            lengths,
-388  	            all_paddings=self._left_padding + self._right_padding,
-389  	            kernel_size=self._kernel_size,
-390  	            stride=self._stride,
-
-```
-```python
-                x, lengths = self.conv(x, lengths)
-```
-```console
--> x, lengths = self.conv(x, lengths)
-(Pdb) p lengths
-tensor([1100])
-(Pdb) p x.shape
-torch.Size([1, 1101, 128])
-
-(Pdb) p self.conv
-MaskedConvSequential(
-  (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-  (1): ReLU(inplace=True)
-  (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-  (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-  (4): ReLU(inplace=True)
-  (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-  (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-  (7): ReLU(inplace=True)
-)
-```
-
-
-```console
-EncDecRNNTBPEModel(
-  (preprocessor): AudioToMelSpectrogramPreprocessor(
-    (featurizer): FilterbankFeatures()
-  )
-  (encoder): ConformerEncoder(
-    (pre_encode): ConvSubsampling(
-      (out): Linear(in_features=4096, out_features=1024, bias=True)
-      (conv): MaskedConvSequential(
-        (0): Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-        (1): ReLU(inplace=True)
-        (2): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-        (3): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-        (4): ReLU(inplace=True)
-        (5): Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
-        (6): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
-        (7): ReLU(inplace=True)
-      )
-    )
-    (pos_enc): RelPositionalEncoding(
-      (dropout): Dropout(p=0.1, inplace=False)
-    )
-    (layers): ModuleList(
-      (0-23): 24 x ConformerLayer(
-        (norm_feed_forward1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
-        (feed_forward1): ConformerFeedForward(
-          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
-          (activation): Swish()
-          (dropout): Dropout(p=0.1, inplace=False)
-          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
-        )
-        (norm_conv): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
-        (conv): ConformerConvolution(
-          (pointwise_conv1): Conv1d(1024, 2048, kernel_size=(1,), stride=(1,), bias=False)
-          (depthwise_conv): CausalConv1D(1024, 1024, kernel_size=(9,), stride=(1,), groups=1024, bias=False)
-          (batch_norm): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
-          (activation): Swish()
-          (pointwise_conv2): Conv1d(1024, 1024, kernel_size=(1,), stride=(1,), bias=False)
-        )
-        (norm_self_att): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
-        (self_attn): RelPositionMultiHeadAttention(
-          (linear_q): Linear(in_features=1024, out_features=1024, bias=False)
-          (linear_k): Linear(in_features=1024, out_features=1024, bias=False)
-          (linear_v): Linear(in_features=1024, out_features=1024, bias=False)
-          (linear_out): Linear(in_features=1024, out_features=1024, bias=False)
-          (dropout): Dropout(p=0.1, inplace=False)
-          (linear_pos): Linear(in_features=1024, out_features=1024, bias=False)
-        )
-        (norm_feed_forward2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
-        (feed_forward2): ConformerFeedForward(
-          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
-          (activation): Swish()
-          (dropout): Dropout(p=0.1, inplace=False)
-          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
-        )
-        (dropout): Dropout(p=0.1, inplace=False)
-        (norm_out): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
-      )
-    )
-  )
   (decoder): RNNTDecoder(
     (prediction): ModuleDict(
       (embed): Embedding(8193, 640, padding_idx=8192)
