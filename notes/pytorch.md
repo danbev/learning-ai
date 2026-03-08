@@ -281,3 +281,23 @@ The commands are pretty simlar to gdb so most can be guessed. I'm mainly adding
 this as a reference for myself as I forget the command to start pdb and it can
 be useful to be able to step through the conversion script and also pytorch model
 implementation when converting new models to gguf format.
+
+#### History in pdb
+This was not as as simple as with gdb/lldb. I had to resort to the following:
+```console
+$ cat ~/pdb_startup.py 
+import readline
+import os
+import atexit
+
+histfile = os.path.expanduser("~/.pdb_history")
+try:
+    readline.read_history_file(histfile)
+except FileNotFoundError:
+    pass
+
+atexit.register(readline.write_history_file, histfile)
+
+$ cat ~/.pdbrc
+import sys; import os; sys.path.insert(0, os.path.expanduser('~')); import pdb_startup
+```
