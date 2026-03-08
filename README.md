@@ -2,20 +2,22 @@
 This repository contains notes and code examples related to AI.
 
 ### In-progress
-* CUDA FA exploration: [notes](./notes/flash-attention.md)
+* [Parakeet](./notes/whisper/parakeet.md): supporting Parakeet in whisper.cpp
+* [Kimi-Linear](./notes/kimi-linear.md)
+* [CUDA FA exploration](./notes/flash-attention.md)
 
 
 ### Topics
 
-* [Tokenization](./notes/tokenization/README.md)
-* [Architectures](./notes/architectures/README.md)
 * [GGML](./notes/ggml.md)
 * [Llama.cpp](./notes/llama.md)
+* [Architectures](./notes/architectures/README.md)
 * [Position Embeddings](./notes/position-embeddings)
+* [Tokenization](./notes/tokenization/README.md)
+* [Speculative Decoding](./notes/speculative-decoding/speculative-decoding.md)
 * [GPUs](./gpu/README.md)
 * [Vector Databases](./notes/vector-databases.md)
 * [Vision](./notes/vision)
-* llama.cpp backend sampling: [notes](./notes/llama.cpp/gpu-sampling.md), [pull request](https://github.com/ggml-org/llama.cpp/pull/17004)
 
 ### Examples/Exploration code
 
