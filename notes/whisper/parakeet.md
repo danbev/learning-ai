@@ -4,6 +4,11 @@ it into a format that can be used with Whisper.cpp. The goal is to identify majo
 differences which might effect the work.
 
 ### Overview
+Parakeet offers three different models:
+* Parakeet-TDT
+* Parakeet-CTC
+* Parakeet-RNNT
+
 The Parakeet model uses a Conformer based encoder named
 [Fast Conformer](https://arxiv.org/pdf/2305.05084) and a TDT (Token-and-Duration
 Transducer) decoder.
@@ -1022,7 +1027,7 @@ torch.Size([1, 256, 138, 16])
 tensor([138.])
 ```
 
-So this will return us to conformer_encoder.py and its forward_internal method::
+So this will return us to conformer_encoder.py and its forward_internal method:
 ```python
            audio_signal, length = self.pre_encode(x=audio_signal, lengths=length)
            ...
@@ -1034,8 +1039,15 @@ So this will return us to conformer_encoder.py and its forward_internal method::
            offset = None
 
         audio_signal, pos_emb = self.pos_enc(x=audio_signal, cache_len=cache_len)
-
 ```
+
+```console
+(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:656
+(Pdb) c
+> /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py(656)forward_internal()
+-> audio_signal, pos_emb = self.pos_enc(x=audio_signal, cache_len=cache_len)
+```
+
 And the shape of the audio_signal is now:
 ```console
 (Pdb) p audio_signal.shape
@@ -1065,14 +1077,132 @@ Looking back at the constructor we find the following:
             )
 ```
 We can find this class in venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/multi_head_attention.py
+```python
+class RelPositionalEncoding(PositionalEncoding):
+    """Relative positional encoding for TransformerXL's layers
+    See : Appendix B in https://arxiv.org/abs/1901.02860
+    ...
+
+    def forward(self, x, cache_len=0):
+        """Compute positional encoding.
+        Args:
+            x (torch.Tensor): Input. Its shape is (batch, time, feature_size)
+            cache_len (int): the size of the cache which is used to shift positions
+        Returns:
+            x (torch.Tensor): Its shape is (batch, time, feature_size)
+            pos_emb (torch.Tensor): Its shape is (1, time, feature_size)
+        """
+
+        if self.xscale:
+            x = x * self.xscale
+
+        # center_pos would be the index of position 0
+        # negative positions would be used for right and positive for left tokens
+        # for input of length L, 2*L-1 positions are needed, positions from (L-1) to -(L-1)
+        input_len = x.size(1) + cache_len
+        center_pos = self.pe.size(1) // 2 + 1
+        start_pos = center_pos - input_len
+        end_pos = center_pos + input_len - 1
+        pos_emb = self.pe[:, start_pos:end_pos]
+        if self.dropout_emb:
+            pos_emb = self.dropout_emb(pos_emb)
+        return self.dropout(x), pos_emb
+```
+We can see that there is a pe tensor in this class:
+```console
+(Pdb) p self.pe.shape
+torch.Size([1, 9999, 1024])
+```
+But it does not exist in the model. This is because it is generated. If we look
+in the super class we find:
+
+So RelPositionalEncoding extends PositionalEncoding. The
+```python
+class PositionalEncoding(torch.nn.Module):
+    """Fixed sinusoidal positional encoding.
+    Args:
+        d_model (int): embedding dim
+        dropout_rate (float): dropout rate
+        max_len (int): maximum input length
+        xscale (bool): whether to scale the input by sqrt(d_model)
+        dropout_rate_emb (float): dropout rate for the positional embeddings
+    """
+    def create_pe(self, positions, dtype):
+        pos_length = positions.size(0)
+        pe = torch.zeros(pos_length, self.d_model, device=positions.device)
+        div_term = torch.exp(
+            torch.arange(0, self.d_model, 2, dtype=torch.float32, device=positions.device)
+            * -(math.log(INF_VAL) / self.d_model)
+        )
+        pe[:, 0::2] = torch.sin(positions * div_term)
+        pe[:, 1::2] = torch.cos(positions * div_term)
+        pe = pe.unsqueeze(0).to(dtype)
+        if hasattr(self, 'pe'):
+            self.pe = pe
+        else:
+            self.register_buffer('pe', pe, persistent=False)
+
+    def extend_pe(self, length, device, dtype):
+        """Reset and extend the positional encodings if needed."""
+        if hasattr(self, 'pe') and self.pe.size(1) >= length:
+            return
+        positions = torch.arange(0, length, dtype=torch.float32, device=device).unsqueeze(1)
+        self.create_pe(positions=positions, dtype=dtype)
+```
+The `extend_pe` function is called from the `set_max_audio_length` function in
+conformer_encoder.py:
+```python
+    def set_max_audio_length(self, max_audio_length):
+        self.max_audio_length = max_audio_length
+        device = next(self.parameters()).device
+        dtype = next(self.parameters()).dtype
+        self.pos_enc.extend_pe(max_audio_length, device, dtype)
+```
+```console
+(Pdb) p self.max_audio_length
+5000
+
+(Pdb) b venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/multi_head_attention.py:1016
+Breakpoint 5 at /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/multi_head_attention.py:1016
+
+(Pdb) p pe
+tensor([[[-0.6639, -0.7478,  0.4186,  ...,  0.8687,  0.4873,  0.8732],
+         [ 0.2705, -0.9627,  0.9878,  ...,  0.8688,  0.4872,  0.8733],
+         [ 0.9563, -0.2925,  0.6782,  ...,  0.8688,  0.4871,  0.8733],
+         ...,
+         [-0.9563, -0.2925, -0.6782,  ...,  0.8688, -0.4871,  0.8733],
+         [-0.2705, -0.9627, -0.9878,  ...,  0.8688, -0.4872,  0.8733],
+         [ 0.6639, -0.7478, -0.4186,  ...,  0.8687, -0.4873,  0.8732]]])
+```
+The above generates the position encoding matrix, which is then stored in the model:
+```python
+            self.register_buffer('pe', pe, persistent=False)
+```
+Which I think is similar to a parameter tensor but does not take place in traning
+of the model, it does not get updated during training. Also buffers are moved
+automatically when the model is moved to a device. And notice that it is not
+stored to the model when torch.save is called.
+
+So in parakeet.cpp we will need to generate this matrix. Comparing the values
+it looks like the match quite well:
+```console
+(Pdb) p pe[0, 0, :10]
+tensor([-0.6639,  -0.7478,  0.4186,   -0.9082,  0.0015,  -1.0000,  -0.9134,  0.4070,  0.6954,  -0.7186])
+
+enc_pos_enc:  type: f32, shape: [1024, 9999, 1, 1]. First 10 values
+        -0.663950 -0.747777 0.418575  -0.908182 0.001462 -0.999999 -0.913418 0.407022 0.695440 -0.718584 
+```
+
+_wip_
+
 ```console
 (Pdb) p pos_emb.shape
 torch.Size([1, 275, 1024])
 ```
-So this does not add potional encodings to the input but rather creates a separate
-tensor with a table of positional encodings.
+```console
+(Pdb) b venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/multi_head_attention.py:1087
+```
 
-_wip_
 
 ```console
 (Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:627
