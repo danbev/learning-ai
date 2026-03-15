@@ -781,9 +781,10 @@ dimension (x-axis), and then the number of elements in the second dimension
 
 Which can be visualized like this:
 ```
-    +---+---+
-    | 0 | 1 |
-    +---+---+
+     Table                   Flat
+    +---+---+        +---+---+---+---+---+---+
+    | 0 | 1 |        | 0 | 1 | 2 | 3 | 4 | 5 |
+    +---+---+        +---+---+---+---+---+---+
     | 2 | 3 |
     +---+---+
     | 4 | 5 |
@@ -897,22 +898,54 @@ inline static void ggml_vec_set_i8(const int n, int8_t * x, const int8_t v) {
 ```
 
 ### ggml_is_contiguous
-So I initially thought that this was about the elements of a tensor are stored without gaps in between them.
-For example:
+In ggml, a tensor is contiguous when its strides (nb[]) follow the canonical
+layout for its current logical shape (ne[]) and type.
+Here, “canonical” means the default packed stride pattern ggml would assign if
+it created a brand new tensor with that shape. For a normal F32 tensor, that
+means:
+```
+nb[0] = 4
+nb[1] = 4 * ne[0]
+nb[2] = nb[1] * ne[1]
+nb[3] = nb[2] * ne[2]
+```
+So axis 0 is the fastest-varying dimension in memory, then axis 1, then axis 2,
+then axis 3. A transposed or permuted tensor may still point to a tightly packed
+underlying buffer, but its nb[] no longer match the canonical stride pattern
+for its new logical shape. In that case, the tensor is not contiguous in ggmls
+sense, even though the underlying allocation itself may still be fully packed.
+
+
+So I initially thought that this was about the elements of a tensor are stored
+without gaps in between them in physical memory. For example:
 ```console
 2d_tensor = [row0_col0, row0_col1, row0_col2, row1_col0, row1_col1, ...]
 ```
-And that might be the general meaning of contiguous. But in GGML it has a more specific meaning and 
-means that it is possbile to iterate over the elements in a logical order without having to jump around
-in memory. For example 
-```
-Tensor shape:               Memory layout:
-tensor = [1, 2, 3]          [1, 2, 3,  4,  5,  6]
-         [4, 5, 6]           0  4  8  12  16  20      (byte offsets)
+And that might be the general meaning of contiguous. But in GGML it has a more
+specific meaning and means that it is possbile to iterate over the elements in a
+logical order without having to jump around in memory. For example 
+```console
+(gdb) p ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 2)
+$27 = (ggml_tensor *) 0x7ffff67ff500
+
+(gdb) p $27->ne
+$28 = {3, 2, 1, 1}
+
+(gdb) p ((float*)$27->data)[0] = 0
+(gdb) p ((float*)$27->data)[1] = 1
+(gdb) p ((float*)$27->data)[2] = 2
+(gdb) p ((float*)$27->data)[3] = 3
+(gdb) p ((float*)$27->data)[4] = 4
+(gdb) p ((float*)$27->data)[5] = 5
+
+
+Tensor shape {3, 2}:        Memory layout:
+tensor = [0, 1, 2]          [0, 1, 2,  3,  4,  5]
+         [3, 4, 5]           0  4  8  12  16  20      (byte offsets)
 ```
 So to read this locally row by row and moving 4 bytes:
 ```
-1 -> 2 -> 3 -> 4 -> 5 -> 6
+0 -> 1 -> 2 -> 3 -> 4 -> 5
 0    4    8    12  16   20
 ```
 So the following code would work:
@@ -926,20 +959,55 @@ for (int i = 0; i < total_elements; i++) {
 
 Now, lets say we transpose this tensor:
 ```
-Logical tensor:     Memory layout:
-[1, 4]             [1, 2, 3, 4, 5, 6]  ← same memory!
-[2, 5]              0  4  8  12 16 20  ← byte offsets
-[3, 6]
+(gdb) p ggml_transpose(ctx, $27)
+$46 = (ggml_tensor *) 0x7ffff67ff690
+(gdb) p $46->ne
+$47 = {2, 3, 1, 1}
+
+(gdb) p $46->data
+$48 = (void *) 0x7ffff67ff650
+(gdb) p $27->data
+$49 = (void *) 0x7ffff67ff650
+
+(gdb) p ((float*)$46->data)[0]
+$50 = 0
+(gdb) p ((float*)$46->data)[1]
+$51 = 1
+(gdb) p ((float*)$46->data)[2]
+$52 = 2
+(gdb) p ((float*)$46->data)[3]
+$53 = 3
+(gdb) p ((float*)$46->data)[4]
+$54 = 4
+(gdb) p ((float*)$46->data)[5]
+$55 = 5
+
+(gdb) p $27->nb
+$57 = {4, 12, 24, 24}
+(gdb) p $46->nb
+$58 = {12, 4, 24, 24}
+
+Logical tensor {2, 3}:     Memory layout:
+[0, 3]                 [0, 1, 2, 3, 4, 5]  ← same memory!
+[1, 4]                  0  4  8  12 16 20  ← byte offsets
+[2, 5]
 ```
 To read logically:
 ```
-1 -> 4 -> 2 -> 5 -> 3 -> 6
+0 -> 3 -> 1 -> 4 -> 2 -> 5
 0    12   4   16    8    20
+
+(gdb) p *(float *)((char*)$46->data + 0 * $46->nb[1] + 1 * $46->nb[0])
+$100 = 3
+
+(gdb) p *(float *)((char*)$46->data + 1 * $46->nb[1] + 1 * $46->nb[0])
+$101 = 4
+
 ```
 Now, to iterate over this transposed tensor we need to jump around in memory:
 ```c++
-for (int row = 0; row < rows; row++) {
-    for (int col = 0; col < cols; col++) {
+for (int row = 0; row < t->ne[1]; row++) {
+    for (int col = 0; col < t->ne[0]; col++) {
         // Complex stride calculation for each element
         float* ptr = (float*)((char*)tensor->data + row * nb[1] + col * nb[0]);
         process(*ptr);
@@ -964,10 +1032,11 @@ Thread 2: reads address 4    [2]
 Thread 3: reads address 16   [5]
 → GPU needs multiple cache line loads, much slower!
 ```
-And like we mentioned in [gpu.md](./gpu.md) this can have very significant impact on performance.
+And like we mentioned in [gpu.md](./gpu.md) this can have very significant impact
+on performance.
 
-The same thing applied to SIMD operations on the CPU as well. Continuous memory access allows loading
-multiple elements into SIMD registers efficiently:
+The same thing applied to SIMD operations on the CPU as well. Continuous memory
+access allows loading multiple elements into SIMD registers efficiently:
 ```
 __m256 vec = _mm256_load_ps(ptr);  // Load 8 floats at once
 ```
@@ -977,12 +1046,13 @@ Non-contiguous memory access would require multiple loads and shuffles, negating
 __m256 vec = _mm256_set_ps(ptr[stride*7], ptr[stride*6], ...);
 ```
 
-So this is the reason why we can see checks in ggml to see if a tensor is contiguous or not, it allows
-for choosing the most efficient way to process the tensor. For examples sometimes it might be better
-to make a copy of a non-contiguous tensor to a contiguous one to allow for faster processing.
+So this is the reason why we can see checks in ggml to see if a tensor is
+contiguous or not, it allows for choosing the most efficient way to process the
+tensor. For example, sometimes it might be better to make a copy of a
+non-contiguous tensor to a contiguous one to allow for faster processing.
 
-Non-contiguous access can be 2-10x slower than contiguous access, with the gap being even larger on
-GPUs where coalescing is critical.
+Non-contiguous access can be 2-10x slower than contiguous access, with the gap
+being even larger on GPUs where coalescing is critical.
 
 ```c++
 bool ggml_is_contiguous(const struct ggml_tensor * tensor) {
@@ -5635,7 +5705,7 @@ Patch 1      Patch 2   Patch 3    Patch 4     Patch 5     Patch 6   Patch 7
 | 9  10    | 10 11    | 11 12    | 12 13    | 13 14    | 14 15    | 15 16    |
 +----------+----------+----------+----------+----------+----------+----------+
 
-Make the kernal into a row vector:
+Make the kernel into a row vector:
 [1  2  3  4]
 
 Now, we can perform a matrix multiplication:
@@ -7979,3 +8049,39 @@ Context Arena:
 │ ggml_tensor metadata                │
 └─────────────────────────────────────┘
 ```
+
+### ggml_permute
+A permuation is similar to a transpose, but it is a generalization of the
+transpose operation. The transpose operation is a special case of the
+permute operation. The first argument is which dimension we want to move
+or have become the x-axis dimension and the second the which dimension
+index we want to move/have as the y-axis dimension.
+
+Lets say we have the following tensor:
+```console
+  [188, 16, 256, 1]
+```
+And then we specify the following permute operation:
+```c++
+    cur = ggml_permute(ctx0, cur, 1, 2, 0, 3);
+```
+We read this as create a new tensor, and move the 0 dimension of the original (cur)
+to dimension 1 in the new tensor.
+```console
+  [_, 188, _, _]
+```
+And the move dimension 1 to the second dimension:
+```console
+  [_, 188, 16, _]
+```
+And move dimension 2 of the orginal to dimension 0:
+```console
+  [256_, 188, 16, _]
+```
+And then finally move dimension 3 from the original to dimension of the resuling
+new tesor:
+```console
+  [256_, 188, 16, 1]
+```
+
+

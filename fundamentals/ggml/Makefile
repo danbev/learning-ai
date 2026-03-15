@@ -10,7 +10,7 @@ CXX := $(DEFCXX)
 endif
 
 CFLAGS = -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -fPIC
-CXXFLAGS += -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -std=c++11 -fPIC 
+CXXFLAGS += -g -Wall -Iggml/include -Iggml/src/ -Wno-unused-variable -std=c++17 -fPIC 
 LDFLAGS = -Lggml/build/src/
 
 OS := $(shell uname -s)
