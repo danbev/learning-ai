@@ -1,11 +1,337 @@
+## Parakeet preprocessing notes
+
+
+### Tensor/Operation comparision
+Pytorch:
+```console
+input shape: torch.Size([1, 1101, 128])
+
+input: tensor([-2.1009, -3.3455, -2.7749, -4.7532, -4.3730, -5.6027, -4.7664, -4.5884,
+        -3.5901, -3.6141])
+input ms: 0.9981744415301794
+
+---------------------------------------------
+Before Layer 0 Conv2d: x.shape: torch.Size([1, 1, 1101, 128]), op: Conv2d(1, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+x shape: torch.Size([1, 1, 1101, 128])
+x: tensor([-2.1009, -3.3455, -2.7749, -4.7532, -4.3730, -5.6027, -4.7664, -4.5884,
+        -3.5901, -3.6141])
+x ms: 0.9981744415301794
+torch.Size([256, 1, 3, 3])
+tensor([ 0.0964,  0.0259, -0.4867, -0.2263, -0.3193,  1.1505, -0.0091,  0.1196,
+         0.0085,  0.0586])
+0.19608584626767314
+tensor([-3.4104e-01,  2.1441e-01, -7.0875e-01, -5.4349e-01, -4.5362e-01,
+        -6.2717e-02, -5.1516e-01, -2.3044e-01,  9.4809e-06, -3.9431e-03])
+0.09868425240328094
+After Layer 0: x shape torch.Size([1, 256, 551, 64])
+x shape: torch.Size([1, 256, 551, 64])
+x: tensor([-3.7990, -4.5085, -4.8426, -3.3884, -2.7329, -3.0468, -3.6646, -2.8045,
+        -2.7402, -2.3244])
+x ms: 0.6077475048109069
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 1 ReLU: x.shape: torch.Size([1, 256, 551, 64]), op: ReLU(inplace=True)
+x shape: torch.Size([1, 256, 551, 64])
+x: tensor([-3.7990, -4.5085, -4.8426, -3.3884, -2.7329, -3.0468, -3.6646, -2.8045,
+        -2.7402, -2.3244])
+x ms: 0.6072816928122464
+After Layer 1: x shape torch.Size([1, 256, 551, 64])
+x shape: torch.Size([1, 256, 551, 64])
+x: tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+x ms: 0.24929871292547623
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 2 Conv2d: x.shape: torch.Size([1, 256, 551, 64]), op: Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+x shape: torch.Size([1, 256, 551, 64])
+x: tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+x ms: 0.24929871292547623
+torch.Size([256, 1, 3, 3])
+tensor([ 0.0998,  0.2409,  0.0960, -0.2674, -0.9655, -0.8366,  0.2090,  0.2630,
+         0.0761, -0.3445])
+0.2360849789271445
+tensor([ 0.0029,  0.2550, -0.0309,  0.0025,  0.0747,  0.0200,  0.0216, -0.0125,
+        -0.0579,  0.0660])
+0.008804818570572236
+After Layer 2: x shape torch.Size([1, 256, 276, 32])
+x shape: torch.Size([1, 256, 276, 32])
+x: tensor([0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029,
+        0.0029])
+x ms: 0.5077442316707769
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 3 Conv2d: x.shape: torch.Size([1, 256, 276, 32]), op: Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+x shape: torch.Size([1, 256, 276, 32])
+x: tensor([0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029, 0.0029,
+        0.0029])
+x ms: 0.5073748530508311
+torch.Size([256, 256, 1, 1])
+tensor([ 0.0406,  0.4173,  0.5180,  1.5758,  1.1877, -0.9608, -0.5145, -0.1828,
+        -0.0264, -0.0442])
+0.25640109406762873
+tensor([ 0.6143,  1.5695,  0.1309,  0.0189,  0.1805, -0.1099,  0.1983,  0.2063,
+        -0.0342, -0.3553])
+0.8843241577090166
+After Layer 3: x shape torch.Size([1, 256, 276, 32])
+x shape: torch.Size([1, 256, 276, 32])
+x: tensor([ -8.3362, -25.2448, -26.4410, -23.6129, -21.3224, -18.5399, -17.5652,
+        -18.3385, -17.7654, -17.1464])
+x ms: 149.37329453965867
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 4 ReLU: x.shape: torch.Size([1, 256, 276, 32]), op: ReLU(inplace=True)
+x shape: torch.Size([1, 256, 276, 32])
+x: tensor([ -8.3362, -25.2448, -26.4410, -23.6129, -21.3224, -18.5399, -17.5652,
+        -18.3385, -17.7654, -17.1464])
+x ms: 149.37009046662348
+After Layer 4: x shape torch.Size([1, 256, 276, 32])
+x shape: torch.Size([1, 256, 276, 32])
+x: tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+x ms: 12.686015406319461
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 5 Conv2d: x.shape: torch.Size([1, 256, 276, 32]), op: Conv2d(256, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=256)
+x shape: torch.Size([1, 256, 276, 32])
+x: tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+x ms: 12.686015406319461
+torch.Size([256, 1, 3, 3])
+tensor([ 0.4176,  0.2623, -0.0297,  0.1375, -0.0719, -0.1959, -0.0702, -0.1433,
+        -0.1219,  0.0293])
+0.15548679877001184
+tensor([-0.1529,  1.0856,  0.9887,  0.7857,  0.1514,  0.4395, -0.0319, -0.3846,
+        -0.3217,  0.2238])
+0.3769830744735316
+After Layer 5: x shape torch.Size([1, 256, 138, 16])
+x shape: torch.Size([1, 256, 138, 16])
+x: tensor([-0.1529, -0.1529, -0.1529, -0.1529, -0.1529, -0.1529, -0.1529, -0.1529,
+        -0.1529, -0.1529])
+x ms: 8.025787332469191
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 6 Conv2d: x.shape: torch.Size([1, 256, 138, 16]), op: Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+x shape: torch.Size([1, 256, 138, 16])
+x: tensor([-0.1529, -0.1529, -0.1529, -0.1529, -0.1529, -0.1529, -0.1529, -0.1529,
+        -0.1529, -0.1529])
+x ms: 8.025787332469191
+torch.Size([256, 256, 1, 1])
+tensor([-0.9037, -0.1159,  0.0021, -0.5367, -0.1100, -0.0310,  0.6205, -0.0788,
+         0.0912,  0.0887])
+0.23345056412277246
+tensor([ 0.5281, -0.0186, -1.5426, -0.4881,  1.1282, -0.0297,  0.4590, -0.8397,
+         0.0881, -0.4935])
+0.5569255296500295
+After Layer 6: x shape torch.Size([1, 256, 138, 16])
+x shape: torch.Size([1, 256, 138, 16])
+x: tensor([-34.3560, -42.0583, -27.8299, -23.4590, -22.6265, -21.5393, -21.6146,
+        -21.7026, -20.6098, -21.3324])
+x ms: 995.8196824710096
+---------------------------------------------
+
+
+---------------------------------------------
+Before Layer 7 ReLU: x.shape: torch.Size([1, 256, 138, 16]), op: ReLU(inplace=True)
+x shape: torch.Size([1, 256, 138, 16])
+x: tensor([-34.3560, -42.0583, -27.8299, -23.4590, -22.6265, -21.5393, -21.6146,
+        -21.7026, -20.6098, -21.3324])
+x ms: 995.8196824710096
+After Layer 7: x shape torch.Size([1, 256, 138, 16])
+x shape: torch.Size([1, 256, 138, 16])
+x: tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+x ms: 76.81944460928672
+---------------------------------------------
+
+---------------------------------------------
+
+After pre_encode: audio_signal shape torch.Size([1, 138, 1024])
+out shape: torch.Size([1024, 4096])
+out: tensor([-0.4425,  0.2388, -0.3707,  0.2516,  0.0822, -0.0622,  0.4018,  0.0587,
+         0.0859, -0.3840])
+out ms: 0.1556534332707742
+audio_signal shape: torch.Size([1, 138, 1024])
+audio_signal: tensor([ 487.9199, -313.3978,  109.8925,  422.0488,   20.6455,  106.9309,
+         467.3413, -125.1918,  108.5956,  317.1499])
+audio_signal ms: 139228.13879601416
+---------------------------------------------
+
+
+```
+
+Parakeet.cpp:
+```console
+Tensor 'mel', type: f32
+ne = [128 1101 1 1]
+Tensor value at [0, 0, 0, 0]: -2.100924
+Tensor value at [1, 0, 0, 0]: -3.345516
+Tensor value at [2, 0, 0, 0]: -2.774928
+Tensor value at [3, 0, 0, 0]: -4.753236
+Tensor value at [4, 0, 0, 0]: -4.373011
+Tensor value at [5, 0, 0, 0]: -5.602739
+Tensor value at [6, 0, 0, 0]: -4.766403
+Tensor value at [7, 0, 0, 0]: -4.588367
+Tensor value at [8, 0, 0, 0]: -3.590068
+Tensor value at [9, 0, 0, 0]: -3.614062
+mel mean_sq = 0.9987380058
+Tensor 'pre_conv_0', type: f32
+ne = [64 551 256 1]
+Tensor value at [0, 0, 0, 0]: -3.798953
+Tensor value at [1, 0, 0, 0]: -4.508554
+Tensor value at [2, 0, 0, 0]: -4.842618
+Tensor value at [3, 0, 0, 0]: -3.388401
+Tensor value at [4, 0, 0, 0]: -2.732860
+Tensor value at [5, 0, 0, 0]: -3.046798
+Tensor value at [6, 0, 0, 0]: -3.664583
+Tensor value at [7, 0, 0, 0]: -2.804516
+Tensor value at [8, 0, 0, 0]: -2.740154
+Tensor value at [9, 0, 0, 0]: -2.324420
+pre_conv_0 mean_sq = 0.6081864728
+Tensor 'pre_conv_0_relu', type: f32
+ne = [64 551 256 1]
+Tensor value at [0, 0, 0, 0]: 0.000000
+Tensor value at [1, 0, 0, 0]: 0.000000
+Tensor value at [2, 0, 0, 0]: 0.000000
+Tensor value at [3, 0, 0, 0]: 0.000000
+Tensor value at [4, 0, 0, 0]: 0.000000
+Tensor value at [5, 0, 0, 0]: 0.000000
+Tensor value at [6, 0, 0, 0]: 0.000000
+Tensor value at [7, 0, 0, 0]: 0.000000
+Tensor value at [8, 0, 0, 0]: 0.000000
+Tensor value at [9, 0, 0, 0]: 0.000000
+pre_conv_0_relu mean_sq = 0.2496694243
+Tensor 'pre_conv_2', type: f32
+ne = [32 276 256 1]
+Tensor value at [0, 0, 0, 0]: 0.002926
+Tensor value at [1, 0, 0, 0]: 0.002926
+Tensor value at [2, 0, 0, 0]: 0.002926
+Tensor value at [3, 0, 0, 0]: 0.002926
+Tensor value at [4, 0, 0, 0]: 0.002926
+Tensor value at [5, 0, 0, 0]: 0.002926
+Tensor value at [6, 0, 0, 0]: 0.002926
+Tensor value at [7, 0, 0, 0]: 0.002926
+Tensor value at [8, 0, 0, 0]: 0.002926
+Tensor value at [9, 0, 0, 0]: 0.002926
+pre_conv_2 mean_sq = 0.5085358742
+Tensor 'pre_conv_3', type: f32
+ne = [32 276 256 1]
+Tensor value at [0, 0, 0, 0]: -8.336175
+Tensor value at [1, 0, 0, 0]: -25.244816
+Tensor value at [2, 0, 0, 0]: -26.440964
+Tensor value at [3, 0, 0, 0]: -23.612862
+Tensor value at [4, 0, 0, 0]: -21.322363
+Tensor value at [5, 0, 0, 0]: -18.539936
+Tensor value at [6, 0, 0, 0]: -17.565189
+Tensor value at [7, 0, 0, 0]: -18.338491
+Tensor value at [8, 0, 0, 0]: -17.765369
+Tensor value at [9, 0, 0, 0]: -17.146439
+pre_conv_3 mean_sq = 149.6801475948
+Tensor 'pre_conv_3_relu', type: f32
+ne = [32 276 256 1]
+Tensor value at [0, 0, 0, 0]: 0.000000
+Tensor value at [1, 0, 0, 0]: 0.000000
+Tensor value at [2, 0, 0, 0]: 0.000000
+Tensor value at [3, 0, 0, 0]: 0.000000
+Tensor value at [4, 0, 0, 0]: 0.000000
+Tensor value at [5, 0, 0, 0]: 0.000000
+Tensor value at [6, 0, 0, 0]: 0.000000
+Tensor value at [7, 0, 0, 0]: 0.000000
+Tensor value at [8, 0, 0, 0]: 0.000000
+Tensor value at [9, 0, 0, 0]: 0.000000
+pre_conv_3_relu mean_sq = 12.7164772143
+Tensor 'pre_conv_5', type: f32
+ne = [16 138 256 1]
+Tensor value at [0, 0, 0, 0]: -0.152901
+Tensor value at [1, 0, 0, 0]: -0.152901
+Tensor value at [2, 0, 0, 0]: -0.152901
+Tensor value at [3, 0, 0, 0]: -0.152901
+Tensor value at [4, 0, 0, 0]: -0.152901
+Tensor value at [5, 0, 0, 0]: -0.152901
+Tensor value at [6, 0, 0, 0]: -0.152901
+Tensor value at [7, 0, 0, 0]: -0.152901
+Tensor value at [8, 0, 0, 0]: -0.152901
+Tensor value at [9, 0, 0, 0]: -0.152901
+pre_conv_5 mean_sq = 8.0371412658
+Tensor 'pre_conv_6', type: f32
+ne = [16 138 256 1]
+Tensor value at [0, 0, 0, 0]: -34.356064
+Tensor value at [1, 0, 0, 0]: -42.058315
+Tensor value at [2, 0, 0, 0]: -27.829866
+Tensor value at [3, 0, 0, 0]: -23.459055
+Tensor value at [4, 0, 0, 0]: -22.626474
+Tensor value at [5, 0, 0, 0]: -21.539301
+Tensor value at [6, 0, 0, 0]: -21.614588
+Tensor value at [7, 0, 0, 0]: -21.702559
+Tensor value at [8, 0, 0, 0]: -20.609838
+Tensor value at [9, 0, 0, 0]: -21.332411
+pre_conv_6 mean_sq = 997.7338405091
+Tensor 'pre_conv_6_relu', type: f32
+ne = [16 138 256 1]
+Tensor value at [0, 0, 0, 0]: 0.000000
+Tensor value at [1, 0, 0, 0]: 0.000000
+Tensor value at [2, 0, 0, 0]: 0.000000
+Tensor value at [3, 0, 0, 0]: 0.000000
+Tensor value at [4, 0, 0, 0]: 0.000000
+Tensor value at [5, 0, 0, 0]: 0.000000
+Tensor value at [6, 0, 0, 0]: 0.000000
+Tensor value at [7, 0, 0, 0]: 0.000000
+Tensor value at [8, 0, 0, 0]: 0.000000
+Tensor value at [9, 0, 0, 0]: 0.000000
+pre_conv_6_relu mean_sq = 76.9038551885
+Tensor 'embd_conv', type: f32
+ne = [1024 138 1 1]
+Tensor value at [0, 0, 0, 0]: -53.026127
+Tensor value at [1, 0, 0, 0]: 156.796188
+Tensor value at [2, 0, 0, 0]: 145.488297
+Tensor value at [3, 0, 0, 0]: -133.339767
+Tensor value at [4, 0, 0, 0]: 85.320869
+Tensor value at [5, 0, 0, 0]: 68.053162
+Tensor value at [6, 0, 0, 0]: -94.475296
+Tensor value at [7, 0, 0, 0]: 110.999542
+Tensor value at [8, 0, 0, 0]: 32.096451
+Tensor value at [9, 0, 0, 0]: 83.606842
+embd_conv mean_sq = 90249.8230259265
+```
+
 ```console
 (Pdb) b venv/lib/python3.13/site-packages/nemo/collections/asr/parts/preprocessing/features.py:414
 Breakpoint 8 at /Users/danbev/work/ai/whisper-models/nvidia/parakeet-tdt-0.6b-v3/venv/lib/python3.13/site-packages/nemo/collections/asr/parts/preprocessing/features.py:414
 ```
 
+### window function
+```console
+(Pdb) p self.window.shape
+torch.Size([400])
+
+(Pdb) (self.window.double()**2).mean().item()
+0.374062509671165
+```
+```console
+window func size: 400:
+0.000000 0.000062 0.000248 0.000558 0.000992 0.001549 0.002230 0.003035 0.003962 0.005013
+Window func sum of squares = 0.374063
+```
+
+
 ```console
 (Pdb) p x.shape
 torch.Size([1, 176000])
+
+(Pdb) (x.double()**2).mean().item()
+0.020192833500258116
+```
+In parakeet.cpp we the input sum of squares is:
+```console
+Input sum_sq = 0.020193
+```
 
 (Pdb) p seq_len
 tensor([176000], dtype=torch.int32)
@@ -51,8 +377,6 @@ of frames that will result from the STFT.
 (Pdb) p seq_len + pad_amount
 tensor([176512], dtype=torch.int32)
 ```
-
-
 This the required padding for STFT which recall is because the normal FFT assumes
 that the signal is periodic and so we pad the signal to make it appear periodic.
 
@@ -89,22 +413,7 @@ tensor([0])
 (Pdb) p self.stft_pad_amount
 None
 ```
-So the above will be skipped. But note that there is implicit padding in the stft
-function:
-```python
-    def stft(self, x):
-        return torch.stft(
-            x,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            center=False if self.exact_pad else True,
-            window=self.window.to(dtype=torch.float, device=x.device),
-            return_complex=True,
-            pad_mode="constant",
-        )
-
-```
+So the above will be skipped.
 
 ```python
 
@@ -118,7 +427,7 @@ False
 (Pdb) p self.dither
 0.0
 ```
-So the above will be skipped be skipped too.
+So the above will be skipped be skipped too as we are not training.
 
 ```python
         # do preemphasis
@@ -133,8 +442,27 @@ So the above will be skipped be skipped too.
 
 (Pdb) p x.shape[1]
 176000
-```
 
+Before:
+(Pdb) p x.view(-1)[0: 10]
+tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+(Pdb) (x.double()**2).mean().item()
+0.020192833500258116
+
+After:
+(Pdb) p x.view(-1)[0: 10]
+tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+(Pdb) (x.double()**2).mean().item()
+0.003075680178340922
+```
+And in parakeet.cpp we get:
+```console
+preemphasis sum_sq = 0.003076
+```
+So these match up well.
+
+Next we have the STFT and this is where we can't really follow the code one to
+one with parakeet.cpp.
 ```python
 
         # disable autocast to get full range of stft values
@@ -145,6 +473,50 @@ amp is Automatic Mixed Precision which is way to optimize operations where they
 can be performed in lower precision. The autocase is enables torch to lower the
 precision and casts in the block as it sees fit. And notice that this is
 actually disabling the autocast feature. So this is where we perform the STFT.
+
+But note that there is implicit padding in the stft function:
+```python
+    def stft(self, x):
+        return torch.stft(
+            x,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            center=False if self.exact_pad else True,
+            window=self.window.to(dtype=torch.float, device=x.device),
+            return_complex=True,
+            pad_mode="constant",
+        )
+```
+Notice that `center=True` is used. This means that the signal is padded with
+```console
+(Pdb) p self.n_fft
+512
+(Pdb) p self.hop_length
+160
+(Pdb) p self.win_length
+400
+(Pdb) p self.exact_pad
+False
+
+Before:
+(Pdb) p x.shape
+torch.Size([1, 176000])
+(Pdb) (x.double()**2).mean().item()
+0.003075680178340922
+
+After:
+(Pdb) p x.shape
+torch.Size([1, 257, 1101])
+(Pdb) (x.double()**2).mean().item()
+0.22117218886573428
+(Pdb) (x.double()**2).mean().item()
+0.22117218886573428
+```
+In parakeet.cpp:
+```console
+
+```
 
 ```python
 
@@ -207,7 +579,23 @@ So here we are converting the amplitude to power/energy:
 ```console
 (Pdb) p self.mag_power
 2.0
+
+DEBUG: Power spectrum before mel filterbank (frames 6-9, first 10 freq bins):
+Frame 6: 3.2837e-06 4.2899e-06 7.4460e-06 1.1077e-05 1.4287e-05 1.8596e-05 2.6389e-05 3.6030e-05 4.1719e-05 4.4808e-05
+Frame 7: 1.0337e-09 5.5690e-06 8.7599e-05 4.1695e-04 6.7910e-04 4.2742e-04 2.5819e-04 7.3727e-04 2.2563e-03 2.8787e-03
+Frame 8: 1.1946e-06 2.0006e-06 2.2658e-05 2.3220e-04 3.3798e-04 4.6885e-04 4.4376e-04 6.5915e-04 1.7280e-03 3.7714e-03
+Frame 9: 7.4403e-07 2.1905e-06 3.0375e-05 1.4913e-04 3.3051e-04 6.8874e-04 9.3089e-04 6.0567e-04 6.5043e-04 1.6719e-03
 ```
+And in parakeet.cpp:
+```console
+Frame 6: 3.0991e-10 8.6247e-08 4.3268e-07 8.0876e-07 1.2299e-06 1.7309e-06 2.3642e-06 2.6058e-06 1.8166e-06 1.7204e-06
+Frame 7: 8.4046e-07 1.0176e-05 7.9205e-05 2.2724e-04 2.9626e-04 1.6084e-04 5.8087e-05 4.1034e-04 1.0343e-03 1.1069e-03
+Frame 8: 1.6822e-06 6.2448e-07 4.6362e-05 3.3973e-04 7.8540e-04 8.3309e-04 1.9151e-04 3.2344e-04 2.9435e-03 5.2613e-03
+Frame 9: 6.9375e-07 4.1823e-06 8.6235e-06 1.4258e-04 2.0025e-04 2.8852e-04 1.0762e-03 7.2638e-04 1.9739e-04 1.8737e-03
+```
+
+
+
 linear_spec is False so this will be skipped:
 ```python
         # return plain spectrogram if required
@@ -323,8 +711,7 @@ Next we have normalization:
 
 (before)
 (Pdb) p x.view(-1)[:10]
-tensor([-16.6355, -16.6355, -16.6355, -16.6355, -16.6355, -16.6352, -15.5229,
-        -15.3404, -15.9664, -15.9212])
+tensor([-16.6355, -16.6355, -16.6355, -16.6355, -16.6355, -16.6352, -15.5229, -15.3404, -15.9664, -15.9212])
 (Pdb) p (x.double()**2).mean().item()
 102.66635666443821
 
@@ -334,6 +721,12 @@ tensor([-2.1009, -2.1009, -2.1009, -2.1009, -2.1009, -2.1006, -0.9609, -0.7740,
         -1.4154, -1.3690])
 (Pdb) p (x.double()**2).mean().item()
 0.9987379881895161
+```
+In parakeet.cpp we have:
+```console
+DEBUG: Mel spectrogram AFTER normalization:
+-2.100924 -2.100924 -2.100924 -2.100924 -2.100922 -2.100621 -0.960900 -0.773955 -1.415364 -1.368993 
+Mean of squares (all values) = 0.9987380057
 ```
 
 ```python
@@ -437,5 +830,5 @@ Attributes:
  'training': False,
  'use_grads': False,
  'win_length': 400}
-
 ```
+
