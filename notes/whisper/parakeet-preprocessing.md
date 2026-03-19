@@ -158,12 +158,15 @@ out shape: torch.Size([1024, 4096])
 out: tensor([-0.4425,  0.2388, -0.3707,  0.2516,  0.0822, -0.0622,  0.4018,  0.0587,
          0.0859, -0.3840])
 out ms: 0.1556534332707742
+out shape: torch.Size([1024])
+out: tensor([ 0.6330, -0.7415, -0.0210, -0.3041, -0.5254,  0.2312,  0.2591,  0.3598,
+         0.5704,  0.2590])
+out ms: 0.3461039746401098
 audio_signal shape: torch.Size([1, 138, 1024])
 audio_signal: tensor([ 487.9199, -313.3978,  109.8925,  422.0488,   20.6455,  106.9309,
          467.3413, -125.1918,  108.5956,  317.1499])
 audio_signal ms: 139228.13879601416
 ---------------------------------------------
-
 
 ```
 
@@ -286,20 +289,55 @@ Tensor value at [7, 0, 0, 0]: 0.000000
 Tensor value at [8, 0, 0, 0]: 0.000000
 Tensor value at [9, 0, 0, 0]: 0.000000
 pre_conv_6_relu mean_sq = 76.9038551885
+Tensor 'enc_pre_out_w', type: f32
+ne = [4096 1024 1 1]
+Tensor value at [0, 0, 0, 0]: -0.442476
+Tensor value at [1, 0, 0, 0]: 0.238827
+Tensor value at [2, 0, 0, 0]: -0.370669
+Tensor value at [3, 0, 0, 0]: 0.251574
+Tensor value at [4, 0, 0, 0]: 0.082155
+Tensor value at [5, 0, 0, 0]: -0.062154
+Tensor value at [6, 0, 0, 0]: 0.401806
+Tensor value at [7, 0, 0, 0]: 0.058698
+Tensor value at [8, 0, 0, 0]: 0.085908
+Tensor value at [9, 0, 0, 0]: -0.384031
+enc_pre_out_w mean_sq = 0.1556534333
+Tensor 'enc_pre_out_b', type: f32
+ne = [1024 1 1 1]
+Tensor value at [0, 0, 0, 0]: 0.633022
+Tensor value at [1, 0, 0, 0]: -0.741507
+Tensor value at [2, 0, 0, 0]: -0.021015
+Tensor value at [3, 0, 0, 0]: -0.304058
+Tensor value at [4, 0, 0, 0]: -0.525447
+Tensor value at [5, 0, 0, 0]: 0.231219
+Tensor value at [6, 0, 0, 0]: 0.259149
+Tensor value at [7, 0, 0, 0]: 0.359799
+Tensor value at [8, 0, 0, 0]: 0.570433
+Tensor value at [9, 0, 0, 0]: 0.258957
+enc_pre_out_b mean_sq = 0.3461039739
 Tensor 'embd_conv', type: f32
 ne = [1024 138 1 1]
-Tensor value at [0, 0, 0, 0]: -53.026127
-Tensor value at [1, 0, 0, 0]: 156.796188
-Tensor value at [2, 0, 0, 0]: 145.488297
-Tensor value at [3, 0, 0, 0]: -133.339767
-Tensor value at [4, 0, 0, 0]: 85.320869
-Tensor value at [5, 0, 0, 0]: 68.053162
-Tensor value at [6, 0, 0, 0]: -94.475296
-Tensor value at [7, 0, 0, 0]: 110.999542
-Tensor value at [8, 0, 0, 0]: 32.096451
-Tensor value at [9, 0, 0, 0]: 83.606842
-embd_conv mean_sq = 90249.8230259265
+Tensor value at [0, 0, 0, 0]: 487.920258
+Tensor value at [1, 0, 0, 0]: -313.397949
+Tensor value at [2, 0, 0, 0]: 109.892563
+Tensor value at [3, 0, 0, 0]: 422.048706
+Tensor value at [4, 0, 0, 0]: 20.645481
+Tensor value at [5, 0, 0, 0]: 106.930923
+Tensor value at [6, 0, 0, 0]: 467.341736
+Tensor value at [7, 0, 0, 0]: -125.191956
+Tensor value at [8, 0, 0, 0]: 108.595947
+Tensor value at [9, 0, 0, 0]: 317.150665
+embd_conv mean_sq = 139383.4975138433
 ```
+```console
+audio_signal shape: torch.Size([1, 138, 1024])
+audio_signal: tensor([ 487.9199, -313.3978, 109.8925, 422.0488, 20.6455, 106.9309, 467.3413, -125.1918, 108.5956, 317.1499])
+audio_signal ms: 139228.13879601416
+```
+And this matches quite closely. So the pre-encoder layer now match.
+
+
+### Misc debugging notes
 
 ```console
 (Pdb) b venv/lib/python3.13/site-packages/nemo/collections/asr/parts/preprocessing/features.py:414
