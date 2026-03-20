@@ -1,0 +1,278 @@
+diff --git a/nemo/collections/asr/modules/conformer_encoder.py b/nemo/collections/asr/modules/conformer_encoder.py
+index 0e25ea7767..a1571214eb 100644
+--- a/nemo/collections/asr/modules/conformer_encoder.py
++++ b/nemo/collections/asr/modules/conformer_encoder.py
+@@ -627,6 +627,18 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+                 audio_signal = self.pre_encode(audio_signal)
+             else:
+                 audio_signal, length = self.pre_encode(x=audio_signal, lengths=length)
++                print("-------------- pre-encoder  ----------------------\n")
++                print(f"After pre_encode: audio_signal shape {audio_signal.shape}")
++                print(f"out shape: {self.pre_encode.out.weight.shape}")
++                print(f"out: {self.pre_encode.out.weight.contiguous().view(-1)[0:10]}")
++                print(f"out ms: {(self.pre_encode.out.weight.double()**2).mean().item()}")
++                print(f"out shape: {self.pre_encode.out.bias.shape}")
++                print(f"out: {self.pre_encode.out.bias.contiguous().view(-1)[0:10]}")
++                print(f"out ms: {(self.pre_encode.out.bias.double()**2).mean().item()}")
++                print(f"audio_signal shape: {audio_signal.shape}")
++                print(f"audio_signal: {audio_signal.contiguous().view(-1)[0:10]}")
++                print(f"audio_signal ms: {(audio_signal.double()**2).mean().item()}")
++                print("---------------------------------------------\n")
+                 length = length.to(torch.int64)
+                 # `self.streaming_cfg` is set by setup_streaming_cfg(), called in the init
+                 if self.streaming_cfg.drop_extra_pre_encoded > 0 and cache_last_channel is not None:
+@@ -649,7 +661,23 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+             cache_len = 0
+             offset = None
+ 
++        print("-------------- encoder  ----------------------\n")
++        print(f"audio_signal shape: {audio_signal.shape}")
++        print(f"audio_signal: {audio_signal.contiguous().view(-1)[0:10]}")
++        print(f"audio_signal ms: {(audio_signal.double()**2).mean().item()}")
++
++        print(f"pe shape: {self.pos_enc.pe.shape}")
++        print(f"pe: {self.pos_enc.pe.contiguous().view(-1)[0:10]}")
++        print(f"pe ms: {(self.pos_enc.pe.double()**2).mean().item()}")
++
+         audio_signal, pos_emb = self.pos_enc(x=audio_signal, cache_len=cache_len)
++        print(f"pos_emb shape: {pos_emb.shape}")
++        print(f"pos_emb: {pos_emb.contiguous().view(-1)[0:10]}")
++        print(f"pos_emb ms: {(pos_emb.double()**2).mean().item()}")
++
++        print(f"audio_signal shape: {audio_signal.shape}")
++        print(f"audio_signal: {audio_signal.contiguous().view(-1)[0:10]}")
++        print(f"audio_signal ms: {(audio_signal.double()**2).mean().item()}")
+ 
+         # Create the self-attention and padding masks
+         pad_mask, att_mask = self._create_masks(
+@@ -659,6 +687,9 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+             offset=offset,
+             device=audio_signal.device,
+         )
++        print(f"att_mask shape: {att_mask.shape}")
++        print(f"att_mask: {att_mask.contiguous().view(-1)[0:10]}")
++        print(f"att_mask ms: {(att_mask.double()**2).mean().item()}")
+ 
+         if cache_last_channel is not None:
+             pad_mask = pad_mask[:, cache_len:]
+@@ -668,6 +699,10 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+             cache_last_time_next = []
+             cache_last_channel_next = []
+ 
++        print(f"pad_mask shape: {pad_mask.shape}")
++        print(f"pad_mask: {pad_mask.contiguous().view(-1)[0:10]}")
++        print(f"pad_mask ms: {(pad_mask.double()**2).mean().item()}")
++
+         for lth, (drop_prob, layer) in enumerate(zip(self.layer_drop_probs, self.layers)):
+             original_signal = audio_signal
+             if cache_last_channel is not None:
+@@ -676,6 +711,10 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+             else:
+                 cache_last_channel_cur = None
+                 cache_last_time_cur = None
++            print(f"-----------------  Layer {lth} {type(layer).__name__} --------------")
++            print(f"layer.self_attn.linear_pos shape: {layer.self_attn.linear_pos.weight.shape}")
++            print(f"layer.self_attn.linear_pos: {layer.self_attn.linear_pos.weight.contiguous().view(-1)[0:10]}")
++            print(f"layer.self_attn.linear_pos ms: {(layer.self_attn.linear_pos.weight.double()**2).mean().item()}")
+             audio_signal = layer(
+                 x=audio_signal,
+                 att_mask=att_mask,
+diff --git a/nemo/collections/asr/parts/submodules/conformer_modules.py b/nemo/collections/asr/parts/submodules/conformer_modules.py
+index b3098ad89f..b498005daf 100644
+--- a/nemo/collections/asr/parts/submodules/conformer_modules.py
++++ b/nemo/collections/asr/parts/submodules/conformer_modules.py
+@@ -172,13 +172,41 @@ class ConformerLayer(torch.nn.Module, AttentionAdapterModuleMixin, AccessMixin):
+             cache_last_time (torch.tensor) : next cache for convolutional layers (B, d_model, T_cache)
+         """
+         residual = x
++
++        print(f"input shape: {x.shape}")
++        print(f"input: {x.contiguous().view(-1)[0:10]}")
++        print(f"input ms: {(x.double()**2).mean().item()}")
++
+         x = self.norm_feed_forward1(x)
++        print(f"norm ffn shape: {x.shape}")
++        print(f"norm ffn: {x.contiguous().view(-1)[0:10]}")
++        print(f"norm ffn ms: {(x.double()**2).mean().item()}")
+         x = self.feed_forward1(x)
++        print(f"ffn linear1 weight shape: {self.feed_forward1.linear1.weight.shape}")
++        print(f"ffn linear1 weight: {self.feed_forward1.linear1.weight.view(-1)[0:10]}")
++        print(f"ffn linear1 weight ms: {(self.feed_forward1.linear1.weight.double()**2).mean().item()}")
++        print(f"ffn linear2 weight shape: {self.feed_forward1.linear2.weight.shape}")
++        print(f"ffn linear2 weight: {self.feed_forward1.linear2.weight.view(-1)[0:10]}")
++        print(f"ffn linear2 weight ms: {(self.feed_forward1.linear2.weight.double()**2).mean().item()}")
++        print(f"ffn shape: {x.shape}")
++        print(f"ffn: {x.contiguous().view(-1)[0:10]}")
++        print(f"ffn ms: {(x.double()**2).mean().item()}")
+         residual = residual + self.dropout(x) * self.fc_factor
++        print(f"fc_factor: {self.fc_factor}")
++        print(f"residual shape: {residual.shape}")
++        print(f"residual: {residual.contiguous().view(-1)[0:10]}")
++        print(f"residual ms: {(residual.double()**2).mean().item()}")
+ 
++        print(" Attention block")
+         x = self.norm_self_att(residual)
++        print(f"norm shape: {x.shape}")
++        print(f"norm: {x.contiguous().view(-1)[0:10]}")
++        print(f"norm ms: {(x.double()**2).mean().item()}")
+         if self.self_attention_model == 'rel_pos':
+             x = self.self_attn(query=x, key=x, value=x, mask=att_mask, pos_emb=pos_emb, cache=cache_last_channel)
++            print(f"self attn: {x.shape}")
++            print(f"self attn: {x.contiguous().view(-1)[0:10]}")
++            print(f"self attn ms: {(x.double()**2).mean().item()}")
+         elif self.self_attention_model == 'rel_pos_local_attn':
+             x = self.self_attn(query=x, key=x, value=x, pad_mask=pad_mask, pos_emb=pos_emb, cache=cache_last_channel)
+         elif self.self_attention_model == 'abs_pos':
+@@ -190,6 +218,9 @@ class ConformerLayer(torch.nn.Module, AttentionAdapterModuleMixin, AccessMixin):
+             (x, cache_last_channel) = x
+ 
+         residual = residual + self.dropout(x)
++        print(f"self attn res: {residual.shape}")
++        print(f"self attn res: {residual.contiguous().view(-1)[0:10]}")
++        print(f"self attn res ms: {(residual.double()**2).mean().item()}")
+ 
+         if self.is_adapter_available():
+             # Call the MHA adapters
+diff --git a/nemo/collections/asr/parts/submodules/multi_head_attention.py b/nemo/collections/asr/parts/submodules/multi_head_attention.py
+index 3e6c056bd7..b708f38714 100644
+--- a/nemo/collections/asr/parts/submodules/multi_head_attention.py
++++ b/nemo/collections/asr/parts/submodules/multi_head_attention.py
+@@ -134,15 +134,32 @@ class MultiHeadAttention(nn.Module):
+         n_batch = value.size(0)
+         if mask is not None:
+             mask = mask.unsqueeze(1)  # (batch, 1, time1, time2)
++            print(f"mask sum: {mask.sum()}")
+             scores = scores.masked_fill(mask, -INF_VAL)
++            print(f"scores before attn shape: {scores.shape}")
++            print(f"scores before attn : {scores.contiguous().view(-1)[0:10]}")
++            print(f"scores before attn ms: {(scores.double()**2).mean().item()}")
+             attn = torch.softmax(scores, dim=-1).masked_fill(mask, 0.0)  # (batch, head, time1, time2)
+         else:
+             attn = torch.softmax(scores, dim=-1)  # (batch, head, time1, time2)
+ 
++        print(f"attn before dropout shape: {attn.shape}")
++        print(f"attn before dropout : {attn.contiguous().view(-1)[0:10]}")
++        print(f"attn before dropout ms: {(attn.double()**2).mean().item()}")
+         p_attn = self.dropout(attn)
++        print(f"V mean: {value.mean().item()}, V ms: {(value.double()**2).mean().item()}")
++        print(f"V first 5: {value[0, 0, 0, :5]}")
+         x = torch.matmul(p_attn, value)  # (batch, head, time1, d_k)
++        print(f"attn raw x shape: {x.shape}")
++        print(f"attn raw x: {x.contiguous().view(-1)[0:10]}")
++        print(f"attn raw ms: {(x.double()**2).mean().item()}")
+         x = x.transpose(1, 2).reshape(n_batch, -1, self.h * self.d_k)  # (batch, time1, d_model)
+ 
++        print(f"attn after matmul shape: {x.shape}")
++        print(f"attn after matmul : {x.contiguous().view(-1)[0:10]}")
++        print(f"attn after matmul : {(x.double()**2).mean().item()}")
++
++        print(f"before linear_out projection....")
+         return self.linear_out(x)  # (batch, time1, d_model)
+ 
+     def forward(self, query, key, value, mask, pos_emb=None, cache=None):
+@@ -283,6 +300,7 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+             output (torch.Tensor): transformed `value` (batch, time1, d_model) weighted by the query dot key attention
+             cache (torch.Tensor) : (batch, time_cache_next, size)
+         """
++        print(f"-----------------  {type(self).__name__} --------------")
+         key, value, query, cache = self.update_cache(key=key, value=value, query=query, cache=cache)
+ 
+         if torch.is_autocast_enabled():
+@@ -300,8 +318,14 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+ 
+             # (batch, head, time1, d_k)
+             q_with_bias_u = (q + self.pos_bias_u).transpose(1, 2)
++            print(f"q_with_bias_u shape: {q_with_bias_u.shape}")
++            print(f"q_with_bias_u : {q_with_bias_u.contiguous().view(-1)[0:10]}")
++            print(f"q_with_bias_u ms: {(q_with_bias_u.double()**2).mean().item()}")
+             # (batch, head, time1, d_k)
+             q_with_bias_v = (q + self.pos_bias_v).transpose(1, 2)
++            print(f"q_with_bias_v shape: {q_with_bias_v.shape}")
++            print(f"q_with_bias_v : {q_with_bias_v.contiguous().view(-1)[0:10]}")
++            print(f"q_with_bias_v ms: {(q_with_bias_v.double()**2).mean().item()}")
+ 
+             # compute attention score
+             # first compute matrix a and matrix c
+@@ -311,7 +335,13 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+             # compute matrix b and matrix d
+             # (batch, head, time1, time2)
+             matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
++            print(f"matrix_bd shape: {matrix_bd.shape}")
++            print(f"matrix_bd : {matrix_bd.contiguous().view(-1)[0:10]}")
++            print(f"matrix_bd ms: {(matrix_bd.double()**2).mean().item()}")
+             matrix_bd = self.rel_shift(matrix_bd)
++            print(f"matrix_bd shifted shape: {matrix_bd.shape}")
++            print(f"matrix_bd shifted: {matrix_bd.contiguous().view(-1)[0:10]}")
++            print(f"matrix_bd shifted ms: {(matrix_bd.double()**2).mean().item()}")
+ 
+             if self.use_pytorch_sdpa:
+                 scale_factor = 1 / math.sqrt(q_with_bias_u.size(-1))
+@@ -344,9 +374,27 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+             else:
+                 # drops extra elements in the matrix_bd to match the matrix_ac's size
+                 matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
++                print(f"matrix_ac shape: {matrix_ac.shape}")
++                print(f"matrix_ac : {matrix_ac.contiguous().view(-1)[0:10]}")
++                print(f"matrix_ac ms: {(matrix_ac.double()**2).mean().item()}")
++
+                 matrix_bd = matrix_bd[:, :, :, : matrix_ac.size(-1)]
++                print(f"matrix_bd final shape: {matrix_bd.shape}")
++                print(f"matrix_bd final : {matrix_bd.contiguous().view(-1)[0:10]}")
++                print(f"matrix_bd final ms: {(matrix_bd.double()**2).mean().item()}")
+                 scores = (matrix_ac + matrix_bd) / self.s_d_k  # (batch, head, time1, time2)
++                print(f"scores final shape: {scores.shape}")
++                print(f"scores final : {scores.contiguous().view(-1)[0:10]}")
++                print(f"scores final ms: {(scores.double()**2).mean().item()}")
++
++                print(f"linear_out.weight shape: {self.linear_out.weight.shape}")
++                print(f"self.linear_out.weight : {self.linear_out.weight.contiguous().view(-1)[0:10]}")
++                print(f"self.linear_out.weight ms: {(self.linear_out.weight.double()**2).mean().item()}")
++
+                 out = self.forward_attention(v, scores, mask)
++                print(f"out shape: {out.shape}")
++                print(f"out : {out.contiguous().view(-1)[0:10]}")
++                print(f"out ms: {(out.double()**2).mean().item()}")
+ 
+         if cache is None:
+             return out
+diff --git a/nemo/collections/asr/parts/submodules/subsampling.py b/nemo/collections/asr/parts/submodules/subsampling.py
+index fee6204bd0..e16d2d8a0b 100644
+--- a/nemo/collections/asr/parts/submodules/subsampling.py
++++ b/nemo/collections/asr/parts/submodules/subsampling.py
+@@ -725,6 +725,9 @@ def calculate_conv_output_size(input_size: torch.Tensor, kernel_size: int, strid
+ class MaskedConvSequential(nn.Sequential):
+     def forward(self, x, lengths):
+         # Convert input (batch, time, features) to conv format
++        print(f"\ninput shape: {x.shape}")
++        print(f"\ninput: {x.contiguous().view(-1)[0:10]}")
++        print(f"input ms: {(x.double()**2).mean().item()}")
+         x = x.unsqueeze(1)  # (batch, 1, time, features)
+         current_lengths = lengths.clone().float()
+         mask = self._create_mask(x, current_lengths.long())
+@@ -735,7 +738,26 @@ class MaskedConvSequential(nn.Sequential):
+             x = apply_channel_mask(x, mask)
+ 
+             # Apply layer
++            print("\n---------------------------------------------")
++            print(f"Before Layer {i} {type(layer).__name__}: x.shape: {x.shape}, op: {layer}")
++            print(f"x shape: {x.shape}")
++            print(f"x: {x.contiguous().view(-1)[0:10]}")
++            print(f"x ms: {(x.double()**2).mean().item()}")
++            if hasattr(layer, 'weight') and layer.weight is not None:
++                print(f"{layer.weight.shape}")
++                print(f"{layer.weight.contiguous().view(-1)[0:10]}")
++                print(f"{(layer.weight.double()**2).mean().item()}")
++                bias_val = getattr(layer, 'bias', None)
++                if hasattr(layer, 'bias') and layer.bias is not None:
++                    print(f"{layer.bias.contiguous().view(-1)[0:10]}")
++                    print(f"{(layer.bias.double()**2).mean().item()}")
++
+             x = layer(x)
++            print(f"After Layer {i}: x shape {x.shape}")
++            print(f"x shape: {x.shape}")
++            print(f"x: {x.contiguous().view(-1)[0:10]}")
++            print(f"x ms: {(x.double()**2).mean().item()}")
++            print("---------------------------------------------\n")
+ 
+             # Update lengths for stride operations with proper padding
+             if hasattr(layer, 'stride') and layer.stride != (1, 1):
