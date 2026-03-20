@@ -337,6 +337,25 @@ Tensor value at [8, 0, 0, 0]: -90.243919
 Tensor value at [9, 0, 0, 0]: -49.085518
 enc_0_attn_out mean_sq = 2151.0597265859
 
+Tensor 'enc_0_attn_probs', type: f32
+ne = [138 138 8 1]
+Tensor value at [0, 0, 0, 0]: 0.802226
+Tensor value at [1, 0, 0, 0]: 0.007187
+Tensor value at [2, 0, 0, 0]: 0.000853
+Tensor value at [3, 0, 0, 0]: 0.000934
+Tensor value at [4, 0, 0, 0]: 0.001278
+Tensor value at [5, 0, 0, 0]: 0.001264
+Tensor value at [6, 0, 0, 0]: 0.001746
+Tensor value at [7, 0, 0, 0]: 0.000713
+Tensor value at [8, 0, 0, 0]: 0.001796
+Tensor value at [9, 0, 0, 0]: 0.003172
+enc_0_attn_probs mean_sq = 0.0015213771
+
+attn before dropout shape: torch.Size([1, 8, 138, 138])
+attn before dropout : tensor([8.0209e-01, 7.1853e-03, 8.5313e-04, 9.3347e-04, 1.2782e-03, 1.2640e-03,
+        1.7461e-03, 7.1240e-04, 1.7957e-03, 3.1717e-03])
+attn before dropout ms: 0.0002531075320057071
+
 ```
 
 ###
@@ -432,3 +451,64 @@ Tensor value at [2, 0, 0, 0]: -22.195379
 But in python we have
 [-25.6702, -25.3171, -23.9058, -22.1954, ...
 We are missing the first values!
+
+ne = [138 138 8 1]
+Tensor value at [0, 0, 0, 0]: -25.670147
+Tensor value at [1, 0, 0, 0]: -25.317028
+Tensor value at [2, 0, 0, 0]: -23.905769
+Tensor value at [3, 0, 0, 0]: -22.195379
+Tensor value at [4, 0, 0, 0]: -21.054802
+Tensor value at [5, 0, 0, 0]: -20.903545
+Tensor value at [6, 0, 0, 0]: -21.479376
+Tensor value at [7, 0, 0, 0]: -22.094097
+Tensor value at [8, 0, 0, 0]: -22.165684
+Tensor value at [9, 0, 0, 0]: -21.610710
+enc_0_attn_rel_pos_shifted mean_sq = 23715.5413888033
+
+
+I think I found something that is odd, this is after
+        x = torch.matmul(p_attn, value)  # (batch, head, time1, d_k)
+        x = x.transpose(1, 2).reshape(n_batch, -1, self.h * self.d_k)  # (batch, time1, d_model)
+In python and after:
+            cur = ggml_mul_mat(ctx0, V_cur, probs);
+in c++.
+
+attn after matmul shape: torch.Size([1, 138, 1024])
+attn after matmul : tensor([-3.5839, -1.4587,  2.1541,  3.2880, -5.2931,  1.4242, -1.5868,  2.1512,
+        -1.3767, -3.6639])
+attn after matmul : 3.0276351453347816
+
+Tensor 'enc_0_attn_inp', type: f32
+ne = [8 128 138 1]
+Tensor value at [0, 0, 0, 0]: -3.583522
+Tensor value at [1, 0, 0, 0]: 1.243704
+Tensor value at [2, 0, 0, 0]: -0.029015
+Tensor value at [3, 0, 0, 0]: -1.039636
+Tensor value at [4, 0, 0, 0]: -0.475555
+Tensor value at [5, 0, 0, 0]: -1.527506
+Tensor value at [6, 0, 0, 0]: 1.856665
+Tensor value at [7, 0, 0, 0]: 1.362838
+Tensor value at [0, 1, 0, 0]: -1.459205
+Tensor value at [1, 1, 0, 0]: 0.049745
+enc_0_attn_inp mean_sq = 5.3382286534
+
+
+attn raw x shape: torch.Size([1, 8, 138, 128])
+attn raw x: tensor([-3.5839, -1.4587,  2.1541,  3.2880, -5.2931,  1.4242, -1.5868,  2.1512, -1.3767, -3.6639])
+attn raw ms: 3.027635145334781
+
+Tensor 'enc_0_attn_inp', type: f32
+ne = [128 138 8 1]
+Tensor value at [0, 0, 0, 0]: -3.583522
+Tensor value at [1, 0, 0, 0]: -1.459205
+Tensor value at [2, 0, 0, 0]: 2.154346
+Tensor value at [3, 0, 0, 0]: 3.287622
+Tensor value at [4, 0, 0, 0]: -5.293824
+Tensor value at [5, 0, 0, 0]: 1.423583
+Tensor value at [6, 0, 0, 0]: -1.586587
+Tensor value at [7, 0, 0, 0]: 2.152065
+Tensor value at [8, 0, 0, 0]: -1.377119
+Tensor value at [9, 0, 0, 0]: -3.664559
+enc_0_attn_inp mean_sq = 5.3382286534
+
+
