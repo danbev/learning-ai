@@ -40,8 +40,9 @@ WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whol
 WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-cpu.a -Wl,--no-whole-archive 
 #WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
-CFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
-CXXFLAGS += -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
+MACOS_TARGET = -mmacosx-version-min=15.6
+CFLAGS += $(MACOS_TARGET) -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
+CXXFLAGS += $(MACOS_TARGET) -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
 WHOLE_ARCHIVE  = -Wl,-force_load,ggml/build/src/libggml.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-base.a
 WHOLE_ARCHIVE += -Wl,-force_load,ggml/build/src/libggml-cpu.a
