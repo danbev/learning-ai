@@ -8084,4 +8084,42 @@ new tesor:
   [256_, 188, 16, 1]
 ```
 
+### rel-shift
 
+Take this initial tensor:
+```console
+[0, 1, 2]
+[0, 1, 2]
+[0, 1, 2]
+```
+And we then pad:
+```console
+[0, 1, 2, X]
+[0, 1, 2, X]
+[0, 1, 2, X]
+```
+And we roll to move the padding column to the front:
+```console
+[X, 0, 1, 2]
+[X, 0, 1, 2]
+[X, 0, 1, 2]
+```
+Then we flatten:
+```console
+[X, 0, 1, 2, X, 0, 1, 2, X, 0, 1, 2]
+```
+Then we reshape to [3, 4]
+```console
+[X, 0, 1]           
+[2, X, 0]
+[1, 2, X]
+[0, 1, 2]
+```
+Notice that X is on the diagonal of the 3x3 submatrix.
+And then we can create a view this to a 3x3:
+```
+[X, 0, 1]           
+[2, X, 0]
+[1, 2, X]
+```
+An example of this can be found in [rel-shift2.cpp](../fundamentals/ggml/src/rel-shift2.cpp).
