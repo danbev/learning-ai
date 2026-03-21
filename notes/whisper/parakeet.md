@@ -303,6 +303,29 @@ In Parakeet they have a layer called `preprocessor` which is equivalent to
 `whisper_pcm_to_mel_with_state` which convertes the audio signal to a mel
 spectrogram.
 
+```console
+(Pdb) p x.shape
+torch.Size([1, 128, 1101])
+
+(Pdb) p x.view(-1)[:10]
+tensor([-2.1009, -2.1009, -2.1009, -2.1009, -2.1009, -2.1006, -0.9609, -0.7740, -1.4154, -1.3690])
+
+(Pdb) p (x.double()**2).mean().item()
+0.9981744415301794
+```
+
+log melspectrogram in parakeet.cpp:
+```console
+DEBUG: Mel spectrogram BEFORE normalization:
+-16.635532 -16.635532 -16.635532 -16.635532 -16.635532 -16.635498 -16.595291 -14.870002 -16.375238 -15.539862 
+Sum of squares = 235881.203697
+
+DEBUG: Mel spectrogram AFTER normalization:
+-2.042357 -2.042357 -2.042357 -2.042357 -2.042357 -2.042323 -2.001918 -0.268119 -1.780780 -0.941283 
+Sum of squares = 1099.977891
+```
+
+
 ### Encoder
 Here is an overview of the encoder layers:
 ```console
@@ -1193,7 +1216,660 @@ enc_pos_enc:  type: f32, shape: [1024, 9999, 1, 1]. First 10 values
         -0.663950 -0.747777 0.418575  -0.908182 0.001462 -0.999999 -0.913418 0.407022 0.695440 -0.718584 
 ```
 
+So that was the relative positional encoding, this the breakpoint to set:
+```console
+(Pdb) b /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/modules/conformer_encoder.py:656
+```
+We have the self-attention mask and padding:
+```python
+        audio_signal, pos_emb = self.pos_enc(x=audio_signal, cache_len=cache_len)
+
+        # Create the self-attention and padding masks
+        pad_mask, att_mask = self._create_masks(
+            att_context_size=cur_att_context_size,
+            padding_length=padding_length,
+            max_audio_length=max_audio_length,
+            offset=offset,
+            device=audio_signal.device,
+        )
+```
+Notice that there are two masks here 'pad_mask' and 'att_mask'. The pad_mask
+is for the end of the buffer to determine real audio from empty padding (I think)
+The att_mask is for the self attention specifying which time frames are allowed
+to see (like not looking into the future or only look at the last 2 seconds).
+
+```python
+    def _create_masks(self, att_context_size, padding_length, max_audio_length, offset, device):
+        if self.self_attention_model != "rel_pos_local_attn":
+            att_mask = torch.ones(1, max_audio_length, max_audio_length, dtype=torch.bool, device=device)
+
+            ...
+
+        # pad_mask is the masking to be used to ignore paddings
+        pad_mask = torch.arange(0, max_audio_length, device=device).expand(
+            padding_length.size(0), -1
+        ) < padding_length.unsqueeze(-1)
+```
+```console
+(Pdb) p self.self_attention_model
+'rel_pos'
+(Pdb) p self.att_context_style
+'regular'
+```
+```
+(Pdb) p att_mask.shape
+torch.Size([1, 138, 138])
+```
+```python
+        # pad_mask is the masking to be used to ignore paddings
+        pad_mask = torch.arange(0, max_audio_length, device=device).expand(
+            padding_length.size(0), -1
+        ) < padding_length.unsqueeze(-1)
+```
+So the first is just creating a tensor using a range from 0 to 138:
+```console
+(Pdb) p torch.arange(0, max_audio_length, device=device)
+tensor([  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,
+         14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,
+         28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,  41,
+         42,  43,  44,  45,  46,  47,  48,  49,  50,  51,  52,  53,  54,  55,
+         56,  57,  58,  59,  60,  61,  62,  63,  64,  65,  66,  67,  68,  69,
+         70,  71,  72,  73,  74,  75,  76,  77,  78,  79,  80,  81,  82,  83,
+         84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  95,  96,  97,
+         98,  99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+        112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125,
+        126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137])
+```
+This is then expended, that is we add a dimension to it:
+```console
+(Pdb) p torch.arange(0, max_audio_length, device=device).expand(1, -1)
+tensor([[  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,
+          14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,
+          28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,  41,
+          42,  43,  44,  45,  46,  47,  48,  49,  50,  51,  52,  53,  54,  55,
+          56,  57,  58,  59,  60,  61,  62,  63,  64,  65,  66,  67,  68,  69,
+          70,  71,  72,  73,  74,  75,  76,  77,  78,  79,  80,  81,  82,  83,
+          84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  95,  96,  97,
+          98,  99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+         112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125,
+         126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137]])
+
+(Pdb) p torch.arange(0, max_audio_length, device=device).expand(1, -1).shape
+torch.Size([1, 138])
+```
+The last step which is `< padding_length.unsqueeze(-1)`:
+```console
+(Pdb) p padding_length.unsqueeze(-1)
+tensor([[138]])
+```
+This is checking every element if it is smaller than the actual lenght:
+```console
+(Pdb) p torch.arange(0, max_audio_length, device=device).expand(1, -1) < padding_length.unsqueeze(-1)
+tensor([[True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True, True, True, True, True, True, True,
+         True, True, True, True, True, True]])
+```
+```python
+        if att_mask is not None:
+            # pad_mask_for_att_mask is the mask which helps to ignore paddings
+            pad_mask_for_att_mask = pad_mask.unsqueeze(1).repeat([1, max_audio_length, 1])
+            pad_mask_for_att_mask = torch.logical_and(pad_mask_for_att_mask, pad_mask_for_att_mask.transpose(1, 2))
+            # att_mask is the masking to be used by the MHA layers to ignore the tokens not supposed to be visible
+            att_mask = att_mask[:, :max_audio_length, :max_audio_length]
+            # paddings should also get ignored, so pad_mask_for_att_mask is used to ignore their corresponding scores
+            att_mask = torch.logical_and(pad_mask_for_att_mask, att_mask.to(pad_mask_for_att_mask.device))
+            att_mask = ~att_mask
+```
+```console
+(Pdb) p pad_mask.unsqueeze(0).repeat([1, max_audio_length, 1])
+tensor([[[True, True, True,  ..., True, True, True],
+         [True, True, True,  ..., True, True, True],
+         [True, True, True,  ..., True, True, True],
+         ...,
+         [True, True, True,  ..., True, True, True],
+         [True, True, True,  ..., True, True, True],
+         [True, True, True,  ..., True, True, True]]])
+(Pdb) p pad_mask.unsqueeze(0).repeat([1, max_audio_length, 1]).shape
+torch.Size([1, 138, 138])
+```
+Following that we have the layers of the model:
+```python
+        for lth, (drop_prob, layer) in enumerate(zip(self.layer_drop_probs, self.layers)):
+            original_signal = audio_signal
+```
+The drop_probs are just for training and we can ignore them for inference.
+```console
+(Pdb) p lth
+0
+(Pdb) p layer
+ConformerLayer(
+  (norm_feed_forward1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+  (feed_forward1): ConformerFeedForward(
+    (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+    (activation): Swish()
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+  )
+  (norm_conv): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+  (conv): ConformerConvolution(
+    (pointwise_conv1): Conv1d(1024, 2048, kernel_size=(1,), stride=(1,), bias=False)
+    (depthwise_conv): CausalConv1D(1024, 1024, kernel_size=(9,), stride=(1,), groups=1024, bias=False)
+    (batch_norm): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (activation): Swish()
+    (pointwise_conv2): Conv1d(1024, 1024, kernel_size=(1,), stride=(1,), bias=False)
+  )
+  (norm_self_att): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+  (self_attn): RelPositionMultiHeadAttention(
+    (linear_q): Linear(in_features=1024, out_features=1024, bias=False)
+    (linear_k): Linear(in_features=1024, out_features=1024, bias=False)
+    (linear_v): Linear(in_features=1024, out_features=1024, bias=False)
+    (linear_out): Linear(in_features=1024, out_features=1024, bias=False)
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear_pos): Linear(in_features=1024, out_features=1024, bias=False)
+  )
+  (norm_feed_forward2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+  (feed_forward2): ConformerFeedForward(
+    (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+    (activation): Swish()
+    (dropout): Dropout(p=0.1, inplace=False)
+    (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+  )
+  (dropout): Dropout(p=0.1, inplace=False)
+  (norm_out): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+)
+```
+A layer is called using:
+```python
+            audio_signal = layer(
+                x=audio_signal,
+                att_mask=att_mask,
+                pos_emb=pos_emb,
+                pad_mask=pad_mask,
+                cache_last_channel=cache_last_channel_cur,
+                cache_last_time=cache_last_time_cur,
+            )
+```
+Notice that the masks are passed in.
+```console
+(Pdb) b venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/conformer_modules.py:174
+Breakpoint 2 at /home/danbev/work/ai/whisper-models/nvidia/parkeet-tdt-0.6b-v3/venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/conformer_modules.py:174
+```
+And this is what the layers forward method looks like:
+```python
+    def forward(self, x, att_mask=None, pos_emb=None, pad_mask=None, cache_last_channel=None, cache_last_time=None):
+        """
+        Args:
+            x (torch.Tensor): input signals (B, T, d_model)
+            att_mask (torch.Tensor): attention masks(B, T, T)
+            pos_emb (torch.Tensor): (L, 1, d_model)
+            pad_mask (torch.tensor): padding mask
+            cache_last_channel (torch.tensor) : cache for MHA layers (B, T_cache, d_model)
+            cache_last_time (torch.tensor) : cache for convolutional layers (B, d_model, T_cache)
+        Returns:
+            x (torch.Tensor): (B, T, d_model)
+            cache_last_channel (torch.tensor) : next cache for MHA layers (B, T_cache, d_model)
+            cache_last_time (torch.tensor) : next cache for convolutional layers (B, d_model, T_cache)
+        """
+        residual = x
+        x = self.norm_feed_forward1(x)
+        x = self.feed_forward1(x)
+        residual = residual + self.dropout(x) * self.fc_factor
+
+        x = self.norm_self_att(residual)
+        if self.self_attention_model == 'rel_pos':
+            x = self.self_attn(query=x, key=x, value=x, mask=att_mask, pos_emb=pos_emb, cache=cache_last_channel)
+        elif self.self_attention_model == 'rel_pos_local_attn':
+            x = self.self_attn(query=x, key=x, value=x, pad_mask=pad_mask, pos_emb=pos_emb, cache=cache_last_channel)
+        elif self.self_attention_model == 'abs_pos':
+            x = self.self_attn(query=x, key=x, value=x, mask=att_mask, cache=cache_last_channel)
+        else:
+            x = None
+
+        if x is not None and cache_last_channel is not None:
+            (x, cache_last_channel) = x
+
+        residual = residual + self.dropout(x)
+
+        if self.is_adapter_available():
+            # Call the MHA adapters
+            pack_input = {
+                'x': residual,
+                'loc': 'mha',
+                'att_mask': att_mask,
+                'pos_emb': pos_emb,
+            }
+            pack_input = self.forward_enabled_adapters(pack_input)
+            residual = pack_input['x']
+
+        x = self.norm_conv(residual)
+        x = self.conv(x, pad_mask=pad_mask, cache=cache_last_time)
+        if cache_last_time is not None:
+            (x, cache_last_time) = x
+        residual = residual + self.dropout(x)
+
+        x = self.norm_feed_forward2(residual)
+        x = self.feed_forward2(x)
+        residual = residual + self.dropout(x) * self.fc_factor
+
+        x = self.norm_out(residual)
+
+        if self.is_adapter_available():
+            # Call the adapters
+            pack_input = {
+                'x': x,
+                'loc': 'post',
+            }
+            pack_input = self.forward_enabled_adapters(pack_input)
+            x = pack_input['x']
+
+        if self.is_access_enabled(getattr(self, "model_guid", None)) and self.access_cfg.get(
+            'save_encoder_tensors', False
+        ):
+            self.register_accessible_tensor(name='encoder', tensor=x)
+        if cache_last_channel is None:
+            return x
+        else:
+            return x, cache_last_channel, cache_last_time
+```
+
+```python
+        pad_mask = ~pad_mask
+        return pad_mask, att_mask
+```
+Continuing with the layers, I've implemented this block:
+```console
+    (layers): ModuleList(
+      (0-23): 24 x ConformerLayer(
+        (norm_feed_forward1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+        (feed_forward1): ConformerFeedForward(
+          (linear1): Linear(in_features=1024, out_features=4096, bias=False)
+          (activation): Swish()
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=False)
+        )
+        // ---- this is what is to be implemented now ---
+        (conv): ConformerConvolution(
+          (pointwise_conv1): Conv1d(1024, 2048, kernel_size=(1,), stride=(1,), bias=False)
+          (depthwise_conv): CausalConv1D(1024, 1024, kernel_size=(9,), stride=(1,), groups=1024, bias=False)
+          (batch_norm): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (activation): Swish()
+          (pointwise_conv2): Conv1d(1024, 1024, kernel_size=(1,), stride=(1,), bias=False)
+        )
+```
+So we can see that this is a convolution, it start with pointwise convolution
+which is something we did in the subsampling encoder graph.
+```console
+(Pdb) b venv/lib/python3.12/site-packages/nemo/collections/asr/parts/submodules/conformer_modules.py:174
+```
+```python
+        x = self.norm_conv(residual)
+        x = self.conv(x, pad_mask=pad_mask, cache=cache_last_time)
+```
+And the convolution layer looks like this (its in the same file): 
+```python
+class ConformerConvolution(nn.Module):
+    ...
+
+    def forward(self, x, pad_mask=None, cache=None):
+        x = x.transpose(1, 2)
+        x = self.pointwise_conv1(x)
+
+        # Compute the activation function or use GLU for original Conformer
+        if self.pointwise_activation == 'glu_':
+            x = nn.functional.glu(x, dim=1)
+        else:
+            x = self.pointwise_activation(x)
+
+        if pad_mask is not None:
+            x = x.masked_fill(pad_mask.unsqueeze(1), 0.0)
+
+        x = self.depthwise_conv(x, cache=cache)
+        if cache is not None:
+            x, cache = x
+
+        if self.norm_type == "layer_norm":
+            x = x.transpose(1, 2)
+            x = self.batch_norm(x)
+            x = x.transpose(1, 2)
+        else:
+            x = self.batch_norm(x)
+
+        x = self.activation(x)
+        x = self.pointwise_conv2(x)
+        x = x.transpose(1, 2)
+        if cache is None:
+            return x
+        else:
+            return x, cache
+```
+```console
+(Pdb) p x.shape
+torch.Size([1, 138, 1024])
+
+(Pdb) p self.pointwise_conv1
+Conv1d(1024, 2048, kernel_size=(1,), stride=(1,), bias=False)
+
+(Pdb) p self.pointwise_activation
+'glu_'
+```
+After transpose:
+```console
+(Pdb) p x.shape
+torch.Size([1, 1024, 138])
+```
+After pointwise_conv1:
+```console
+(Pdb) p x.shape
+torch.Size([1, 2048, 138])
+```
+In this case batch normalization is used:
+```console
+(Pdb) p self.norm_type
+'batch_norm'
+```
+
+```console
+(Pdb) p self.depthwise_conv
+CausalConv1D(1024, 1024, kernel_size=(9,), stride=(1,), groups=1024, bias=False)
+```
+
 _wip_
+
+
+The shape of the subsampling compution is
+```c++
+(gdb) p cur->ne
+$4 = {1024, 188, 1, 1}
+
+   0 [0   ...           1023]
+     ...
+ 187 [0   ...           1023]
+```
+So we have an feature/hidden state of 1024, and we have 188 time or sequence
+length.
+This what the layers of the model are going to operate on, they will project
+them to higher dimensions (ffn1/ffn2) and this is also what attention is run on.
+The attention is multihead attention and there are 8 heads:
+```console
+1985	            const int d_head = n_state / n_head;
+(gdb) p n_head
+$9 = 8
+```
+And this matches the model yml:
+```yml
+  n_heads: 8
+```
+So we divide the 1024 features into groups of 128 each (1024/8=128).
+
+We know that n_time is 188:
+```c++
+            const int p_len = 2 * n_time - 1;
+            const int p_offset = (9999 / 2) - (n_time - 1);
+            struct ggml_tensor * pos_raw = ggml_view_2d(ctx0, model.pe,
+                n_state, p_len,
+                model.pe->nb[1],
+                p_offset * model.pe->nb[1]);
+```
+```console
+(gdb) p model.pe->ne
+(gdb) p p_offset
+$22 = 4812
+(gdb) p p_len
+$20 = 375
+
+(gdb) p model.pe->ne
+$17 = {1024, 9999, 1, 1}
+   0 [0   ...            1023]
+     ...
+     ...
+     ...
+     ...
+     ...
+9999 [0   ...            1023]
+
+(gdb) p pos_raw->ne
+$23 = {1024, 375, 1, 1}
+   0 [0   ...            1023]
+     ...
+     ...
+ 374 [0   ...            1023]
+```
+And recall that pe is the computed relative distances scores. We are creating
+a few into that matrix for the current 188 frame of audio (from -187 to +187)
+But these are just "raw" sin/cos values:
+```c++
+        const int d_model = model.hparams.n_audio_state;
+        const int max_len = 9999;
+
+        // Positions range from +4999 to -4999 (centered at 0)
+        std::vector<float> pe_buf(d_model * max_len);
+        for (int idx = 0; idx < max_len; idx++) {
+            int position = (max_len / 2) - idx;
+            for (int i = 0; i < d_model; i++) {
+                // div_term for this dimension: 10000^(-2k/d_model) where k = i/2
+                float div_term = expf(-(i / 2) * 2.0f * logf(10000.0f) / d_model);
+                float angle = position * div_term;
+
+                if (i % 2 == 0) {
+                    pe_buf[idx * d_model + i] = sinf(angle);
+                } else {
+                    pe_buf[idx * d_model + i] = cosf(angle);
+                }
+            }
+        }
+```
+Then model does not understand them directly, but it has been trained to do so,
+and we use the att_pos_w to get the model understand. Like which frequencies
+matter for identifiying word boundries etc:
+```c++
+    struct ggml_tensor * pos = ggml_mul_mat(ctx0, model.layers[il].attn_pos_w, pos_raw);
+```
+At this point Q_cur has the shape:
+```console
+(gdb) p Q_cur->ne
+$28 = {1024, 188, 1, 1}
+```
+But we are using multihead attention so we need to reshape this to
+```console
+{128, 8, 188, 1}
+0
+   0 [0  ... 127]
+     ...
+   7 [0  ... 127]
+
+1
+   0 [0  ... 127]
+     ...
+   7 [0  ... 127]
+...
+187
+   0 [0  ... 127]
+     ...
+   7 [0  ... 127]
+```
+
+```c++
+    Q_cur = ggml_reshape_3d(ctx0, Q_cur, d_head, n_head, n_time);
+```
+We also reshape the position tensor which recall was:
+```console
+(gdb) p pos->ne
+$33 = {1024, 375, 1, 1}
+```
+```c++
+        pos   = ggml_reshape_3d(ctx0,   pos, d_head, n_head, p_len);
+(gdb) p pos->ne
+$35 = {128, 8, 375, 1}
+```
+Next we have the this layers learned content bias which allows the model to ensure
+that certain query features should be important regardless if the attention score
+is high or not. It is like something that the model is always looking for.
+So by adding this to the query it is like telling it to "look for things that
+match my current audio `and` look for things that i've learned that are generally
+important in every sentence.
+```c++
+    struct ggml_tensor * Q_u = ggml_add(ctx0, Q_cur, model.layers[il].attn_pos_bias_u);
+```
+```console
+(gdb) p model.layers[il].attn_pos_bias_u->ne
+$36 = {128, 8, 1, 1}
+(gdb) p Q_u->ne
+$37 = {128, 8, 188, 1}
+```
+And we also have something similar but this time it is for positional scores, so
+this help the model decide which distances are important.
+```c++
+    struct ggml_tensor * Q_v = ggml_add(ctx0, Q_cur, model.layers[il].attn_pos_bias_v);
+```
+```console
+(gdb) p model.layers[il].attn_pos_bias_v->ne
+$38 = {128, 8, 1, 1}
+```
+```console
+(gdb) p K_prep->ne
+$9 = {128, 188, 8, 1}
+(gdb) p Q_prep->ne
+$10 = {128, 188, 8, 1}
+(gdb) p matrix_ac->ne
+$11 = {188, 188, 8, 1}
+```
+Next we have:
+```c++
+            struct ggml_tensor * P_T = ggml_permute(ctx0, pos, 0, 2, 1, 3);
+            struct ggml_tensor * matrix_bd = ggml_mul_mat(ctx0, P_T, Q_v);
+```
+So this is transposing the position tensor, then this is multiplied by Q_v, the
+query with the position bias added.
+```console
+(gdb) p matrix_bd->ne
+$1 = {188, 375, 8, 1}
+```
+Lets walk through this relative shift:
+```console
+(gdb) p content_scores->ne
+$10 = {188, 188, 8, 1}         // Audio i vs Audio j
+(gdb) p rel_pos_scores->ne     // Audio i vs every possible distance
+$9 = {375, 188, 8, 1}
+```
+
+So the starting state is the following:
+```console
+(gdb) p rel_pos_scores->ne
+$9 = {375, 188, 8, 1}
+```
+So we have 188 audio frames and each has 375 distance values. And we have 8
+heads.
+
+We will swap the first two dimensions:
+```c++
+            rel_pos_scores = ggml_cont(ctx0, ggml_permute(ctx0, rel_pos_scores, 1, 0, 2, 3));
+            // rel shift
+            {
+                const auto pos_len = rel_pos_scores->ne[0];
+                const auto q_len = rel_pos_scores->ne[1];
+                const auto h  = rel_pos_scores->ne[2];
+```
+
+```console
+(gdb) p rel_pos_scores->ne
+$20 = {188, 375, 8, 1}
+```
+
+```
+(gdb) p pos_len
+$13 = 188
+(gdb) p q_len
+$14 = 375
+(gdb) p h
+$15 = 8
+```
+Next we us pad to add a column of spacing, by using ggml_pad and specifying the
+first dimension:
+```c++
+                rel_pos_scores = ggml_pad(ctx0, rel_pos_scores, 1, 0, 0, 0);
+```
+```console
+(gdb) p rel_pos_scores->ne
+$17 = {189, 375, 8, 1}
+```
+Next we are using ggml_roll and we are shifting the first dimension by one and
+entries will roll over at the end to the beginning.
+```c++
+                rel_pos_scores = ggml_roll(ctx0, rel_pos_scores, 1, 0, 0, 0);
+```
+So the first dimension is now 189 after the padding. So is this moving the
+padding to the first column. So we padded by one and then moved that empty column
+to be the first.
+
+Next we rehape:
+```c++
+                rel_pos_scores = ggml_reshape_3d(ctx0, rel_pos_scores, q_len, pos_len + 1, h);
+```
+```console
+(gdb) p rel_pos_scores->ne
+$24 = {375, 189, 8, 1}
+```
+
+```c++
+                rel_pos_scores = ggml_view_3d(ctx0, rel_pos_scores, q_len, pos_len, h, rel_pos_scores->nb[1],
+                                              rel_pos_scores->nb[2], rel_pos_scores->nb[0] * q_len);
+```
+```console
+(gdb) p rel_pos_scores->ne
+$25 = {375, 188, 8, 1}
+```
+
+```c++
+                rel_pos_scores = ggml_cont_3d(ctx0, rel_pos_scores, pos_len, q_len, h);
+```
+```console
+(gdb) p rel_pos_scores->ne
+$26 = {188, 375, 8, 1}
+```
+
+```c++
+            }
+            rel_pos_scores = ggml_view_3d(ctx0, rel_pos_scores, content_scores->ne[0], rel_pos_scores->ne[1],
+                                          rel_pos_scores->ne[2], rel_pos_scores->nb[1], rel_pos_scores->nb[2], 0);
+```
+
+So lets imagine that the relative position matrix is a [5, 3, 1, 1]:
+```console
+  Row 0:   -2.0  -1.0   0.0   1.0   2.0
+  Row 1:   -2.0  -1.0   0.0   1.0   2.0
+  Row 2:   -2.0  -1.0   0.0   1.0   2.0
+```
+And our content score might look something like this ([3, 3, 1, 1]):
+```console
+  Row 0:    0.1   0.2   0.3
+  Row 1:    0.4   0.5   0.6
+  Row 2:    0.7   0.8   0.9
+```
+
+We want to produce a relative position matrix that looks like this:
+```console
+  Row 0:    0.0   1.0   2.0
+  Row 1:   -1.0   0.0   1.0
+  Row 2:   -2.0  -1.0   0.0
+```
+With this is is possible for Row 0 (frame 0) can look at Frame 0: Distance is 0
+because (0,0) in the position matrix is 0. To look up frame 1 it uses (0,1) which
+is 1 so distance is +1.
+```console
+  Row 0:    0.1   0.2   0.3
+  Row 1:    0.4   0.5   0.6
+  Row 2:    0.7   0.8   0.9
+```
+
 
 ```console
 (Pdb) p pos_emb.shape
@@ -1370,6 +2046,17 @@ layer previously):
 )
 ```
 
+### Decoder
+So we have first process the audio to the the log mel spectrogram, which is
+passed through the pre-encoder which filters, subsamples the time dimension, and
+projects the features into the model's abstract feature space. The encoder then
+processes this information through a series of conformer layers. 
+
+In the decoder we first have the network, this takes the input token and looks
+up the embedding and then passes it through the LSTM layers. The output of this
+is then passed to the joint network which combines it with the encoder output to
+produce the final output.
+
 ### Debugging
 ```console
 (venv) $ python -m pdb test-model.py
@@ -1532,3 +2219,431 @@ component/layer for this.
 
 ### pre-emphasis
 TODO:
+
+
+### impl notes
+So after the attention we have the following tensor:
+```console
+(gdb) p cur->ne
+$6 = {1024, 188, 1, 1}
+```
+So we have 188 time frames each with an embedding dimension of 1024:
+```console
+  0 [0   ...   1023]
+         ...
+ 187[0   ...   1023]
+```
+This will go through a normalization and then a pointwise convolution:
+```console
+{1024, 188, 1, 1} -> {2048, 188, 1, 1}
+```
+So we have now doubles the hidden space.
+
+And then we have the glu which and after that we have:
+```console
+(gdb) p cur->ne
+$8 = {188, 1024, 1, 1}
+```
+
+```console
+{9, 1024, 1, 1}
+
+    0 [0  ... 8]
+          ...
+          ...
+          ...
+          ...
+ 1023 [0  ... 8]
+ ```
+So we have 1024 different 9 element kernels. Each of there were trained
+to detect different things from the hidden embeddings for this layer.
+
+And at this point we have 188 + 9 padding audio frames (time sequence), and
+the embedding dimension/feature dimension i
+```console
+ {196, 1024, 1, 1}
+
+   0 [0    ...    195]
+           ...
+           ...
+           ...
+           ...
+ 1023[0    ...    195]
+```
+ For each embedding dimension we want to slide the kernel over them, one for
+ each row. For example kernel 3 only slides over feature 3, they are specific
+ to a feature. To achive this we need to reshape the tensors.
+```console
+{9, 1, 1024, 1}
+
+0
+    0 [0  ... 8]
+1 
+    0 [0  ... 8]
+
+...
+
+1023
+    0 [0  ... 8]
+ ```
+And likewise for the input:
+```console
+ {196, 1, 1024, 1}
+0
+   0 [0    ...    195]
+1
+   0 [0    ...    195]
+...
+1023
+   0 [0    ...    195]
+```
+
+ ```console
+    struct ggml_tensor * dw_weights = ggml_reshape_3d(ctx0, model.layers[il].conv_dw_w, 9, 1, 1024);
+    // {196, 1024, 1, 1} -> {196, 1, 1024, 1}
+    // We have 196 audio frames (time sequences) 188 + 9 padding.
+    struct ggml_tensor * dw_input = ggml_reshape_3d(ctx0, cur, 196, 1, 1024);
+```
+
+### Troubleshooting
+Check the hann window:
+```console
+(Pdb) p self.preprocessor.featurizer.window
+tensor([0.0000e+00, 6.1989e-05, 2.4796e-04, 5.5784e-04, 9.9158e-04, 1.5491e-03,
+        2.2301e-03, 3.0347e-03, 3.9624e-03, 5.0132e-03, 6.1867e-03, 7.4826e-03,
+        8.9007e-03, 1.0441e-02, 1.2102e-02, 1.3884e-02, 1.5787e-02, 1.7810e-02,
+        1.9952e-02, 2.2214e-02, 2.4594e-02, 2.7091e-02, 2.9706e-02, 3.2438e-02,
+        3.5286e-02, 3.8249e-02, 4.1326e-02, 4.4517e-02, 4.7821e-02, 5.1238e-02,
+```
+```console
+DEBUG: Using window size=400, model window available=1
+DEBUG: First 10 window values: 0.000000 0.000062 0.000248 0.000558 0.000992 0.001549 0.002230 0.003035 0.003962 0.005013
+```
+This looks alright.
+
+```console
+(Pdb) p self.preprocessor.featurizer.normalize
+'per_feature
+```
+
+
+
+Print out the log mel spectrogram:
+Original model:
+```console
+(Pdb) p processed_signal.shape
+torch.Size([1, 128, 1101])
+(Pdb) p processed_signal_length
+tensor([1100])
+
+(Pdb) p processed_signal.flatten()[:10]
+tensor([-2.1009, -2.1009, -2.1009, -2.1009, -2.1009, -2.1006, -0.9609, -0.7740, -1.4154, -1.3690])
+```
+Converted model:
+```console
+$1 = std::vector of length 140928, capacity 140928 = {-2.05021167, -2.0502038, -2.05019426, -2.0502038, -2.05020976, -2.05017686,
+  -2.01004934, -0.266436309, -1.78740978, -0.941619873, 0.0673485398, 0.504330456, -1.34932756, -0.418367326, -0.718491852,
+  -0.104035422, -1.82856262, -0.803638935, -0.167220548, -1.65037513, 0.787270248, 0.189204603, -1.20511734, -0.908368051,
+  -0.855753958, -0.605012834, -0.384045064, -0.134049699, -1.33701825, -0.594381094, -0.104019038, -1.60528338, -1.29771447,
+  -0.54337126, 0.71394676, -1.04538357, -0.327619195, -1.06872046, -1.03802013, -1.74886429, -1.19933796, -1.18783236, -1.70146394,
+```
+
+
+(Pdb) p sample_rate
+16000
+(Pdb) p n_window_size
+400
+(Pdb) p n_window_stride
+160
+(Pdb) p window
+'hann'
+(Pdb) p normalize
+'per_feature'
+(Pdb) p n_fft
+512
+(Pdb) p preemph
+0.97
+(Pdb) p nfilt
+128
+(Pdb) p lowfreq
+0
+(Pdb) p highfreq
+None
+(Pdb) p log
+True
+(Pdb) p log_zero_guard_type
+'add'
+(Pdb) p log_zero_guard_value
+5.960464477539063e-08
+(Pdb) p dither
+1e-05
+(Pdb) p pad_to
+0
+(Pdb) p max_duration
+16.7
+(Pdb) p frame_splicing
+1
+(Pdb) p exact_pad
+False
+(Pdb) p pad_value
+0.0
+(Pdb) p mag_power
+2.0
+(Pdb) p use_grads
+False
+(Pdb) p rng
+None
+(Pdb) p nb_augmentation_prob
+0.0
+(Pdb) p nb_max_freq
+4000
+(Pdb) p mel_norm
+'slaney'
+
+
+------------------------------
+### Checking tensors
+
+Window function:
+```console
+(Pdb) pp self.window.shape
+torch.Size([400])
+
+(Pdb) pp self.window.view(-1)[:10]
+tensor([0.0000e+00, 6.1989e-05, 2.4796e-04, 5.5784e-04, 9.9158e-04, 1.5491e-03, 2.2301e-03, 3.0347e-03, 3.9624e-03, 5.0132e-03])
+(Pdb) p (self.window.double()**2).mean().item()
+0.374062509671165
+```
+
+```console
+window func size: 400:
+0.000000 0.000062 0.000248 0.000558 0.000992 0.001549 0.002230 0.003035 0.003962 0.005013
+Sum of squares = 0.374063
+```
+
+Log melspectrogram in python:
+```console
+(Pdb) p x.shape
+torch.Size([1, 128, 1101])
+
+(Pdb) p x.view(-1)[:10]
+tensor([-2.1009, -2.1009, -2.1009, -2.1009, -2.1009, -2.1006, -0.9609, -0.7740, -1.4154, -1.3690])
+
+(Pdb) p (x.double()**2).mean().item()
+0.9981744415301794
+```
+
+```console
+DEBUG: Mel spectrogram AFTER normalization:
+-2.050006 -2.050006 -2.050006 -2.050006 -2.050006 -2.049972 -2.009351 -0.266303 -1.787033 -0.943058
+Mean of squares (all values) = 0.9990137367
+```
+
+And the same tensor in parakeet.cpp look like this:
+```console
+(gdb) p model.enc_pre_conv_0_w->ne
+$1 = {3, 3, 1, 256}
+
+Tensor 'enc_pre_conv_0_w', type: f32
+ne = [3 3 1 256]
+Tensor value at [0, 0, 0, 0]: 0.096362
+Tensor value at [1, 0, 0, 0]: 0.025928
+Tensor value at [2, 0, 0, 0]: -0.486745
+Tensor value at [0, 1, 0, 0]: -0.226291
+Tensor value at [1, 1, 0, 0]: -0.319316
+Tensor value at [2, 1, 0, 0]: 1.150509
+Tensor value at [0, 2, 0, 0]: -0.009058
+Tensor value at [1, 2, 0, 0]: 0.119550
+Tensor value at [2, 2, 0, 0]: 0.008535
+Tensor value at [0, 0, 0, 1]: 0.058622
+enc_pre_conv_0_w mean_sq = 0.1960858460
+```
+So we have a pretty close match and I think we can say that the weights are
+correct for this tensor. Now lets look at the output of the convolution using
+this tensor.
+
+And the input x tensor is:
+```console
+(Pdb) p x
+tensor([[[[-2.1009, -3.3455, -2.7749,  ..., -1.6735, -1.6589, -1.7144],
+          [-2.1009, -3.3455, -2.7749,  ..., -1.6735, -1.6589, -1.7144],
+          [-2.1009, -3.3455, -2.7749,  ..., -1.6735, -1.6589, -1.7144],
+          ...,
+          [ 0.5293,  0.3247,  0.3585,  ...,  1.1187,  0.5583,  0.5893],
+          [ 0.4928, -0.4181, -0.5930,  ...,  1.0809,  1.1783,  1.1371],
+          [ 0.0000,  0.0000,  0.0000,  ...,  0.0000,  0.0000,  0.0000]]]])
+(Pdb) p x.is_contiguous()
+False
+(Pdb) p x.contiguous().view(-1)[:10]
+tensor([-2.1009, -3.3455, -2.7749, -4.7532, -4.3730, -5.6027, -4.7664, -4.5884, -3.5901, -3.6141])
+```
+
+After the convolution operation, which also adds the bias:
+```console
+(Pdb) p layer.bias.shape
+torch.Size([256])
+
+(Pdb) p layer.bias.view(-1)[:10]
+tensor([-3.4104e-01,  2.1441e-01, -7.0875e-01, -5.4349e-01, -4.5362e-01, -6.2717e-02, -5.1516e-01, -2.3044e-01,  9.4809e-06, -3.9431e-03])
+
+(Pdb) p (layer.bias.double()**2).mean().item()
+0.09868425240328094
+```
+
+And the bias in parakeet.cpp:
+```console
+Tensor 'enc_pre_conv_0_b', type: f32
+ne = [1 1 256 1]
+Tensor value at [0, 0, 0, 0]: -0.341044
+Tensor value at [0, 0, 1, 0]: 0.214413
+Tensor value at [0, 0, 2, 0]: -0.708747
+Tensor value at [0, 0, 3, 0]: -0.543491
+Tensor value at [0, 0, 4, 0]: -0.453616
+Tensor value at [0, 0, 5, 0]: -0.062717
+Tensor value at [0, 0, 6, 0]: -0.515164
+Tensor value at [0, 0, 7, 0]: -0.230438
+Tensor value at [0, 0, 8, 0]: 0.000009
+Tensor value at [0, 0, 9, 0]: -0.003943
+enc_pre_conv_0_b mean_sq = 0.0986842517
+```
+
+output in python:
+```console
+(Pdb) p x.contiguous().view(-1)[:10]
+tensor([-3.7990, -4.5085, -4.8426, -3.3884, -2.7329, -3.0468, -3.6646, -2.8045, -2.7402, -2.3244])
+(Pdb) p (x.double()**2).mean().item()
+0.6077475048109069
+```
+
+output in parakeet.cpp:
+```console
+Tensor 'pre_conv_0_bias', type: f32
+ne = [551 64 256 1]
+Tensor value at [0, 0, 0, 0]: -2.477598
+Tensor value at [1, 0, 0, 0]: -1.983089
+Tensor value at [2, 0, 0, 0]: -1.983040
+Tensor value at [3, 0, 0, 0]: 0.105437
+Tensor value at [4, 0, 0, 0]: -0.858916
+Tensor value at [5, 0, 0, 0]: 0.364040
+Tensor value at [6, 0, 0, 0]: -0.588580
+Tensor value at [7, 0, 0, 0]: -0.093665
+Tensor value at [8, 0, 0, 0]: -0.762478
+Tensor value at [9, 0, 0, 0]: -2.190899
+pre_conv_0_bias mean_sq = 0.6100155181
+```
+So there is a mismatch in the output values. Lets just double check that the
+inputs to the operations are the same.
+Python:
+```console
+(Pdb) p x.shape
+torch.Size([1, 1101, 128])
+
+(Pdb) p x.contiguous().view(-1)[:10]
+tensor([-2.1009, -3.3455, -2.7749, -4.7532, -4.3730, -5.6027, -4.7664, -4.5884, -3.5901, -3.6141])
+
+(Pdb) p (x.double()**2).mean().item()
+0.9981744415301794
+```
+Then there is an unsqueeze:
+```console
+(Pdb) p x.shape
+torch.Size([1, 1, 1101, 128])
+```
+Then we have this mask:
+```console
+(Pdb) l
+724
+725  	class MaskedConvSequential(nn.Sequential):
+726  	    def forward(self, x, lengths):
+727  	        # Convert input (batch, time, features) to conv format
+728 B	        x = x.unsqueeze(1)  # (batch, 1, time, features)
+729  ->	        current_lengths = lengths.clone().float()
+730  	        mask = self._create_mask(x, current_lengths.long())
+```
+```console
+(Pdb) p mask.contiguous().view(-1)[:10]
+tensor([1., 1., 1., 1., 1., 1., 1., 1., 1., 1.])
+
+(Pdb) p (mask.double()**2).mean().item()
+0.9990917347865577
+```
+And this mask is applied:
+```console
+(Pdb) l .
+730  	        mask = self._create_mask(x, current_lengths.long())
+731
+732  	        # Process through each layer with mask propagation
+733  	        for i, layer in enumerate(self):
+734  	            # Apply current mask before layer
+735  ->	            x = apply_channel_mask(x, mask)
+736
+737  	            # Apply layer
+738  	            x = layer(x)
+```
+```console
+(Pdb) p x.contiguous().view(-1)[:10]
+tensor([-2.1009, -3.3455, -2.7749, -4.7532, -4.3730, -5.6027, -4.7664, -4.5884, -3.5901, -3.6141])
+(Pdb) p (x.double()**2).mean().item()
+0.9981744415301794
+```
+But this does not change the data.
+
+In parakeet.cpp:
+```console
+Tensor 'mel', type: f32
+ne = [1101 128 1 1]
+Tensor value at [0, 0, 0, 0]: -2.049985
+Tensor value at [1, 0, 0, 0]: -2.049981
+Tensor value at [2, 0, 0, 0]: -2.049985
+Tensor value at [3, 0, 0, 0]: -2.049984
+Tensor value at [4, 0, 0, 0]: -2.049968
+Tensor value at [5, 0, 0, 0]: -2.049945
+Tensor value at [6, 0, 0, 0]: -2.008003
+Tensor value at [7, 0, 0, 0]: -0.266578
+Tensor value at [8, 0, 0, 0]: -1.787163
+Tensor value at [9, 0, 0, 0]: -0.942764
+mel mean_sq = 0.9986481456
+```
+
+
+### conv tensor conversion
+```console
+(Pdb) p layer.weight.shape
+torch.Size([256, 1, 3, 3])
+```
+```c++
+model.enc_pre_conv_0_w = create_tensor(PARAKEET_TENSOR_ENC_PRE_CONV_0_WEIGHT, ggml_new_tensor_4d(ctx, vtype, 3, 3, 1, n_subsampling_channels));
+```
+
+
+
+Perfect! Now I can see the exact problem. Comparing the mel spectrum values before log:
+
+  Python:
+  - Frame 6: 1.2174e-07
+  - Frame 7: 1.5803e-07
+  - Frame 8: 5.6772e-08
+  - Frame 9: 6.2160e-08
+
+  C++:
+  - Frame 6: 2.4475e-09 (50x smaller!)
+  - Frame 7: 2.8876e-07 (1.8x larger)
+  - Frame 8: 1.7721e-08 (3.2x smaller)
+  - Frame 9: 1.1868e-07 (1.9x larger)
+
+  The values are significantly different, meaning the issue is in the power spectrum calculation or mel filterbank application,
+  not in normalization.
+
+  Since the window function matches perfectly and padding looks correct, let me check the mel filterbank weights. Can you verify
+  in Python:
+
+  # Check filterbank values
+  print(f"\nDEBUG: Mel filterbank first bin (first 10 weights):")
+  print(f"{self.fb[0, 0, :10]}")
+  print(f"Filterbank mean squared: {(self.fb.double()**2).mean().item()}")
+
+  Also, I need to check if there's a difference in how the power spectrum is computed. In your earlier Python output, you showed
+  the mean squared of the power spectrum before mel filterbank was 36.698161585839.
+
+  Can you add debug to C++ to print the power spectrum values for a specific frame (like frame 7 where audio starts)?
+
