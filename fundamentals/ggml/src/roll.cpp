@@ -19,7 +19,7 @@ static void print_tensor_2d(struct ggml_tensor * t, const char * label) {
 }
 
 int main(void) {
-    printf("=== ggml_roll example ===\n\n");
+    printf("ggml_roll example\n");
 
     struct ggml_init_params params = {
         .mem_size   = 16 * 1024 * 1024,
@@ -41,11 +41,13 @@ int main(void) {
 
     struct ggml_tensor * roll_cols = ggml_roll(ctx, a, 1, 0, 0, 0);
     ggml_set_name(roll_cols, "roll_cols_+2");
+    // So this will shift the x/columns right be 1 position and warp.
+    // We specify 0, 1, 0, 0 this would shift the y/rows down by 1 positon.
 
     struct ggml_cgraph * cgraph = ggml_new_graph(ctx);
     ggml_build_forward_expand(cgraph, roll_cols);
 
-    ggml_graph_compute_with_ctx(ctx, cgraph, /*n_threads=*/1);
+    ggml_graph_compute_with_ctx(ctx, cgraph, 1);
 
     print_tensor_2d(roll_cols, "roll(shift0=+1, shift1=0)  -- shift cols right by 1");
 
