@@ -28,9 +28,10 @@ int main(void) {
 
     const int T = 3;             // n_time (rows)
     const int P = 2 * T - 1;     // pos_len (ruler width)
-    const int H = 2;             // n_head (to check 3D strides)
+    const int H = 1;             // n_head (to check 3D strides)
 
     struct ggml_tensor * rel_pos_scores = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, P, T, H);
+    ggml_set_name(rel_pos_scores, "rel_pos_scores");
     std::vector<float> data(ggml_nelements(rel_pos_scores));
     int center = P / 2; // Index 2 for P=5
     for (int h = 0; h < H; ++h) {
