@@ -8085,6 +8085,8 @@ new tesor:
 ```
 
 ### rel-shift
+This section is about explaining a technique used in conformer models where they
+use relative position encoding.
 
 Take this initial tensor:
 ```console
@@ -8092,7 +8094,9 @@ Take this initial tensor:
 [0, 1, 2]
 [0, 1, 2]
 ```
-And we then pad:
+And we then pad using ggml_pad and specify the first dimension is to be padded
+which adds a column of zeros on the right side of the tensor (represented by X
+here):
 ```console
 [0, 1, 2, X]
 [0, 1, 2, X]
@@ -8104,22 +8108,83 @@ And we roll to move the padding column to the front:
 [X, 0, 1, 2]
 [X, 0, 1, 2]
 ```
-Then we flatten:
+Then we envision this tensor flatten:
 ```console
 [X, 0, 1, 2, X, 0, 1, 2, X, 0, 1, 2]
 ```
-Then we reshape to [3, 4]
+Now, we then reshape this tensnor into a [3, 4]:
 ```console
-[X, 0, 1]           
+[X, 0, 1]
 [2, X, 0]
 [1, 2, X]
 [0, 1, 2]
 ```
 Notice that X is on the diagonal of the 3x3 submatrix.
-And then we can create a view this to a 3x3:
+
+And then we can create a view of this to a 3x3:
 ```
 [X, 0, 1]           
 [2, X, 0]
 [1, 2, X]
 ```
 An example of this can be found in [rel-shift2.cpp](../fundamentals/ggml/src/rel-shift2.cpp).
+
+Lets take a litle more complex example:
+```console
+rel_pos_scores [5, 3, 2, 1]
+  Row 0:   98.0  99.0 100.0 101.0 102.0
+  Row 1:   98.0  99.0 100.0 101.0 102.0
+  Row 2:   98.0  99.0 100.0 101.0 102.0
+
+padded [6, 3, 2, 1]
+  Row 0:   98.0  99.0 100.0 101.0 102.0   0.0
+  Row 1:   98.0  99.0 100.0 101.0 102.0   0.0
+  Row 2:   98.0  99.0 100.0 101.0 102.0   0.0
+
+rolled [6, 3, 2, 1]
+  Row 0:    0.0  98.0  99.0 100.0 101.0 102.0
+  Row 1:    0.0  98.0  99.0 100.0 101.0 102.0
+  Row 2:    0.0  98.0  99.0 100.0 101.0 102.0
+```
+
+```console
+reshaped [3, 6, 2, 1]
+  Row 0:    0.0  98.0  99.0
+  Row 1:  100.0 101.0 102.0
+  Row 2:    0.0  98.0  99.0
+  Row 3:  100.0 101.0 102.0
+  Row 4:    0.0  98.0  99.0
+  Row 5:  100.0 101.0 102.0
+```
+So we want to create a 3x3 tensor from the above tensor. Notice that the first
+row is a "biproduct" of the pad and roll and we want to start past that line
+so we would need to skip 12 bytes (3x4), this will be our offset. And we now
+we want to have 3 columns and 3 rows, but we need to also consider the strides
+for the dimensions. For the columns we need a stride of 4 bytes but we don't need
+to specify that as that is decuded by the type of data. But for the other dimesions
+we do have to specify the stride. For the rows
+```console
+               offset
+                 ↓
+[0.0  98.0  99.0 100.0 101.0 102.0 0.0  98.0  99.0 100.0 101.0 102.0 0.0  98.0  99.0 100.0 101.0 102.0]
+[   skipped 12  ] 
+
+                        20 bytes                  40 bytes                      60
+                          ↓                          ↓                           ↓
+[100.0 101.0 102.0 0.0 98.0 99.0 100.0 101.0 102.0 0.0 98.0 99.0 100.0 101.0 102.0]
+[   row  0       ]          [   row 1      ]           [ row 2       ]
+```
+So if we use a stride of 5 elements, that is 20 bytes we skipt the shifted values
+and the output becomes this 3x3 tensor (view):
+```console
+sliced [3, 3, 2, 1]
+  Row 0:  100.0 101.0 102.0
+  Row 1:   99.0 100.0 101.0
+  Row 2:   98.0  99.0 100.0
+```
+```console
+--- Head 0 ---
+  100.0   101.0   102.0
+   99.0   100.0   101.0
+   98.0    99.0   100.0
+```
