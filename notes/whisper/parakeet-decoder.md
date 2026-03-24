@@ -408,3 +408,28 @@ Tensor value at [8, 0, 0, 0]: 0.481923
 Tensor value at [9, 0, 0, 0]: 0.577011
 lstm_layer_0_o_t mean_sq = 0.2829721501
 ```
+
+And the new embedding vector is:
+```console
+new x shape: torch.Size([1, 1, 640])
+new x: tensor([-0.0059, -0.0164, -0.0030, -0.0016,  0.0003,  0.0064,  0.0060, -0.0049, -0.0020, -0.0124])
+new x: ms: 0.0015669984467194518
+```
+```console
+(gdb) n
+Tensor 'lstm_pred_out', type: f32
+ne = [640 1 1 1]
+nb = [4 2560 2560 2560]
+Tensor value at [0, 0, 0, 0]: -0.005916
+Tensor value at [1, 0, 0, 0]: -0.016424
+Tensor value at [2, 0, 0, 0]: -0.002994
+Tensor value at [3, 0, 0, 0]: -0.001601
+Tensor value at [4, 0, 0, 0]: 0.000315
+Tensor value at [5, 0, 0, 0]: 0.006404
+Tensor value at [6, 0, 0, 0]: 0.005976
+Tensor value at [7, 0, 0, 0]: -0.004926
+Tensor value at [8, 0, 0, 0]: -0.002023
+Tensor value at [9, 0, 0, 0]: -0.012439
+lstm_pred_out mean_sq = 0.0015669989
+```
+So the lstm network looks like it is working correctly.
