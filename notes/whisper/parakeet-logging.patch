@@ -455,10 +455,10 @@ index 3e6c056bd7..8729d2c112 100644
          if cache is None:
              return out
 diff --git a/nemo/collections/asr/parts/submodules/subsampling.py b/nemo/collections/asr/parts/submodules/subsampling.py
-index fee6204bd0..e16d2d8a0b 100644
+index 7f9fc60699..8f49650c60 100644
 --- a/nemo/collections/asr/parts/submodules/subsampling.py
 +++ b/nemo/collections/asr/parts/submodules/subsampling.py
-@@ -725,6 +725,9 @@ def calculate_conv_output_size(input_size: torch.Tensor, kernel_size: int, strid
+@@ -655,6 +655,9 @@ def calculate_conv_output_size(input_size: torch.Tensor, kernel_size: int, strid
  class MaskedConvSequential(nn.Sequential):
      def forward(self, x, lengths):
          # Convert input (batch, time, features) to conv format
@@ -468,7 +468,7 @@ index fee6204bd0..e16d2d8a0b 100644
          x = x.unsqueeze(1)  # (batch, 1, time, features)
          current_lengths = lengths.clone().float()
          mask = self._create_mask(x, current_lengths.long())
-@@ -735,7 +738,26 @@ class MaskedConvSequential(nn.Sequential):
+@@ -665,7 +668,26 @@ class MaskedConvSequential(nn.Sequential):
              x = apply_channel_mask(x, mask)
  
              # Apply layer
@@ -496,36 +496,67 @@ index fee6204bd0..e16d2d8a0b 100644
              # Update lengths for stride operations with proper padding
              if hasattr(layer, 'stride') and layer.stride != (1, 1):
 diff --git a/nemo/collections/common/parts/rnn.py b/nemo/collections/common/parts/rnn.py
-index 0b5435acc7..7839484a38 100644
+index 0b5435acc7..93cef56cf3 100644
 --- a/nemo/collections/common/parts/rnn.py
 +++ b/nemo/collections/common/parts/rnn.py
-@@ -227,7 +227,29 @@ class LSTMDropout(torch.nn.Module):
+@@ -227,7 +227,60 @@ class LSTMDropout(torch.nn.Module):
      def forward(
          self, x: torch.Tensor, h: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
      ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
 +        print(f"--------- {type(self.lstm).__name__} ------------")
-+        print(f"weight_hh_l0 weight shape: {self.lstm.weight_hh_l0.shape}")
-+        print(f"weight_hh_l0: {self.lstm.weight_hh_l0.contiguous().view(-1)[0:10]}")
-+        print(f"weight_hh_l0 ms: {(self.lstm.weight_hh_l0.double()**2).mean().item()}")
-+
-+        print(f"weight_hh_l1 weight shape: {self.lstm.weight_hh_l1.shape}")
-+        print(f"weight_hh_l1: {self.lstm.weight_hh_l1.contiguous().view(-1)[0:10]}")
-+        print(f"weight_hh_l1 ms: {(self.lstm.weight_hh_l1.double()**2).mean().item()}")
-+
-+        print(f"weight_ih_l0 weight shape: {self.lstm.weight_ih_l0.shape}")
++        print(f"weight_ih_l0 shape: {self.lstm.weight_ih_l0.shape}")
 +        print(f"weight_ih_l0: {self.lstm.weight_ih_l0.contiguous().view(-1)[0:10]}")
 +        print(f"weight_ih_l0 ms: {(self.lstm.weight_ih_l0.double()**2).mean().item()}")
++        print(f"bias_ih_l0 shape: {self.lstm.bias_ih_l0.shape}")
++        print(f"bias_ih_l0: {self.lstm.bias_ih_l0.contiguous().view(-1)[0:10]}")
++        print(f"bias_ih_l0 ms: {(self.lstm.bias_ih_l0.double()**2).mean().item()}")
 +
-+        print(f"weight_ih_l1 weight shape: {self.lstm.weight_ih_l1.shape}")
++        print(f"weight_ih_l1 shape: {self.lstm.weight_ih_l1.shape}")
 +        print(f"weight_ih_l1: {self.lstm.weight_ih_l1.contiguous().view(-1)[0:10]}")
 +        print(f"weight_ih_l1 ms: {(self.lstm.weight_ih_l1.double()**2).mean().item()}")
++        print(f"bias_ih_l1 shape: {self.lstm.bias_ih_l1.shape}")
++        print(f"bias_ih_l1: {self.lstm.bias_ih_l1.contiguous().view(-1)[0:10]}")
++        print(f"bias_ih_l1 ms: {(self.lstm.bias_ih_l1.double()**2).mean().item()}")
 +
-         x, h = self.lstm(x, h)
++
++        print(f"weight_hh_l0 shape: {self.lstm.weight_hh_l0.shape}")
++        print(f"weight_hh_l0: {self.lstm.weight_hh_l0.contiguous().view(-1)[0:10]}")
++        print(f"weight_hh_l0 ms: {(self.lstm.weight_hh_l0.double()**2).mean().item()}")
++        print(f"bias_hh_l0 shape: {self.lstm.bias_hh_l0.shape}")
++        print(f"bias_hh_l0: {self.lstm.bias_hh_l0.contiguous().view(-1)[0:10]}")
++        print(f"bias_hh_l0 ms: {(self.lstm.bias_hh_l0.double()**2).mean().item()}")
++
++        print(f"weight_hh_l1 shape: {self.lstm.weight_hh_l1.shape}")
++        print(f"weight_hh_l1: {self.lstm.weight_hh_l1.contiguous().view(-1)[0:10]}")
++        print(f"weight_hh_l1 ms: {(self.lstm.weight_hh_l1.double()**2).mean().item()}")
++        print(f"bias_hh_l1 shape: {self.lstm.bias_hh_l1.shape}")
++        print(f"bias_hh_l1: {self.lstm.bias_hh_l1.contiguous().view(-1)[0:10]}")
++        print(f"bias_hh_l1 ms: {(self.lstm.bias_hh_l1.double()**2).mean().item()}")
++
++        print(f"h_state shape: {h[0].shape}")
++        print(f"h_state: {h[0].contiguous().view(-1)[0:10]}")
++        print(f"h_state: ms: {(h[0].double()**2).mean().item()}")
++
++        print(f"c_state shape: {h[1].shape}")
++        print(f"c_state: {h[1].contiguous().view(-1)[0:10]}")
++        print(f"c_state: ms: {(h[1].double()**2).mean().item()}")
++
 +        print(f"x shape: {x.shape}")
 +        print(f"x: {x.contiguous().view(-1)[0:10]}")
-+        print(f"x ms: {(x.double()**2).mean().item()}")
++        print(f"x: ms: {(x.double()**2).mean().item()}")
 +
-+        print(f"h shape: {h}")
+         x, h = self.lstm(x, h)
++        print(f"updated h_state shape: {h[0].shape}")
++        print(f"updated h_state: {h[0].contiguous().view(-1)[0:10]}")
++        print(f"updated h_state: ms: {(h[0].double()**2).mean().item()}")
++
++        print(f"updated c_state shape: {h[1].shape}")
++        print(f"updated c_state: {h[1].contiguous().view(-1)[0:10]}")
++        print(f"updated c_state: ms: {(h[1].double()**2).mean().item()}")
++
++        print(f"new x shape: {x.shape}")
++        print(f"new x: {x.contiguous().view(-1)[0:10]}")
++        print(f"new x: ms: {(x.double()**2).mean().item()}")
  
          if self.dropout:
              x = self.dropout(x)
