@@ -58,6 +58,92 @@ pred_1_ih_w mean_sq = 0.0195933476
 ```
 So the two input to hidden weights look good.
 
+And the biases:
+```console
+bias_ih_l0 shape: torch.Size([2560])
+bias_ih_l0: tensor([ 0.6148,  0.0201, -0.3556,  0.4211,  0.5016,  0.0922,  0.1749,  0.2933,
+         0.3930,  0.2531])
+bias_ih_l0 ms: 0.15821436759665083
+
+bias_ih_l1 shape: torch.Size([2560])
+bias_ih_l1: tensor([-1.0063,  0.1899, -0.0338, -0.1681, -0.6291, -1.4161, -1.8615, -0.7408,
+        -0.6594,  0.1817])
+bias_ih_l1 ms: 0.5914398869601122
+```
+```console
+Tensor 'pred_0_ih_b', type: f32
+ne = [2560 1 1 1]
+nb = [4 10240 10240 10240]
+Tensor value at [0, 0, 0, 0]: 0.614826
+Tensor value at [1, 0, 0, 0]: 0.020149
+Tensor value at [2, 0, 0, 0]: -0.355560
+Tensor value at [3, 0, 0, 0]: 0.421130
+Tensor value at [4, 0, 0, 0]: 0.501597
+Tensor value at [5, 0, 0, 0]: 0.092152
+Tensor value at [6, 0, 0, 0]: 0.174912
+Tensor value at [7, 0, 0, 0]: 0.293331
+Tensor value at [8, 0, 0, 0]: 0.393027
+Tensor value at [9, 0, 0, 0]: 0.253118
+pred_0_ih_b mean_sq = 0.1582143676
+Tensor 'pred_1_ih_b', type: f32
+ne = [2560 1 1 1]
+nb = [4 10240 10240 10240]
+Tensor value at [0, 0, 0, 0]: -1.006311
+Tensor value at [1, 0, 0, 0]: 0.189915
+Tensor value at [2, 0, 0, 0]: -0.033847
+Tensor value at [3, 0, 0, 0]: -0.168075
+Tensor value at [4, 0, 0, 0]: -0.629074
+Tensor value at [5, 0, 0, 0]: -1.416134
+Tensor value at [6, 0, 0, 0]: -1.861542
+Tensor value at [7, 0, 0, 0]: -0.740779
+Tensor value at [8, 0, 0, 0]: -0.659427
+Tensor value at [9, 0, 0, 0]: 0.181663
+pred_1_ih_b mean_sq = 0.5914398877
+```
+
+```console
+bias_hh_l0 shape: torch.Size([2560])
+bias_hh_l0: tensor([ 0.6425,  0.0227, -0.3591,  0.3803,  0.4799,  0.1192,  0.1688,  0.3171,
+         0.4005,  0.2199])
+bias_hh_l0 ms: 0.48959604766099324
+
+bias_hh_l1 shape: torch.Size([2560])
+bias_hh_l1: tensor([-1.0186,  0.2159,  0.0159, -0.1612, -0.6269, -1.4517, -1.8947, -0.7625,
+        -0.6602,  0.1272])
+bias_hh_l1 ms: 0.7729063754253067
+```
+```console
+Tensor 'pred_0_hh_b', type: f32
+ne = [2560 1 1 1]
+nb = [4 10240 10240 10240]
+Tensor value at [0, 0, 0, 0]: 0.642521
+Tensor value at [1, 0, 0, 0]: 0.022742
+Tensor value at [2, 0, 0, 0]: -0.359071
+Tensor value at [3, 0, 0, 0]: 0.380312
+Tensor value at [4, 0, 0, 0]: 0.479876
+Tensor value at [5, 0, 0, 0]: 0.119183
+Tensor value at [6, 0, 0, 0]: 0.168764
+Tensor value at [7, 0, 0, 0]: 0.317118
+Tensor value at [8, 0, 0, 0]: 0.400493
+Tensor value at [9, 0, 0, 0]: 0.219857
+pred_0_hh_b mean_sq = 0.4895960480
+
+Tensor 'pred_1_hh_b', type: f32
+ne = [2560 1 1 1]
+nb = [4 10240 10240 10240]
+Tensor value at [0, 0, 0, 0]: -1.018631
+Tensor value at [1, 0, 0, 0]: 0.215855
+Tensor value at [2, 0, 0, 0]: 0.015897
+Tensor value at [3, 0, 0, 0]: -0.161164
+Tensor value at [4, 0, 0, 0]: -0.626932
+Tensor value at [5, 0, 0, 0]: -1.451684
+Tensor value at [6, 0, 0, 0]: -1.894704
+Tensor value at [7, 0, 0, 0]: -0.762498
+Tensor value at [8, 0, 0, 0]: -0.660172
+Tensor value at [9, 0, 0, 0]: 0.127235
+pred_1_hh_b mean_sq = 0.7729063755
+```
+
 ```console
 weight_hh_l0 weight shape: torch.Size([2560, 640])
 weight_hh_l0: tensor([-0.4790, -0.5023, -0.1944, -0.4421,  0.0749, -0.0917,  0.1450, -0.5983,
@@ -101,3 +187,8 @@ Tensor value at [9, 0, 0, 0]: 0.096255
 pred_1_hh_w mean_sq = 0.2788341998
 ```
 And the hidden to hidden weights also look good.
+
+
+```console
+
+```
