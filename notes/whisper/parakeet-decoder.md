@@ -433,3 +433,114 @@ Tensor value at [9, 0, 0, 0]: -0.012439
 lstm_pred_out mean_sq = 0.0015669989
 ```
 So the lstm network looks like it is working correctly.
+
+Lets check the prediction network weights:
+```console
+-----------   project_prednet --------------
+enc weight shape: torch.Size([640, 1024])
+enc weight first 10: tensor([ 0.4491,  0.2169, -0.1756,  0.5549, -0.1599, -0.2160, -0.1807, -0.1016, 0.4827, -0.1228])
+enc weight ms: 0.05906470395357386
+enc bias shape: torch.Size([640])
+enc bias first 10: tensor([-0.0928,  0.0059, -0.0517, -0.0564, -0.0292, -0.0391, -0.0478, -0.0527, -0.0526, -0.0396])
+enc bias ms: 0.004705693324129073
+pred weight shape: torch.Size([640, 640])
+pred weight first 10: tensor([ 0.0389,  0.0478,  0.0719,  0.0272,  0.0776,  0.0239, -4.8391, -0.0572, -0.0296, -0.4229])
+pred weight ms: 0.026254206615704278
+pred bias shape: torch.Size([640])
+pred bias first 10: tensor([ 0.0075, -0.0665,  0.1155,  0.0405,  0.0868,  0.0767,  0.1177,  0.0501, 0.0799,  0.1070])
+pred bias ms: 0.00834839599740533
+net weight shape: torch.Size([8198, 640])
+net weight first 10: tensor([-0.6792, -1.2550,  0.3613, -1.3501, -1.4267, -1.2751, -0.1863, -0.7224, -0.5462, -3.1797])
+net weight ms: 2.862700290880567
+net bias shape: torch.Size([8198])
+net bias first 10: tensor([-0.8144, -6.3227, -6.3229, -6.3363, -6.3246, -6.3475, -6.3134, -6.3376, -6.3208, -6.3541])
+net bias ms: 3.0838270793520572
+```
+```console
+Tensor 'enc_w', type: f32
+ne = [1024 640 1 1]
+nb = [4 4096 2621440 2621440]
+Tensor value at [0, 0, 0, 0]: 0.449101
+Tensor value at [1, 0, 0, 0]: 0.216937
+Tensor value at [2, 0, 0, 0]: -0.175624
+Tensor value at [3, 0, 0, 0]: 0.554874
+Tensor value at [4, 0, 0, 0]: -0.159935
+Tensor value at [5, 0, 0, 0]: -0.216033
+Tensor value at [6, 0, 0, 0]: -0.180728
+Tensor value at [7, 0, 0, 0]: -0.101629
+Tensor value at [8, 0, 0, 0]: 0.482728
+Tensor value at [9, 0, 0, 0]: -0.122787
+enc_w mean_sq = 0.0590647039
+Tensor 'enc_b', type: f32
+ne = [640 1 1 1]
+nb = [4 2560 2560 2560]
+Tensor value at [0, 0, 0, 0]: -0.092756
+Tensor value at [1, 0, 0, 0]: 0.005898
+Tensor value at [2, 0, 0, 0]: -0.051685
+Tensor value at [3, 0, 0, 0]: -0.056398
+Tensor value at [4, 0, 0, 0]: -0.029241
+Tensor value at [5, 0, 0, 0]: -0.039086
+Tensor value at [6, 0, 0, 0]: -0.047768
+Tensor value at [7, 0, 0, 0]: -0.052694
+Tensor value at [8, 0, 0, 0]: -0.052597
+Tensor value at [9, 0, 0, 0]: -0.039564
+enc_b mean_sq = 0.0047056933
+Tensor 'pred_w', type: f32
+ne = [640 640 1 1]
+nb = [4 2560 1638400 1638400]
+Tensor value at [0, 0, 0, 0]: 0.038949
+Tensor value at [1, 0, 0, 0]: 0.047800
+Tensor value at [2, 0, 0, 0]: 0.071878
+Tensor value at [3, 0, 0, 0]: 0.027191
+Tensor value at [4, 0, 0, 0]: 0.077618
+Tensor value at [5, 0, 0, 0]: 0.023932
+Tensor value at [6, 0, 0, 0]: -4.839054
+Tensor value at [7, 0, 0, 0]: -0.057186
+Tensor value at [8, 0, 0, 0]: -0.029608
+Tensor value at [9, 0, 0, 0]: -0.422927
+pred_w mean_sq = 0.0262542067
+Tensor 'pred_b', type: f32
+ne = [640 1 1 1]
+nb = [4 2560 2560 2560]
+Tensor value at [0, 0, 0, 0]: 0.007501
+Tensor value at [1, 0, 0, 0]: -0.066518
+Tensor value at [2, 0, 0, 0]: 0.115487
+Tensor value at [3, 0, 0, 0]: 0.040459
+Tensor value at [4, 0, 0, 0]: 0.086818
+Tensor value at [5, 0, 0, 0]: 0.076729
+Tensor value at [6, 0, 0, 0]: 0.117666
+Tensor value at [7, 0, 0, 0]: 0.050109
+Tensor value at [8, 0, 0, 0]: 0.079927
+Tensor value at [9, 0, 0, 0]: 0.106973
+pred_b mean_sq = 0.0083483960
+Tensor 'net_w', type: f32
+ne = [640 8198 1 1]
+nb = [4 2560 20986880 20986880]
+Tensor value at [0, 0, 0, 0]: -0.679157
+Tensor value at [1, 0, 0, 0]: -1.254964
+Tensor value at [2, 0, 0, 0]: 0.361348
+Tensor value at [3, 0, 0, 0]: -1.350146
+Tensor value at [4, 0, 0, 0]: -1.426732
+Tensor value at [5, 0, 0, 0]: -1.275067
+Tensor value at [6, 0, 0, 0]: -0.186315
+Tensor value at [7, 0, 0, 0]: -0.722446
+Tensor value at [8, 0, 0, 0]: -0.546176
+Tensor value at [9, 0, 0, 0]: -3.179691
+net_w mean_sq = 2.8627002909
+Tensor 'net_b', type: f32
+ne = [8198 1 1 1]
+nb = [4 32792 32792 32792]
+Tensor value at [0, 0, 0, 0]: -0.814420
+Tensor value at [1, 0, 0, 0]: -6.322651
+Tensor value at [2, 0, 0, 0]: -6.322863
+Tensor value at [3, 0, 0, 0]: -6.336310
+Tensor value at [4, 0, 0, 0]: -6.324604
+Tensor value at [5, 0, 0, 0]: -6.347466
+Tensor value at [6, 0, 0, 0]: -6.313402
+Tensor value at [7, 0, 0, 0]: -6.337592
+Tensor value at [8, 0, 0, 0]: -6.320780
+Tensor value at [9, 0, 0, 0]: -6.354064
+net_b mean_sq = 3.0838270791
+```
+
+
