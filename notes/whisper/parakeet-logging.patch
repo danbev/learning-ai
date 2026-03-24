@@ -1,5 +1,5 @@
 diff --git a/nemo/collections/asr/modules/conformer_encoder.py b/nemo/collections/asr/modules/conformer_encoder.py
-index 0e25ea7767..a1571214eb 100644
+index 0e25ea7767..80d1f1a652 100644
 --- a/nemo/collections/asr/modules/conformer_encoder.py
 +++ b/nemo/collections/asr/modules/conformer_encoder.py
 @@ -627,6 +627,18 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
@@ -77,8 +77,53 @@ index 0e25ea7767..a1571214eb 100644
              audio_signal = layer(
                  x=audio_signal,
                  att_mask=att_mask,
+@@ -734,6 +773,7 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+         if self.out_proj is not None:
+             audio_signal = self.out_proj(audio_signal)
+ 
++
+         # Reduction
+         if self.reduction_position == -1:
+             audio_signal, length = self.reduction_subsampling(x=audio_signal, lengths=length)
+@@ -752,6 +792,11 @@ class ConformerEncoder(NeuralModule, StreamingEncoder, Exportable, AccessMixin):
+                 torch.clamp(cache_last_channel_len + cache_keep_size, max=cache_len),
+             )
+         else:
++            print(f"audio_signal out shape: {audio_signal.shape}")
++            print(f"audio_signal out: {audio_signal.contiguous().view(-1)[0:10]}")
++            print(f"audio_signal out first timestep: {audio_signal[0, :10, 0]}")
++            print(f"audio_signal out first timestep: {audio_signal[0, 0, :10]}")
++            print(f"audio_signalout ms: {(audio_signal.double()**2).mean().item()}")
+             return audio_signal, length
+ 
+     def update_max_seq_length(self, seq_length: int, device):
+diff --git a/nemo/collections/asr/modules/rnnt.py b/nemo/collections/asr/modules/rnnt.py
+index 9f5c234977..fb68a41cfd 100644
+--- a/nemo/collections/asr/modules/rnnt.py
++++ b/nemo/collections/asr/modules/rnnt.py
+@@ -772,6 +772,9 @@ class RNNTDecoder(rnnt_abstract.AbstractRNNTDecoder, Exportable, AdapterModuleMi
+ 
+             # (B, U) -> (B, U, H)
+             y = self.prediction["embed"](y)
++            print(f"y (embed) shape: {y.shape}")
++            print(f"y: {y.contiguous().view(-1)[0:10]}")
++            print(f"y ms: {(y.double()**2).mean().item()}")
+         else:
+             # Y is not provided, assume zero tensor with shape [B, 1, H] is required
+             # Emulates output of embedding of pad token.
+@@ -799,6 +802,10 @@ class RNNTDecoder(rnnt_abstract.AbstractRNNTDecoder, Exportable, AdapterModuleMi
+         # Forward step through RNN
+         y = y.transpose(0, 1)  # (U + 1, B, H)
+         g, hid = self.prediction["dec_rnn"](y, state)
++        print(f"g (embed) shape: {g.shape}")
++        print(f"g: {g.contiguous().view(-1)[0:10]}")
++        print(f"g ms: {(g.double()**2).mean().item()}")
++
+         g = g.transpose(0, 1)  # (B, U + 1, H)
+ 
+         del y, start, state
 diff --git a/nemo/collections/asr/parts/submodules/conformer_modules.py b/nemo/collections/asr/parts/submodules/conformer_modules.py
-index b3098ad89f..b498005daf 100644
+index b3098ad89f..0728502c96 100644
 --- a/nemo/collections/asr/parts/submodules/conformer_modules.py
 +++ b/nemo/collections/asr/parts/submodules/conformer_modules.py
 @@ -172,13 +172,41 @@ class ConformerLayer(torch.nn.Module, AttentionAdapterModuleMixin, AccessMixin):
@@ -133,11 +178,163 @@ index b3098ad89f..b498005daf 100644
  
          if self.is_adapter_available():
              # Call the MHA adapters
+@@ -203,16 +234,41 @@ class ConformerLayer(torch.nn.Module, AttentionAdapterModuleMixin, AccessMixin):
+             residual = pack_input['x']
+ 
+         x = self.norm_conv(residual)
++        print(f"conv norm shape: {x.shape}")
++        print(f"conv norm: {x.contiguous().view(-1)[0:10]}")
++        print(f"conv norm first timestep: {x[0, :10, 0]}")
++        print(f"conv norm ms: {(x.double()**2).mean().item()}")
+         x = self.conv(x, pad_mask=pad_mask, cache=cache_last_time)
++        print(f"conv shape: {x.shape}")
++        print(f"conv: {x.contiguous().view(-1)[0:10]}")
++        print(f"conv first timestep: {x[0, :10, 0]}")
++        print(f"conv ms: {(x.double()**2).mean().item()}")
+         if cache_last_time is not None:
+             (x, cache_last_time) = x
+         residual = residual + self.dropout(x)
++        print(f"conv dropout(residual): {residual.shape}")
++        print(f"conv dropout: {residual.contiguous().view(-1)[0:10]}")
++        print(f"conv dropout first timestep: {x[0, :10, 0]}")
++        print(f"conv dropout ms: {(residual.double()**2).mean().item()}")
+ 
+         x = self.norm_feed_forward2(residual)
++        print(f"conv norm ffn2 shape: {x.shape}")
++        print(f"conv norm ffn2: {x.contiguous().view(-1)[0:10]}")
++        print(f"conv norm ffn2 first timestep: {x[0, :10, 0]}")
++        print(f"conv norm ffn2 ms: {(x.double()**2).mean().item()}")
+         x = self.feed_forward2(x)
+         residual = residual + self.dropout(x) * self.fc_factor
++        print(f"self.fc_factor: {self.fc_factor}")
++        print(f"conv dropout(residual): {residual.shape}")
++        print(f"conv dropout: {residual.contiguous().view(-1)[0:10]}")
++        print(f"conv dropout first timestep: {x[0, :10, 0]}")
++        print(f"conv dropout ms: {(residual.double()**2).mean().item()}")
+ 
+         x = self.norm_out(residual)
++        print(f"conv norm out shape: {x.shape}")
++        print(f"conv norm out: {x.contiguous().view(-1)[0:10]}")
++        print(f"conv norm first timestep: {x[0, :10, 0]}")
++        print(f"conv norm out ms: {(x.double()**2).mean().item()}")
+ 
+         if self.is_adapter_available():
+             # Call the adapters
+@@ -230,6 +286,10 @@ class ConformerLayer(torch.nn.Module, AttentionAdapterModuleMixin, AccessMixin):
+         if cache_last_channel is None:
+             return x
+         else:
++            print(f"conv output shape: {x.shape}")
++            print(f"conv output: {x.contiguous().view(-1)[0:10]}")
++            print(f"conv output first timestep: {x[0, :10, 0]}")
++            print(f"conv output ms: {(x.double()**2).mean().item()}")
+             return x, cache_last_channel, cache_last_time
+ 
+ 
+@@ -318,8 +378,16 @@ class ConformerConvolution(nn.Module):
+         )
+ 
+     def forward(self, x, pad_mask=None, cache=None):
++        print("    self conv.....")
++        print(f"pointwise_conv1.weight shape: {self.pointwise_conv1.weight.shape}")
++        print(f"pointwise_conv1: {self.pointwise_conv1.weight.contiguous().view(-1)[0:10]}")
++        print(f"pointwise_conv1 ms: {(self.pointwise_conv1.weight.double()**2).mean().item()}")
+         x = x.transpose(1, 2)
+         x = self.pointwise_conv1(x)
++        print(f"pointwise_conv1 shape: {x.shape}")
++        print(f"pointwise_conv1: {x.contiguous().view(-1)[0:10]}")
++        print(f"pointwise_conv1 first timestep: {x[0, :10, 0]}")
++        print(f"pointwise_conv1 ms: {(x.double()**2).mean().item()}")
+ 
+         # Compute the activation function or use GLU for original Conformer
+         if self.pointwise_activation == 'glu_':
+@@ -327,13 +395,36 @@ class ConformerConvolution(nn.Module):
+         else:
+             x = self.pointwise_activation(x)
+ 
++        print(f"glu shape: {x.shape}")
++        print(f"glu: {x.contiguous().view(-1)[0:10]}")
++        print(f"glu first timestep: {x[0, :10, 0]}")
++        print(f"glu ms: {(x.double()**2).mean().item()}")
++
+         if pad_mask is not None:
+             x = x.masked_fill(pad_mask.unsqueeze(1), 0.0)
+ 
++        print(f"pad_mask shape: {x.shape}")
++        print(f"pad_mask : {x.contiguous().view(-1)[0:10]}")
++        print(f"pad_mask first timestep: {x[0, :10, 0]}")
++        print(f"pad_mask ms: {(x.double()**2).mean().item()}")
++
++        print(f"depthwise_conv weight shape: {self.depthwise_conv.weight.shape}")
++        print(f"depthwise_conv weight : {self.depthwise_conv.weight.contiguous().view(-1)[0:10]}")
++        print(f"depthwise_conv weight ms: {(self.depthwise_conv.weight.double()**2).mean().item()}")
+         x = self.depthwise_conv(x, cache=cache)
++        print(f"depthwise_conv shape: {x.shape}")
++        print(f"depthwise_conv : {x.contiguous().view(-1)[0:10]}")
++        print(f"depthwise first timestep: {x[0, :10, 0]}")
++        print(f"depthwise_conv ms: {(x.double()**2).mean().item()}")
+         if cache is not None:
+             x, cache = x
+ 
++        print(f"batch_norm weight shape: {self.batch_norm.weight.shape}")
++        print(f"batch_norm weight : {self.batch_norm.weight.contiguous().view(-1)[0:10]}")
++        print(f"batch_norm weight ms: {(self.batch_norm.weight.double()**2).mean().item()}")
++        print(f"batch_norm bias shape: {self.batch_norm.bias.shape}")
++        print(f"batch_norm bias : {self.batch_norm.bias.contiguous().view(-1)[0:10]}")
++        print(f"batch_norm bias ms: {(self.batch_norm.bias.double()**2).mean().item()}")
+         if self.norm_type == "layer_norm":
+             x = x.transpose(1, 2)
+             x = self.batch_norm(x)
+@@ -341,9 +432,26 @@ class ConformerConvolution(nn.Module):
+         else:
+             x = self.batch_norm(x)
+ 
++        print(f"batch norm shape: {x.shape}")
++        print(f"batch norm : {x.contiguous().view(-1)[0:10]}")
++        print(f"batch norm first timestep: {x[0, :10, 0]}")
++        print(f"batch norm ms: {(x.double()**2).mean().item()}")
++
+         x = self.activation(x)
++        print(f"swish shape: {x.shape}")
++        print(f"swish: {x.contiguous().view(-1)[0:10]}")
++        print(f"switsh first timestep: {x[0, :10, 0]}")
++        print(f"swish ms: {(x.double()**2).mean().item()}")
+         x = self.pointwise_conv2(x)
++        print(f"pointwise_conv2 shape: {x.shape}")
++        print(f"pointwise_conv2: {x.contiguous().view(-1)[0:10]}")
++        print(f"pointwise_conv2 first timestep: {x[0, :10, 0]}")
++        print(f"pointwise_conv2 ms: {(x.double()**2).mean().item()}")
+         x = x.transpose(1, 2)
++        print(f"transpose shape: {x.shape}")
++        print(f"transpose: {x.contiguous().view(-1)[0:10]}")
++        print(f"transpose first timestep: {x[0, :10, 0]}")
++        print(f"transpose ms: {(x.double()**2).mean().item()}")
+         if cache is None:
+             return x
+         else:
 diff --git a/nemo/collections/asr/parts/submodules/multi_head_attention.py b/nemo/collections/asr/parts/submodules/multi_head_attention.py
-index 3e6c056bd7..b708f38714 100644
+index 3e6c056bd7..8729d2c112 100644
 --- a/nemo/collections/asr/parts/submodules/multi_head_attention.py
 +++ b/nemo/collections/asr/parts/submodules/multi_head_attention.py
-@@ -134,15 +134,32 @@ class MultiHeadAttention(nn.Module):
+@@ -115,7 +115,17 @@ class MultiHeadAttention(nn.Module):
+         n_batch = query.size(0)
+         q = self.linear_q(query).view(n_batch, -1, self.h, self.d_k)
+         k = self.linear_k(key).view(n_batch, -1, self.h, self.d_k)
++        print(f"value shape: {value.shape}")
++        print(f"value: {value.contiguous().view(-1)[0:10]}")
++        print(f"value ms: {(value.double()**2).mean().item()}")
++        print(f"linear_v weight shape: {self.linear_v.weight.shape}")
++        print(f"linear_v: {self.linear_v.weight.contiguous().view(-1)[0:10]}")
++        print(f"linear_v ms: {(self.linear_v.weight.double()**2).mean().item()}")
+         v = self.linear_v(value).view(n_batch, -1, self.h, self.d_k)
++        print(f"v weight shape: {v.shape}")
++        print(f"v: {v.contiguous().view(-1)[0:10]}")
++        print(f"v first 10 timesteps, head 0, d_head 0: {v[0, :10, 0, 0]}")
++        print(f"v ms: {(v.double()**2).mean().item()}")
+         q = q.transpose(1, 2)
+         k = k.transpose(1, 2)
+         v = v.transpose(1, 2)
+@@ -134,15 +144,34 @@ class MultiHeadAttention(nn.Module):
          n_batch = value.size(0)
          if mask is not None:
              mask = mask.unsqueeze(1)  # (batch, 1, time1, time2)
@@ -154,8 +351,10 @@ index 3e6c056bd7..b708f38714 100644
 +        print(f"attn before dropout : {attn.contiguous().view(-1)[0:10]}")
 +        print(f"attn before dropout ms: {(attn.double()**2).mean().item()}")
          p_attn = self.dropout(attn)
-+        print(f"V mean: {value.mean().item()}, V ms: {(value.double()**2).mean().item()}")
-+        print(f"V first 5: {value[0, 0, 0, :5]}")
++        print(f"attn V shape: {value.shape}")
++        print(f"attn V : {value.contiguous().view(-1)[0:10]}")
++        print(f"attn V ms: {(value.double()**2).mean().item()}")
++
          x = torch.matmul(p_attn, value)  # (batch, head, time1, d_k)
 +        print(f"attn raw x shape: {x.shape}")
 +        print(f"attn raw x: {x.contiguous().view(-1)[0:10]}")
@@ -170,7 +369,7 @@ index 3e6c056bd7..b708f38714 100644
          return self.linear_out(x)  # (batch, time1, d_model)
  
      def forward(self, query, key, value, mask, pos_emb=None, cache=None):
-@@ -283,6 +300,7 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+@@ -283,6 +312,7 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
              output (torch.Tensor): transformed `value` (batch, time1, d_model) weighted by the query dot key attention
              cache (torch.Tensor) : (batch, time_cache_next, size)
          """
@@ -178,7 +377,18 @@ index 3e6c056bd7..b708f38714 100644
          key, value, query, cache = self.update_cache(key=key, value=value, query=query, cache=cache)
  
          if torch.is_autocast_enabled():
-@@ -300,8 +318,14 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+@@ -292,6 +322,10 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+         with avoid_float16_autocast_context():
+             q, k, v = self.forward_qkv(query, key, value)
+             q = q.transpose(1, 2)  # (batch, time1, head, d_k)
++            print(f"v shape: {v.shape}")
++            print(f"v : {v.contiguous().view(-1)[0:10]}")
++            print(f"v first timestep: {v[0, :10, 0]}")
++            print(f"v ms: {(v.double()**2).mean().item()}")
+ 
+             n_batch_pos = pos_emb.size(0)
+             n_batch = value.size(0)
+@@ -300,8 +334,14 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
  
              # (batch, head, time1, d_k)
              q_with_bias_u = (q + self.pos_bias_u).transpose(1, 2)
@@ -193,7 +403,7 @@ index 3e6c056bd7..b708f38714 100644
  
              # compute attention score
              # first compute matrix a and matrix c
-@@ -311,7 +335,13 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+@@ -311,7 +351,15 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
              # compute matrix b and matrix d
              # (batch, head, time1, time2)
              matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
@@ -204,10 +414,12 @@ index 3e6c056bd7..b708f38714 100644
 +            print(f"matrix_bd shifted shape: {matrix_bd.shape}")
 +            print(f"matrix_bd shifted: {matrix_bd.contiguous().view(-1)[0:10]}")
 +            print(f"matrix_bd shifted ms: {(matrix_bd.double()**2).mean().item()}")
++            torch.save(matrix_bd.cpu(), 'matrix_bd_shifted.pt')
++
  
              if self.use_pytorch_sdpa:
                  scale_factor = 1 / math.sqrt(q_with_bias_u.size(-1))
-@@ -344,9 +374,27 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
+@@ -344,9 +392,34 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
              else:
                  # drops extra elements in the matrix_bd to match the matrix_ac's size
                  matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
@@ -216,9 +428,16 @@ index 3e6c056bd7..b708f38714 100644
 +                print(f"matrix_ac ms: {(matrix_ac.double()**2).mean().item()}")
 +
                  matrix_bd = matrix_bd[:, :, :, : matrix_ac.size(-1)]
++                torch.save(matrix_bd.cpu(), 'matrix_bd_final.pt')
 +                print(f"matrix_bd final shape: {matrix_bd.shape}")
 +                print(f"matrix_bd final : {matrix_bd.contiguous().view(-1)[0:10]}")
 +                print(f"matrix_bd final ms: {(matrix_bd.double()**2).mean().item()}")
++
++                scores_pre = (matrix_ac + matrix_bd)
++                print(f"scores_pre final shape: {scores_pre.shape}")
++                print(f"scores_pre final : {scores_pre.contiguous().view(-1)[0:10]}")
++                print(f"scores_pre final ms: {(scores_pre.double()**2).mean().item()}")
++
                  scores = (matrix_ac + matrix_bd) / self.s_d_k  # (batch, head, time1, time2)
 +                print(f"scores final shape: {scores.shape}")
 +                print(f"scores final : {scores.contiguous().view(-1)[0:10]}")
@@ -276,3 +495,37 @@ index fee6204bd0..e16d2d8a0b 100644
  
              # Update lengths for stride operations with proper padding
              if hasattr(layer, 'stride') and layer.stride != (1, 1):
+diff --git a/nemo/collections/common/parts/rnn.py b/nemo/collections/common/parts/rnn.py
+index 0b5435acc7..7839484a38 100644
+--- a/nemo/collections/common/parts/rnn.py
++++ b/nemo/collections/common/parts/rnn.py
+@@ -227,7 +227,29 @@ class LSTMDropout(torch.nn.Module):
+     def forward(
+         self, x: torch.Tensor, h: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
++        print(f"--------- {type(self.lstm).__name__} ------------")
++        print(f"weight_hh_l0 weight shape: {self.lstm.weight_hh_l0.shape}")
++        print(f"weight_hh_l0: {self.lstm.weight_hh_l0.contiguous().view(-1)[0:10]}")
++        print(f"weight_hh_l0 ms: {(self.lstm.weight_hh_l0.double()**2).mean().item()}")
++
++        print(f"weight_hh_l1 weight shape: {self.lstm.weight_hh_l1.shape}")
++        print(f"weight_hh_l1: {self.lstm.weight_hh_l1.contiguous().view(-1)[0:10]}")
++        print(f"weight_hh_l1 ms: {(self.lstm.weight_hh_l1.double()**2).mean().item()}")
++
++        print(f"weight_ih_l0 weight shape: {self.lstm.weight_ih_l0.shape}")
++        print(f"weight_ih_l0: {self.lstm.weight_ih_l0.contiguous().view(-1)[0:10]}")
++        print(f"weight_ih_l0 ms: {(self.lstm.weight_ih_l0.double()**2).mean().item()}")
++
++        print(f"weight_ih_l1 weight shape: {self.lstm.weight_ih_l1.shape}")
++        print(f"weight_ih_l1: {self.lstm.weight_ih_l1.contiguous().view(-1)[0:10]}")
++        print(f"weight_ih_l1 ms: {(self.lstm.weight_ih_l1.double()**2).mean().item()}")
++
+         x, h = self.lstm(x, h)
++        print(f"x shape: {x.shape}")
++        print(f"x: {x.contiguous().view(-1)[0:10]}")
++        print(f"x ms: {(x.double()**2).mean().item()}")
++
++        print(f"h shape: {h}")
+ 
+         if self.dropout:
+             x = self.dropout(x)
