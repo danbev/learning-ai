@@ -593,47 +593,6 @@ h_enc mean_sq = 0.0277305856
 
 Currently the transcribed output is the following:
 ```console
-And so my fell Americans Ask not what your coun can do for you ask what you can do for your coun
+[     0 ->  11010] .. And so, my fell Americans, ask not what your country can do for you ask what you can do for your country..
 ```
-I suspect that this is due to the difference I noticed in the first encoder layer
-and that this accumulates through all 24 layers producing an incorrect encoder
-output. The joint network then produces an incorrect logits due to this. The 
-prediction network looks fine which we checked above. There is also the posibility
-that this is related to the vocab and tokenization. I've sort of done back and
-forth between BPE and SentencePiece tokenization as the original model "seems"
-to contain both types. I need to look into this as well so I undertand it. But 
-the difference in the encoder output is something I'd like to fix and the output
-after all layers should at least be close.
-
-```console
-Tensor 'enc_1_res', type: f32
-ne = [1024 138 1 1]
-nb = [4 4096 565248 565248]
-Tensor value at [0, 0, 0, 0]: 7.048666
-Tensor value at [1, 0, 0, 0]: -0.037965
-Tensor value at [2, 0, 0, 0]: -0.354737
-Tensor value at [3, 0, 0, 0]: 6.875470
-Tensor value at [4, 0, 0, 0]: -1.089862
-Tensor value at [5, 0, 0, 0]: 0.896261
-Tensor value at [6, 0, 0, 0]: 11.562939
-Tensor value at [7, 0, 0, 0]: -4.819638
-Tensor value at [8, 0, 0, 0]: 1.517478
-Tensor value at [9, 0, 0, 0]: 2.906459
-enc_1_res mean_sq = 100.6666315289
-```
-```console
-Tensor 'encoder_out', type: f32
-ne = [1024 138 1 1]
-nb = [4 4096 565248 565248]
-Tensor value at [0, 0, 0, 0]: -0.011536
-Tensor value at [1, 0, 0, 0]: 0.004017
-Tensor value at [2, 0, 0, 0]: -0.013610
-Tensor value at [3, 0, 0, 0]: 0.013694
-Tensor value at [4, 0, 0, 0]: 0.006636
-Tensor value at [5, 0, 0, 0]: 0.010974
-Tensor value at [6, 0, 0, 0]: 0.015367
-Tensor value at [7, 0, 0, 0]: 0.017305
-Tensor value at [8, 0, 0, 0]: 0.016140
-Tensor value at [9, 0, 0, 0]: -0.004083
-encoder_out mean_sq = 0.0003816722
-```
+So this is close but notice that we have `fell` instead of `fellow`.
