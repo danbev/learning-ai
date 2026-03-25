@@ -56,7 +56,6 @@ int main(void) {
 
     size_t offset = (center+1) * sizeof(float); 
 
-    size_t physical_stride = (P + 1) * sizeof(float);
     struct ggml_tensor * sliced = ggml_view_3d(ctx, reshaped, 
         T, T, H,
         (P) * sizeof(float),  // stride for rows
