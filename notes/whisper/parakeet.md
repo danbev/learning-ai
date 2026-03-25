@@ -2647,3 +2647,50 @@ Perfect! Now I can see the exact problem. Comparing the mel spectrum values befo
 
   Can you add debug to C++ to print the power spectrum values for a specific frame (like frame 7 where audio starts)?
 
+
+### Time-restricted Durations
+In the model configuration we have:
+```console
+model_defaults:
+  ...
+  tdt_durations:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  num_tdt_durations: 5
+```
+The joint network outputs not just log probs for the vocabulary which is 8192
+but it outputs 8198:
+```console
+Tensor 'log_probs', type: f32
+ne = [8198 1 1 1]
+nb = [4 32792 32792 32792]
+Tensor value at [0, 0, 0, 0]: -30.037724
+Tensor value at [1, 0, 0, 0]: -41.217815
+Tensor value at [2, 0, 0, 0]: -41.076900
+Tensor value at [3, 0, 0, 0]: -41.158520
+Tensor value at [4, 0, 0, 0]: -41.102310
+Tensor value at [5, 0, 0, 0]: -41.144932
+Tensor value at [6, 0, 0, 0]: -41.136822
+Tensor value at [7, 0, 0, 0]: -41.068092
+Tensor value at [8, 0, 0, 0]: -41.137356
+Tensor value at [9, 0, 0, 0]: -41.134548
+log_probs mean_sq = 2587.2295275343
+```
+* 0-8191 are the vocabulary tokens (8192)
+* 8192 is the Blank token
+* 8193-8197 are the duration predictions.
+
+This means:
+* Duration 0: Stay at current frame (emit another token at same timestep)
+* Duration 1: Advance by 1 frame
+* Duration 2: Skip ahead 2 frames
+* Duration 3: Skip ahead 3 frames
+* Duration 4: Skip ahead 4 frames
+
+I was not aware of this initially and I need to update the conversion script
+to include these fields and update the model loading code and the model in
+parakeet.cpp to handle the duration predictions. I've hardcoded this at the
+moment to 5 which matches the original model.
