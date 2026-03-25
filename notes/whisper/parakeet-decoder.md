@@ -543,4 +543,50 @@ Tensor value at [9, 0, 0, 0]: -6.354064
 net_b mean_sq = 3.0838270791
 ```
 
+Lets check the joint network operations:
+```console
+g (decoder output) shape: torch.Size([1, 1, 1, 640])
+g (decoder output): tensor([-0.1789, -0.6497,  0.0667, -0.8417, -0.7555, -0.6655,  0.1217,  0.0054, 0.0828,  0.1404])
+g (decoder output) ms: 0.2662256571914745
+```
+```console
+Tensor 'h_pred', type: f32
+ne = [640 1 1 1]
+nb = [4 2560 2560 2560]
+Tensor value at [0, 0, 0, 0]: -0.178892
+Tensor value at [1, 0, 0, 0]: -0.649663
+Tensor value at [2, 0, 0, 0]: 0.066709
+Tensor value at [3, 0, 0, 0]: -0.841729
+Tensor value at [4, 0, 0, 0]: -0.755545
+Tensor value at [5, 0, 0, 0]: -0.665460
+Tensor value at [6, 0, 0, 0]: 0.121706
+Tensor value at [7, 0, 0, 0]: 0.005357
+Tensor value at [8, 0, 0, 0]: 0.082830
+Tensor value at [9, 0, 0, 0]: 0.140433
+h_pred mean_sq = 0.2662257378
+```
 
+And the encoder 
+```console
+f (encoder output) shape: torch.Size([1, 1, 1, 640])
+f (encoder output): tensor([-0.1893,  0.0609,  0.0433, -0.0617,  0.0643, -0.1913, -0.4701,  0.0287,
+         0.1934,  0.0033])
+f (encoder output) ms: 0.03259012275771887
+```
+
+```console
+Tensor 'h_enc', type: f32
+ne = [640 1 1 1]
+nb = [4 2560 2560 2560]
+Tensor value at [0, 0, 0, 0]: -0.192974
+Tensor value at [1, 0, 0, 0]: 0.211292
+Tensor value at [2, 0, 0, 0]: -0.013812
+Tensor value at [3, 0, 0, 0]: -0.102958
+Tensor value at [4, 0, 0, 0]: 0.010258
+Tensor value at [5, 0, 0, 0]: -0.119775
+Tensor value at [6, 0, 0, 0]: -0.377761
+Tensor value at [7, 0, 0, 0]: -0.046373
+Tensor value at [8, 0, 0, 0]: 0.137346
+Tensor value at [9, 0, 0, 0]: 0.017899
+h_enc mean_sq = 0.0277305856
+```
