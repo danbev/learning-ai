@@ -98,7 +98,7 @@ index 0e25ea7767..80d1f1a652 100644
  
      def update_max_seq_length(self, seq_length: int, device):
 diff --git a/nemo/collections/asr/modules/rnnt.py b/nemo/collections/asr/modules/rnnt.py
-index 9f5c234977..fb68a41cfd 100644
+index 9f5c234977..1644fe00c8 100644
 --- a/nemo/collections/asr/modules/rnnt.py
 +++ b/nemo/collections/asr/modules/rnnt.py
 @@ -772,6 +772,9 @@ class RNNTDecoder(rnnt_abstract.AbstractRNNTDecoder, Exportable, AdapterModuleMi
@@ -122,6 +122,55 @@ index 9f5c234977..fb68a41cfd 100644
          g = g.transpose(0, 1)  # (B, U + 1, H)
  
          del y, start, state
+@@ -1683,7 +1690,13 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
+             Logits / log softmaxed tensor of shape (B, T, U, V + 1).
+         """
+         f = f.unsqueeze(dim=2)  # (B, T, 1, H)
++        print(f"f (encoder output) shape: {f.shape}")
++        print(f"f (encoder output): {f.contiguous().view(-1)[0:10]}")
++        print(f"f (encoder output) ms: {(f.double()**2).mean()}")
+         g = g.unsqueeze(dim=1)  # (B, 1, U, H)
++        print(f"g (decoder output) shape: {g.shape}")
++        print(f"g (decoder output): {g.contiguous().view(-1)[0:10]}")
++        print(f"g (decoder output) ms: {(g.double()**2).mean()}")
+ 
+         if self.training and self.masking_prob > 0:
+             [B, _, U, _] = g.shape
+@@ -1692,6 +1705,9 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
+             g = g * rand
+ 
+         inp = f + g  # [B, T, U, H]
++        print(f"inp shape: {inp.shape}")
++        print(f"inp: {inp.contiguous().view(-1)[0:10]}")
++        print(f"inp ms: {(inp.double()**2).mean()}")
+ 
+         del f, g
+ 
+@@ -1699,7 +1715,14 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
+         if self.is_adapter_available():
+             inp = self.forward_enabled_adapters(inp)
+ 
++        print(f"linear weight shape: {self.joint_net[2].weight.shape}")
++        print(f"linear weight: {self.joint_net[2].weight.contiguous().view(-1)[0:10]}")
++        print(f"linear weight ms: {(self.joint_net[2].weight.double()**2).mean()}")
++
+         res = self.joint_net(inp)  # [B, T, U, V + 1]
++        print(f"res shape: {res.shape}")
++        print(f"res: {res.contiguous().view(-1)[0:10]}")
++        print(f"res ms: {(res.double()**2).mean()}")
+ 
+         del inp
+ 
+@@ -1713,6 +1736,9 @@ class RNNTJoint(rnnt_abstract.AbstractRNNTJoint, Exportable, AdapterModuleMixin)
+                     res = (res / self.temperature).log_softmax(dim=-1)
+                 else:
+                     res = res.log_softmax(dim=-1)
++                    print(f"res softmax shape: {res.shape}")
++                    print(f"res softmax: {res.contiguous().view(-1)[0:10]}")
++                    print(f"res softmax ms: {(res.double()**2).mean()}")
+         else:
+             if self.log_softmax:
+                 if self.temperature != 1.0:
 diff --git a/nemo/collections/asr/parts/submodules/conformer_modules.py b/nemo/collections/asr/parts/submodules/conformer_modules.py
 index b3098ad89f..0728502c96 100644
 --- a/nemo/collections/asr/parts/submodules/conformer_modules.py
@@ -455,10 +504,10 @@ index 3e6c056bd7..8729d2c112 100644
          if cache is None:
              return out
 diff --git a/nemo/collections/asr/parts/submodules/subsampling.py b/nemo/collections/asr/parts/submodules/subsampling.py
-index 7f9fc60699..8f49650c60 100644
+index fee6204bd0..e16d2d8a0b 100644
 --- a/nemo/collections/asr/parts/submodules/subsampling.py
 +++ b/nemo/collections/asr/parts/submodules/subsampling.py
-@@ -655,6 +655,9 @@ def calculate_conv_output_size(input_size: torch.Tensor, kernel_size: int, strid
+@@ -725,6 +725,9 @@ def calculate_conv_output_size(input_size: torch.Tensor, kernel_size: int, strid
  class MaskedConvSequential(nn.Sequential):
      def forward(self, x, lengths):
          # Convert input (batch, time, features) to conv format
@@ -468,7 +517,7 @@ index 7f9fc60699..8f49650c60 100644
          x = x.unsqueeze(1)  # (batch, 1, time, features)
          current_lengths = lengths.clone().float()
          mask = self._create_mask(x, current_lengths.long())
-@@ -665,7 +668,26 @@ class MaskedConvSequential(nn.Sequential):
+@@ -735,7 +738,26 @@ class MaskedConvSequential(nn.Sequential):
              x = apply_channel_mask(x, mask)
  
              # Apply layer
@@ -495,43 +544,99 @@ index 7f9fc60699..8f49650c60 100644
  
              # Update lengths for stride operations with proper padding
              if hasattr(layer, 'stride') and layer.stride != (1, 1):
+diff --git a/nemo/collections/asr/parts/submodules/transducer_decoding/tdt_label_looping.py b/nemo/collections/asr/parts/submodules/transducer_decoding/tdt_label_looping.py
+index 696fe704e6..7b3de59896 100644
+--- a/nemo/collections/asr/parts/submodules/transducer_decoding/tdt_label_looping.py
++++ b/nemo/collections/asr/parts/submodules/transducer_decoding/tdt_label_looping.py
+@@ -339,7 +339,13 @@ class GreedyBatchedTDTLabelLoopingComputer(GreedyBatchedLabelLoopingComputerBase
+             multi_biasing_ids = torch.full([batch_size], fill_value=-1, dtype=torch.long, device=device)
+ 
+         # do not recalculate joint projection, project only once
++        print("encoder_output shape:", encoder_output.shape)
++        print("endoder_output first 10:", encoder_output.view(-1)[:10])
++        print(f"encoder_output ms: {(encoder_output.double()**2).mean()}")
+         encoder_output_projected = self.joint.project_encoder(encoder_output)
++        print("encoder_output_projected shape:", encoder_output_projected.shape)
++        print("decoder_output_projected first 10:", encoder_output_projected.view(-1)[:10])
++        print(f"encoder_output_projected ms: {(encoder_output_projected.double()**2).mean()}")
+         float_dtype = encoder_output_projected.dtype
+ 
+         # init output structures: BatchedHyps (for results), BatchedAlignments + last decoder state
+@@ -393,6 +399,37 @@ class GreedyBatchedTDTLabelLoopingComputer(GreedyBatchedLabelLoopingComputerBase
+             decoder_output, state, *_ = self.decoder.predict(
+                 labels.unsqueeze(1), state, add_sos=False, batch_size=batch_size
+             )
++            print("-----------   project_prednet --------------")
++            enc_weight = self.joint.enc.weight
++            enc_bias = self.joint.enc.bias
++            print("enc weight shape:", enc_weight.shape)
++            print("enc weight first 10:", enc_weight.view(-1)[:10])
++            print(f"enc weight ms: {(enc_weight.double()**2).mean()}")
++            print("enc bias shape:", enc_bias.shape)
++            print("enc bias first 10:", enc_bias[:10])
++            print(f"enc bias ms: {(enc_bias.double()**2).mean()}")
++
++            pred_weight = self.joint.pred.weight
++            pred_bias = self.joint.pred.bias
++            print("pred weight shape:", pred_weight.shape)
++            print("pred weight first 10:", pred_weight.view(-1)[:10])
++            print(f"pred weight ms: {(pred_weight.double()**2).mean()}")
++            print("pred bias shape:", pred_bias.shape)
++            print("pred bias first 10:", pred_bias[:10])
++            print(f"pred bias ms: {(pred_bias.double()**2).mean()}")
++
++            net_weight = self.joint.joint_net[2].weight  # shape: [8198, 640]
++            net_bias = self.joint.joint_net[2].bias      # shape: [8198]
++            print("net weight shape:", net_weight.shape)
++            print("net weight first 10:", net_weight.view(-1)[:10])
++            print(f"net weight ms: {(net_weight.double()**2).mean()}")
++            print("net bias shape:", net_bias.shape)
++            print("net bias first 10:", net_bias[:10])
++            print(f"net bias ms: {(net_bias.double()**2).mean()}")
++
++            print("decoder_output shape:", decoder_output.shape)
++            print("decoder_output first 10:", decoder_output.view(-1)[:10])
++            print(f"decoder_output ms: {(decoder_output.double()**2).mean()}")
+             decoder_output = self.joint.project_prednet(decoder_output)  # do not recalculate joint projection
+ 
+             # fusion models
 diff --git a/nemo/collections/common/parts/rnn.py b/nemo/collections/common/parts/rnn.py
-index 0b5435acc7..93cef56cf3 100644
+index 0b5435acc7..bee753ba89 100644
 --- a/nemo/collections/common/parts/rnn.py
 +++ b/nemo/collections/common/parts/rnn.py
-@@ -227,7 +227,60 @@ class LSTMDropout(torch.nn.Module):
+@@ -227,8 +227,119 @@ class LSTMDropout(torch.nn.Module):
      def forward(
          self, x: torch.Tensor, h: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
      ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
 +        print(f"--------- {type(self.lstm).__name__} ------------")
-+        print(f"weight_ih_l0 shape: {self.lstm.weight_ih_l0.shape}")
-+        print(f"weight_ih_l0: {self.lstm.weight_ih_l0.contiguous().view(-1)[0:10]}")
-+        print(f"weight_ih_l0 ms: {(self.lstm.weight_ih_l0.double()**2).mean().item()}")
-+        print(f"bias_ih_l0 shape: {self.lstm.bias_ih_l0.shape}")
-+        print(f"bias_ih_l0: {self.lstm.bias_ih_l0.contiguous().view(-1)[0:10]}")
-+        print(f"bias_ih_l0 ms: {(self.lstm.bias_ih_l0.double()**2).mean().item()}")
-+
-+        print(f"weight_ih_l1 shape: {self.lstm.weight_ih_l1.shape}")
-+        print(f"weight_ih_l1: {self.lstm.weight_ih_l1.contiguous().view(-1)[0:10]}")
-+        print(f"weight_ih_l1 ms: {(self.lstm.weight_ih_l1.double()**2).mean().item()}")
-+        print(f"bias_ih_l1 shape: {self.lstm.bias_ih_l1.shape}")
-+        print(f"bias_ih_l1: {self.lstm.bias_ih_l1.contiguous().view(-1)[0:10]}")
-+        print(f"bias_ih_l1 ms: {(self.lstm.bias_ih_l1.double()**2).mean().item()}")
-+
-+
-+        print(f"weight_hh_l0 shape: {self.lstm.weight_hh_l0.shape}")
-+        print(f"weight_hh_l0: {self.lstm.weight_hh_l0.contiguous().view(-1)[0:10]}")
-+        print(f"weight_hh_l0 ms: {(self.lstm.weight_hh_l0.double()**2).mean().item()}")
-+        print(f"bias_hh_l0 shape: {self.lstm.bias_hh_l0.shape}")
-+        print(f"bias_hh_l0: {self.lstm.bias_hh_l0.contiguous().view(-1)[0:10]}")
-+        print(f"bias_hh_l0 ms: {(self.lstm.bias_hh_l0.double()**2).mean().item()}")
-+
-+        print(f"weight_hh_l1 shape: {self.lstm.weight_hh_l1.shape}")
-+        print(f"weight_hh_l1: {self.lstm.weight_hh_l1.contiguous().view(-1)[0:10]}")
-+        print(f"weight_hh_l1 ms: {(self.lstm.weight_hh_l1.double()**2).mean().item()}")
-+        print(f"bias_hh_l1 shape: {self.lstm.bias_hh_l1.shape}")
-+        print(f"bias_hh_l1: {self.lstm.bias_hh_l1.contiguous().view(-1)[0:10]}")
-+        print(f"bias_hh_l1 ms: {(self.lstm.bias_hh_l1.double()**2).mean().item()}")
++#        print(f"weight_ih_l0 shape: {self.lstm.weight_ih_l0.shape}")
++#        print(f"weight_ih_l0: {self.lstm.weight_ih_l0.contiguous().view(-1)[0:10]}")
++#        print(f"weight_ih_l0 ms: {(self.lstm.weight_ih_l0.double()**2).mean().item()}")
++#        print(f"bias_ih_l0 shape: {self.lstm.bias_ih_l0.shape}")
++#        print(f"bias_ih_l0: {self.lstm.bias_ih_l0.contiguous().view(-1)[0:10]}")
++#        print(f"bias_ih_l0 ms: {(self.lstm.bias_ih_l0.double()**2).mean().item()}")
++#
++#        print(f"weight_ih_l1 shape: {self.lstm.weight_ih_l1.shape}")
++#        print(f"weight_ih_l1: {self.lstm.weight_ih_l1.contiguous().view(-1)[0:10]}")
++#        print(f"weight_ih_l1 ms: {(self.lstm.weight_ih_l1.double()**2).mean().item()}")
++#        print(f"bias_ih_l1 shape: {self.lstm.bias_ih_l1.shape}")
++#        print(f"bias_ih_l1: {self.lstm.bias_ih_l1.contiguous().view(-1)[0:10]}")
++#        print(f"bias_ih_l1 ms: {(self.lstm.bias_ih_l1.double()**2).mean().item()}")
++#
++#
++#        print(f"weight_hh_l0 shape: {self.lstm.weight_hh_l0.shape}")
++#        print(f"weight_hh_l0: {self.lstm.weight_hh_l0.contiguous().view(-1)[0:10]}")
++#        print(f"weight_hh_l0 ms: {(self.lstm.weight_hh_l0.double()**2).mean().item()}")
++#        print(f"bias_hh_l0 shape: {self.lstm.bias_hh_l0.shape}")
++#        print(f"bias_hh_l0: {self.lstm.bias_hh_l0.contiguous().view(-1)[0:10]}")
++#        print(f"bias_hh_l0 ms: {(self.lstm.bias_hh_l0.double()**2).mean().item()}")
++#
++#        print(f"weight_hh_l1 shape: {self.lstm.weight_hh_l1.shape}")
++#        print(f"weight_hh_l1: {self.lstm.weight_hh_l1.contiguous().view(-1)[0:10]}")
++#        print(f"weight_hh_l1 ms: {(self.lstm.weight_hh_l1.double()**2).mean().item()}")
++#        print(f"bias_hh_l1 shape: {self.lstm.bias_hh_l1.shape}")
++#        print(f"bias_hh_l1: {self.lstm.bias_hh_l1.contiguous().view(-1)[0:10]}")
++#        print(f"bias_hh_l1 ms: {(self.lstm.bias_hh_l1.double()**2).mean().item()}")
 +
 +        print(f"h_state shape: {h[0].shape}")
 +        print(f"h_state: {h[0].contiguous().view(-1)[0:10]}")
@@ -545,18 +650,77 @@ index 0b5435acc7..93cef56cf3 100644
 +        print(f"x: {x.contiguous().view(-1)[0:10]}")
 +        print(f"x: ms: {(x.double()**2).mean().item()}")
 +
++         # Manual LSTM computation to inspect gates (layer 0 only for now)
++        import torch.nn.functional as F
++
++        # Get the input and states
++        x_input = x  # shape: [1, 1, 640]
++        h_state = h[0][0:1]  # hidden state for layer 0, shape: [1, 1, 640]
++        c_state = h[1][0:1]  # cell state for layer 0, shape: [1, 1, 640]
++
++        # Reshape for matrix multiplication
++        x_flat = x_input.squeeze(0)  # [1, 640]
++        h_flat = h_state.squeeze(0)  # [1, 640]
++
++        # Get layer 0 weights and biases
++        weight_ih = self.lstm.weight_ih_l0  # [2560, 640]
++        weight_hh = self.lstm.weight_hh_l0  # [2560, 640]
++        bias_ih = self.lstm.bias_ih_l0      # [2560]
++        bias_hh = self.lstm.bias_hh_l0      # [2560]
++
++        # Compute gates
++        inp_gates = F.linear(x_flat, weight_ih, bias_ih)  # [1, 2560]
++        hid_gates = F.linear(h_flat, weight_hh, bias_hh)  # [1, 2560]
++        gates = inp_gates + hid_gates  # [1, 2560]
++
++        # Split into 4 gates (each 640 dims)
++        i_t, f_t, g_t, o_t = gates.chunk(4, 1)
++
++        # Apply activations
++        i_t = torch.sigmoid(i_t)  # input gate
++        f_t = torch.sigmoid(f_t)  # forget gate
++        g_t = torch.tanh(g_t)     # cell gate (note: PyTorch uses 'g', you use 'c_t')
++        o_t = torch.sigmoid(o_t)  # output gate
++
++        # Compute new cell and hidden states
++        c_flat = c_state.squeeze(0)
++        c_new = f_t * c_flat + i_t * g_t
++        h_new = o_t * torch.tanh(c_new)
++
++        # Print values
++        print("gates (combined):", gates[0, :10])
++        print("i_t:", i_t[0, :10])
++        print("f_t:", f_t[0, :10])
++        print("g_t:", g_t[0, :10])
++        print("o_t:", o_t[0, :10])
++        print("c_new:", c_new[0, :10])
++        print("h_new:", h_new[0, :10])
++
++        # Also compute mean squared values
++        print("gates ms:", (gates ** 2).mean().item())
++        print("i_t ms:", (i_t ** 2).mean().item())
++        print("f_t ms:", (f_t ** 2).mean().item())
++        print("g_t ms:", (g_t ** 2).mean().item())
++        print("o_t ms:", (o_t ** 2).mean().item())
++
          x, h = self.lstm(x, h)
-+        print(f"updated h_state shape: {h[0].shape}")
+ 
++        print(f"updated h_state_0 shape: {h[0].shape}")
 +        print(f"updated h_state: {h[0].contiguous().view(-1)[0:10]}")
-+        print(f"updated h_state: ms: {(h[0].double()**2).mean().item()}")
++        print(f"updated h_state_0: {h[0][0, 0, :10]}")
++        print(f"updated h_state_1: {h[0][1, 0, :10]}")
++        print(f"updated h_state_0: ms: {(h[0].double()**2).mean(dim=2)}")
 +
 +        print(f"updated c_state shape: {h[1].shape}")
 +        print(f"updated c_state: {h[1].contiguous().view(-1)[0:10]}")
-+        print(f"updated c_state: ms: {(h[1].double()**2).mean().item()}")
++        print(f"updated c_state: {h[1][0, 0, :10]}")
++        print(f"updated c_state: {h[1][1, 0, :10]}")
++        print(f"updated c_state: ms: {(h[1].double()**2).mean(dim=2)}")
 +
 +        print(f"new x shape: {x.shape}")
 +        print(f"new x: {x.contiguous().view(-1)[0:10]}")
 +        print(f"new x: ms: {(x.double()**2).mean().item()}")
- 
++
          if self.dropout:
              x = self.dropout(x)
+ 
