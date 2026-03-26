@@ -591,8 +591,119 @@ Tensor value at [9, 0, 0, 0]: 0.017899
 h_enc mean_sq = 0.0277305856
 ```
 
+Looking at the output from the encoder we have:
+```console
+encoder_output shape: torch.Size([1, 138, 1024])
+endoder_output first 10: tensor([-0.0224, -0.0211, -0.0144,  0.0163,  0.0090,  0.0074,  0.0004, -0.0061, 0.0097, -0.0053])
+encoder_output ms: 0.00042489943895244233
+
+Tensor 'encoder_out', type: f32
+ne = [1024 138 1 1]
+nb = [4 4096 565248 565248]
+Tensor value at [0, 0, 0, 0]: -0.022787
+Tensor value at [1, 0, 0, 0]: -0.018744
+Tensor value at [2, 0, 0, 0]: -0.014242
+Tensor value at [3, 0, 0, 0]: 0.015535
+Tensor value at [4, 0, 0, 0]: 0.009264
+Tensor value at [5, 0, 0, 0]: 0.006285
+Tensor value at [6, 0, 0, 0]: 0.001559
+Tensor value at [7, 0, 0, 0]: -0.005344
+Tensor value at [8, 0, 0, 0]: 0.009274
+Tensor value at [9, 0, 0, 0]: -0.005005
+encoder_out mean_sq = 0.0004266212
+```
+
 Currently the transcribed output is the following:
 ```console
 [     0 ->  11010] .. And so, my fell Americans, ask not what your country can do for you ask what you can do for your country..
 ```
 So this is close but notice that we have `fell` instead of `fellow`.
+
+Lets also verify the logits after the first decoder processing in both models:
+```console
+res shape: torch.Size([1, 1, 1, 8198])
+res: tensor([-23.5368, -29.7975, -29.7697, -29.7915, -29.7668, -29.8374, -29.7903,
+        -29.7877, -29.7857, -29.8097])
+res ms: 1337.2306009287868
+
+Tensor 'logits', type: f32
+ne = [8198 1 1 1]
+nb = [4 32792 32792 32792]
+Tensor value at [0, 0, 0, 0]: -23.106153
+Tensor value at [1, 0, 0, 0]: -29.486340
+Tensor value at [2, 0, 0, 0]: -29.460196
+Tensor value at [3, 0, 0, 0]: -29.479502
+Tensor value at [4, 0, 0, 0]: -29.458452
+Tensor value at [5, 0, 0, 0]: -29.526749
+Tensor value at [6, 0, 0, 0]: -29.481016
+Tensor value at [7, 0, 0, 0]: -29.477755
+Tensor value at [8, 0, 0, 0]: -29.475622
+Tensor value at [9, 0, 0, 0]: -29.502647
+logits mean_sq = 1305.8575721220
+```
+After discovering that I had not included the duration that the joint network
+produces, it produces logits for the vocabulary plus the blank token which is 8192
+tokens but also an additional 6 duration tokens, so 8198 total. With these
+included and updating the decoding loop I now get:
+```console
+Decoded 37 tokens. First 20:
+575 547 7877 1103 309 530 596 3213 404 667 7877 279 583 1491 3470 3629 867 331 958 7893 
+
+
+Number of segments: 1
+[     0 ->  11010] and so, my fellow Americans, ask not what your country can do for you ask what you can do for your country.
+```
+So this looks better as fellow is now correct and we don't have the extra dots
+at the start and end. But notice that `and` is now lowercase.
+
+
+Lets look at the first iteration:
+```console
+Tensor 'log_probs', type: f32
+ne = [8198 1 1 1]
+nb = [4 32792 32792 32792]
+Tensor value at [0, 0, 0, 0]: -33.340218
+Tensor value at [1, 0, 0, 0]: -39.720402
+Tensor value at [2, 0, 0, 0]: -39.694260
+Tensor value at [3, 0, 0, 0]: -39.713562
+Tensor value at [4, 0, 0, 0]: -39.692513
+Tensor value at [5, 0, 0, 0]: -39.760811
+Tensor value at [6, 0, 0, 0]: -39.715080
+Tensor value at [7, 0, 0, 0]: -39.711815
+Tensor value at [8, 0, 0, 0]: -39.709686
+Tensor value at [9, 0, 0, 0]: -39.736710
+log_probs mean_sq = 2128.3407421874
+
+=== Frame 0 logits debug ===
+Last token fed to decoder: 8192
+Token 575 (lowercase and): -23.852222
+Token 1976 (▁And): -20.784370
+Token 8192 (best): -12.952738
+Blank 8192: -12.952738
+Total logits available: 8198
+Top 5 tokens:
+  [0] Token 8192: -12.952738 ([BLANK])
+  [1] Token 7306: -20.057316 (▁')
+  [2] Token 1976: -20.784370 (▁And)
+  [3] Token 356: -21.961397 (▁M)
+  [4] Token 517: -21.976948 (▁U)
+```
+```console
+res softmax shape: torch.Size([1, 1, 1, 8198])
+res softmax: tensor([-33.9400, -40.2007, -40.1729, -40.1947, -40.1700, -40.2406, -40.1935, -40.1910, -40.1889, -40.2129])
+res softmax ms: 2183.7105195390573
+loop logits shape: torch.Size([1, 8198])
+loop logits: tensor([-33.9400, -40.2007, -40.1729, -40.1947, -40.1700, -40.2406, -40.1935, -40.1910, -40.1889, -40.2129])
+loop logits ms: 2183.7105195390573
+```
+After comparing the original pytorch implementation I discoved an difference
+where I though it was a good idea to put the prediction network and the joint
+network in the same graph. But they need to be called separately so I separated
+them and also tried to follow the decoding loop more closely. And now the following:
+```console
+Decoded 38 tokens. First 20:
+
+1976 547 7877 1103 309 530 596 3213 404 667 7877 279 583 1491 3470 3629 867 331 958 7893 
+Number of segments: 1
+[     0 ->  11010] And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
