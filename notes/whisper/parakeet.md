@@ -2694,3 +2694,35 @@ I was not aware of this initially and I need to update the conversion script
 to include these fields and update the model loading code and the model in
 parakeet.cpp to handle the duration predictions. I've hardcoded this at the
 moment to 5 which matches the original model.
+
+
+### Chunking 
+So after working on the original implementation of parakeet.cpp I was able to
+got through a simple audio file and comparing the operation outputs and verify
+that they closely match the original model.
+
+This is from the original model transcribing:
+```console
+[1976,  547, 7877, 1103,  309,  530,  596, 3213,  404,  667, 7877,  279,
+583, 1491, 3470, 3629,  867,  331,  958, 7893, 2059,  458,  509, 1180,
+7877,  279,  583, 3470, 1180, 2059,  458,  509, 3629,  867,  331,  958,
+7893, 7883]),
+text='And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.'
+```
+
+And this is the output of the converted parakeet.cpp:
+```console
+Processing audio: total_frames=1101, chunk_size=1101
+parakeet_decode: starting decode with n_frames=138
+Decoded 38 new tokens (total: 38). First 20 new:
+1976 547 7877 1103 309 530 596 3213 404 667 7877 279 583 1491 3470 3629 867 331 958 7893 2059 458 509 1180 7877 279 583 3470 1180 2059 458 509 3629 867 331 958 7893 7883
+Segment [     0 ->   1101]: And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.
+```
+But for a longer audio file we need to split the longer audio into chunks. So we
+would process each chunk through the pre-encoder and the encoder (the subsampling)
+and then we can use the same prediction network state, this is the LSTM state, 
+and then continue with the joint network to decode the tokens. But just naively
+splitting the audio will not work as there will be cut offs which can cause
+incorrect transcriptions. And we also need to take the duration into consideration
+when doing this. I'll take a look at how the original model handles this to se
+how it should be done.
