@@ -2726,3 +2726,77 @@ splitting the audio will not work as there will be cut offs which can cause
 incorrect transcriptions. And we also need to take the duration into consideration
 when doing this. I'll take a look at how the original model handles this to se
 how it should be done.
+
+In audio the end of one chunk needs to understand the context of the previous
+chunk. For example if we cut off the middle of the sounds "b" this might be mis-
+interpreted by the model.
+
+We can use a context buffer for this so that we don't just cut off and sent
+the new chunk, but we include some of the end of the last chunk as well.
+
+we also need to take into consideration that the joint network in Parakeet also
+produces duration tokens/values. These are used with argmax to get a index into
+the models duration array which has values indicating how many time frames to
+skip a ahead.
+
+So when processing a chunk, we actually need to feed the end of the previous
+chunk plus the current chunk:
+```console
+   [end of previous chunk] + [current chunk]
+```
+We can store this in the parakeet_state.
+```c++
+    // This vector stores the previous n audio frames to enable chunk.
+    // So this should store the samples I think.
+    std::vector<float> audio_context_buffer;
+```
+
+```console
+$ ffprobe -i samples/gb1.ogg -show_entries format=duration,bit_rate -show_entries stream=sample_rate,channels -of compact=p=0:nk=1
+
+Input #0, ogg, from 'samples/gb1.ogg':
+  Duration: 00:03:18.73, start: 0.000000, bitrate: 67 kb/s
+  Stream #0:0: Audio: vorbis, 22050 Hz, stereo, fltp, 88 kb/s
+22050|2
+198.734331|67131
+
+$ ffmpeg -i samples/gb1.ogg -ar 16000 -ac 1 samples/gb1_16k.wav
+
+Input #0, ogg, from 'samples/gb1.ogg':
+  Duration: 00:03:18.73, start: 0.000000, bitrate: 67 kb/s
+  Stream #0:0: Audio: vorbis, 22050 Hz, stereo, fltp, 88 kb/s
+Stream mapping:
+  Stream #0:0 -> #0:0 (vorbis (native) -> pcm_s16le (native))
+Press [q] to stop, [?] for help
+Output #0, wav, to 'samples/gb1_16k.wav':
+  Metadata:
+    ISFT            : Lavf61.7.100
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 16000 Hz, mono, s16, 256 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 pcm_s16le
+[out#0/wav @ 0x6000035dc000] video:0KiB audio:6210KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.001227%
+size=    6211KiB time=00:03:18.73 bitrate= 256.0kbits/s speed=2.51e+03x
+
+(venv) $ ffprobe -i samples/gb1_16k.wav -show_entries format=duration,bit_rate -show_entries stream=sample_rate,channels -of compact=p=0:nk=1
+Input #0, wav, from 'samples/gb1_16k.wav':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Duration: 00:03:18.73, bitrate: 256 kb/s
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 16000 Hz, 1 channels, s16, 256 kb/s
+16000|1
+198.734375|256003
+```
+So we have 198.7 x 16000 = 3,179,750 samples in total.
+Total input frames if we have 10ms chunks is 19873 frames, and with 8x
+subsampling this becomes 2484 frames. This is the number of frames that the
+encoder will output.
+
+So to recap that process a bit here. We pass in the samples and the number of
+samples. This will go throught the logmel spectrogram generation and this is what
+is the input to the subsampling.
+
+
+
+
+Just to think this through lets say we have 40 second audio and we split it into
+2 chunks, one might be 30 seconds and the other 10 seconds. 
