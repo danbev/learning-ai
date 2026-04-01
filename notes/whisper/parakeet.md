@@ -2786,7 +2786,94 @@ Input #0, wav, from 'samples/gb1_16k.wav':
 16000|1
 198.734375|256003
 ```
-So we have 198.7 x 16000 = 3,179,750 samples in total.
+```console
+$ ffprobe -i samples/gb1.wav -show_entries format=duration,bit_rate -show_entries stream=sample_rate,channels -of compact=p=0:nk=1
+Input #0, wav, from 'samples/gb1.wav':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Duration: 00:03:18.73, bitrate: 256 kb/s
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 16000 Hz, 1 channels, s16, 256 kb/s
+16000|1
+198.734375|256003
+```
+So we have 198.73 seconds of audio, at 16000 samples per second, which gives
+198.73 x 16000 = 3179750 samples:
+```console
+(gdb) p n_samples
+$1 = 3179750
+```
+And after this has be processed by the logmel spectrogram generation we have:
+```console
+(gdb) p state.mel
+$5 = {n_len = 19874, n_len_org = 19874, n_mel = 128, data = std::vector of length 2543872
+```
+So we have 19874 time frames, and 128 mel bins (for each time frame).
+```console
+0     [0  ...     127]
+...
+...
+...
+...
+...
+...
+19873 [0  ...     127]
+```
+So we need to split this into chunks to be processed. What size of the chunks
+should we use? Perhaps 1024 would be a good choice.
+
+So
+```c++
+    state->n_audio_ctx = 1024;
+
+    int total_mel_frames = state->mel.n_len;
+    int step_size        = 800;
+    int window_size      = state->n_audio_ctx;
+
+    for (int t = 0; t < total_mel_frames; t += step_size) {
+        int current_window = std::min(window_size, total_mel_frames - t);
+    }
+```
+```c++
+            float * dst = pstate.inp_mel.data();
+            // zero out the mel data.
+            memset(dst, 0, ggml_nbytes(mel));
+
+            const int i0 = std::min(mel_offset,         mel_inp.n_len);
+            const int i1 = std::min(mel_offset + n_ctx, mel_inp.n_len);
+
+            for (int j = 0; j < mel_inp.n_mel; ++j) {
+                for (int i = i0; i < i1; ++i) {
+                    dst[(i - i0) * mel_inp.n_mel + j] = mel_inp.data[j * mel_inp.n_len + i];
+                }
+            }
+            ggml_backend_tensor_set(mel, pstate.inp_mel.data(), 0, ggml_nelements(mel)*sizeof(float));
+```
+Currently, that is before the copying above, the mel data exist in memory like
+the image shows above, we first have time frame 0 with its bins, then row 1 etc.
+```
+[Mel 0 , t0, t1, t2...], [Mel 1, t0, t1, t2...], ...
+```
+But we want this data in interleaved format:
+```
+[T0, Mel 0, Mel 1, Mel 2 ...], [T1, Mel 0, Mel 1, ...], ...
+```
+
+I've tried a few different approaches to this, but the most promising this far
+is to first process the entire audio file by encoder and then run a single
+decode process. This produces a pretty accurate output:
+```console
+My fellow Americans, this day has brought terrible news and great sadness to our country. At nine o'clock this morning, mission control in Houston lost contact with our space shuttle Columbia. A short time later, debris was seen falling from the skies above Texas. The Columbia's lost. There are no survivors. On board was a crew of seven, Colonel Rick Husband, Lieutenant Colonel Michael Anderson, Commander Laurel Clark, Captain David Brown, Commander William McCool, Dr. Kulpna Chavla, and Ilan Ramon, a colonel. These men and women assumed great risk in the service to all humanity. In an age when spaceflight has come to seem almost routine. It is easy to overlook the dangers of travel by rocket and the difficulties of navigating the fierce outer atmosphere of the Earth. These astronauts knew the dangers, and they faced them willingly, knowing they had a high and noble purpose in life. Because of their courage and daring and idealism, we will miss them all the more. All Americans today are thinking as well of the families of these men and women who have been given this sudden shock and grief. Our entire nation grieves with you. And those you loved will always have the respect and gratitude of this country. The cause in which they died will continue. Mankind is led into the darkness beyond our world by the inspiration of discovery and the longing to understand. Our journey into space will go on. In the skies today, we saw destruction and tragedy. Yet farther than we can see, there is comfort and hope. In the words of the prophet Isaiah, lift your eyes and look to the heavens. Who created all this? Yet we can pray that all are safely home. May God bless the grieving families, and may God continue to bless America.
+Test passed: Parakeet model loaded and freed successfully
+```
+The original models output:
+```console
+My fellow Americans, this day has brought terrible news and great sadness to our country. At nine o'clock this morning, mission control in Houston lost contact with our space shuttle Columbia. A short time later, debris was seen falling from the skies above Texas. The Columbia's lost. There are no survivors. On board was a crew of seven, Colonel Rick Husband, Lieutenant Colonel Michael Anderson, Commander Laurel Clark, Captain David Brown, Commander William McCool, Dr. Kulpna Shavla, and Ilan Ramon, a colonel in the Israeli Air Force. These men and women assumed great risk in the service to all humanity. In an age when spaceflight has come to seem almost routine, it is easy to overlook the dangers of travel by rocket and the difficulties of navigating the fierce outer atmosphere of the Earth. Because of their courage and daring and idealism, we will miss them all the more. All Americans today are thinking as well of the families of these men and women who have been given this sudden shock and grief. You're not alone. Our entire nation grieves with you, and those you love will always have the respect and gratitude of this country. The cause in which they died will continue. Mankind is led into the darkness beyond our world by the inspiration of discovery and the longing to understand. Our journey into space will go on. In the skies today, we saw destruction and tragedy. Yet farther than we can see, there is comfort and hope. In the words of the prophet Isaiah, lift your eyes and look to the heavens. Who created all these? He who brings out the starry hosts one by one and calls them each by name. Because of his great power and mighty strength, not one of them is missing. The crew of the shuttle Columbia did not return safely to Earth. Yet we can pray that all are safely home. May God bless the grieving families, and may God continue to bless America.
+```
+This does not feel like an optimal solution but it works and hopefully will allow
+me to try other approaches.
+
+_wip_
+
 Total input frames if we have 10ms chunks is 19873 frames, and with 8x
 subsampling this becomes 2484 frames. This is the number of frames that the
 encoder will output.
@@ -2795,8 +2882,136 @@ So to recap that process a bit here. We pass in the samples and the number of
 samples. This will go throught the logmel spectrogram generation and this is what
 is the input to the subsampling.
 
+### Timestamps
+The original parakeet model can be used with a Timestamp option which will
+generate information like the following:
+```console
+[Hypothesis(
+score=-622.7587890625,
+y_sequence=tensor([1976,  547, 7877, 1103,  309,  530,  596, 3213,  404,  667, 7877,  279,
+ 583, 1491, 3470, 3629,  867,  331,  958, 7893, 2059,  458,  509, 1180,
+7877,  279,  583, 3470, 1180, 2059,  458,  509, 3629,  867,  331,  958,
+ 7893, 7883]),
+ text='And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.',
+ dec_out=None,
+ dec_state=LabelLoopingStateItem(predictor_state=(tensor([[-7.2654e-08,  6.2677e-06, -1.5610e-03,  ..., -7.7586e-08,
+ ...-1.2105e-01, -2.6987e-01, -3.1783e-01, -1.6972e+00,  4.8569e-03]]),
+ label=tensor(7883),
+ decoded_length=tensor(138),
+ fusion_state_list=[],
+ time_jump=tensor(0)),
+ timestamp={'timestep':
+   [3, 7, 11, 13, 16, 17, 19, 22, 26, 30, 37, 41, 45, 53, 65, 69, 75, 76, 78, 80, 82, 85, 89, 93, 98, 102, 105, 109, 112, 116, 119, 121, 124, 126, 128, 129, 130, 132],
+'char': [
+   {'char': ['And'], 'start_offset': 3, 'end_offset': 7, 'start': 0.24, 'end': 0.56},
+   {'char': ['so'], 'start_offset': 7, 'end_offset': 11, 'start': 0.56, 'end': 0.88},
+   {'char': [','], 'start_offset': 11, 'end_offset': 11, 'start': 0.88, 'end': 0.88},
+   {'char': ['my'], 'start_offset': 13, 'end_offset': 16, 'start': 1.04, 'end': 1.28},
+   {'char': ['f'], 'start_offset': 16, 'end_offset': 17, 'start': 1.28, 'end': 1.36},
+   {'char': ['ell'], 'start_offset': 17, 'end_offset': 19, 'start': 1.36, 'end': 1.52},
+   {'char': ['ow'], 'start_offset': 19, 'end_offset': 22, 'start': 1.52, 'end': 1.76},
+   {'char': ['Amer'], 'start_offset': 22, 'end_offset': 26, 'start': 1.76, 'end': 2.08},
+   {'char': ['ic'], 'start_offset': 26, 'end_offset': 30, 'start': 2.08, 'end': 2.4},
+   {'char': ['ans'], 'start_offset': 30, 'end_offset': 34, 'start': 2.4, 'end': 2.72},
+   {'char': [','], 'start_offset': 34, 'end_offset': 34, 'start': 2.72, 'end': 2.72},
+   {'char': ['a'], 'start_offset': 41, 'end_offset': 45, 'start': 3.2800000000000002, 'end': 3.6},
+   {'char': ['sk'], 'start_offset': 45, 'end_offset': 49, 'start': 3.6, 'end': 3.92},
+   {'char': ['not'], 'start_offset': 53, 'end_offset': 57, 'start': 4.24, 'end': 4.5600000000000005},
+   {'char': ['what'], 'start_offset': 65, 'end_offset': 69, 'start': 5.2, 'end': 5.5200000000000005},
+   {'char': ['your'], 'start_offset': 69, 'end_offset': 71, 'start': 5.5200000000000005, 'end': 5.68},
+   {'char': ['co'], 'start_offset': 75, 'end_offset': 76, 'start': 6.0, 'end': 6.08},
+   {'char': ['un'], 'start_offset': 76, 'end_offset': 78, 'start': 6.08, 'end': 6.24},
+   {'char': ['tr'], 'start_offset': 78, 'end_offset': 80, 'start': 6.24, 'end': 6.4},
+   {'char': ['y'], 'start_offset': 80, 'end_offset': 82, 'start': 6.4, 'end': 6.5600000000000005},
+   {'char': ['can'], 'start_offset': 82, 'end_offset': 85, 'start': 6.5600000000000005, 'end': 6.8},
+   {'char': ['do'], 'start_offset': 85, 'end_offset': 89, 'start': 6.8, 'end': 7.12},
+   {'char': ['for'], 'start_offset': 89, 'end_offset': 93, 'start': 7.12, 'end': 7.44},
+   {'char': ['you'], 'start_offset': 93, 'end_offset': 97, 'start': 7.44, 'end': 7.76},
+   {'char': [','], 'start_offset': 97, 'end_offset': 97, 'start': 7.76, 'end': 7.76},
+   {'char': ['a'], 'start_offset': 102, 'end_offset': 105, 'start': 8.16, 'end': 8.4},
+   {'char': ['sk'], 'start_offset': 105, 'end_offset': 109, 'start': 8.4, 'end': 8.72},
+   {'char': ['what'], 'start_offset': 109, 'end_offset': 112, 'start': 8.72, 'end': 8.96},
+   {'char': ['you'], 'start_offset': 112, 'end_offset': 116, 'start': 8.96, 'end': 9.28},
+   {'char': ['can'], 'start_offset': 116, 'end_offset': 119, 'start': 9.28, 'end': 9.52},
+   {'char': ['do'], 'start_offset': 119, 'end_offset': 121, 'start': 9.52, 'end': 9.68},
+   {'char': ['for'], 'start_offset': 121, 'end_offset': 124, 'start': 9.68, 'end': 9.92},
+   {'char': ['your'], 'start_offset': 124, 'end_offset': 126, 'start': 9.92, 'end': 10.08},
+   {'char': ['co'], 'start_offset': 126, 'end_offset': 128, 'start': 10.08, 'end': 10.24},
+   {'char': ['un'], 'start_offset': 128, 'end_offset': 129, 'start': 10.24, 'end': 10.32},
+   {'char': ['tr'], 'start_offset': 129, 'end_offset': 130, 'start': 10.32, 'end': 10.4},
+   {'char': ['y'], 'start_offset': 130, 'end_offset': 132, 'start': 10.4, 'end': 10.56},
+   {'char': ['.'], 'start_offset': 132, 'end_offset': 132, 'start': 10.56, 'end': 10.56}],
+'word': [
+   {'word': 'And', 'start_offset': 3, 'end_offset': 7, 'start': 0.24, 'end': 0.56},
+   {'word': 'so,', 'start_offset': 7, 'end_offset': 11, 'start': 0.56, 'end': 0.88},
+   {'word': 'my', 'start_offset': 13, 'end_offset': 16, 'start': 1.04, 'end': 1.28},
+   {'word': 'fellow', 'start_offset': 16, 'end_offset': 22, 'start': 1.28, 'end': 1.76},
+   {'word': 'Americans,', 'start_offset': 22, 'end_offset': 34, 'start': 1.76, 'end': 2.72},
+   {'word': 'ask', 'start_offset': 41, 'end_offset': 49, 'start': 3.2800000000000002, 'end': 3.92},
+   {'word': 'not', 'start_offset': 53, 'end_offset': 57, 'start': 4.24, 'end': 4.5600000000000005},
+   {'word': 'what', 'start_offset': 65, 'end_offset': 69, 'start': 5.2, 'end': 5.5200000000000005},
+   {'word': 'your', 'start_offset': 69, 'end_offset': 71, 'start': 5.5200000000000005, 'end': 5.68},
+   {'word': 'country', 'start_offset': 75, 'end_offset': 82, 'start': 6.0, 'end': 6.5600000000000005},
+   {'word': 'can', 'start_offset': 82, 'end_offset': 85, 'start': 6.5600000000000005, 'end': 6.8},
+   {'word': 'do', 'start_offset': 85, 'end_offset': 89, 'start': 6.8, 'end': 7.12},
+   {'word': 'for', 'start_offset': 89, 'end_offset': 93, 'start': 7.12, 'end': 7.44},
+   {'word': 'you,', 'start_offset': 93, 'end_offset': 97, 'start': 7.44, 'end': 7.76},
+   {'word': 'ask', 'start_offset': 102, 'end_offset': 109, 'start': 8.16, 'end': 8.72},
+   {'word': 'what', 'start_offset': 109, 'end_offset': 112, 'start': 8.72, 'end': 8.96},
+   {'word': 'you', 'start_offset': 112, 'end_offset': 116, 'start': 8.96, 'end': 9.28},
+   {'word': 'can', 'start_offset': 116, 'end_offset': 119, 'start': 9.28, 'end': 9.52},
+   {'word': 'do', 'start_offset': 119, 'end_offset': 121, 'start': 9.52, 'end': 9.68},
+   {'word': 'for', 'start_offset': 121, 'end_offset': 124, 'start': 9.68, 'end': 9.92},
+   {'word': 'your', 'start_offset': 124, 'end_offset': 126, 'start': 9.92, 'end': 10.08},
+   {'word': 'country.', 'start_offset': 126, 'end_offset': 132, 'start': 10.08, 'end': 10.56}
+],
+'segment': [
+    {'segment': 'And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.',
+     'start_offset': 3, 'end_offset': 132, 'start': 0.24, 'end': 10.56}
+ ]}, alignments=None, frame_confidence=None, token_confidence=None, word_confidence=None, length=tensor(138), y=None, lm_state=None, lm_scores=None, ngram_lm_state=None, tokens=None, last_token=None, token_duration=[4, 4, 2, 3, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 1, 2, 2, 2, 3, 4, 4, 4, 4, 3, 4, 3, 4, 3, 2, 3, 2, 2, 1, 1, 2, 4], last_frame=None, biasing_cfg=None, xatt_scores=None)]
+```
 
-
-
-Just to think this through lets say we have 40 second audio and we split it into
-2 chunks, one might be 30 seconds and the other 10 seconds. 
+To match the above, though not exactly (still keeping this somewhat similar to
+whisper.cpp but perhaps this should change to be more like the original):
+```console
+Segment 0: [0 -> 1101] "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country."
+Tokens:
+  [ 0] id= 1976 frame=  3 dur_idx= 4 dur_val= 4 p=0.9996 plog=-15.6162 t0=  24 t1=  56 word_start=1 "▁And"
+  [ 1] id=  547 frame=  7 dur_idx= 4 dur_val= 4 p=0.9999 plog=-18.7914 t0=  56 t1=  88 word_start=1 "▁so"
+  [ 2] id= 7877 frame= 11 dur_idx= 2 dur_val= 2 p=0.8453 plog=-14.5968 t0=  88 t1= 104 word_start=0 ","
+  [ 3] id= 1103 frame= 13 dur_idx= 3 dur_val= 3 p=0.9996 plog=-15.6151 t0= 104 t1= 128 word_start=1 "▁my"
+  [ 4] id=  309 frame= 16 dur_idx= 1 dur_val= 1 p=0.9913 plog=-11.9667 t0= 128 t1= 136 word_start=1 "▁f"
+  [ 5] id=  530 frame= 17 dur_idx= 2 dur_val= 2 p=1.0000 plog=-13.5254 t0= 136 t1= 152 word_start=0 "ell"
+  [ 6] id=  596 frame= 19 dur_idx= 3 dur_val= 3 p=1.0000 plog=-16.3210 t0= 152 t1= 176 word_start=0 "ow"
+  [ 7] id= 3213 frame= 22 dur_idx= 4 dur_val= 4 p=0.9999 plog=-10.1507 t0= 176 t1= 208 word_start=1 "▁Amer"
+  [ 8] id=  404 frame= 26 dur_idx= 4 dur_val= 4 p=1.0000 plog=-25.1000 t0= 208 t1= 240 word_start=0 "ic"
+  [ 9] id=  667 frame= 30 dur_idx= 4 dur_val= 4 p=1.0000 plog=-27.1773 t0= 240 t1= 272 word_start=0 "ans"
+  [10] id= 7877 frame= 37 dur_idx= 4 dur_val= 4 p=0.9093 plog=-16.3398 t0= 296 t1= 328 word_start=0 ","
+  [11] id=  279 frame= 41 dur_idx= 4 dur_val= 4 p=0.9980 plog=-19.7236 t0= 328 t1= 360 word_start=1 "▁a"
+  [12] id=  583 frame= 45 dur_idx= 4 dur_val= 4 p=1.0000 plog=-24.5318 t0= 360 t1= 392 word_start=0 "sk"
+  [13] id= 1491 frame= 53 dur_idx= 4 dur_val= 4 p=1.0000 plog=-23.2955 t0= 424 t1= 456 word_start=1 "▁not"
+  [14] id= 3470 frame= 65 dur_idx= 4 dur_val= 4 p=0.9995 plog=-16.7244 t0= 520 t1= 552 word_start=1 "▁what"
+  [15] id= 3629 frame= 69 dur_idx= 2 dur_val= 2 p=0.8168 plog=-11.6476 t0= 552 t1= 568 word_start=1 "▁your"
+  [16] id=  867 frame= 75 dur_idx= 1 dur_val= 1 p=0.9980 plog=-12.5256 t0= 600 t1= 608 word_start=1 "▁co"
+  [17] id=  331 frame= 76 dur_idx= 2 dur_val= 2 p=1.0000 plog=-11.6734 t0= 608 t1= 624 word_start=0 "un"
+  [18] id=  958 frame= 78 dur_idx= 2 dur_val= 2 p=1.0000 plog=-11.3656 t0= 624 t1= 640 word_start=0 "tr"
+  [19] id= 7893 frame= 80 dur_idx= 2 dur_val= 2 p=1.0000 plog=-14.3272 t0= 640 t1= 656 word_start=0 "y"
+  [20] id= 2059 frame= 82 dur_idx= 3 dur_val= 3 p=1.0000 plog=-17.7691 t0= 656 t1= 680 word_start=1 "▁can"
+  [21] id=  458 frame= 85 dur_idx= 4 dur_val= 4 p=1.0000 plog=-23.2535 t0= 680 t1= 712 word_start=1 "▁do"
+  [22] id=  509 frame= 89 dur_idx= 4 dur_val= 4 p=1.0000 plog=-23.0690 t0= 712 t1= 744 word_start=1 "▁for"
+  [23] id= 1180 frame= 93 dur_idx= 4 dur_val= 4 p=0.9999 plog=-25.0585 t0= 744 t1= 776 word_start=1 "▁you"
+  [24] id= 7877 frame= 98 dur_idx= 4 dur_val= 4 p=0.8822 plog=-14.2621 t0= 784 t1= 816 word_start=0 ","
+  [25] id=  279 frame=102 dur_idx= 3 dur_val= 3 p=0.9992 plog=-16.8122 t0= 816 t1= 840 word_start=1 "▁a"
+  [26] id=  583 frame=105 dur_idx= 4 dur_val= 4 p=1.0000 plog=-21.0343 t0= 840 t1= 872 word_start=0 "sk"
+  [27] id= 3470 frame=109 dur_idx= 3 dur_val= 3 p=0.9999 plog=-15.4671 t0= 872 t1= 896 word_start=1 "▁what"
+  [28] id= 1180 frame=112 dur_idx= 4 dur_val= 4 p=0.9997 plog=-17.6853 t0= 896 t1= 928 word_start=1 "▁you"
+  [29] id= 2059 frame=116 dur_idx= 3 dur_val= 3 p=0.9999 plog=-15.5379 t0= 928 t1= 952 word_start=1 "▁can"
+  [30] id=  458 frame=119 dur_idx= 2 dur_val= 2 p=1.0000 plog=-15.9920 t0= 952 t1= 968 word_start=1 "▁do"
+  [31] id=  509 frame=121 dur_idx= 3 dur_val= 3 p=1.0000 plog=-15.9604 t0= 968 t1= 992 word_start=1 "▁for"
+  [32] id= 3629 frame=124 dur_idx= 2 dur_val= 2 p=0.9994 plog=-12.2084 t0= 992 t1=1008 word_start=1 "▁your"
+  [33] id=  867 frame=126 dur_idx= 2 dur_val= 2 p=0.9969 plog=-9.1232 t0=1008 t1=1024 word_start=1 "▁co"
+  [34] id=  331 frame=128 dur_idx= 1 dur_val= 1 p=0.9999 plog=-12.6941 t0=1024 t1=1032 word_start=0 "un"
+  [35] id=  958 frame=129 dur_idx= 1 dur_val= 1 p=1.0000 plog=-8.8891 t0=1032 t1=1040 word_start=0 "tr"
+  [36] id= 7893 frame=130 dur_idx= 2 dur_val= 2 p=1.0000 plog=-14.1431 t0=1040 t1=1056 word_start=0 "y"
+  [37] id= 7883 frame=132 dur_idx= 4 dur_val= 4 p=0.9567 plog=-11.5198 t0=1056 t1=1088 word_start=0 "."
+```
