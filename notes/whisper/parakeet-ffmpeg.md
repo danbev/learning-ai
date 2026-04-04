@@ -3,7 +3,7 @@ To try this out we need to first checkout the parakeet-support branch:
 ```console
 $ git clone -b parakeet-support https://github.com/danbev/whisper.cpp.git
 ```
-Then we build and install the library to a local directory named install:
+Then we build and install the library to a local directory named `build-install`:
 ```console
 $ cat build-install.sh 
 #!/bin/bash
@@ -38,13 +38,13 @@ Then we need to check out the FFmpeg parakeet.cpp branch:
 ```console
 $ git clone -b parakeet.cpp https://github.com/danbev/FFmpeg.git
 ```
-And then build FFmpeg using [build.sh](https://github.com/danbev/FFmpeg/blob/parakeet.cpp/build.sh)
+And then build FFmpeg using the [build.sh](https://github.com/danbev/FFmpeg/blob/parakeet.cpp/build.sh)
 script.
 
 After that it should be possible to [run](https://github.com/danbev/FFmpeg/blob/parakeet.cpp/run-parakeet.sh)
 ffmpeg with parakeet.cpp support:
 ```console
-./ffmpeg -i /home/danbev/work/ai/whisper-work/samples/gb1.wav -loglevel quiet -af parakeet=model=/home/danbev/work/ai/whisper-work/models/ggml-parakeet-tdt-0.6b-v3.bin:use_gpu=1:destination=- -f null -
+./ffmpeg -i gb1.wav -loglevel quiet -af parakeet=model=ggml-parakeet-tdt-0.6b-v3.bin:use_gpu=1:destination=- -f null -
 ggml_cuda_init: found 1 CUDA devices (Total VRAM: 11903 MiB):
   Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes, VRAM: 11903 MiB
 load_backend: loaded CUDA backend from /home/danbev/work/ai/whisper-work/build-install/lib/libggml-cuda.so
