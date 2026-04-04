@@ -38,13 +38,30 @@ Then we need to check out the FFmpeg parakeet.cpp branch:
 ```console
 $ git clone -b parakeet.cpp https://github.com/danbev/FFmpeg.git
 ```
-And then build FFmpeg using the [build.sh](https://github.com/danbev/FFmpeg/blob/parakeet.cpp/build.sh)
-script.
-
-After that it should be possible to [run](https://github.com/danbev/FFmpeg/blob/parakeet.cpp/run-parakeet.sh)
-ffmpeg with parakeet.cpp support:
+And then build FFmpeg using the following configuration options and we explicitely
+set `PKG_CONFIG_PATH` to point to the `pkgconfig` directory of the local
+installation above:
 ```console
-./ffmpeg -i gb1.wav -loglevel quiet -af parakeet=model=ggml-parakeet-tdt-0.6b-v3.bin:use_gpu=1:destination=- -f null -
+$ export PKG_CONFIG_PATH="/home/danbev/work/ai/whisper-work/build-install/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+$ ./configure --prefix=/usr --enable-version3 --disable-shared --enable-gpl \
+  --enable-nonfree --enable-static --enable-pthreads --enable-filters \
+  --enable-openssl --enable-runtime-cpudetect --enable-libvpx --enable-libx264 \
+  --enable-libx265 --enable-libspeex --enable-libfreetype --enable-fontconfig \
+  --enable-libzimg --enable-libvorbis --enable-libwebp --enable-libfribidi \
+  --enable-libharfbuzz --enable-libass --enable-whisper --enable-parakeet
+
+$ make
+```
+To run we need to set `LD_LIBRARY_PATH` to point to the `lib` directory of the local installation above so that the parakeet and whisper backends can be found at runtime. For macos this
+would instead be `DYLD_LIBRARY_PATH`:
+```console
+$ export LD_LIBRARY_PATH=/home/danbev/work/ai/whisper-work/build-install/lib/:$LD_LIBRARY_PATH
+```
+
+After that it should be possible to run using the following command:
+```console
+$ ./ffmpeg -i gb1.wav -loglevel quiet -af parakeet=model=ggml-parakeet-tdt-0.6b-v3.bin:use_gpu=1:destination=- -f null -
 ggml_cuda_init: found 1 CUDA devices (Total VRAM: 11903 MiB):
   Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes, VRAM: 11903 MiB
 load_backend: loaded CUDA backend from /home/danbev/work/ai/whisper-work/build-install/lib/libggml-cuda.so
