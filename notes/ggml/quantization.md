@@ -10,16 +10,16 @@ are quantizing also matters and should influence the choice of the quantization
 strategy/type. I'm just mentioning this as it was not obivious to me at first,
 and I'll include examples that illustrate this.
 
-One thing that was not obvious to me at first is that quantization the type of
-quantization depends on the what the backend can handle efficiently. For example
-if a backend has uppport for int 8 operations that using 8 bit quantization might
-seem like the best choice. This way there is no dequantization required if the
-data is packed in int8 format. This felt intuitive to me but it is actually still
-more efficient to use 4 bit quantization and then dequantize to int8 because
-memory transfers are the bottleneck not the computation. For this to be possible
-the backend must be able to dequantize efficiently and also do this on the device
-itself or there will still be a memory transfer bottleneck. This is why we often
-see dequantization kernels/functions in backends.
+One thing that was not obvious to me at first is the type of quantization
+depends on what the backend can handle efficiently. For example if a backend has
+uppport for int 8 operations using 8 bit quantization might seem like the best
+choice. This way there is no dequantization required if the data is packed in
+int8 format. This felt intuitive to me but it is actually still more efficient
+to use 4 bit quantization and then dequantize to int8 because memory transfers
+are the bottleneck not the computation. For this to be possible the backend must
+be able to dequantize efficiently and also do this on the device itself or there
+will still be a memory transfer bottleneck. This is why we often see
+dequantization kernels/functions in backends.
 
 ### Symmetric quantization
 This is where we map zero in the original data range to zero in the quantized
@@ -155,19 +155,50 @@ And this is a 32 bit unsigned integer, that is 4 bytes, and like `ggml_half` it
 can only store positive values.
 
 ### Blocks
-In the coming sections we will look at types that are used in ggml and the all
-start with `block_` and it was not clear to me what this meant and why blocks
-are used. Blocks are simply tensors that are divided into blocks of a certain
-size and then quantized individually. As we will see we have a scaling factor
-when we quantize which is calculated based on the maximum value in the block. If
-just one or a few data points are extreme outliers (very high or very low
-compared to the rest of the data), they can disproportionately influence the
-scale factor. This is because the scale factor is often chosen to accommodate
-the maximum absolute value in the tensor.
-So instead the tensors are flattened into vectors and then divided into blocks
+In the coming sections we will look at types that are used in ggml and they all
+start with `block_`. It was not clear to me what this meant and why blocks are
+used. Blocks are simply tensors that are divided into blocks of a certain size
+and then quantized individually.
+
+As we will see we have a scaling factor when we quantize which is calculated
+based on the maximum value in the block. If just one or a few data points are
+extreme outliers (very high or very low compared to the rest of the data), they
+can disproportionately influence the scale factor. This is because the scale
+factor is often chosen to accommodate the maximum absolute value in the tensor.
+
+So instead, the tensors are flattened into vectors and then divided into blocks
 of a certain size like 32, 64, or 128 elements. Each block is then scaled
 individually based on its own max absolute value. Outliers affect only the block
 they are in, rather than the entire dataset. 
+
+### Per tensor scale
+So we discussed block in the previous section and I would have though that was
+the end of it, that we use blocks and we would be good to go. But if we take a
+look at 4-bit numbers they are very cramped and can only represent -3.0 - 3.0.
+If a tensor has large values then those will not be able to represented. So we
+can use a scale for the tensor to shrink the entire tensor so that it fits into
+the -3.0 - 3.0 range.
+
+So we would first scale the tensor values down, perform the operations on the
+4-bit range and then scale them up again.
+
+Now, the weights of the model would already be in NVFP4 format if the model
+supports that. But activation tensors usually are in a higher precision.
+1) The kernel looks at the incoming activation tensor and calculates a global
+scale to shrink the whole tensor down so that the values fit into the narrow
+range of -3.0 - 3.0.
+
+2) The tensor is split into blocks of 16. For each block it finds a local scale.
+
+3) The tensor core as two NVFP4 inputs:
+   * Input A: the pre-stored NVFP4 weights.
+   * Input B: the quantized NVFP4 activations.
+   The TPU performs the GEMM in NVFP4.
+
+4) The result is often in often in high precision number.
+
+5) The kernel multiplies the result by both the weight scale and the activation
+   scale so that then next layer can be handed the values.
 
 ### `block_q4_0`
 This struct is defined in `ggml/src/ggml-common.h`:
