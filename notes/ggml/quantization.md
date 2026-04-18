@@ -322,7 +322,7 @@ void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_REST
         y[i].d = GGML_FP32_TO_FP16(d);
 
         for (int j = 0; j < qk/2; ++j) {
-            // Extract and scale/divide value in x for positions 0, 1, 2, 3, ... , 15
+            // Extract and scale/divide value in x for positions 0,  1,   2, 3, ... , 15
             const float x0 = x[i*qk + 0    + j]*id;
             // Extract and scale/divide value in x for positions 16, 17, 18, 19, .. , 31
             // because qk is 32.
@@ -405,7 +405,7 @@ for (int i = 0; i < 16; i++) {
 ```
 To get the low (lo) values that is.
 
-The advantage of the packing though, is that it allows efficient processing using
+The advantage of this packing though, is that it allows efficient processing using
 SIMD instructions, so we can now do the following:
 ```console
 __m128i v   = _mm_loadu_si128((const __m128i*)qs);      // loads qs[0..15]
