@@ -173,11 +173,42 @@ they are in, rather than the entire dataset.
 
 ### Per tensor scale
 So we discussed block in the previous section and I would have though that was
-the end of it, that we use blocks and we would be good to go. But if we take a
-look at 4-bit numbers they are very cramped and can only represent -3.0 - 3.0.
-If a tensor has large values then those will not be able to represented. So we
-can use a scale for the tensor to shrink the entire tensor so that it fits into
-the -3.0 - 3.0 range.
+the end of it, that we use blocks and we would be good to go.
+What I mean is that if we already take 16 value blocks we have a scale for them,
+which means we have scaled down the value of the actual values. And multiple of
+these 16 value blocks can make up a tensor. In my mind we don't need the
+additional per-tensor scale because we have already scaled down the values per
+block?
+
+This issue is that the E4M3 scale factor has a limited range (max around 448).
+Now if we have a block of 16 values:
+```
+  [0.2, 0.01, -0.1, 1.0, 5000.0, 0.5, -1.0, -0.003]
+```
+To fit this into NVPF4 (max representable code is 6.0) we need a block scale.
+To fit 1000.0 into this the scale will need to be:
+```console
+5000.0 / 6.0 = 833.3
+```
+This will overlow as the max representable code is 448. So this will be set to
+448 and we have lost precision for this value in this block, instead scaled value
+representing 5000.0 we have 448.0 * 6.0 = 2688.0 which is a significant loss of
+precision.
+
+Now, we apply a per-tensor Scale of 2.0:
+```console
+  [0.1, 0.005, -0.05, 0.5, 2500.0, 0.25, -0.5, -0.0015]
+```
+The outlier becomes 2500.0 and the scale becomes:
+```console
+2500.0 / 6.0 = 416.7
+```
+And this is less than the max representable code of 448 so we can represent this
+value.
+
+If a tensor has larger values then those will not be able to represented. So we
+can use a scale for the tensor as a whole to shrink the entire tensor so that it
+fits into the -3.0 - 3.0 range.
 
 So we would first scale the tensor values down, perform the operations on the
 4-bit range and then scale them up again.
@@ -198,7 +229,14 @@ range of -3.0 - 3.0.
 4) The result is often in often in high precision number.
 
 5) The kernel multiplies the result by both the weight scale and the activation
-   scale so that then next layer can be handed the values.
+   scale so that then next layer can be handed the tensor.
+
+For example:
+```
+Weight value: 30.0      we can't store this in 4 bits so we use 10 as the scale
+Scaled value:  3.0
+```
+So the hardware sees 3.0
 
 ### `block_q4_0`
 This struct is defined in `ggml/src/ggml-common.h`:
