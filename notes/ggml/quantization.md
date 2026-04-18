@@ -109,7 +109,7 @@ quantized_value = round((0.0 - (-1.2)) / 0.24)
                 = round((1.2) / 0.24)
                 = round(5) = 5
 ```
-So we are taking the float value, the y axis and subtracting the minium
+So we are taking the float value, the y axis value, and subtracting the minium.
 
 To dequantize we do:
 ```
@@ -374,8 +374,8 @@ input array `x`:
             // Extract and scale/divide value in x for positions 16, 17, 18, 19, .. ,31
             const float x1 = x[i*qk + qk/2 + j]*id;
 ```
-So this is accessing values from the input array in pairs, {0, 15}, {1, 16},
-{2, 17}, ..., {15, 31}. This will cause the quantized values to be stored
+So this is accessing values from the input array in pairs, {0, 16}, {1, 17},
+{2, 18}, ..., {15, 31}. This will cause the quantized values to be stored
 something like this:
 ```console
 x 
