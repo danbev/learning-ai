@@ -1,20 +1,19 @@
 ## Quanitization
 These are ways to take floating point values and storing them with fewer bits,
-we want to make something that take more storage space, or memory space and
+we want to make something that takes more storage space, or memory space and
 store it with less bits.
 
 So if we think about floating points we have half presicion 16-bits, single
-precision 32-bits, and double precision 64-bits. My understanding that models
+precision 32-bits, and double precision 64-bits. My understanding is that models
 are trained using single-precision 32-bit floating points. But these can then be
 quantanised to smaller sizes. This might make the model less accurate but I'm
-not clear on that yet.
+not clear on that yet. 
 
 My current understanding is that the models could be trained on single-precision
-and then quantanised. So this will make the model size smaller, taking less
-room on disk, and also less memory. But at inference time I'm not sure yet if
-the the values are then converted back to single-precision or if they are
-inferred using the quantanised values. Hopefully this document will sort that
-out.
+and then quantanised. So this will make the model size smaller, taking less room
+on disk, and also less memory. But at inference time I'm not sure yet if the the
+values are then converted back to single-precision or if they are inferred using
+the quantanised values. Hopefully this document will sort that out.
 
 ### Symmetric Quantanisation
 Take the following example:
@@ -38,8 +37,8 @@ scale = ---------------
 scale =  ------------- = 3.9215686274509803
          255 - 0
 ```
-So 3.9215686274509803 is the scale factor. So to convert a floating point into
-our range we can use this scaling factor:
+So 3.9215686274509803 is the scale factor. So, to convert a floating point value
+into our range we can use this scaling factor:
 ```
 int quantanised_value = value / scale
 
@@ -75,15 +74,15 @@ So if we quantize a value in that range, for example -40.0 then we should get
 -40.0 / 4.07843137254902 = -9.80392156862745
                          = -10 (rounded)
 ```
-Notice that this does not line up to 0 which is what have have above. This is
-an issue and something that we need to take into account.
+Notice that this does not line up to 0 which is what had above. This is an issue
+and something that we need to take into account.
 ```
 1000.0 / 4.07843137254902 = 245.09803921568627
                           = 245 (rounded)
 ```
 Notice that this value does not line up with 255. What we can do is take
 the value that we got when we converted -40.0 and add the `negative` of that
-value to all the values that we convert to fix this issue in mis-alignment. 
+value to all the values that we convert to fix this issue of mis-alignment. 
 ```
 -40.0 / 4.07843137254902 + -(-10) = -9.80392156862745 + 10
                                    = 0.19607843137254902
