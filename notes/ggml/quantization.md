@@ -439,7 +439,7 @@ quantized value:
             const uint8_t xi0 = MIN(15, (int8_t)(x0 + 8.5f));
             const uint8_t xi1 = MIN(15, (int8_t)(x1 + 8.5f));
 ```
-This for rounding and storing the quantized value in the range of [0-15]. And
+This is for rounding and storing the quantized value in the range of [0-15]. And
 we will see later that we subtract 8 when we dequantize the value to get it back
 into the range of [-8, 7].
 
@@ -1659,7 +1659,7 @@ as there is no risk of another pointer accessing the same memory concurrently.
 aggressively, as there is no risk of data dependencies between iterations due to
  aliasing.
 
-###  TQ1_0 (Ternary Quantiztion
+###  TQ1_0 (Ternary Quantiztion)
 The `1` I think stands for the floor of the bits per weight which is floor(1.6875bpw = 1).
 And `0` has the same meaning as for the other quantization types, like `q4_0`, `q5_0` and means
 that there is only one delta value for the quantization and no minimum value.
@@ -1678,7 +1678,7 @@ State 2: 10
 So we can see that we need two bits to represent the three states, and we can also see that
 we have one additional state which is unused. So storing the values using 2 bits will make us
 waste 1/4 of the bits which is not great.
-What we can do instead it we can take multiple ternary numbers and pack them into a single byte.
+What we can do instead is we can take multiple ternary numbers and pack them into a single byte.
 ```
 [2, 1]
 ```
@@ -2160,16 +2160,222 @@ Or a little more compact:
 ```
 And we only process 4 elements so this will simply skip the last 0 trit.
 
-## IQ (Importance  Quantization)
+## IQ (Importance  Quantization?)
 This was introduced in https://github.com/ggml-org/llama.cpp/pull/4773.
 
-Similar to how a .zip file uses a dictionary repeated patterns
-reference the dictionary rather than storing data multiple times.
+In this case we don't consider each floating point value individually (even
+though he handle them in blocks like we mention earlier) we treat a vector of 8
+floating point values as one entity.
+```
+ [0.3, -0.1, 5.5, 3.2, 1.0, 2.0, 20.0, -15.0]
+```
+And what is done it that we use lookup tables to find the closest matching vector
+and then use those values as the quantized values.
+So we are doing vector quantization now instead of one-by-one quantization.
+Imaging this as a vector which points to a position in an 8 dimensional vector
+space.
 
-Acts like compressed file, using lookup table to save extra space, trading speed
-for additional memory usage memory. So this would be of interest for constrained
-devices/environments where memory is at a premium and somewhat slower inference
-is acceptable.
+Lets start by looking at block_iq2_xxs:
+```c++
+typedef struct {
+    ggml_half d;
+    uint16_t qs[QK_K/8];
+} block_iq2_xxs;
+static_assert(sizeof(block_iq2_xxs) == sizeof(ggml_half) + QK_K/8*sizeof(uint16_t), "wrong iq2_xxs block size/padding");
+```
+So we have the delta/scale is the global scale for the entire block.
+And we have a block of size 32 uint16_t (2 bytes) so recall that this gives us
+two 8-bit indices to a pattern of 8 weights. So we can represent a total of 16
+weights with this:
+```
+qs_0                                       lookup table
+    [0      7][0      7]                  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] 0
+        ↑ idx 3  ↑ idx 128                                 ...
+        +---------+--------------------->                  ...
+qs_1
+    [0      7][0      7]
+...
+qs_15
+    [0      7][0      7]                  [1.0, ...                              ] 255
+```
+So the values stored in qs are actually indices into the lookup table.
+
+To inspect the tables we can use the following command.
+```console
+$ g++ -E -DGGML_COMMON_IMPL_CPP src/ggml-common.h -o ggml-common-preprocessed.h
+```
+```c++
+static const uint64_t iq2xxs_grid[256] = {
+    0x0808080808080808, 0x080808080808082b, 0x0808080808081919, 0x0808080808082b08,
+    0x0808080808082b2b, 0x0808080808190819, 0x0808080808191908, 0x08080808082b0808,
+    0x08080808082b082b, 0x08080808082b2b08, 0x08080808082b2b2b, 0x0808080819080819,
+    ...
+    0x080808082b2b082b, 0x0808081908080819, 0x0808081908081908, 0x0808081908190808,
+    0x0808081908191919, 0x0808081919080808, 0x080808192b081908, 0x080808192b192b08,
+    0x2b2b08080808082b, 0x2b2b080819190808, 0x2b2b08082b081919, 0x2b2b081908082b19,
+    0x2b2b082b08080808, 0x2b2b190808192b08, 0x2b2b2b0819190808, 0x2b2b2b1908081908,
+};
+```
+So we are storing indices into this table and each entry in this table is a 8
+dimensional vector.
+
+```console
+(venv) spark $ ./build-dgx-spark-release/bin/llama-imatrix -m models/Kimi-Linear-Q8_0.gguf -f imatrix-input.txt
+```
+I just created the input file with 1000 row to make sure the file imatrix could
+be created. Now, this imatrix.gguf is then used during quantization:
+```console
+(venv) spark $ gdb --args ./build-dgx-spark-debug/bin/llama-quantize --imatrix imatrix.gguf models/Kimi-Linear.gguf IQ2_XXS
+```
+And we can set a breakpoint in quantize_row_iq2_xxs_impl:
+```console
+(gdb) br ggml-quants.c:3169
+(gdb) r
+```
+```console
+Thread 103 "llama-quantize" hit Breakpoint 1, quantize_row_iq2_xxs_impl (x=0xffe65fa11010, vy=0xffe5fe0002a0, n=2304, 
+    quant_weights=0xaaaab2446fe0) at /home/danbev/work/llama.cpp/ggml/src/ggml-quants.c:3169
+3169	    const int gindex = iq2_data_index(GGML_TYPE_IQ2_XXS);
+```
+
+```c++
+void iq2xs_init_impl(enum ggml_type type) {
+    const int gindex = iq2_data_index(type);
+    const int grid_size = iq2_grid_size(type);
+    if (iq2_data[gindex].grid) {
+        return;
+    }
+    static const uint16_t kgrid_2bit_256[256] = {
+            0,     2,     5,     8,    10,    17,    20,    32,    34,    40,    42,    65,    68,    80,    88,    97,
+          100,   128,   130,   138,   162,   257,   260,   272,   277,   320,   388,   408,   512,   514,   546,   642,
+         1025,  1028,  1040,  1057,  1060,  1088,  1090,  1096,  1120,  1153,  1156,  1168,  1188,  1280,  1282,  1288,
+         1312,  1350,  1385,  1408,  1425,  1545,  1552,  1600,  1668,  1700,  2048,  2053,  2056,  2068,  2088,  2113,
+         2116,  2128,  2130,  2184,  2308,  2368,  2562,  2580,  4097,  4100,  4112,  4129,  4160,  4192,  4228,  4240,
+         4245,  4352,  4360,  4384,  4432,  4442,  4480,  4644,  4677,  5120,  5128,  5152,  5157,  5193,  5248,  5400,
+         5474,  5632,  5654,  6145,  6148,  6160,  6208,  6273,  6400,  6405,  6560,  6737,  8192,  8194,  8202,  8260,
+         8289,  8320,  8322,  8489,  8520,  8704,  8706,  9217,  9220,  9232,  9280,  9302,  9472,  9537,  9572,  9872,
+        10248, 10272, 10388, 10820, 16385, 16388, 16400, 16408, 16417, 16420, 16448, 16456, 16470, 16480, 16513, 16516,
+        16528, 16640, 16672, 16737, 16768, 16773, 16897, 16912, 16968, 16982, 17000, 17408, 17416, 17440, 17536, 17561,
+        17682, 17700, 17920, 18433, 18436, 18448, 18496, 18501, 18688, 18776, 18785, 18818, 19013, 19088, 20480, 20488,
+        20497, 20505, 20512, 20608, 20616, 20740, 20802, 20900, 21137, 21648, 21650, 21770, 22017, 22100, 22528, 22545,
+        22553, 22628, 22848, 23048, 24580, 24592, 24640, 24680, 24832, 24917, 25112, 25184, 25600, 25605, 25872, 25874,
+        25988, 26690, 32768, 32770, 32778, 32833, 32898, 33028, 33048, 33088, 33297, 33793, 33796, 33808, 33813, 33856,
+        33888, 34048, 34118, 34196, 34313, 34368, 34400, 34818, 35076, 35345, 36868, 36880, 36900, 36928, 37025, 37142,
+        37248, 37445, 37888, 37922, 37956, 38225, 39041, 39200, 40962, 41040, 41093, 41225, 41472, 42008, 43088, 43268,
+    };
+    ...
+    const int kmap_size = 43692;
+    const int nwant = type == GGML_TYPE_IQ1_S || type == GGML_TYPE_IQ1_M ? 3 : type == GGML_TYPE_IQ2_S ? 1 : 2;
+    const uint16_t * kgrid = type == GGML_TYPE_IQ2_XXS ? kgrid_2bit_256 :
+                             type == GGML_TYPE_IQ2_XS  ? kgrid_2bit_512 :
+                             type == GGML_TYPE_IQ1_S || type == GGML_TYPE_IQ1_M ? kgrid_1bit_2048 : kgrid_2bit_1024;
+    uint64_t * kgrid_q2xs;
+    int      * kmap_q2xs;
+    uint16_t * kneighbors_q2xs;
+```
+In this case we have:
+```console
+(gdb) p kgrid
+$3 = (const uint16_t *) 0xfffff64488c8 <kgrid_2bit_256>
+```
+So recall that the the goals is to instead of quantizing every single number
+indvidually we handling weights in blocks of 8.
+
+Alright, so imagine we have our original model which is not quantized yet, it
+has weights in FP32 or FP32. So we have our weights:
+```console
+ [0.3, -0.1, 5.5, 3.2, 1.0, 2.0, 20.0, -15.0]
+```
+And these is what llama-quantize will look at (and it will also look at the
+imatrix to see which of these 8 are the most important, more on the imatrix
+later).
+Now, it will search the kgrid above and pick the one that fits our vector the
+best, and it will save the index (lets say 18) into the model file. So after
+quantization that weight which previously contains floating point values now
+contains integer indices.
+
+```console
+ [18]
+```
+So instead of those 8 values in the original model we now only have one value for
+those 8, and also a scale (d) stored. And of course this happends to all groups
+of 8 float values but I'm only showing one here.
+
+When we use this quantized model the GPU will read the index 18, and looks up
+that position in the kgrid and unpacks the values stored there. It then multiplies
+those integers by the scale (d).
+
+So the grid is created like this:
+```console
+(gdb) f
+#0  iq2xs_init_impl (type=GGML_TYPE_IQ2_XXS) at /home/danbev/work/llama.cpp/ggml/src/ggml-quants.c:3043
+3043	    uint64_t * the_grid = (uint64_t *)malloc(grid_size*sizeof(uint64_t));
+(gdb) p grid_size
+$4 = 256
+```
+And this is the code:
+```c++
+    uint64_t * the_grid = (uint64_t *)malloc(grid_size*sizeof(uint64_t));
+    for (int k = 0; k < grid_size; ++k) {
+        // get a pointer to an uint64_t slot (which can store 8 bytes)
+        int8_t * pos = (int8_t *)(the_grid + k);
+        for (int i = 0; i < 8; ++i) {
+            int l = (kgrid[k] >> 2*i) & 0x3;
+            pos[i] = 2*l + 1;
+        }
+    }
+```
+So we allocate a new 256 array for this. And kgrid is the table from above. 
+```console
+(gdb) p k
+$11 = 18
+(gdb) p kgrid[k]
+$12 = 130
+
+(gdb) ptype kgrid[k]
+type = const unsigned short
+(gdb) p sizeof(kgrid[k])
+$13 = 2
+```
+```c++
+    static const uint16_t kgrid_2bit_256[256] = {
+            0,     2,     5,     8,    10,    17,    20,    32,    34,    40,    42,    65,    68,    80,    88,    97,
+          100,   128,   130,   138,   162,   257,   260,   272,   277,   320,   388,   408,   512,   514,   546,   642,
+                         ↑
+```
+So we have two 8-bit values:
+```console
+
+00000000 10000010
+```
+```c++
+int l = (kgrid[k] >> 2*i) & 0x3;
+        (     130 >> 2*0) & 0x3;
+```
+```console
+(gdb) python print(format(130, '032b'))
+00000000000000000000000010000010
+(gdb) p/t  0x3
+$17 = 11
+```
+So above we are first shifting by 2 position each time, for the first iteration
+this becomes:
+```console
+00000000000000000000000010000010
+                              11
+                              10            = 2
+l = 2
+pos[i] = 2*2+1;
+pos[i] = 5;
+```
+
+_wip_
+
+
+
+How this works is that we try to match this
+8 value combo with a lookup table that has been trained/produced by a model.
+This provides a 
 
 ```c++
     [GGML_TYPE_IQ2_XXS] = {
