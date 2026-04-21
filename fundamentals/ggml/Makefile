@@ -35,10 +35,10 @@ TARGETS_CPP := $(patsubst $(SRCDIR)/%.cpp, %, $(SOURCES_CPP))
 ifeq ($(OS),Linux)
 CFLAGS += -fopenmp
 CXXFLAGS += -fopenmp
-WHOLE_ARCHIVE  = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive 
-WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whole-archive 
-WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-cpu.a -Wl,--no-whole-archive 
-#WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
+WHOLE_ARCHIVE  = -Wl,--whole-archive ggml/build/src/libggml.a -Wl,--no-whole-archive
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-base.a -Wl,--no-whole-archive
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/libggml-cpu.a -Wl,--no-whole-archive
+WHOLE_ARCHIVE += -Wl,--whole-archive ggml/build/src/ggml-cuda/libggml-cuda.a -Wl,--no-whole-archive 
 else ifeq ($(OS),Darwin)
 MACOS_TARGET = -mmacosx-version-min=15.6
 CFLAGS += $(MACOS_TARGET) -framework Metal -framework Foundation -framework MetalKit -framework Accelerate
@@ -75,6 +75,10 @@ pre-ggml.c:
 backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
 backend-cuda: CC = $(CXX)
 backend-cuda: backend
+
+meta-backend-cuda: CUDA_FLAGS := -L${CUDA_DIR} -lcuda -lcublas -lculibos -lcudart -lcublasLt
+meta-backend-cuda: CC = $(CXX)
+meta-backend-cuda: meta-backend
 
 backend-vulkan: VULKAN_FLAGS := -Wl,--whole-archive -lvulkan -Wl,--no-whole-archive
 backend-vulkan: CC = $(CXX)
