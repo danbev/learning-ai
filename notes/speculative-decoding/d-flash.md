@@ -232,3 +232,30 @@ So that is how the target model extract the feature layers.
 
 Now, lets turn our attention to the draft models decode function (the encoder
 is very simple so I'm skipping it for now.
+```c++
+llm_build_dflash_decode::llm_build_dflash_decode(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+    const int64_t n_embd_head = hparams.n_embd_head_v();
+
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+
+    // Noise tokens [MASK]
+    GGML_ASSERT(model.target_tok_embd != nullptr && "DFlash decoder requires target model's tok_embd");
+    ggml_tensor * noise_embd = build_inp_embd(model.target_tok_embd);
+    cb(noise_embd, "inp_noise_embd", -1);
+```
+Recall that before we call decode we created a batch which contained the last
+token id and the rest were the mask token id. This is just treated as a normal
+input of token ids, so they will be looked up using ggml_get_rows in the model.
+
+Next we have the cross attention tensor that is create as an input tensor, which
+will later be filled with the features from the target model:
+```c++
+    // Target context via llama_cross (filled from accumulated_target_ctx), graph rebuilds every step
+    ggml_tensor * target_ctx = build_inp_cross_embd();
+    const int64_t n_ctx = target_ctx->ne[1];
+```
+So I was expecting to find some diffusion "magic" for a lack of a better word but
+that is part of how the model was trained, it was trained to denoise a corrupted
+input sequence. Here the noice is what we introduced with the mask_token_id's.
+The actual graph uses cross attention, where the features from the target model
+enable the model to predict good outputs.
