@@ -76,25 +76,57 @@ common/speculative.cpp:
             return;
         }
 
+        // Then we get the output of the encoder:
         const float * target_ctx_new = llama_get_embeddings(ctx_dft_enc);
         GGML_ASSERT(target_ctx_new && "encoder output is null");
 
-        // Step 2: Append to accumulated target_ctx and set on decoder context (writes to cross.v_embd)
+        // Then we append these to the accumulated_ctx vector as a range. So this
+        // will grow larger and larger we go.
         const size_t new_size = (size_t)n_embd * n_new;
         accumulated_ctx.insert(accumulated_ctx.end(), target_ctx_new, target_ctx_new + new_size);
 
         const int n_ctx_total = (int)(accumulated_ctx.size() / n_embd);
         llama_set_dflash_accumulated_target_ctx(ctx_dft_dec, accumulated_ctx.data(), n_embd, n_ctx_total);
+```
+And this will be copied into the llama_context's cross member:
+```c++
+void llama_context::set_dflash_accumulated_target_ctx(const float * data, int32_t n_embd, int32_t n_tokens) {
+    GGML_ASSERT(data != nullptr);
+    const size_t size = (size_t)n_embd * n_tokens;
+    // Store in cross struct (reusing T5 style cross-attention for accumulated target features fed to the DFlash decoder)
+    cross.n_embd = n_embd;
+    cross.n_enc  = n_tokens; // n_ctx_total
+    cross.v_embd.resize(size);
+    std::memcpy(cross.v_embd.data(), data, size * sizeof(float));
+}
+```
+```c++
+struct llama_cross {
+    int64_t n_embd = 0;
+    int64_t n_enc  = 0;
 
-        // Step 3: Decode noise block
+    // embeddings data copied to host memory (tmp)
+    std::vector<float> v_embd;
+
+    // needed to construct the cross-attention mask in the decoder
+    std::vector<std::set<llama_seq_id>> seq_ids_enc;
+};
+```
+
+Following that we have:
+```c++
+        // This is the noice token id
         const llama_token mask_token_id = llama_model_dflash_mask_token_id(llama_get_model(ctx_dft_dec));
 
+        // And we will now clear the batch and add the last llama_token id (which is passed
+        // into this draft function. The remaining tokens will get the mask_token_id.
         common_batch_clear(batch);
         for (int i = 0; i < block_size; i++) {
             const llama_token tok = (i == 0) ? id_last : mask_token_id;
             common_batch_add(batch, tok, i, {0}, true);
         }
 
+        // Then we call decode which is the Diffusion part.
         if (llama_decode(ctx_dft_dec, batch) != 0) {
             LOG_ERR("DFlash: noise decode failed\n");
             return;
@@ -102,7 +134,7 @@ common/speculative.cpp:
 
         dflash_n_past = n;
 
-        // Step 4: Sample draft tokens from positions 1..block_size-1
+        // And then we sample from the result of the diffusion step.
         result.clear();
         common_sampler_reset(smpl);
 
@@ -117,3 +149,86 @@ common/speculative.cpp:
         }
     }
 ```
+So just to be really clear about this. The first time draft is called we have
+already processed the initial prompt, so we will always have target model features
+to use, they will be from the initial prompt the first time. And after that, for
+token generation, we will be using the drafting process.
+So the target model will handle the initial decode and since it need to store
+the target feature layer outputs the target model needs to know about dflash.
+```c++
+llm_build_qwen3::llm_build_qwen3(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+    const int64_t n_embd_head = hparams.n_embd_head_v();
+    ...
+    for (int il = 0; il < n_layer; ++il) {
+        ggml_tensor * inpSA = inpL;
+        ...
+        // DFlash: Extract intermediate layer features from target model at layer INPUT
+        if (dflash && cparams.dflash_extract_enabled && !dflash->extract_layer_indices.empty()) {
+            static const char * dflash_extract_names[] = {
+                "dflash_extract_0", "dflash_extract_1", "dflash_extract_2",
+                "dflash_extract_3", "dflash_extract_4"
+            };
+            for (size_t i = 0; i < dflash->extract_layer_indices.size() && i < 5; ++i) {
+                if (dflash->extract_layer_indices[i] == il) {
+                    cb(inpL, dflash_extract_names[i], il);
+                    break;
+                }
+            }
+        }
+        ...
+    }
+    ...
+}
+```
+If we look in llama-context.cpp we have:
+```c++
+llm_graph_cb llama_context::graph_get_cb() const {
+    return [&](const llama_ubatch & ubatch, ggml_tensor * cur, const char * name, int il) {
+        if (il >= 0) {
+            ggml_format_name(cur, "%s-%d", name, il);
+        } else {
+            ggml_set_name(cur, name);
+        }
+        ...
+        // DFlash: Extract intermediate layer features if this is an extraction point
+        if (cparams.dflash_extract_enabled) {
+            static constexpr const char * prefix = "dflash_extract_";
+            static constexpr size_t prefix_len = 15;
+
+            if (strncmp(name, prefix, prefix_len) == 0) {
+                size_t extract_idx = 0;
+                if (sscanf(name + prefix_len, "%zu", &extract_idx) == 1 && extract_idx < dflash.extract_tensors.size()) {
+                    ggml_set_output(cur);
+                    dflash.extract_tensors[extract_idx] = cur;
+                }
+            }
+        }
+        ...
+
+```
+So the callback will set the tensors as output, and will also store them in
+the dflash member of llama-context:
+```c++
+struct llama_context {
+    ...
+    mutable llama_dflash dflash;
+```
+```c++
+// DFlash intermediate results struct (similar to Eagle3)
+struct llama_dflash {
+    std::vector<int> extract_layer_indices;
+
+    std::vector<float> target_features;
+
+    std::vector<ggml_tensor *> extract_tensors;
+
+    void clear() {
+        target_features.clear();
+        extract_tensors.clear();
+    }
+};
+```
+So that is how the target model extract the feature layers.
+
+Now, lets turn our attention to the draft models decode function (the encoder
+is very simple so I'm skipping it for now.
