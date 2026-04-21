@@ -12,7 +12,7 @@ next token. It works in "token" space so it outputs token ids. Eagle 1 changes
 this and instead predicts the next hidden state for the next token.
 
 So compared to [Medusa](./medusa.md) which has separate lm_heads for each
-token that is predicted Eagle only has one lm_head. The process looks something
+token that is predicted, Eagle only has one lm_head. The process looks something
 like the following:
 ```
             main_model: predicts h_t
@@ -50,7 +50,7 @@ more than a single token. For example for each iteration of the eagle head we
 might do N predictions.
 
 Notice that h_t and inp_embd are actually concatenated together so this will be
-a larger vector that the original hidden space.
+a larger vector than the original hidden space.
 
 ```
 Tree Key:
@@ -71,7 +71,7 @@ k = 2
  [sat] [ran]   [end] [sun] <-- Top-2 for x_{t+2}
 ```
 Instead of a single chain we now have an array with this tree. Now if the
-prediction is "cat->sat", but the real model wanted "cat-ran" the we would loose
+prediction is "cat->sat", but the real model wanted "cat-ran" then we would loose
 the second prediction. With a tree structure we can keep the "ran" prediction:
 ```
 [cat, dog, sat, ran, end, sun]
@@ -82,7 +82,7 @@ Draft chain: ["The", "cat", "sat", "on"]
 Real Models: ["The", "cat", "slept", "..."]
 ```
 Here "sat" is rejected so the rest of the draft model predictions are also
-rejected. BUt perhaps the real model would have accepted "on" after "slept" but
+rejected. But perhaps the real model would have accepted "on" after "slept" but
 with the simple chain we would never get to see that prediction.
 
 Also the tree is not just a simple list, each node contains the cumulative log
@@ -98,7 +98,7 @@ be pruned if the cumulative log probability of a branch is too low.
 TODO: expand on this.
 
 ### Eagle 3
-So if we think about the two prior version above we saw that the take the
+So if we think about the two prior version above we saw that they take the
 predicted hidden state h_t and the concatenate it with the token embedding of
 the predicted token. In Eagle3 instead of taking just the models output (h_t)
 they also take a hidden state from the lower level, a mid level, and a later
@@ -135,11 +135,10 @@ And this is set in:
                                 hparams.eagle3_extract_layers[2]);
 ```
 
-Now, if they are concatenating all of these together then the input this will be
-very large and unpractical. What is done instead is these are merged/fused
-together. This is done using a separate encoder in llama.cpp. Then we have the
-decoder which is the actual speculator itself, the one that generates draft
-tokens.
+Now, if they are concatenating all of these together the input will be very
+large and unpractical. What is done instead is they are merged/fused together.
+This is done using a separate encoder in llama.cpp. Then we have the decoder
+which is the actual speculator itself, the one that generates draft tokens.
 
 But lets start by looking at how a concrete example works to get a better
 picture of the whole process. I'll be looking at speculative-simple for this:
@@ -202,7 +201,7 @@ python convert_hf_to_gguf.py \
 deactivate
 ```
 Setting a breakpoint in speculative-simple's main function we can start by
-looking at the decoding of the initial propt which is done by the main model:
+looking at the decoding of the initial prompt which is done by the main model:
 ```c++ 
 if (params.speculative.eagle3) {
     // Target model decodes full prompt and sample first token and intermediate features are extracted
@@ -272,6 +271,7 @@ Following that we have:
 Notice the use of thread local here and that this is static. So the first time
 a thread enters this function it will create a new std::vector in its thread
 local storage area. And this is destroyed when the thread exits.
+
 Next we loop over all the 3 layers (low, mid, high) that we mentioned above:
 ```c++
     for (size_t layer_idx = 0; layer_idx < n_layers; ++layer_idx) {
@@ -299,6 +299,7 @@ tensor and write it into the temp_layer_features buffer:
 ```
 Notice that we synchronize after this call so that we are sure that the data
 is copied.
+
 Following that we are going to copy this data into the target_features vector:
 ```c++
         for (int64_t token_idx = 0; token_idx < n_tokens; ++token_idx) {
@@ -380,7 +381,7 @@ const float * llama_context::get_eagle3_target_features() const {
 }
 ```
 And this is the same vector that we saw was filled above in process_ubatch.
-The we will create a new batch but with the embeddings field set to the
+Then we will create a new batch but with the embeddings field set to the
 extracted features:
 ```c++
         llama_batch enc_batch = {
@@ -400,9 +401,8 @@ the three hidden states that we populated by the target model by the first
 decode that we saw previously. The encoder will take the three hidden states and
 run a bidirectional attention over them which produces a fused representation.
 
-cross attention cache) which the decoder will then attend to. So calling the
-encoder is so that we can merge/fuse the features together like we mentioned
-above and then the decoder can attend to this fused representation.
+So calling the encoder is so that we can merge/fuse the features together like
+we mentioned above and then the decoder can attend to this fused representation.
 Because it's bidirectional, each position can attend to all others across all
 three feature levels simultaneously.
 
@@ -495,8 +495,9 @@ void llama_context::set_eagle3_g_embeddings(const float * g_embd, int32_t n_embd
     std::memcpy(eagle3.g_embeddings.data(), g_embd, size * sizeof(float));
 }
 ```
-So after this method returns we ahve set the g_embeddings field of the eagle3
+So after this method returns we have set the g_embeddings field of the eagle3
 member of llama_context.
+
 Next the batch is cleared and a new batch is prepared:
 ```c++
         common_batch_clear(batch);
@@ -572,7 +573,7 @@ llm_build_eagle3_decode::llm_build_eagle3_decode(const llama_model & model,
     ggml_tensor * token_embd_eagle3 = (model.tok_embd != nullptr) ? model.tok_embd : model.target_tok_embd;
 }
 ```
-So the token embedding matrix (which what is used to lookup the token embedding
+So the token embedding matrix (which is what is used to lookup the token embedding
 vectors for tokens) is either retrieved from the model's tok_embd field or the
 target_tok_embd field:
 ```console
