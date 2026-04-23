@@ -1,6 +1,13 @@
 ## Meta backend
-TODO: add intro from Linux NUC
+This a virtual device that aggregates multiple physical devices, like multiple
+GPUs, or CPU plus GPU combos into a single logical device.
 
+And recall that ggml_backend_dev_t, a device represents a hardware device. And
+a ggml_backend_t (backend) is an active instance or context created from a device
+that executes operations.
+
+So a virtual device combines multiple physical devices and can be used to split
+a model across multiple GPUs, for tensor parallelism, etc.
 
 ### Example
 Build the example:
