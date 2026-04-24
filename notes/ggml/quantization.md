@@ -172,7 +172,7 @@ individually based on its own max absolute value. Outliers affect only the block
 they are in, rather than the entire dataset. 
 
 ### Per tensor scale
-So we discussed block in the previous section and I would have though that was
+So we discussed blocks in the previous section and I would have though that was
 the end of it, that we use blocks and we would be good to go.
 What I mean is that if we already take 16 value blocks we have a scale for them,
 which means we have scaled down the value of the actual values. And multiple of
@@ -190,12 +190,12 @@ To fit 1000.0 into this the scale will need to be:
 ```console
 5000.0 / 6.0 = 833.3
 ```
-This will overlow as the max representable code is 448. So this will be set to
+This will overflow as the max representable code is 448. So this will be set to
 448 and we have lost precision for this value in this block, instead scaled value
 representing 5000.0 we have 448.0 * 6.0 = 2688.0 which is a significant loss of
 precision.
 
-Now, we apply a per-tensor Scale of 2.0:
+Now, if we apply a per-tensor scale of 2.0:
 ```console
   [0.1, 0.005, -0.05, 0.5, 2500.0, 0.25, -0.5, -0.0015]
 ```
@@ -206,30 +206,21 @@ The outlier becomes 2500.0 and the scale becomes:
 And this is less than the max representable code of 448 so we can represent this
 value.
 
-If a tensor has larger values then those will not be able to represented. So we
-can use a scale for the tensor as a whole to shrink the entire tensor so that it
-fits into the -3.0 - 3.0 range.
+If a tensor has larger values then those will not be able to be represented. So
+we can use a scale for the tensor as a whole, to shrink the entire tensor so
+that it fits into the -3.0 - 3.0 range.
 
 So we would first scale the tensor values down, perform the operations on the
 4-bit range and then scale them up again.
 
 Now, the weights of the model would already be in NVFP4 format if the model
 supports that. But activation tensors usually are in a higher precision.
-1) The kernel looks at the incoming activation tensor and calculates a global
-scale to shrink the whole tensor down so that the values fit into the narrow
-range of -3.0 - 3.0.
 
-2) The tensor is split into blocks of 16. For each block it finds a local scale.
-
-3) The tensor core as two NVFP4 inputs:
-   * Input A: the pre-stored NVFP4 weights.
-   * Input B: the quantized NVFP4 activations.
-   The TPU performs the GEMM in NVFP4.
-
-4) The result is often in often in high precision number.
-
-5) The kernel multiplies the result by both the weight scale and the activation
-   scale so that then next layer can be handed the tensor.
+1) The weights are stored as 4-bit floats.
+2) Every 16 weights for a block that share one 8-bit float (F8) scale.
+3) The tensor as a "global" scale which is a 32-bit float (F32).
+4) The GPU performs the F4xF8 part in a tensor core.
+5) The GPU multiplies the result from above by the F32 tensor scale.
 
 For example:
 ```
@@ -237,6 +228,51 @@ Weight value: 30.0      we can't store this in 4 bits so we use 10 as the scale
 Scaled value:  3.0
 ```
 So the hardware sees 3.0
+
+### block_nvfp4
+```c++
+#define QK_NVFP4 64
+#define QK_NVFP4_SUB 16  // sub-block size for per-group scales
+typedef struct {
+    uint8_t d[QK_NVFP4/QK_NVFP4_SUB]; // UE4M3 scales (4 bytes, one per 16-element sub-block)
+    uint8_t qs[QK_NVFP4/2];           // packed 4-bit E2M1 values (32 bytes)
+} block_nvfp4;
+```
+So this can hold 32 bytes. And we are dealing with 4-bit values so we can have
+64 quantized values per such a block. That is 4 blocks, and therefor we also
+have d of size 4 so that each one has a scale. The scale is an unsigned E4M3
+float value.
+
+Notice the lack of a global scale.
+
+For the weights in the model this scale is determined offline when the model
+is quantized. This is done by looking at the weights in a tensor/layer, finding
+the distribution, and picking an global scale value that prevents local F8
+scales from hitting their 448.0 limit. This scale value is stored in a .scale
+tensor in the model.
+
+For activations which change for every prompt we calculate the scale value on
+the fly.
+
+And we have to apply both to the result of the kernel operation to ensure that
+the data is in the correct scale for the next layer.
+
+So this would look something like this:
+* Reduction (The Prologue)
+Before doing the math, the kernel looks at the incoming hidden states (the
+activations) and calculates the AMAX (absolute max).
+
+* Scale Discovery
+t uses that AMAX to generate the S_g (scale global) for the activations.
+
+* Performs the GEMM operation
+
+* Epilog
+It applies both the Weight S_g (from the file) and the Activation S_g (it just
+calculated) to the final result.
+
+
+
 
 ### `block_q4_0`
 This struct is defined in `ggml/src/ggml-common.h`:
