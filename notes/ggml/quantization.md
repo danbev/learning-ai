@@ -271,7 +271,422 @@ t uses that AMAX to generate the S_g (scale global) for the activations.
 It applies both the Weight S_g (from the file) and the Activation S_g (it just
 calculated) to the final result.
 
+### nvfp4 model conversion
+I'm not sure where to put this but I need to understand how these tensor are
+handled in the model conversion (convert_hf_to_gguf.py).
+In the script when prepar_tensors is called (which is callde from the write 
+method) we have the following code:
+```python
+    def prepare_tensors(self):
+        # detect NVFP4 quantization (ModelOpt format)
+        quant_algo = (self.hparams.get("quantization_config") or {}).get("quant_algo")
+        quant_method = (self.hparams.get("quantization_config") or {}).get("quant_method")
+        quant_layers = (self.hparams.get("quantization_config") or {}).get("quantized_layers") or {}
+        quant_config_file = self.dir_model / "hf_quant_config.json"
 
+        if (not quant_algo or not quant_layers) and quant_config_file.is_file():
+            with open(quant_config_file, "r", encoding="utf-8") as f:
+                hf_quant_config = json.load(f)
+                quant_config = hf_quant_config.get("quantization") or {}
+                producer = hf_quant_config.get("producer") or {}
+                producer_name = (producer.get("name") or "").lower()
+                if quant_method is None:
+                    self.hparams.setdefault("quantization_config", {})["quant_method"] = producer_name
+                quant_algo = quant_config.get("quant_algo", quant_algo)
+                quant_layers = quant_config.get("quantized_layers", quant_layers) or {}
+
+        # Some models use per-tensor quant_algo (e.g. "MIXED_PRECISION" with
+        # per-layer NVFP4/FP8) instead of a single global "NVFP4" value.
+        if quant_algo != "NVFP4":
+            if any(v.get("quant_algo") == "NVFP4" for v in quant_layers.values() if isinstance(v, dict)):
+                quant_algo = "NVFP4"
+
+        self._is_nvfp4 = quant_algo == "NVFP4"
+```
+So this part is about detecting the quantiation type from either the config.json
+or a separate hf_quant_config.json.
+Following that we have:
+```python
+        # NVFP4 weights are repacked and written directly to gguf_writer.
+        # This must run before dequant_model so NVFP4 tensors are removed
+        # from model_tensors, leaving only non-NVFP4 (e.g. FP8) for dequant.
+        if self._is_nvfp4:
+            self._generate_nvfp4_tensors()
+
+        self.dequant_model()
+```
+In the original model, for every linear layer, like self_attn.q_proj we will
+have 3 tensors:
+* .weight         int8    Packed nibbles, 2 values per byte. (No scaling info here)
+* .weight.scale   e4m3    Local micro scales, one for every 16 weights (block scales)
+* .weight.scale2  float32 The global scale, one for the entire tensor.
+
+Lets take a look at a concrete model:
+```console
+(venv) spark $ python -m pdb ./convert_hf_to_gguf.py /home/danbev/work/models/nvidia/Phi-4-reasoning-plus-NVFP4
+(Pdb) b convert_hf_to_gguf.py:742
+(Pdb) c
+(Pdb) l .
+737
+738  	        del experts, merged
+739
+740  	    def prepare_tensors(self):
+741  	        # detect NVFP4 quantization (ModelOpt format)
+742 B->	        quant_algo = (self.hparams.get("quantization_config") or {}).get("quant_algo")
+743  	        quant_method = (self.hparams.get("quantization_config") or {}).get("quant_method")
+744  	        quant_layers = (self.hparams.get("quantization_config") or {}).get("quantized_layers") or {}
+745  	        quant_config_file = self.dir_model / "hf_quant_config.json"
+746
+747  	        if (not quant_algo or not quant_layers) and quant_config_file.is_file():
+
+(Pdb) pp self.hparams.get("quantization_config")
+{'config_groups': {'group_0': {'input_activations': {'dynamic': False,
+                                                     'group_size': 16,
+                                                     'num_bits': 4,
+                                                     'type': 'float'},
+                               'targets': ['Linear'],
+                               'weights': {'dynamic': False,
+                                           'group_size': 16,
+                                           'num_bits': 4,
+                                           'type': 'float'}}},
+ 'ignore': ['lm_head'],
+ 'kv_cache_scheme': {'dynamic': False, 'num_bits': 8, 'type': 'float'},
+ 'producer': {'name': 'modelopt',
+              'version': '0.37.0.dev5+g76fb12d47.d20250905'},
+ 'quant_algo': 'NVFP4',
+ 'quant_method': 'modelopt'}
+
+-> if self._is_nvfp4:
+(Pdb) p quant_algo
+'NVFP4'
+(Pdb) p quant_method
+'modelopt'
+(Pdb) p self._is_nvfp4
+True
+```
+So in this case we will call
+```python
+        # NVFP4 weights are repacked and written directly to gguf_writer.
+        # This must run before dequant_model so NVFP4 tensors are removed
+        # from model_tensors, leaving only non-NVFP4 (e.g. FP8) for dequant.
+        if self._is_nvfp4:
+            self._generate_nvfp4_tensors()
+```
+Which looks like this:
+```python
+    def _generate_nvfp4_tensors(self):
+        # Per-layer expert merging to avoid holding all experts in memory
+        expert_blocks: dict[tuple[int, str], list[tuple[int, np.ndarray]]] = {}
+        expert_scales: dict[tuple[int, str], list[tuple[int, float]]] = {}
+        expert_input_scales: dict[tuple[int, str], list[tuple[int, float]]] = {}
+        expert_shapes: dict[tuple[int, str], list[int]] = {}
+        n_experts = self.find_hparam(["num_local_experts", "num_experts"], optional=True) or 0
+        consumed: list[str] = []
+
+        for name in list(self.model_tensors.keys()):
+            if not name.endswith(".weight"):
+                continue
+            scale_name = name.replace(".weight", ".weight_scale")
+            scale2_name = name.replace(".weight", ".weight_scale_2")
+            input_scale_name = name.replace(".weight", ".input_scale")
+```
+So this is going to iterate over all the tensors in this model.
+```console
+(Pdb) p len(self.model_tensors.keys())
+803
+```
+But only those that have a .weight suffix. And these are the three tensors we
+mentioned previously. And we only process is the scale_name is in the model. If
+we inspect the original model we can get see these tensors:
+```console
+(venv) spark $ ./scripts/utils/inspect-org-model.py --list-all -s
+...
+model.layers.0.mlp.down_proj.input_scale     F32     []             4.00 B
+model.layers.0.mlp.down_proj.weight          U8      [5120, 8960]  43.75 MB
+model.layers.0.mlp.down_proj.weight_scale    F8_E4M3 [5120, 1120]   5.47 MB
+model.layers.0.mlp.down_proj.weight_scale_2  F32     []             4.00 B
+```
+Now, `input_scale` is the global scale for the incoming hidden states, per tensor
+so just a single value. So this is an example of where the scaling is not done
+dynamically but instead this has been calibrated and store during the quantization
+process.
+And the three other are the tensors related to the NVFP8 weights.
+```console
+(Pdb) c
+> /home/danbev/work/llama.cpp/convert_hf_to_gguf.py(651)_generate_nvfp4_tensors()
+-> weight = LazyTorchTensor.to_eager(self.model_tensors[name]())
+(Pdb) p name
+'model.layers.0.mlp.down_proj.weight'
+```
+```python
+            weight = LazyTorchTensor.to_eager(self.model_tensors[name]())
+            scale = LazyTorchTensor.to_eager(self.model_tensors[scale_name]())
+```
+So the arguments here is `self.model_tensors[name]()` which is a "lazy" call, 
+```console
+(Pdb) p self.model_tensors[name]()
+<__main__.LazyTorchTensor object at 0xeea460bc8ec0>
+```
+So this object just contains metadata information about where this tensor is, like
+a pointer to the correct .safetensor file:
+```console
+(Pdb) pp self.model_tensors[name]().__dict__
+{'_args': (LocalTensor(dtype='U8',
+                       shape=(5120, 8960),
+                       data_range=LocalTensorRange(filename=PosixPath('/home/danbev/work/models/nvidia/Phi-4-reasoning-plus-NVFP4/model-00001-of-00002.safetensors'),
+                                                   offset=1458139872,
+                                                   size=45875200)),),
+ '_data': None,
+ '_func': <function LazyTorchTensor.from_local_tensor.<locals>.<lambda> at 0xeea460aa37e0>,
+ '_kwargs': {},
+ '_meta': tensor(..., device='meta', size=(5120, 8960), dtype=torch.uint8)}
+```
+The `to_eager` function will take this lazy object information and read the
+tensor data into memory.
+```console
+(Pdb) p weight
+tensor([[ 19, 191, 223,  ..., 206,  54, 154],
+        [186,  92,  42,  ...,  65, 156, 151],
+        [ 50,  71, 214,  ...,  85,  17, 196],
+        ...,
+        [109,  22, 214,  ..., 105, 185, 139],
+        [103,  54, 197,  ..., 157,  10, 199],
+        [ 80, 245,  80,  ..., 221, 250, 118]], dtype=torch.uint8)
+
+(Pdb) p scale
+tensor([[ 8.0000,  9.0000,  8.0000,  ...,  7.5000,  5.5000,  6.0000],
+        [ 6.5000, 11.0000,  5.0000,  ...,  6.5000,  4.0000,  7.5000],
+        [ 6.0000,  6.5000,  5.5000,  ...,  7.5000,  6.0000,  7.5000],
+        ...,
+        [ 7.0000, 10.0000,  5.5000,  ...,  8.0000,  5.5000, 11.0000],
+        [ 4.5000,  8.0000,  4.5000,  ...,  6.5000,  7.0000,  9.0000],
+        [ 6.0000,  9.0000,  6.0000,  ...,  5.0000,  8.0000,  5.0000]],
+       dtype=torch.float8_e4m3fn)
+```
+Next we have the global scales which are options for some models:
+```python
+            scale2 = LazyTorchTensor.to_eager( self.model_tensors.get(scale2_name, lambda: torch.tensor(1.0))() )
+            input_scale = LazyTorchTensor.to_eager(self.model_tensors.get(input_scale_name, lambda: torch.tensor(1.0))())
+```
+Just to clarify this syntax, this trying to get the scale2_name, and if not the
+default is just torch.tensor(1.0), and again we have to call the to get the
+lazy tensor:
+```python
+self.model_tensors.get(scale2_name, lambda: torch.tensor(1.0))()
+```
+```console
+(Pdb) p scale2
+tensor(0.0009)
+(Pdb) p input_scale
+tensor(0.0010)
+```
+The tensors are then added to the consumed list:
+```python
+            # Mark tensors for removal from model_tensors (already written to gguf)
+            consumed.extend([name, scale_name])
+            if scale2_name in self.model_tensors:
+                consumed.append(scale2_name)
+            if input_scale_name in self.model_tensors:
+                consumed.append(input_scale_name)
+```
+```console
+(Pdb) pp consumed
+['model.layers.0.mlp.down_proj.weight',
+ 'model.layers.0.mlp.down_proj.weight_scale',
+ 'model.layers.0.mlp.down_proj.weight_scale_2',
+ 'model.layers.0.mlp.down_proj.input_scale']
+```
+Next there is a check if the current tensor is an expert tensor:
+```python
+            m = re.search(r'\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$', name)
+            if m:
+                ...
+
+            else:
+                self._repack_nvfp4(name, weight, scale, scale2, input_scale)
+```
+```python
+    def _repack_nvfp4(self, name: str, weight: Tensor, scale: Tensor, scale2: Tensor, input_scale: Tensor):
+        if "language_model." in name:
+            name = name.replace("language_model.", "")
+
+        new_name = self.map_tensor_name(name)
+```
+And this will look up the original tensor name mapping to the ggml tensor name:
+```console
+(Pdb) p name
+'model.layers.0.mlp.down_proj.weight'
+(Pdb) p new_name
+'blk.0.ffn_down.weight'
+```
+```python
+        raw, shape = self._nvfp4_pack(weight, scale)
+```
+```python
+    def _nvfp4_pack(weight: Tensor, scale: Tensor) -> tuple[np.ndarray, list[int]]:
+        """Repack NVFP4 ModelOpt tensors into ggml super-block layout.
+        Preserves original E4M3 scale bits as UE4M3 (strip sign bit).
+        The per-tensor scale2 factor is stored as a separate tensor and applied at inference time via ggml_mul().
+        Returns (raw_data, logical_shape)."""
+
+        out_features = weight.shape[0]
+        n_blocks = scale.shape[1]
+
+        # Unpack ModelOpt nibble-packed weights
+        w = weight.reshape(out_features, n_blocks, 8)
+        vals = torch.stack([w & 0x0F, w >> 4], dim=-1).reshape(out_features, n_blocks, 16)
+
+        # Preserve original E4M3 scale bits as UE4M3 (strip sign bit)
+        d_ue = scale.view(torch.uint8).numpy().reshape(out_features, n_blocks) & 0x7F
+        qs = (vals[:, :, :8] | (vals[:, :, 8:] << 4)).to(torch.uint8).numpy()
+
+        # Pack into super-blocks: [4 UE4M3 scales, 32 qs bytes] = 36 bytes per 64 elements
+        n_super = n_blocks // 4
+        d_grouped = d_ue.reshape(out_features, n_super, 4)
+        qs_grouped = qs.reshape(out_features, n_super, 4, 8).reshape(out_features, n_super, 32)
+        raw = np.concatenate([d_grouped, qs_grouped], axis=-1).reshape(out_features, n_super * 36)
+        return raw, [out_features, n_super * 64]
+```
+
+```console
+(Pdb) p weight.shape
+torch.Size([5120, 8960])
+(Pdb) p w.shape
+torch.Size([5120, 1120, 8])
+```
+So the `w & 0x0F` is performing this operation on all values in the w tensor:
+```console
+(Pdb) p w[0, 0, 0].item()
+19
+(Pdb) p (w & 0x0F)[0, 0, 0].item()
+3
+```
+And 19 in binary is 10011 and this just keeping the lower bits 11 which is 3.
+
+```console
+(Pdb) p vals.shape
+torch.Size([5120, 1120, 16])
+```
+So the last dimension is 16 which represents a block.
+```console
+(Pdb) p vals[:, :, :8].shape
+torch.Size([5120, 1120, 8])
+```
+This is a tensor of the first 8 value of the block.
+```console
+(Pdb) p (vals[:, :, :8] << 4).shape
+torch.Size([5120, 1120, 8])
+```
+And that is a tensor of the last.
+So `qs` is he 
+```console
+(Pdb) p qs.shape
+(5120, 1120, 8)
+```
+
+```console
+(Pdb) p vals[0, 0, 0]
+tensor(3, dtype=torch.uint8)
+(Pdb) p vals[0, 0, 8]
+tensor(5, dtype=torch.uint8)
+(Pdb) p (vals[0, 0, 8] << 4)
+tensor(80, dtype=torch.uint8)
+(Pdb) p (vals[0, 0, 0] | (vals[0, 0, 8] << 4))
+tensor(83, dtype=torch.uint8)
+```
+So we have 3 which is 0000 0011, and 5 which is 0000 0101.
+When we do `vals[0, 0, 8] << 4` we are doing this:
+```console
+5  = 0000 0101.
+shifted:
+0101 0000 = 80
+```
+And the OR operation then does:
+```console
+0101 0000
+0000 0011
+---------
+0101 0011  (83) or 0x53 hex.
+```
+So the 5 and 3 are still there but in diffent positions, we have swapped them.
+The reason this is done is because of efficiently being able to load these values
+later.
+```python
+        # Preserve original E4M3 scale bits as UE4M3 (strip sign bit)
+        d_ue = scale.view(torch.uint8).numpy().reshape(out_features, n_blocks) & 0x7F
+        qs = (vals[:, :, :8] | (vals[:, :, 8:] << 4)).to(torch.uint8).numpy()
+
+        # Pack into super-blocks: [4 UE4M3 scales, 32 qs bytes] = 36 bytes per 64 elements
+        n_super = n_blocks // 4
+        d_grouped = d_ue.reshape(out_features, n_super, 4)
+        qs_grouped = qs.reshape(out_features, n_super, 4, 8).reshape(out_features, n_super, 32)
+        raw = np.concatenate([d_grouped, qs_grouped], axis=-1).reshape(out_features, n_super * 36)
+        return raw, [out_features, n_super * 64]
+```
+Back in 
+```python
+        logger.info(f"Repacked {new_name} with shape {shape} and quantization NVFP4")
+        self.gguf_writer.add_tensor(new_name, raw, raw_dtype=gguf.GGMLQuantizationType.NVFP4)
+```
+So this will write this tensor named:
+```console
+(Pdb) p new_name
+'blk.0.ffn_down.weight'
+(Pdb) p raw.shape
+(5120, 10080)
+```
+And notice the quantization type if NVFP4.
+
+And then we also write the global tensor scale for the weight (per-tensor)
+```python
+
+        # Emit per-tensor scale2 as a separate F32 tensor when non-trivial
+        if not self._nvfp4_scale2_is_trivial(scale2):
+            scale2_f32 = scale2.float().numpy().flatten()
+            scale_name = new_name.replace(".weight", ".scale")
+            logger.info(f"  + {scale_name} (per-tensor NVFP4 scale2, shape [{scale2_f32.size}])")
+            self.gguf_writer.add_tensor(scale_name, scale2_f32)
+```
+```console
+-> scale_name = new_name.replace(".weight", ".scale")
+(Pdb) p scale2_f32
+array([0.00086612], dtype=float32)
+(Pdb) n
+> /home/danbev/work/llama.cpp/convert_hf_to_gguf.py(623)_repack_nvfp4()
+-> logger.info(f"  + {scale_name} (per-tensor NVFP4 scale2, shape [{scale2_f32.size}])")
+(Pdb) p scale_name
+'blk.0.ffn_down.scale'
+```
+So if we go looking for a tensor in llama-arch.cpp we won't find one named
+`blk.%d.ffn_down.scale`. There is only
+```c++
+    { LLM_TENSOR_FFN_DOWN,                               "blk.%d.ffn_down" },
+```
+This handled in llama-model.cpp:
+```c++
+        // generic pass: load optional per-tensor/per-expert ".scale" tensors (e.g. NVFP4 scale2)
+        // this avoids having to add scale loading to every architecture
+        for (int i = 0; i < n_layer; ++i) {
+            auto & layer = layers[i];
+
+            ...
+
+            // dense FFN weight scales (per-tensor, shape {1})
+            if (!layer.ffn_down_s && layer.ffn_down) {
+                layer.ffn_down_s = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
+```
+And we also to the same for the input scale global tensor (the input/activation)
+tensor global scale:
+```python
+
+        # Emit per-tensor input_scale as a separate F32 tensor when non-trivial
+        if not self._nvfp4_scale2_is_trivial(input_scale):
+            input_scale_f32 = input_scale.float().numpy().flatten()
+            input_scale_name = new_name.replace(".weight", ".input_scale")
+            logger.info(f"  + {input_scale_name} (per-tensor NVFP4 input_scale, shape [{input_scale_f32.size}])")
+            self.gguf_writer.add_tensor(input_scale_name, input_scale_f32)
+```
 
 
 ### `block_q4_0`
