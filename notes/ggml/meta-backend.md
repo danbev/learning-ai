@@ -200,5 +200,178 @@ GPU3 sends the total back to GPU1. So both now have the total.
 GPU1 sends the total back to GPU0.
 GPU3 sends the total back to GPU2.
 ```
+And after that a new ggml_backend is created and returned.
+Back in main we create two tensors and a addtion operation and add them to the
+graph. And after that we have:
+```c++
+    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ctx, meta_backend);
+```
+In ggml/src/ggml-alloc.c we can find the following:
+```c++
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    size_t nbytes_total = 0;
+    if (ggml_backend_buft_is_meta(buft)) {
+        return ggml_backend_meta_alloc_ctx_tensors_from_buft(ctx, buft);
+    }
+    return ggml_backend_alloc_ctx_tensors_from_buft_impl(ctx, buft, &nbytes_total, /*no_alloc =*/ false);
+}
+```
+So there is a special case for meta backends. Let's look at that function:
+```c++
+struct ggml_backend_buffer * ggml_backend_meta_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    const size_t n_simple_bufts = ggml_backend_meta_buft_n_bufts(buft);
+
+    ggml_init_params params = {
+        /*.mem_size   =*/ 1024*1024*1024, // FIXME
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+
+    ggml_backend_meta_buffer_context * meta_buf_ctx = new ggml_backend_meta_buffer_context();
+    meta_buf_ctx->buf_configs.reserve(n_simple_bufts);
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        meta_buf_ctx->buf_configs.emplace_back(ggml_init(params), nullptr);
+    }
+
+    ggml_backend_buffer_t meta_buf = ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, meta_buf_ctx, 0);
+    for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+        t->buffer = meta_buf;
+        ggml_backend_meta_buffer_init_tensor(meta_buf, t);
+        t->data = (void *) 0x2000000000000000; // FIXME
+    }
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        meta_buf_ctx->buf_configs[i].buf = ggml_backend_alloc_ctx_tensors_from_buft(
+            meta_buf_ctx->buf_configs[i].ctx, ggml_backend_meta_buft_simple_buft(buft, i));
+        meta_buf->size = std::max(meta_buf->size, ggml_backend_buffer_get_size(meta_buf_ctx->buf_configs[i].buf));
+    }
+    return meta_buf;
+}
+```
+```c++
+struct ggml_backend_meta_buffer_context {
+    static constexpr size_t nbtc = GGML_TENSOR_SIZE - sizeof(ggml_tensor::padding);
+
+    std::map<std::pair<const ggml_tensor *, bool>, std::pair<ggml_backend_meta_split_state, char[nbtc]>> split_state_cache;
+    std::map<          const ggml_tensor *,        std::vector<ggml_tensor *>>                           simple_tensors;
+
+    struct buffer_config {
+        ggml_context          * ctx;
+        ggml_backend_buffer_t   buf;
+
+        buffer_config(ggml_context * ctx, ggml_backend_buffer_t buf) : ctx(ctx), buf(buf) {}
+    };
+    std::vector<buffer_config> buf_configs;
+
+    int debug;
+
+    ggml_backend_meta_buffer_context() {
+        const char * GGML_META_DEBUG = getenv("GGML_META_DEBUG");
+        debug = GGML_META_DEBUG ? atoi(GGML_META_DEBUG) : 0;
+    }
+};
+```
+We can see that this holds a vector of ggml_context's, one for each backend which
+are created in the previous function.
+
+Next we have the following which just created a ggml_backend_buffer_t for the
+meta backend:
+```c++
+    ggml_backend_buffer_t meta_buf = ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, meta_buf_ctx, 0);
+```
+Next we will iterate over all the tensors in the context and initalize them,
+setting their buffer to the meta buffer:
+```c++
+    for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+        t->buffer = meta_buf;
+        ggml_backend_meta_buffer_init_tensor(meta_buf, t);
+        t->data = (void *) 0x2000000000000000; // FIXME
+    }
+```
+
+```c++
+static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
+    const size_t n_simple_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
+
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
+    GGML_ASSERT(ggml_nelements(tensor) == 0 || split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+    GGML_ASSERT(split_state.n_segments <= 16);
+
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
+```
+The above call will call the 
+```c++
+static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_sync) {
+    const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(tensor->buffer);
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
+    ...
+    if (it == buf_ctx->split_state_cache.end()) {
+        buf_ctx->split_state_cache[key].first = calculate_split_state();
+```
+Where calculate_split_state() is a lambda:
+```c++
+    auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
+        if (ggml_nelements(tensor) == 0) {
+            return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, 1};
+        }
+
+        if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
+            ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
+            const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
+            ggml_backend_meta_split_state ret = dev_ctx->get_split_state(tensor, dev_ctx->get_split_state_ud);
+```
+And this is calling our callback function:
+```c++
+ggml_backend_meta_split_state get_split_state(const struct ggml_tensor * tensor, void * user_data) {
+    ggml_backend_meta_split_state state;
+
+    // Replicate the tensor on all devices.
+    state.axis = GGML_BACKEND_SPLIT_AXIS_MIRRORED;
+    state.n_segments = 1;
+    return state;
+}
+```
+So for each tensor this function will be called to determine how to split the
+tensor.
+```c++
+    enum ggml_backend_meta_split_axis {
+        // tensor split by tensor dimensions:
+        GGML_BACKEND_SPLIT_AXIS_0 = 0,
+        GGML_BACKEND_SPLIT_AXIS_1 = 1,
+        GGML_BACKEND_SPLIT_AXIS_2 = 2,
+        GGML_BACKEND_SPLIT_AXIS_3 = 3,
+
+        GGML_BACKEND_SPLIT_AXIS_MIRRORED = 10, // all values on all backends
+        GGML_BACKEND_SPLIT_AXIS_PARTIAL  = 11, // each backend has a partial sum
+
+        // for internal bookkeeping only:
+        GGML_BACKEND_SPLIT_AXIS_NONE    = 98,
+        GGML_BACKEND_SPLIT_AXIS_UNKNOWN = 99,
+    };
+```
+
+```console
+(gdb) p tensor->name
+$7 = "a", '\000' <repeats 62 times>
+```
+
+```c++
+    if (it == buf_ctx->split_state_cache.end()) {
+        buf_ctx->split_state_cache[key].first = calculate_split_state();
+        memcpy(buf_ctx->split_state_cache[key].second, tensor, sizeof(buf_ctx->split_state_cache[key].second));
+```
+```console
+(gdb) p key
+$16 = {first = 0x7fffcbbff060, second = true}
+
+(gdb) ptype buf_ctx->split_state_cache[key].second
+type = char [328]
+```
+So the above is copying the tensor data into the cache, but only the first 328
+bytes of the tensor. This is the size of the ggml_tensor struct.
+This is storing a snapshot of the tensor in the cache.
+
+
 
 __wip__
