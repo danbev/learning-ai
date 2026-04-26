@@ -32,7 +32,7 @@ int main(int argc, char ** argv) {
     }
 
     ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_name("CPU");
-    if (!cuda_dev) {
+    if (!cpu_dev) {
         fprintf(stderr, "CPU device not found\n");
         ggml_free(ctx);
         return 1;
