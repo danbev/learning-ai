@@ -247,7 +247,7 @@ Notice the lack of a global scale.
 
 For the weights in the model this scale is determined offline when the model
 is quantized. This is done by looking at the weights in a tensor/layer, finding
-the distribution, and picking an global scale value that prevents local F8
+the distribution, and picking a global scale value that prevents local F8
 scales from hitting their 448.0 limit. This scale value is stored in a .scale
 tensor in the model.
 
@@ -263,18 +263,19 @@ Before doing the math, the kernel looks at the incoming hidden states (the
 activations) and calculates the AMAX (absolute max).
 
 * Scale Discovery
-t uses that AMAX to generate the S_g (scale global) for the activations.
+It uses that AMAX to generate the S_g (scale global) for the activations.
 
 * Performs the GEMM operation
 
 * Epilog
-It applies both the Weight S_g (from the file) and the Activation S_g (it just
+It applies both the Weight S_g (from the file) and the Activation S_g (it is just
 calculated) to the final result.
 
 ### nvfp4 model conversion
 I'm not sure where to put this but I need to understand how these tensor are
 handled in the model conversion (convert_hf_to_gguf.py).
-In the script when prepar_tensors is called (which is callde from the write 
+
+In the script when prepare_tensors is called (which is called from the write 
 method) we have the following code:
 ```python
     def prepare_tensors(self):
@@ -305,6 +306,7 @@ method) we have the following code:
 ```
 So this part is about detecting the quantiation type from either the config.json
 or a separate hf_quant_config.json.
+
 Following that we have:
 ```python
         # NVFP4 weights are repacked and written directly to gguf_writer.
@@ -315,6 +317,7 @@ Following that we have:
 
         self.dequant_model()
 ```
+Notice that this is done before dequant_model().
 In the original model, for every linear layer, like self_attn.q_proj we will
 have 3 tensors:
 * .weight         int8    Packed nibbles, 2 values per byte. (No scaling info here)
@@ -364,7 +367,7 @@ Lets take a look at a concrete model:
 (Pdb) p self._is_nvfp4
 True
 ```
-So in this case we will call
+So in this case we will call:
 ```python
         # NVFP4 weights are repacked and written directly to gguf_writer.
         # This must run before dequant_model so NVFP4 tensors are removed
@@ -396,7 +399,7 @@ So this is going to iterate over all the tensors in this model.
 803
 ```
 But only those that have a .weight suffix. And these are the three tensors we
-mentioned previously. And we only process is the scale_name is in the model. If
+mentioned previously. And we only process if the scale_name is in the model. If
 we inspect the original model we can get see these tensors:
 ```console
 (venv) spark $ ./scripts/utils/inspect-org-model.py --list-all -s
