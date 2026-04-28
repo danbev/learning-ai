@@ -364,7 +364,7 @@ in the cache:
         buf_ctx->split_state_cache[key].first = calculate_split_state();
         memcpy(buf_ctx->split_state_cache[key].second, tensor, sizeof(buf_ctx->split_state_cache[key].second));
 ```
-Where calculate_split_state() is a lambda:
+Where calculate_split_state() is a lambda in ggml_backend_meta_get_split_state:
 ```c++
     auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
         if (ggml_nelements(tensor) == 0) {
@@ -430,4 +430,320 @@ specified when creating this meta backend:
 And the value here is the number of number of elements from the current tensor
 that will be that will be allocated to devs[0].
 
+And just to orient ourselves a bit here is the backtrace from the debugger:
+```console
+(gdb) bt
+#0  operator() (__closure=0x7fffffffb050) at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-backend-meta.cpp:764
+#1  0x00005555555a2382 in ggml_backend_meta_get_split_state (tensor=0x7fffcbbff060, assume_sync=true)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-backend-meta.cpp:1032
+#2  0x00005555555a2cbc in ggml_backend_meta_buffer_init_tensor (buffer=0x55555ce6cbe0, tensor=0x7fffcbbff060)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-backend-meta.cpp:1090
+#3  0x00005555555a54a4 in ggml_backend_meta_alloc_ctx_tensors_from_buft (ctx=0x55555ce1eda0, buft=0x55555ce40658)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-backend-meta.cpp:1437
+#4  0x000055555559095d in ggml_backend_alloc_ctx_tensors_from_buft (ctx=0x55555ce1eda0, buft=0x55555ce40658)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-alloc.c:1241
+#5  0x00005555555909c0 in ggml_backend_alloc_ctx_tensors (ctx=0x55555ce1eda0, backend=0x55555ce53590)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-alloc.c:1247
+#6  0x0000555555568126 in main (argc=1, argv=0x7fffffffd6a8) at src/meta-backend.cpp:81
+```
+So for the source tensors and the operation the following block is called:
+```c++
+    auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
+        if (ggml_nelements(tensor) == 0) {
+            return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, 1};
+        }
+        if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
+            ...
+
+            return ret;
+        }
+```
+And this is the block that calls our callback function. This returnes early but
+for a view this rest of the lambda is executed:.
+```c++
+        std::vector<ggml_backend_meta_split_state> src_ss(GGML_MAX_SRC, {GGML_BACKEND_SPLIT_AXIS_NONE, {0}, 1});
+        for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+            if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
+                src_ss[i] = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, 1};
+                continue;
+            }
+            src_ss[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_sync =*/ true);
+            GGML_ASSERT(src_ss[i].axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+        }
+```
+So this is creating a new std::vector which will hold source split states with a
+size of 10 which is the max number of source tensors, and all 10 entries will be
+initialied with  axis of GGML_BACKEND_SPLIT_AXIS_NONE, ne of {0}, and
+n_segments 1.
+Then we iterate over the max nr of sources (10), and if the source tensor is nullptr
+of the is the same as the current tensor this sets the axis to unknown.
+
+And recall that a view doesn't own its data, it just has an shape and the data
+is part of another tensor but we will have to have a split for a view. So we
+will recursively call ggml_backend_meta_get_split_state with the views source
+tensor and assign that to entry in src_ss.
+
+After all sources have been processed we have the following switch statement:
+```c++
+        ggml_backend_meta_split_state split_state;
+        switch (tensor->op) {
+            ...
+            case GGML_OP_VIEW: {
+                split_state = handle_view(src_ss);
+            } break;
+            ...
+```
+And handle_view is a lambda defined ealier in this function:
+```console
+    auto handle_view = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+        if (ggml_is_contiguous(tensor) && ggml_is_contiguous(tensor->src[0])) {
+            return handle_reshape(src_ss);
+        }
+```
+And handle_view looks like this:
+```c++
+    auto handle_reshape = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+        switch (src_ss[0].axis) {
+            case GGML_BACKEND_SPLIT_AXIS_MIRRORED:
+            case GGML_BACKEND_SPLIT_AXIS_PARTIAL: {
+                return src_ss[0];
+            }
+            ...
+```
+So, src_ss is a vector of 10 elements which is the max number of source tensors
+that an operation tensor can have. And just to recap, the current tensor is a
+result reshape tensor (from our view tensor that is). It was a source which is
+the "real" tensors and what we are doing it trying to determine if/how the
+current tensor needs to be split and how
+In this case we are simply using the same split state as same split state as
+the source (in the case of mirror and partial that is).
+
+```c++
+            case GGML_BACKEND_SPLIT_AXIS_0:
+            case GGML_BACKEND_SPLIT_AXIS_1:
+            case GGML_BACKEND_SPLIT_AXIS_2:
+            case GGML_BACKEND_SPLIT_AXIS_3: {
+
+                // if the the source was split along its last dimension
+                if (src_ss[0].axis == ggml_n_dims(tensor->src[0]) - 1) {
+                    return {ggml_backend_meta_split_axis(ggml_n_dims(tensor) - 1), {0}, 1};
+                }
+```
+We know that it was one of the above cases , either split 0, 1, 2, or 3 dimension.
+
+
+And after the lambda returnes we have:
+```c++
+        if (split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS) {
+            bool first_src_split_by_axis = true;
+```
+Just a not about the split_stat.axis and how it is used in the code base. It
+intentionally gives the first 4 values of the enum the 0-3, and the rest are
+assigned higher values which enables us to use the enum in statements like the
+above. 
+```console
+(gdb) p split_state.axis
+$23 = GGML_BACKEND_SPLIT_AXIS_MIRRORED
+(gdb) p (int)split_state.axis
+$24 = 10
+```
+
+The returned state split will be set in the cache:
+```c++
+    if (it == buf_ctx->split_state_cache.end()) {
+        buf_ctx->split_state_cache[key].first = calculate_split_state();
+        memcpy(buf_ctx->split_state_cache[key].second, tensor, sizeof(buf_ctx->split_state_cache[key].second));
+```
+And then the rest of the function is mainly for debugging, and the
+ggml_backend_meta_split_state is returned.
+```console
+(gdb) 
+ggml_backend_meta_buffer_init_tensor (buffer=0x55555ce6cbe0, tensor=0x7fffcbbff4b0)
+    at /home/danbev/work/ai/learning-ai/fundamentals/ggml/ggml/src/ggml-backend-meta.cpp:1091
+1091	    GGML_ASSERT(ggml_nelements(tensor) == 0 || split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+```
+```c++
+static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
+    const size_t n_simple_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
+
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
+    GGML_ASSERT(ggml_nelements(tensor) == 0 || split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+    GGML_ASSERT(split_state.n_segments <= 16);
+
+    int split_dim = split_state.axis;
+    int64_t ne[GGML_MAX_DIMS];
+    size_t  nb[GGML_MAX_DIMS];
+    for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
+        ne[k] = tensor->ne[k];
+        nb[k] = tensor->nb[k];
+    }
+```
+The above loop is just making a local copy of the number of elements and number
+of bytes of the operation tensor so that the original tensor values are not modified
+later.
+
+Next, a vector of ggml_tensor pointers are created named simple_tensors which
+are the kind of tensors that we are used to see normally. They have their own
+ne, nb, type, data pointer, and a buffer pointing to memory managed by a specific
+real backend. But a simple tensor might not contains all of the tensors data
+which is a difference.
+```c++
+    std::vector<ggml_tensor *> simple_tensors;
+    simple_tensors.reserve(n_simple_bufs);
+
+    for (size_t j = 0; j < n_simple_bufs; j++) {
+        ggml_context          * simple_ctx = buf_ctx->buf_configs[j].ctx;
+        ggml_backend_buffer_t   simple_buf = buf_ctx->buf_configs[j].buf;
+        ...
+        ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensor->type, GGML_MAX_DIMS, ne);
+```
+So here we can see the actual tensor is created.
+And then we copy the rest of the tensor properties:
+```c++
+        t_ij->op = tensor->op;
+        for (int i = 0; i < GGML_MAX_DIMS; i++) {
+            t_ij->nb[i] = nb[i];
+        }
+        t_ij->flags = tensor->flags;
+        memcpy(t_ij->op_params, tensor->op_params, sizeof(tensor->op_params));
+        ggml_set_name(t_ij, tensor->name);
+        t_ij->buffer = simple_buf;
+        t_ij->view_src = tensor->view_src;
+        t_ij->view_offs = tensor->view_offs;
+```
+And since our tensor is a view we will entry this block and set the tensors
+view_src:
+```c++
+        if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
+            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
+```
+Lets take a closer look at ggml_backend_meta_buffer_simple_tensor:
+```c++
+static struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(const struct ggml_tensor * tensor, size_t index) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(tensor->buffer));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
+    GGML_ASSERT(index < buf_ctx->buf_configs.size());
+
+    auto it = buf_ctx->simple_tensors.find(tensor);
+    if (it == buf_ctx->simple_tensors.end()) {
+        return nullptr;
+    }
+    return it->second[index];
+}
+```
+We saw the simple_tensors field ealier but we did to actually look at what it
+was in detail.
+```c++
+struct ggml_backend_meta_buffer_context {
+    static constexpr size_t nbtc = GGML_TENSOR_SIZE - sizeof(ggml_tensor::padding);
+
+    std::map<std::pair<const ggml_tensor *, bool>, std::pair<ggml_backend_meta_split_state, char[nbtc]>> split_state_cache;
+    std::map<          const ggml_tensor *,        std::vector<ggml_tensor *>>                           simple_tensors;
+```
+So a backend buffer context has a map of tensor pointer to a vector of tensor
+pointers. So the function above uses the tensor as the key and then the index
+to get the tensor of interest.
+So before the following call the current simple_tensor as a view_src that points
+to the meta source tensor. But this will look up the simple tensor and set it:
+```c++
+            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
+```
+And if we have a view_src then we update the data pointer to point to that
+source_views data. And if not then it uses the the tensors data (not a view):
+```c++
+        if (t_ij->view_src != nullptr) {
+            t_ij->data = (char *) t_ij->view_src->data + t_ij->view_offs;
+        } else if (simple_buf != nullptr) {
+            t_ij->data = (char *) ggml_backend_buffer_get_base(simple_buf)
+                + size_t(tensor->data) - size_t(ggml_backend_buffer_get_base(buffer));
+        }
+```
+
+```c++
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        meta_buf_ctx->buf_configs[i].buf = ggml_backend_alloc_ctx_tensors_from_buft(
+            meta_buf_ctx->buf_configs[i].ctx, ggml_backend_meta_buft_simple_buft(buft, i));
+        meta_buf->size = std::max(meta_buf->size, ggml_backend_buffer_get_size(meta_buf_ctx->buf_configs[i].buf));
+    }
+```
+But this time we are not passing in a backend buffer context but the context
+for the simple tensors. So this is where the actual physical memory on each
+simple backend will be created.
+
+So that is pretty much the last thing that happends for
+ggml_backend_alloc_ctx_tensors.
+
+The next interaction happens when we call:
+```c++
+    ggml_backend_tensor_set(a, a_data, 0, sizeof(a_data));
+```
+```c++
+void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+    GGML_ASSERT(tensor);
+    ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+    GGML_ASSERT(buf != NULL && "tensor buffer not set");
+
+    if (size == 0) {
+        return;
+    }
+
+    GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
+    GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor write out of bounds");
+
+    buf->iface.set_tensor(buf, tensor, data, offset, size);
+}
+```
+```console
+(gdb) p *buf
+$48 = {iface = {free_buffer = 0x55555559e0c7 <ggml_backend_meta_buffer_free_buffer(ggml_backend_buffer_t)>, 
+    get_base = 0x5555555a2abe <ggml_backend_meta_buffer_get_base(ggml_backend_buffer_t)>, 
+    init_tensor = 0x5555555a2ad6 <ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t, ggml_tensor*)>, memset_tensor = 0x0, 
+    set_tensor = 0x5555555a3704 <ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t, ggml_tensor*, void const*, size_t, size_t)>, 
+    get_tensor = 0x5555555a4413 <ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t, ggml_tensor const*, void*, size_t, size_t)>, set_tensor_2d = 0x0, get_tensor_2d = 0x0, cpy_tensor = 0x0, 
+    clear = 0x5555555a4f02 <ggml_backend_meta_buffer_clear(ggml_backend_buffer_t, uint8_t)>, 
+    reset = 0x5555555a4f6a <ggml_backend_meta_buffer_reset(ggml_backend_buffer_t)>}, buft = 0x55555ce40658, 
+  context = 0x55555ce2fa80, size = 384, usage = GGML_BACKEND_BUFFER_USAGE_ANY}
+
+(gdb) p buf.iface
+$49 = {free_buffer = 0x55555559e0c7 <ggml_backend_meta_buffer_free_buffer(ggml_backend_buffer_t)>, 
+  get_base = 0x5555555a2abe <ggml_backend_meta_buffer_get_base(ggml_backend_buffer_t)>, 
+  init_tensor = 0x5555555a2ad6 <ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t, ggml_tensor*)>, memset_tensor = 0x0, 
+  set_tensor = 0x5555555a3704 <ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t, ggml_tensor*, void const*, size_t, size_t)>, 
+  get_tensor = 0x5555555a4413 <ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t, ggml_tensor const*, void*, size_t, size_t)>, 
+  set_tensor_2d = 0x0, get_tensor_2d = 0x0, cpy_tensor = 0x0, 
+  clear = 0x5555555a4f02 <ggml_backend_meta_buffer_clear(ggml_backend_buffer_t, uint8_t)>, 
+  reset = 0x5555555a4f6a <ggml_backend_meta_buffer_reset(ggml_backend_buffer_t)>}
+```
+So we can see that when we call `buf->iface.set_tensor` this will be calling
+into the meta bachend buffer.
+```c++
+static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+    const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
+    GGML_ASSERT(ggml_is_contiguous(tensor));
+
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ false);
+```
+This is again calling ggml_backend_meta_get_split_state, but this time with
+assume_sync set to false, so the data transfer my be async.
+
+```c++
+    switch (split_state.axis) {
+        ...
+
+        case GGML_BACKEND_SPLIT_AXIS_MIRRORED: {
+            for (size_t j = 0; j < n_bufs; j++) {
+                ggml_tensor * simple_tensor = ggml_backend_meta_buffer_simple_tensor(tensor, j);
+                ggml_backend_tensor_set(simple_tensor, data, offset, size);
+            }
+        } break;
+```
+And in our case this will iterate over our two backend meta buffers, get the
+simple tensor for the current tensor, and the index is the backend in question.
+And then we perform a normal ggml_backend_tensor_set call, well this was also
+that but now the simple_tensor is used which has a different backend buffer
+so this will get dispatched to the actual backend.
+
 __wip__
+

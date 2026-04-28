@@ -7,7 +7,6 @@
 ggml_backend_meta_split_state get_split_state(const struct ggml_tensor * tensor, void * user_data) {
     ggml_backend_meta_split_state state;
 
-    // Replicate the tensor on all devices.
     state.axis = GGML_BACKEND_SPLIT_AXIS_MIRRORED;
     state.n_segments = 1;
     return state;
@@ -50,7 +49,10 @@ int main(int argc, char ** argv) {
     ggml_set_name(a, "a");
     ggml_set_name(b, "b");
 
-    struct ggml_tensor * result = ggml_add(ctx, a, b);
+    struct ggml_tensor * result_tmp = ggml_add(ctx, a, b);
+    ggml_set_name(result_tmp, "result_tmp");
+
+    struct ggml_tensor * result = ggml_view_1d(ctx, result_tmp, 4, 0);
     ggml_set_name(result, "result");
 
     struct ggml_cgraph * gf = ggml_new_graph(ctx);
