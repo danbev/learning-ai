@@ -66,3 +66,11 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
     llm->build_dense_out(dense_2_out_layers, dense_2_out_layers_b, dense_3_out_layers);
 ```
 So I think we should update the model in ggml-org.
+
+### Updating the model
+```console
+$ hf upload ggml-org/embeddinggemma-300M-GGUF \
+	./ggml-model-Q8_0.gguf \
+	embeddinggemma-300M-Q8_0.gguf \
+	--commit-message "Updated model to include dense layers"
+```
