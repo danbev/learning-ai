@@ -74,3 +74,7 @@ $ hf upload ggml-org/embeddinggemma-300M-GGUF \
 	embeddinggemma-300M-Q8_0.gguf \
 	--commit-message "Updated model to include dense layers"
 ```
+And we can verify that this works using the following command:
+```console
+$ build/bin/llama-embedding -hf ggml-org/embeddinggemma-300M-GGUF --pooling none --embd-normalize -1 --verbose-prompt --no-warmup
+```
