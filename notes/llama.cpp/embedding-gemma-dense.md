@@ -2,8 +2,13 @@
 
 The model that I converted and published to [ggml-org](https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/)
 does not contain the extra dense layers. These were skipped during the conversion
-work which is my fault for not understanding their importance.
+work which is my fault for not understanding their importance. There was also
+a [discussion](https://github.com/ggml-org/llama.cpp/pull/16367#issuecomment-3380083975)
+about this in the original PR.
+
+
 Inspecting the existing model we can see that these layers are not present:
+
 ```console
 (venv) $ ./gguf-py/gguf/scripts/gguf_dump.py ~/Downloads/embeddinggemma-300M-Q8_0.gguf 
 INFO:gguf-dump:* Loading: /home/danbev/Downloads/embeddinggemma-300M-Q8_0.gguf
