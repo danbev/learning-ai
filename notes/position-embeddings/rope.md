@@ -22,9 +22,9 @@ answer it.
 
 The goal here is the same, to introduce positional encoding but instead of
 adding this to the embeddings it will add them to the query and key matrices by
-rotating them. The idea is to make the dot product of the query
-and key vectors position-aware, encoding the relative positions of tokens into
-the attention mechanism.
+rotating them. The idea is to make the dot product of the query and key vectors
+position-aware, encoding the relative positions of tokens into the attention
+mechanism.
 
 Lets take the following sequence "Dan loves ice".
 ```console
@@ -67,6 +67,22 @@ Pair 3 (x3, y3): Rotates by 2 * theta_slow   (e.g., 0.2 degrees).
 ```
 Now, the attention mechanism calculates the similarity (dot product) between
 "ice" (Query at pos 2) and "loves" (Key at pos 1).
+
+To understand why we can group values into pairs without breaking the model,
+think of the high-dimensional query or key as a single vector pointing to a
+location in the hidden vector space.
+
+We can visualize this vector as a sum of subvectors (pairs). To get to the final
+tip of the query vector, you follow the path of these subvectors. When we apply
+RoPE, we are simply rotating each subvector segment on its own 2D plane before
+adding them up.
+
+The length of the total vector stays the same.
+The tip moves to a new location, effectively 'tagging' the original meaning with
+a positional coordinate.
+
+And recall that we rotate both the query and key vectors by the same logic, so
+their relative angles stay the same.
 
 The dot product sums up the overlaps of these pairs.
 ```
@@ -134,8 +150,9 @@ You can think of the W_Q (and W_K) matrix as a sorting machine or a switchboard
 operator. Before the multiplication, your input vector (the embedding) is just a
 "bag of features."
 
-The multiplication X * W_Q$ reshuffles and combines these features into the
+The multiplication X * W_Q reshuffles and combines these features into the
 specific slots that RoPE expects.
+
 The matrix effectively says:
 "Okay, I see 'Plural' and 'Noun' features. Those are grammar rules. I need to
 move a combination of those into indices 0 and 1 (the Fast Rotation slots) so
@@ -151,8 +168,8 @@ by frequency sensitivity.
 * The bottom of the vector contains data that needs to last a long time (global context).
 
 When rotating the query and key vectors they are rotated in a certain way that
-is not caotic like the absolute positioning. For each position they are
-rotated a certain "fixed" amount of degrees (theta).
+is not caotic like the absolute positioning. For each position they are rotated
+a certain "fixed" amount of degrees (theta).
 
 So the matrix that rope operates on is the one that has been sorted by
 frequency sensitivity by the Wq and Wk matrices. The rotations in rope are
