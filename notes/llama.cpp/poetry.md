@@ -7,9 +7,18 @@ scripts.
 
 ### Install Poetry
 ```console
+$ python -m pip install --user pipx
+$ python -m pipx ensurepath
+```
+
+```console
 $ pipx install poetry
 ```
 
+Enable tab completion on windows (powershell):
+```console
+poetry completions powershell | Out-File -FilePath $PROFILE -Append
+```
 
 ### Using
 ```console
