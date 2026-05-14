@@ -68,3 +68,78 @@ and output X as the next predicted token from the target model:
 ```console
 [A, B, X]
 ```
+
+### checkpoints
+In llama.cpp there are checkpoints that are saved which are related to speculative
+decoding. To understand why this is needed we need to consider that that when
+we perform speculative decoding we are updating the kv-cache for transformer
+models, and for recurrent models we are updatin the hidden states. If we have to
+reject a token we need to be able to rollback to the previous state. This is not
+difficult for a transformer model as it is possible to remove entries from the
+kv-cache. But for recurrent models it is more difficult, as the state cannot be
+rolled back. This is where checkpoints are used.
+
+So we have a draft and a target model, and both might require checkpointing:
+* Transformer target + Transformer draft  -> no checkpointing required
+* Transformer target + mamba draft        -> Only draft checkpointing required
+* Mamba target       + Transformer draft  -> Only target checkpointing required
+* Mamba target       + Mamba draft        -> Both need checkpointing
+
+Initial state:
+```console
+    Target: h₀ → [A] → h₁ → [B] → h₂  (accepted tokens)
+    Draft:  d₀ → [A] → d₁ → [B] → d₂
+```
+
+Save checkpoints (before speculation):
+```console
+* Checkpoint target at h₂
+* Checkpoint draft  at d₂
+```
+
+Generate draft tokens:
+```console
+Draft: d₂ → [X] → d₃ → [Y] → d₄ → [Z] → d₅
+Drafts: [X, Y, Z]
+```
+
+Evaluate draft on target:
+```console
+Target: h₂ → [X] → h₃ → [Y] → h₄ → [Z] → h₅
+```
+
+A) Full acceptance (all 3 accepted), just keep everything so we don't use the
+checkpoints in this case.
+
+B) Partial acceptance (only X and Y accepted, Z was rejected):
+After generating [X, Y, Z] the draft models hidden state is at d₅. But not all
+tokens were accepted by the target model so we need to remove them from the
+hidden state, but for a recurrent model that is not possible so what we do is
+we reset the state to the state before the speculative decoding and we replay
+them:
+```
+Restore checkpoints:
+target back to h₂
+draft  back to d₂
+
+Process ONLY accepted tokens [X, Y]:
+Target: h₂ → [X] → h₃ → [Y] → h₄
+Draft:  d₂ → [X] → d₃ → [Y] → d₄
+```
+
+Notice that when we have a partial accept by the target model we are actuall
+decoding the same tokens. Like in our case we had already processed/produced
+[X Y Z] and now we will again produce [X Y].
+
+For recurrent models, there's no alternative:
+* After decoding [X, Y, Z], hidden state = h₅
+* h₅ has Z "baked in" we can't extract it.
+* To get the correct state h₄ (after only X, Y), we have to:
+  * Restore to h₂ (before any speculation)
+  * Replay [X, Y]
+
+For transformer models (no checkpointing), this doesn't happen:
+* We just delete the KV cache entry for token Z at its position.
+* No re-computation needed.
+
+_wip_
