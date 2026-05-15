@@ -4,13 +4,13 @@ If you search for examples online you will probably see examples where a model
 is loaded from a file. But this can all be done programmatrically and there
 is an example of this in [simple-inf.cpp](../../fundamentals/openvino-cpp/src/simple-inf.cpp).
 
-The OpenVINO backend, being part of ggml use the gguf file format just like
+The OpenVINO backend, being part of ggml uses the gguf file format just like
 everything else. What the backend does is that it translates the GGML concepts
 to OpenVINO concepts and then uses the OpenVINO runtime to execute the model.
 
 * GGML tensors are translated into ov::Tensor (ov = OpenVINO). 
 
-* OpenVINO has a number of built-in operations and additional one have been created
+* OpenVINO has a number of built-in operations and additional ones have been created
   in ggml/src/ggml-openvino/openvino/op/*.cpp).
 
 * The computation graph is translated into an ov::Model (which is a directed
@@ -67,7 +67,7 @@ includes specific sizes for the inputs, like the sequence length, batch size
 etc.
 
 In the case of OpenVINO which translate the GGML graph to an OpenVINO model, they
-have to perform the above steps of compilation, firmware generation and loading
+have to perform the above steps of compilation, firmware generation, and loading
 to the NPU. This is a slow process and it is not feasible to do for every
 inference call. Currently they do some form of caching which I'm not exactly sure
 how this works and I think this only applied of the NPU case which I can't
@@ -89,7 +89,7 @@ to "flash" the device for the new program. And this is what is happening with
 llama.cpp and OpenVINO backend where the sequence length and batch size can
 change for every inference call. And this is also the reason why the NPU has
 this issue and not the CPU or GPU as they are more flexible and can handle it.
-There are solutions like having a fixed sequence lenght and padding the input
+There are solutions like having a fixed sequence length and padding the input
 to fit but this also wastes resources.
 
 So could the CPU handle the prefill prompt and then the NPU handle the decoding
