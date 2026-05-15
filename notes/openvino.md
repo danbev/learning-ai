@@ -1,8 +1,8 @@
 ## Open Visual Inference & Neural Network Optimization (OpenVINO)
-Is a toolkit developed by Intel and it for developing and acceleration of
+Is a toolkit developed by Intel and for developing and acceleration of
 applications that require computer vision and deep learning inference.
 
-So this is a framework that works accross Intel hardware (CPU, GPU, FPGA ect).
+So this is a framework that works across Intel hardware (CPU, GPU, FPGA ect).
 
 ### Installing OpenVINO
 Follow the [instructions](https://docs.openvino.ai/2023.3/openvino_docs_install_guides_installing_openvino_from_archive_linux.html) and then I configured an additional logical link to:
@@ -12,8 +12,8 @@ $ sudo ln -s openvino_2023.3.0 openvino
 ```
 
 ### Building
-Before starting I needed to make sure that by GPU can be detected by the
-OpenVINO or I'd get the following compilation error:
+Before starting I needed to make sure that by GPU can be detected by OpenVINO or
+I'd get the following compilation error:
 ```console
 /home/danielbevenius/work/ai/openvino/openvino/src/plugins/intel_gpu/src/plugin/plugin.cpp:393:24: error: the mangled name of ‘ov::intel_gpu::<lambda(std::string, std::string, bool)>::operator std::__cxx11::basic_string<char> (*)(std::string, std::string, bool)() const’ changed between ‘-fabi-version=11’ (‘_ZNK2ov9intel_gpu15StringRightTrimMUlNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_bE_cvPFS6_S6_S6_bEEv’) and ‘-fabi-version=18’ (‘_ZNK2ov9intel_gpu15StringRightTrimMUlNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_bE_cvPFS7_S7_S7_bEEv’) [-Werror=abi]
   393 | auto StringRightTrim = [](std::string string, std::string substring, bool case_sensitive = true) {
@@ -41,7 +41,7 @@ $ cmake -DCMAKE_BUILD_TYPE=Release .. -DENABLE_INTEL_GPU=OFF
 $ cmake --build . --parallel 8
 $ cmake --install . --prefix ~/work/ai/openvino/openvino_dist
 ```
-One thing to note is the reaon I wanted to build OpenVINO is that it is the
+One thing to note is the reason I wanted to build OpenVINO is that it is the
 default backend available for wasi-nn in wasmtime. And there is a specific
 version that is used with wasmtime wasi-nn. Just building the latest and
 sourcing the OpenVINO setupvars.sh file will not work. I think this might be
