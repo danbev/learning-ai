@@ -22,7 +22,7 @@ say 8. This is a number of latent vectors.
  6 [0   ... h_dim]
  7 [0   ... h_dim]
 ```
-So initially this would just be noice, like in stable diffusion where we start
+So initially this would just be noise, like in stable diffusion where we start
 with guassian noise. But here the positions are initialized using masked embeddings.
 Each slot will be filled with a masked token embedding:
 ```
@@ -115,7 +115,7 @@ struct llama_cross {
 
 Following that we have:
 ```c++
-        // This is the noice token id
+        // This is the noise token id
         const llama_token mask_token_id = llama_model_dflash_mask_token_id(llama_get_model(ctx_dft_dec));
 
         // And we will now clear the batch and add the last llama_token id (which is passed
@@ -149,11 +149,11 @@ Following that we have:
         }
     }
 ```
-So just to be really clear about this. The first time draft is called we have
+So just to be really clear about this. When the first time draft is called we have
 already processed the initial prompt, so we will always have target model features
 to use, they will be from the initial prompt the first time. And after that, for
 token generation, we will be using the drafting process.
-So the target model will handle the initial decode and since it need to store
+So the target model will handle the initial decode and since it needs to store
 the target feature layer outputs the target model needs to know about dflash.
 ```c++
 llm_build_qwen3::llm_build_qwen3(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -228,10 +228,10 @@ struct llama_dflash {
     }
 };
 ```
-So that is how the target model extract the feature layers.
+So that is how the target model extracts the feature layers.
 
 Now, lets turn our attention to the draft models decode function (the encoder
-is very simple so I'm skipping it for now.
+is very simple so I'm skipping it for now).
 ```c++
 llm_build_dflash_decode::llm_build_dflash_decode(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v();
