@@ -1,14 +1,58 @@
 ## D-Flash speculative decoding
-What D-Flash addresses is the fact that when we have a draft model it is still
-an autoregressive model, like medusa and eagle,  which processes one token at a
-time which means that there is a limit to have good these types of models can
-perform. The D in D-Flash stands for diffusion.
+What block diffusion flash addresses is the fact that when we have a draft model
+it is still an autoregressive model, like medusa and eagle, which processes one
+token at a time which means that there is a limit to have good these types of
+models can perform. The D in D-Flash stands for diffusion.
 
 So diffusion will generate all the "stuff" at once if for example we think of
 an image. But in an LLM we don't have a fixed size output to generate which is
 a requirement of a diffusion model (if I recall correctly). So what D-Flash does
 is it creates blocks of tokens of a fixed size and then it generates those
 blocks in one forward process or the diffusion model.
+
+So the flow is something like this, we first process the initial prompt using
+the target model just like any normal inference. But the model will extract
+a number of layer's output as features, which it will then be merge and
+normalized to fit the dimension of the draft model. These features will then be
+used with the cross attention when drafting stering the draft model towards good
+outputs. So the draft model is influenced, given context, by the target model
+and this should produce better draft predictions.
+
+Then the draft model will predict a block of tokens. So lets say we are going
+to predict 4 tokens:
+```
+slot :   0      1      2      3
+token: [MASK] [MASK] [MASK] [MASK]
+```
+So this is like the noise in the diffusion process. The draft model will use
+the cross attention features to predict something better than random tokens.
+Now, these are predicted in a single forward pass but there are usually a few
+steps (are these layers of actual full diffusion processes?).
+The draft model looks at all the slots simultaneously using bidirectional
+attention.
+The draft model will predict a probablity distribution for every mask at the
+same time.
+```
+slot 0: "diffusion" (80% confidence)
+slot 1: "process" (40% confidence)
+slot 2: "is" (75% confidence)
+slot 3: "cool" (30% confidence)
+```
+Now, the draft model might choose the top two predictions that is is most
+certain about, so in this case "diffusion" and "is". And the others will be
+kepts as MASK tokens.
+The model then runs another quick pass but now it has more infromation/context,
+it has the predictions from the first pass, in addition to the cross attention
+features from the target model.
+```
+slot 1: "process" (now 95% confidence)
+slot 3: "clear" (now 90% confidence)
+```
+After this the masks have been replaced with actual tokens, so we have generated
+4 tokens in 2 passes:
+```
+Final Draft Output: diffusion process is clear
+```
 
 Alright lets try to understand this better. We will have a block of tokens, lets
 say 8. This is a number of latent vectors.
