@@ -1,4 +1,7 @@
 ## D-Flash speculative decoding
+
+llama.cpp pull request: https://github.com/ggml-org/llama.cpp/pull/22105
+
 What block diffusion flash addresses is the fact that when we have a draft model
 it is still an autoregressive model, like medusa and eagle, which processes one
 token at a time which means that there is a limit to have good these types of
@@ -9,6 +12,7 @@ an image. But in an LLM we don't have a fixed size output to generate which is
 a requirement of a diffusion model (if I recall correctly). So what D-Flash does
 is it creates blocks of tokens of a fixed size and then it generates those
 blocks in one forward process or the diffusion model.
+
 
 So the flow is something like this, we first process the initial prompt using
 the target model just like any normal inference. But the model will extract
