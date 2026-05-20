@@ -9,11 +9,14 @@ CXXFLAGS = -std=c++17 -Wall -Wextra -I$(RT_INCLUDE_DIR)
 LDFLAGS = -lhailort
 LDFLAGS += -L$(RT_BUILD_LIB_DIR)
 
-simple: src/simple.cpp
+version: src/version.cpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-run-simple:
-	env LD_LIBRARY_PATH=$(RT_BUILD_LIB_DIR) ./simple
+run-version:
+	env LD_LIBRARY_PATH=$(RT_BUILD_LIB_DIR) ./version
+
+simple: src/simple.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
 
 .PHONY: clean
 clean: 
