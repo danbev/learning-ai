@@ -23,6 +23,44 @@ HailoRT Version: 5.3.0
 ```
 
 ### Hardware
-TODO: update when hardware arrives.
+* Raspberry Pi 5
+* Raspberry Pi AI HAT+ 2 (Hailo-10H AI Accelerator chip)
+
+Parts:
+![image](../../notes/images/pi-pre.jpg)
+
+Assembled:
+![image](../../notes/images/pi.jpg)
 
 
+### ssh
+```console
+$ ssh danbev@danbev-pi.local
+Linux danbev-pi 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+```
+
+### Install libraries
+```console
+$ sudo apt install -y dkms hailo-h10-all
+$ sudo reboot
+```
+
+### Verify setup
+```console
+danbev@danbev-pi:~ $ hailortcli fw-control identify
+Executing on device: 0001:01:00.0
+Identifying board
+Control Protocol Version: 2
+Firmware Version: 5.1.1 (release,app)
+Logger Version: 0
+Device Architecture: HAILO10H
+```
+
+_wip_
