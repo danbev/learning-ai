@@ -27,10 +27,10 @@ HailoRT Version: 5.3.0
 * Raspberry Pi AI HAT+ 2 (Hailo-10H AI Accelerator chip)
 
 Parts:
-![image](../../notes/images/pi-pre.jpg)
+![image](../../notes/images/pi-pre.jpeg)
 
 Assembled:
-![image](../../notes/images/pi.jpg)
+![image](../../notes/images/pi.jpeg)
 
 
 ### ssh
