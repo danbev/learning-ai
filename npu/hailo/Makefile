@@ -24,6 +24,9 @@ inspect-hef:
 qwen: src/qwen.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
+qwen-prefill: src/qwen-prefill.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
+
 qwen-hef:
 	hailortcli parse-hef hefs/qwen2.5.hef
 
