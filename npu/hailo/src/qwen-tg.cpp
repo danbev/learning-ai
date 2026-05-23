@@ -25,7 +25,9 @@ int main() {
     for (const auto &name : infer_model->get_input_names()) {
         size_t frame_size = infer_model->input(name).expect("Bad input name").get_frame_size();
         std::cout << "  Input  " << name << " size=" << frame_size << '\n';
+	// fill the input buffer by name, and every value will have 128.
         input_buffers[name].assign(frame_size, 128);
+
         auto status = bindings.input(name).expect("Failed to get input binding").set_buffer(MemoryView(input_buffers[name].data(), frame_size));
         if (status != HAILO_SUCCESS) {
             std::cerr << "[-] Failed to set input buffer for " << name << ": " << status << '\n';

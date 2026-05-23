@@ -21,7 +21,7 @@ simple: src/simple.cpp
 inspect-hef:
 	hailortcli parse-hef hefs/shortcut_net.hef
 
-qwen: src/qwen.cpp
+qwen-tg: src/qwen-tg.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
 qwen-prefill: src/qwen-prefill.cpp
@@ -36,4 +36,4 @@ ctags:
 
 .PHONY: clean
 clean: 
-	@${RM} simple
+	@${RM} simple qwen-tg qwen-prefill
