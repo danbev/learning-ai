@@ -27,6 +27,10 @@ qwen: src/qwen.cpp
 qwen-hef:
 	hailortcli parse-hef hefs/qwen2.5.hef
 
+.PHONY: ctags
+ctags:
+	@ctags -R /usr/include/hailo src/
+
 .PHONY: clean
 clean: 
 	@${RM} simple

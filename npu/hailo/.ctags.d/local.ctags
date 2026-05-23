@@ -1,0 +1,3 @@
+--languages=C++
+--kinds-C++=+p
+--exclude=tappas
