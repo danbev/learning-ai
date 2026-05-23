@@ -21,6 +21,12 @@ simple: src/simple.cpp
 inspect-hef:
 	hailortcli parse-hef hefs/shortcut_net.hef
 
+qwen: src/qwen.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
+
+qwen-hef:
+	hailortcli parse-hef hefs/qwen2.5.hef
+
 .PHONY: clean
 clean: 
 	@${RM} simple
