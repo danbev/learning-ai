@@ -18,6 +18,9 @@ run-version:
 simple: src/simple.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
+inspect-hef:
+	hailortcli parse-hef hefs/shortcut_net.hef
+
 .PHONY: clean
 clean: 
 	@${RM} simple
