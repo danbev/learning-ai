@@ -36,7 +36,7 @@ specific chain.
 
 There is an example in
 [github-search.py](../langchain/src/github-search.py) which uses
-a github repository to retreive all the documents in it and inserts
+a github repository to retrieve all the documents in it and inserts
 them into a vector database. It then uses a query to search for the most
 relevant document related to the query from the vector database, and then uses
 those documents as context for prompting llm.
