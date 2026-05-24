@@ -83,7 +83,7 @@ Its value is decided by the variance schedule which will make the progression
 from the original image to the final image smooth, the amount of noice will
 increase over time.
 
-We represent the inital image, or input image as x₀.
+We represent the initial image, or input image as x₀.
 x₀ is a random variable that follows the distribution function q(x₀) which is the
 distribution of the original image. This is written as:
 ```

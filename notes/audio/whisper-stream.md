@@ -277,7 +277,7 @@ Next, in `stream.cpp` we create three buffers:
     std::vector<float> pcmf32_old;
     std::vector<float> pcmf32_new(n_samples_30s, 0.0f);
 ```
-`pcmf32_new` recieves the new audio samples which is what we pass to
+`pcmf32_new` receives the new audio samples which is what we pass to
 `audio_async::get()`.  `pcmf32_old` contains previous samples, and `pcmf32` is
 the buffer that is passed to `whisper_full`.
 ```c++
