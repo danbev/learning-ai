@@ -424,7 +424,7 @@ Target 0: (llama-server) stopped.
 ```
 
 To be able to step through the actual server processing we can set a breakpoint
-in the repsonse handler:
+in the response handler:
 ```c++
     auto middleware_server_state = [&res_error, &state](const httplib::Request & req, httplib::Response & res) {
         server_state current_state = state.load();
