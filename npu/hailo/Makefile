@@ -28,7 +28,15 @@ qwen-prefill: src/qwen-prefill.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
 qwen-hef:
-	hailortcli parse-hef hefs/qwen2.5.hef
+	@hailortcli parse-hef hefs/qwen2.5.hef
+
+.PHONY: identify
+identify:
+	@hailortcli fw-control identify
+
+.PHONY: scan
+scan:
+	@hailortcli scan
 
 .PHONY: ctags
 ctags:
