@@ -30,6 +30,9 @@ qwen-prefill: src/qwen-prefill.cpp
 qwen-hef:
 	@hailortcli parse-hef hefs/qwen2.5.hef
 
+download-qwen-2.5:
+	curl -L -o hefs/Qwen2-1.5B-Instruct.hef "https://dev-public.hailo.ai/v5.3.0/blob/Qwen2-1.5B-Instruct.hef"
+
 .PHONY: identify
 identify:
 	@hailortcli fw-control identify
