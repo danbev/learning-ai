@@ -33,6 +33,18 @@ qwen-hef:
 download-qwen-2.5:
 	curl -L -o hefs/Qwen2-1.5B-Instruct.hef "https://dev-public.hailo.ai/v5.3.0/blob/Qwen2-1.5B-Instruct.hef"
 
+qwen-infer: src/qwen-infer.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
+
+extract-theta: src/extract-theta.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
+
+extract-config: src/extract-config.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
+
+dump-meta: src/dump-output-meta.cpp
+	$(CXX) -std=c++17 $< -o $@ -lhailort
+
 .PHONY: identify
 identify:
 	@hailortcli fw-control identify
@@ -47,4 +59,4 @@ ctags:
 
 .PHONY: clean
 clean: 
-	@${RM} simple qwen-tg qwen-prefill
+	@${RM} simple qwen-tg qwen-prefill qwen-infer
