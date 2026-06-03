@@ -256,7 +256,6 @@ understanding the fundamentals of large language models, inference engines, and 
 * [Granite Vision](./notes/vision/granite.md)
 * [JEPA](./notes/vision/jepa.md)
 * [Image Preprocessing](./notes/vision/image-preprocessing.md)
-* [Ollama Image Preprocessing](./notes/vision/ollama-image-preprocessing.md)
 * [CLIP Search](./notes/clip-search.md)
 * [BLIP-2](./notes/blip2.md)
 * [Mobile VLM](./notes/mobile-vlm.md)
@@ -366,8 +365,6 @@ Neural Processing Unit exploration (Hailo).
 | Project | Description |
 |---------|-------------|
 | [Hailo](./npu/hailo/README.md) | Hailo-8/8L AI accelerator, Raspberry Pi AI HAT+ |
-| [HailoRT](./npu/hailort/README.md) | Hailo runtime library |
-| [Hailo Model Zoo](./npu/hailo_model_zoo_genai/) | Hailo model zoo for genai |
 
 ### Vector Databases
 
@@ -384,7 +381,6 @@ Word and sentence embedding examples.
 
 | Project | Description |
 |---------|-------------|
-| [Python](./embeddings/python/) | Embeddings examples in Python |
 | [Rust](./embeddings/rust/) | Embeddings examples in Rust |
 
 ### Audio Code
