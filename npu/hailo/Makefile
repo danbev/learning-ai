@@ -28,7 +28,7 @@ qwen-prefill: src/qwen-prefill.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
 qwen-hef:
-	@hailortcli parse-hef hefs/qwen2.5.hef
+	@hailortcli parse-hef hefs/Qwen2-1.5B-Instruct.hef
 
 download-qwen-2.5:
 	curl -L -o hefs/Qwen2-1.5B-Instruct.hef "https://dev-public.hailo.ai/v5.3.0/blob/Qwen2-1.5B-Instruct.hef"
@@ -44,6 +44,12 @@ extract-config: src/extract-config.cpp
 
 dump-meta: src/dump-output-meta.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
+
+download-llama3.2:
+	curl -L -o hefs/Llama3.2-1B-Instruct.hef "https://dev-public.hailo.ai/v5.3.0/blob/Llama3.2-1B-Instruct.hef"
+
+llama-hef:
+	@hailortcli parse-hef hefs/Llama3.2-1B-Instruct.hef
 
 .PHONY: identify
 identify:

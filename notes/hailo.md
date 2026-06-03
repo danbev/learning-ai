@@ -132,6 +132,11 @@ only 2 key and value.
 TODO: take a closer look at this later when implmenting and exactly what data
 we need for input_layer 4, 5, and 6.
 
+And then we also have RMSNorm:
+```console
+            Input  qwen2_prefill96/input_layer4 UINT8,  FCR (1x96x1536)
+```
+
 And then we have the output:
 ```console
             Output qwen2_prefill96/qwen2_block29_conv1 UINT8, NHWC(1x1x37984)
@@ -142,5 +147,11 @@ And then we have the output:
 37984 * 4 = 151936 bytes
 ```
 The vocabulary size of the Qwen2.5 tokenizer is exactly 151936 tokens.
+
+### KV-cache
+This exists on the device during generation. So when during prefill the NPU
+processes 96 tokens, calculates their KV projections and internally writes them
+into a persistent hardware memory slot allocated inside the networks graphs
+context.
 
 _wip_
