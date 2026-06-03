@@ -5,7 +5,7 @@ understanding the fundamentals of large language models, inference engines, and 
 
 ## In-progress
 
-| [Hailo](./npu/hailo) | Hailo-10H AI accelerator (NPU), Raspberry Pi AI HAT+ |
+* [Hailo](./npu/hailo) Hailo-10H AI accelerator (NPU), Raspberry Pi AI HAT+
 * [Parakeet](./notes/whisper/parakeet.md) — Supporting Parakeet in whisper.cpp
 * [Kimi-Linear](./notes/kimi-linear.md)
 * [CUDA FA exploration](./notes/flash-attention.md)
