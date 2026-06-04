@@ -5,7 +5,7 @@ It is designed for AI applications and can accelerate machine learning tasks.
 I have a Pi 5 with a Pi AI HAT+2 (Hailo-10H AI Accelerator chip).
 
 Pre-assemble:
-![image](../../notes/images/pi-pre.jpeg)
+![image](images/pi-pre.jpeg)
 
 * Raspberry Pi 5 - 8 GB	                        1   2.119,00 SEK
 * 128GB Micro SD – Class A2 – Raspberry Pi OS	1	  589,00 SEK
@@ -15,7 +15,7 @@ Pre-assemble:
 Total: 4490 SEK
 
 Assembled:
-![image](../../notes/images/pi.jpeg)
+![image](images/pi.jpeg)
 
 (HAT = Hardware Attached on Top, a standard for add-on boards for Raspberry Pi)
 
