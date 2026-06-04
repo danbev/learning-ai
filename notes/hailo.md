@@ -7,12 +7,14 @@ I have a Pi 5 with a Pi AI HAT+2 (Hailo-10H AI Accelerator chip).
 Pre-assemble:
 ![image](images/pi-pre.jpeg)
 
-* Raspberry Pi 5 - 8 GB	                        1   2.119,00 SEK
-* 128GB Micro SD – Class A2 – Raspberry Pi OS	1	  589,00 SEK
-* Raspberry Pi AI HAT+ 2 (40 TOPS)              1   1.711.20 SEK
-* Power Adapter 27W USB-C PD Raspberry Pi 5     1     143.20 SEK
-* Activ Cooler för Raspberry Pi 5               1      71.20 SEK
-* Total                                                 4490 SEK
+| Part | Qty | Price (SEK) |
+|------|-----|-------------|
+| Raspberry Pi 5 - 8 GB | 1 | 2.119,00 |
+| 128GB Micro SD – Class A2 – Raspberry Pi OS | 1 | 589,00 |
+| Raspberry Pi AI HAT+ 2 (40 TOPS) | 1 | 1.711,20 |
+| Power Adapter 27W USB-C PD Raspberry Pi 5 | 1 | 143,20 |
+| Active Cooler för Raspberry Pi 5 | 1 | 71,20 |
+| **Total** | | **4.633,60** |
 
 Assembled:
 ![image](images/pi.jpeg)
