@@ -12,7 +12,7 @@ Pre-assemble:
 * Raspberry Pi AI HAT+ 2 (40 TOPS)              1   1.711.20 SEK
 * Power Adapter 27W USB-C PD Raspberry Pi 5     1     143.20 SEK
 * Activ Cooler för Raspberry Pi 5               1      71.20 SEK
-Total: 4490 SEK
+* Total                                                 4490 SEK
 
 Assembled:
 ![image](images/pi.jpeg)
