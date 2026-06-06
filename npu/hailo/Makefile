@@ -42,6 +42,9 @@ extract-theta: src/extract-theta.cpp
 extract-config: src/extract-config.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
+inspect-hef-bin: src/inspect-hef.cpp
+	$(CXX) -std=c++17 $< -o inspect-hef $(LDFLAGS)
+
 dump-meta: src/dump-output-meta.cpp
 	$(CXX) -std=c++17 $< -o $@ -lhailort
 
