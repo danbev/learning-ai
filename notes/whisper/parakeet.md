@@ -3053,7 +3053,7 @@ chunks [l | c | r ][l | c | r ][        ][       ][        ][      ][     ]
 ```
 
 ### Relative position shift
-A standalone example of this can be found in [parakeet-rel-pos](../../fundamentals/ggml/src/parakeet-rel-pos).
+A standalone example of this can be found in [parakeet-rel-pos](../../fundamentals/ggml/src/parakeet-rel-pos.cpp).
 
 So we start by every row having the exact same center:
 ```console
