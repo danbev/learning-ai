@@ -1861,7 +1861,7 @@ We want to produce a relative position matrix that looks like this:
   Row 1:   -1.0   0.0   1.0
   Row 2:   -2.0  -1.0   0.0
 ```
-With this is is possible for Row 0 (frame 0) can look at Frame 0: Distance is 0
+With this it is possible for Row 0 (frame 0) can look at Frame 0: Distance is 0
 because (0,0) in the position matrix is 0. To look up frame 1 it uses (0,1) which
 is 1 so distance is +1.
 ```console
@@ -3050,4 +3050,98 @@ chunks [l | c | r ][l | c | r ][        ][       ][        ][      ][     ]
                      \     /
                       \ - /
                       joint
+```
+
+### Relative position shift
+A standalone example of this can be found in [parakeet-rel-pos](../../fundamentals/ggml/src/parakeet-rel-pos).
+
+So we start by every row having the exact same center:
+```console
+  rel_pos_scores [5, 3, 1, 1]
+    Row 0:   98.0  99.0 100.0 101.0 102.0
+    Row 1:   98.0  99.0 100.0 101.0 102.0
+    Row 2:   98.0  99.0 100.0 101.0 102.0
+
+Memory:
+[98.0 99.0 100.0 101.0 102.0] [98.0 99.0 100.0 101.0 102.0]  [98.0 99.0 100.0 101.0 102.0]
+```
+Then we pad:
+```console
+  padded [6, 3, 1, 1]
+    Row 0:   98.0  99.0 100.0 101.0 102.0   0.0
+    Row 1:   98.0  99.0 100.0 101.0 102.0   0.0
+    Row 2:   98.0  99.0 100.0 101.0 102.0   0.0
+Memory:
+[98.0 99.0 100.0 101.0 102.0 0.0] [98.0 99.0 100.0 101.0 102.0 0.0] [98.0 99.0 100.0 101.0 102.0 0.0]
+```
+And the roll the padded column to the front:
+```console
+  rolled [6, 3, 1, 1]
+    Row 0:    0.0  98.0  99.0 100.0 101.0 102.0
+    Row 1:    0.0  98.0  99.0 100.0 101.0 102.0
+    Row 2:    0.0  98.0  99.0 100.0 101.0 102.0
+[0.0 98.0 99.0 100.0 101.0 102.0] [0.0 98.0 99.0 100.0 101.0 102.0] [0.0 98.0 99.0 100.0 101.0 102.0]
+```
+So each row is 6 elements long.
+
+Then we reshape to rows of 3 elements and 6 rows:
+```
+  reshaped [3, 6, 1, 1]
+    Row 0:    0.0  98.0  99.0
+    Row 1:  100.0 101.0 102.0
+    Row 2:    0.0  98.0  99.0
+    Row 3:  100.0 101.0 102.0
+    Row 4:    0.0  98.0  99.0
+    Row 5:  100.0 101.0 102.0
+
+[0.0 98.0 99.0] [100.0 101.0 102.0] [0.0 98.0 99.0] [100.0 101.0 102.0] [0.0 98.0 99.0] [100.0 101.0 102.0]
+```
+
+The we have do the slicing by doing a reshape with a custom stride:
+```c++
+    struct ggml_tensor * sliced = ggml_view_3d(ctx, reshaped, 
+        T, T, H,
+        (P) * sizeof(float),  // stride for rows (nb1) (20)
+        reshaped->nb[2],      // stride for heads (nb2) (72)
+        offset                // 12 (3 floats)
+    );
+```
+```console
+[0.0 98.0 99.0] [100.0 101.0 102.0] [0.0 98.0 99.0] [100.0 101.0 102.0] [0.0 98.0 99.0] [100.0 101.0 102.0]
+               ↑
+            offset
+```
+The actual memory is unchanged by the reshape but we are starting at the offset,
+then we move 20 bytes for each row. And we have 3x3 matrix.
+```console
+
+                   first row
+[0.0 98.0 99.0] [100.0 101.0 102.0]  0.0 98.0 [99.0 100.0 101.0]  102.0  0.0 [98.0 99.0 100.0] 101.0 102.0
+               ↑                              ↑                             ↑                              ↑
+            offset----------------------------+-----------------------------+------------------------------+
+```
+Which gives us:
+```console
+  sliced [3, 3, 1, 1]
+    Row 0:  100.0 101.0 102.0
+    Row 1:   99.0 100.0 101.0
+    Row 2:   98.0  99.0 100.0
+```
+
+```
+  --- Head 0 ---
+    100.0   101.0   102.0
+     99.0   100.0   101.0
+     98.0    99.0   100.0
+ ```
+
+And this is what this represents:
+ ```
+               Key 0   Key 1   Key 2
+               (t=0)   (t=1)   (t=2)
+              ------------------------
+Query 0 (t=0) | 100.0   101.0   102.0 |  --> (dist:  0, +1, +2) present, future, future
+Query 1 (t=1) |  99.0   100.0   101.0 |  --> (dist: -1,  0, +1) past, present, future
+Query 2 (t=2) |  98.0    99.0   100.0 |  --> (dist: -2, -1,  0) past, past, present
+              ------------------------
 ```
