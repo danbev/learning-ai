@@ -291,3 +291,16 @@ data.
 ```console
 (lldb) expression -l objc -O -- [ctx->data model]
 ```
+
+### Convert a model
+```console
+$ python3.11 -m venv venv
+$ source venv/bin/activate
+(venv) $ python -m pip install --upgrade pip
+(venv) $ pip install "torch==2.7.0" ane_transformers openai-whisper coremltools
+(venv) ./models/generate-coreml-model.sh base.en
+...
+done converting
+/Users/danbev/work/ai/whisper.cpp/models/coreml-encoder-base.en.mlmodelc/coremldata.bin
+models/coreml-encoder-base.en.mlmodelc -> models/ggml-base.en-encoder.mlmodelc
+```
