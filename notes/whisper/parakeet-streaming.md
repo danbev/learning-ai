@@ -3,6 +3,20 @@ Just stashing some notes about Parakeet Stream Models in case we decide to
 support them in the future.
 
 ### nemotron-3.5-asr-streaming-0.6b.nemo model
+This model is described as a `Cache-Aware FastConformer-RNNT architecture`.
+To understand what this means lets think of "offline", which is where we pass the
+entire sample through the network. When we do streaming, we process small chunks
+of audio at a time. If we try to process each chunk in isolation it will loose
+context and the accuracy will collapse.
+
+A Cache-Aware architecture fixes this. It means the model layers are explicitly
+designed to accept, update, and pass forward historical state tensors (caches)
+right alongside the fresh incoming audio chunk. And this is different from trying
+to do this externally from the model, it looses accuracy at the borders. Because
+the model was trained using this same structure, this chunking, it will not loose
+accuracy in the same way.
+
+
 ```console
 EncDecRNNTBPEModelWithPrompt(
   (preprocessor): AudioToMelSpectrogramPreprocessor(
@@ -131,119 +145,9 @@ model_defaults:
     es-US: 3
     es: 3
     zh-CN: 4
-    zh-ZH: 4
-    zh-TW: 5
-    hi-IN: 6
-    hi: 6
-    hi-HI: 6
-    ar-AR: 7
-    ar: 7
-    fr-FR: 8
-    fr: 8
-    de-DE: 9
-    de: 9
-    ja-JP: 10
-    ja-JA: 10
-    ru-RU: 11
-    ru: 11
-    pt-BR: 12
-    pt-PT: 13
-    pt: 13
-    ko-KR: 14
-    ko: 14
-    ko-KO: 14
-    it-IT: 15
-    it: 15
-    nl-NL: 16
-    nl: 16
-    pl-PL: 17
-    pl: 17
-    tr-TR: 18
-    tr: 18
-    uk-UA: 19
-    uk: 19
-    ro-RO: 20
-    ro: 20
-    el-GR: 21
-    el: 21
-    cs-CZ: 22
-    cs: 22
-    hu-HU: 23
-    hu: 23
-    sv-SE: 24
-    sv: 24
-    da-DK: 25
-    da: 25
-    fi-FI: 26
-    fi: 26
-    no-NO: 27
-    'no': 27
-    nb-NO: 103
-    nb: 103
-    nn-NO: 104
-    nn: 104
-    sk-SK: 28
-    sk: 28
-    hr-HR: 29
-    hr: 29
-    bg-BG: 30
-    bg: 30
-    lt-LT: 31
-    lt: 31
-    et-EE: 60
-    et: 60
-    lv-LV: 61
-    lv: 61
-    sl-SI: 62
-    sl: 62
-    th-TH: 32
-    vi-VN: 33
-    id-ID: 34
-    ms-MY: 35
-    bn-IN: 36
-    ur-PK: 37
-    fa-IR: 38
-    ta-IN: 39
-    te-IN: 40
-    mr-IN: 41
-    gu-IN: 42
-    kn-IN: 43
-    ml-IN: 44
-    si-LK: 45
-    ne-NP: 46
-    km-KH: 47
-    sw-KE: 48
-    am-ET: 49
-    ha-NG: 50
-    zu-ZA: 51
-    yo-NG: 52
-    ig-NG: 53
-    af-ZA: 54
-    rw-RW: 55
-    so-SO: 56
-    ny-MW: 57
-    ln-CD: 58
-    or-KE: 59
-    he-IL: 64
-    ku-TR: 65
-    az-AZ: 66
-    ka-GE: 67
-    hy-AM: 68
-    uz-UZ: 69
-    tg-TJ: 70
-    ky-KG: 71
-    qu-PE: 80
-    ay-BO: 81
-    gn-PY: 82
-    nah-MX: 83
-    mi-NZ: 96
-    haw-US: 97
-    sm-WS: 98
-    to-TO: 99
-    fr-CA: 100
+    ...
     mt-MT: 102
     auto: 101
-...
 ```
 So we have `num_prompts` which is 128, this is the number of possible supported
 languaged. The `prompt_dictionary` is a mapping between language codes the index
@@ -283,5 +187,302 @@ partial_hypothesis: None  (type: typing.Optional[typing.List[typing.Any]])
 _internal: None  (type: typing.Optional[nemo.collections.asr.parts.mixins.transcription.InternalTranscribeConfig])
 target_lang: 'auto'  (type: <class 'str'>)
 ```
+
+### Encoder configuration
+```console
+encoder:
+  _target_: nemo.collections.asr.modules.ConformerEncoder
+  feat_in: 128
+  feat_out: -1
+  n_layers: 24
+  d_model: 1024
+  use_bias: false
+  subsampling: dw_striding
+  subsampling_factor: 8
+  subsampling_conv_channels: 256
+  causal_downsampling: true
+  reduction: null
+  reduction_position: null
+  reduction_factor: 1
+  ff_expansion_factor: 4
+  self_attention_model: rel_pos
+  n_heads: 8
+  att_context_size:
+  - - 56
+    - 3
+  - - 56
+    - 0
+  - - 56
+    - 6
+  - - 56
+    - 13
+  att_context_style: chunked_limited
+  xscaling: false
+  untie_biases: true
+  pos_emb_max_len: 5000
+  conv_kernel_size: 9
+  conv_norm_type: layer_norm
+  conv_context_size: causal
+  dropout: 0.1
+  dropout_pre_encoder: 0.1
+  dropout_emb: 0.0
+  dropout_att: 0.1
+  stochastic_depth_drop_prob: 0.0
+  stochastic_depth_mode: linear
+  stochastic_depth_start_layer: 1
+```
+
+### att_context_size
+So recall that this model was trained with chunked attention and this section
+specifies the boundries of the chunks it used during training.
+These are pairs of [left context, right context]
+```console
+  att_context_size:
+  - - 56   Pair 1: left=56 frames (~4.5s)
+    - 3            right=3 frames (~0.25s)
+
+  - - 56   Pair 2: left=56 frames (~4.5s)
+    - 0
+
+  - - 56   Pair 3: left=56 frames (~4.5s)
+    - 6
+
+  - - 56   Pair 4: left=56 frames (~4.5s)
+    - 13
+```
+So all have the same left context of 56 frames so that can all look backward into
+the past by 56 frames (56 x 80ms = 4.48s) but the right context varies. And the
+right is how much the model can look forward. So it was trained to look 3 frames
+into the future, 0 so just a normal causal mask where the future is completely
+masked out.
+
+And notice that the `att_context_style: chunked_limited` which means it was
+it was trained using those attention sizes.
+
+Now, there are 4 different pairs or attention context here which is why this is
+called multi-lookahead, it was not just trained with one fixed attention window
+but multiple. And I think this can be configured/specified by choosing a specific
+pair from the above list.
+
+### causal_downsampling
+For this model `causal_downsampling: true` which is different from the TDT model
+where this is false. This configuration options is related to the pre-processing
+stage where the downsampling happens. Both models down sample by a factor of 8
+which is done by 3 convolutions if I recall correctly.
+
+For offline mode (which is what the TDT model does) when calculating the
+downsampled feature for time t, the convolution kernel centers itself on t and
+looks both backward into the past (t - k) and forward into the future (t + k).
+This is perfectly fine for offline transcription because the entire audio file
+is loaded into memory at once. The model is free to look ahead.
+
+But in a live streaming environment, looking ahead at the subsampling stage is
+impossible because those future audio frames haven't been recorded yet.
+Setting this to true forces the subsampling convolutions to use asymmetric
+(left-only) padding.
+So we need to restrict convolution kernels so that when they evaluate time t,
+they are strictly restricted to looking at the current frame and past frames.
+The future side of the kernel is completely blinded.
+
+
+### prompt
+The NeMo model has internal classes named prompt, and there is also tensors name
+like `prompt_kernel.0.weight` which I found somewhat confusing. I think of a
+prompt as a text prompt to an LLM. In this case it is a language prompt. In audio
+the features for someone saying a phrase in English has a simlar acustic
+characteristic to someone speaking Swedish. We need to tell the decoding head
+what language we are expecting. This is done using a one-hot vector which has
+a 1 in the position of the language we are expecting. We can think of this as
+a text prompt, "Respond only in Swedish". So in this way it is like a prompt, 
+hence the name.
+
+
+### Subsampling (pre_encode)
+So in an offline model we have a subsampling and the streaming model will be 
+similar, that is it will have the same 3 convolutions but with some differences.
+
+If we consider the input to this layer it is the log mel-spectrogram where we
+have 128 mel bins and 1101 time steps.
+```console
+(gdb) p mel->ne
+$2 = {128, 1101, 1, 1}
+
+     mel bins →
+0    [0 1 2 3 4 5 6 ...  127]  time
+1    [0 1 2 3 4 5 6 ...  127]   ↓
+2    [0 1 2 3 4 5 6 ...  127]
+3    [0 1 2 3 4 5 6 ...  127]
+       ...
+1100 [0 1 2 3 4 5 6 ...  127]
+
+(gdb) p model.enc_pre_conv_0_w->ne
+$3 = {3, 3, 1, 256}
+```
+So we have a kernel of size 3x3.
+And this is what the first convolution looks like:
+```c++
+    struct ggml_tensor * cur = ggml_conv_2d(ctx0, model.enc_pre_conv_0_w, mel, 2, 2, 1, 1, 1, 1);
+```
+This has a x stride of 2 and a y stride of 2 as well. And we have one frame of
+padding on the left and the right.
+So the first convolution will start at time 0 and look at the first 3 frames,
+and the first 3 mel bins like this.
+
+If we did not have any padding (0) then our starting point would be like this:
+```console
+     mel bins →
+0    [x x x 3 4 5 6 ...  127]  time
+1    [x x x 3 4 5 6 ...  127]   ↓
+2    [x x x 3 4 5 6 ...  127]
+3    [0 1 2 3 4 5 6 ...  127]
+       ...
+1100 [0 1 2 3 4 5 6 ...  127]
+```
+But with a padding of 1 we get:
+```console
+
+     -1    0    1    2    3    4  ...  125  126  127  128
+-1  [ 0    0    0    0    0    0  ...    0    0    0    0 ]  <-- Virtual Row -1
+ 0  [ 0    x    x    x    x    x  ...    x    x    x    0 ]  <-- Time 0
+ 1  [ 0    x    x    x    x    x  ...    x    x    x    0 ]  <-- Time 1
+ 2  [ 0    x    x    x    x    x  ...    x    x    x    0 ]  <-- Time 2
+    ...
+1100[ 0    x    x    x    x    x  ...    x    x    x    0 ]  <-- Time 1100 (Last actual frame)
+1101[ 0    0    0    0    0    0  ...    0    0    0    0 ]  <-- Virtual Row 1101
+```
+
+```console
+               mel bins →
+      -1   0   1   2   3   4   5 ... 127 128
+ -1  [ x   x   x ] 0   0   0   0              ← Virtual padding row (zeros)
+  0  [ x   x   x ] 2   3   4   5 ... 127   0  ← time 0
+  1  [ x   x   x ] 2   3   4   5 ... 127   0  ← time 1
+  2    0   1   2   3   4   5   6 ... 127   0  ← time 2
+  3    0   1   2   3   4   5   6 ... 127   0  ← time 3
+       ...
+1100   0   1   2   3   4   5   6 ... 127   0
+1101   0   0   0   0   0   0   0 ... 127   0
+       ↑
+ Virtual padding column (zeros)
+```
+For the next jump, since we have a stride of 2 we jump to mel bins while still
+on the same time steps (-1, 0, 1):
+```console
+               mel bins →
+      -1   0   1   2   3   4   5 ... 127 128
+ -1    0   0 [ x   x   x ]                
+  0    0   x [ x   x   x ] 4   5 ... 127   0 ← time 0
+  1    0   x [ x   x   x ] 4   5 ... 127   0 ← time 1
+  2    0   1   2   3   4   5   6 ... 127   0 ← time 2
+  3    0   1   2   3   4   5   6 ... 127   0 ← time 3
+       ...
+1100   0   1   2   3   4   5   6 ... 127   0
+1101   0   0   0   0   0   0   0 ...   0   0
+```
+Notice that we get an overlapping of the previous mel bin and the next mel bin
+for each convolution operation, as well as an overlapp in time.
+And when we hit the end of the x-axis we will have processed 3 time frames and
+all the mel bins for them. We then shift the kernel by 2 in the y direction and
+continue. This again allows for an overlap in the time dimension as well.
+
+Now, this works fine for offline mode as we can add padding to the start, a column
+of zero frequencies, and a row of zero time at the top as well. Lets say we have
+chunked a larger audio file, then this above approach would work for the first
+chunk, but for the next chunk, the padding should not be zeros, well it should
+not be there at all. What this chunk really needs is the last 2 time steps
+from the previous chunk.
+
+When we cut a long audio stream into isolated blocks (let’s say 80ms chunks,
+which give us 8 log-mel frames at a time), a standard offline Conv2d module
+encounters a crisis at both ends of the chunk.
+
+When Chunk 1 (frames 0–7) finishes, Chunk 2 (frames 8–15) arrives.
+This is what would happend if we did this:
+```console
+         mel bins →
+   7   [ 0   0   0 ... 0 ]  ← Standard padding inserts ZEROS here for Chunk 2!
+-------------------------
+   8   [ x   x   x ... x ]  ← Frame 8 (Actual start of Chunk 2)
+   9   [ x   x   x ... x ]  ← Frame 9
+```
+We would be telling the neural network that the speaker was completely silent a
+split second ago might not have been the case at all.
+
+And we also have an problem with the end. When the offline model reaches the
+absolute end of the file, it applies its standard symmetric padding. It creates
+a virtual frame filled with zeros symmetrically on both sides like we saw above.
+This is perfectly fine for offline because the speaker has actually stopped
+talking. There is no future audio missing, silence is the ground truth. But for
+streaming this is wrong.
+What we have to do is to change the the centering of the kernel so that instead
+of looking at [t-1, 0, t+1] we would look at [t-2, t-1, t]. SO this never looks
+to the right so this padding is not an issue now. So we can't use this type of
+symmatric padding. We actually can't specify any padding at all for these type
+of model. What we have to do is to add the padding manually to the tensor before
+the we call the convolution operation. So we handle the padding manually.
+So this is what we want to achive (and recall this is the mel tensor that we
+pass into the convolution operation, after applying our manual padding):
+```console
+                    mel bins →
+      -1    0    1    2    3    4  ...  127  128
+ -2  [ 0    0    0    0    0    0  ...    0    0 ]  <-- Virtual Row -2 (Past)
+ -1  [ 0    0    0    0    0    0  ...    0    0 ]  <-- Virtual Row -1 (Past)
+-------------------------------------------------
+  0  [ 0    x    x    x    x    x  ...    x    0 ]  <-- Time 0 (First actual frame)
+  1  [ 0    x    x    x    x    x  ...    x    0 ]  <-- Time 1
+  2  [ 0    x    x    x    x    x  ...    x    0 ]  <-- Time 2
+    ...
+1100 [ 0    x    x    x    x    x  ...    x    0 ]  <-- Time 1100 (Last frame)
+                                                    <-- NO BOTTOM PADDING ROW HERE!
+```
+So we still have the padding for the mel bins which it not an issue.
+```c++
+struct ggml_tensor * padded_mel = ggml_pad_ext(ctx0, mel,
+    1, 1, // X-axis padding (Left, Right)
+    2, 0, // Y-axis padding (Top/Past, Bottom/Future)
+    0, 0
+);
+
+struct ggml_tensor * cur = ggml_conv_2d(ctx0, model.enc_pre_conv_0_w, padded_mel,
+    2, 2, // Strides (s0, s1)
+    0, 0, // Padding parameters set to 0 because we manual padded!
+    1, 1  // Dilation
+);
+```
+
+### Python walkthrough
+```console
+$ source venv/bin/activate
+(venv) $ python -m pdb test-model.py
+
+(Pdb) b ../NeMo/nemo/collections/asr/models/rnnt_bpe_models_prompt.py:324
+```
+```python
+    @typecheck()
+    def forward(
+        self,
+        input_signal=None,
+        input_signal_length=None,
+        processed_signal=None,
+        processed_signal_length=None,
+        prompt_indices=None,
+    ):
+        has_input_signal = input_signal is not None and input_signal_length is not None
+        has_processed_signal = processed_signal is not None and processed_signal_length is not None
+        if (has_input_signal ^ has_processed_signal) is False:
+            raise ValueError(
+                f"{self} Arguments ``input_signal`` and ``input_signal_length`` are mutually exclusive "
+                " with ``processed_signal`` and ``processed_signal_len`` arguments."
+            )
+
+        if not has_processed_signal:
+            processed_signal, processed_signal_length = self.preprocessor(
+                input_signal=input_signal,
+                length=input_signal_length,
+            )
+```
+So in this case has_processed_signal is False so this block will be executed.
+This is what is going to proprocess the audio into log mel-spectrograms.
+
 
 _wip_
