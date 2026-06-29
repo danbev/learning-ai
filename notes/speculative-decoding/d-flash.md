@@ -2,10 +2,10 @@
 
 llama.cpp pull request: https://github.com/ggml-org/llama.cpp/pull/22105
 
-What block diffusion flash addresses is the fact that when we have a draft model
-it is still an autoregressive model, like medusa and eagle, which processes one
-token at a time which means that there is a limit to have good these types of
-models can perform. The D in D-Flash stands for diffusion.
+What block diffusion flash (D-Flash) addresses is the fact that when we have a
+draft model it is still an autoregressive model, like Medusa and Eagle, which
+processes one token at a time which means that there is a limit to have good
+these types of models can perform. The D in D-Flash stands for diffusion.
 
 So diffusion will generate all the "stuff" at once if for example we think of
 an image. But in an LLM we don't have a fixed size output to generate which is
@@ -13,12 +13,11 @@ a requirement of a diffusion model (if I recall correctly). So what D-Flash does
 is it creates blocks of tokens of a fixed size and then it generates those
 blocks in one forward process or the diffusion model.
 
-
 So the flow is something like this, we first process the initial prompt using
-the target model just like any normal inference. But the model will extract
-a number of layer's output as features, which it will then be merge and
+the target model just like any normal inference. But the model will extract a
+number of layer's outputs as features, which it will then be merged and
 normalized to fit the dimension of the draft model. These features will then be
-used with the cross attention when drafting stering the draft model towards good
+used with the cross attention when drafting, stering the draft model towards good
 outputs. So the draft model is influenced, given context, by the target model
 and this should produce better draft predictions.
 
@@ -42,10 +41,11 @@ slot 1: "process" (40% confidence)
 slot 2: "is" (75% confidence)
 slot 3: "cool" (30% confidence)
 ```
-Now, the draft model might choose the top two predictions that is is most
-certain about, so in this case "diffusion" and "is". And the others will be
-kepts as MASK tokens.
-The model then runs another quick pass but now it has more infromation/context,
+Now, the draft model might choose the top two predictions that it is most
+certain about, so in this case "diffusion" and "is". And the others will be kept
+as MASK tokens.
+
+The model then runs another quick pass but now it has more information/context,
 it has the predictions from the first pass, in addition to the cross attention
 features from the target model.
 ```
