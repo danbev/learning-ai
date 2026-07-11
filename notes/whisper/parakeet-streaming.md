@@ -234,12 +234,13 @@ encoder:
 
 ### att_context_size
 So recall that this model was trained with chunked attention and this section
-specifies the boundries of the chunks it used during training.
-These are pairs of [left context, right context]
+specifies the boundries of the chunks it used during training. These are pairs
+of [left context, right context], they decribe the tokens ability to see into
+the past and future tokens:
 ```console
   att_context_size:
-  - - 56   Pair 1: left=56 frames (~4.5s)
-    - 3            right=3 frames (~0.25s)
+  - - 56   Pair 1: left=56 frames (~4.5s in the past)
+    - 3            right=3 frames (~0.25s in the future)
 
   - - 56   Pair 2: left=56 frames (~4.5s)
     - 0
@@ -251,10 +252,10 @@ These are pairs of [left context, right context]
     - 13
 ```
 So all have the same left context of 56 frames so that can all look backward into
-the past by 56 frames (56 x 80ms = 4.48s) but the right context varies. And the
+the past by 56 frames (56 x 80ms = 4.48s), but the right context varies. And the
 right is how much the model can look forward. So it was trained to look 3 frames
 into the future, 0 so just a normal causal mask where the future is completely
-masked out.
+masked out. This is all related to the attention layer.
 
 And notice that the `att_context_style: chunked_limited` which means it was
 it was trained using those attention sizes.
@@ -263,6 +264,10 @@ Now, there are 4 different pairs or attention context here which is why this is
 called multi-lookahead, it was not just trained with one fixed attention window
 but multiple. And I think this can be configured/specified by choosing a specific
 pair from the above list.
+
+Also note that the `conv_context_size: causal` which means that the
+And that this use `layer_norm` and not `batch_norm`.
+
 
 ### causal_downsampling
 For this model `causal_downsampling: true` which is different from the TDT model
@@ -283,6 +288,22 @@ Setting this to true forces the subsampling convolutions to use asymmetric
 So we need to restrict convolution kernels so that when they evaluate time t,
 they are strictly restricted to looking at the current frame and past frames.
 The future side of the kernel is completely blinded.
+
+```console
+(Pdb) p model.encoder.streaming_cfg
+CacheAwareStreamingConfig(
+chunk_size=[25, 32],
+shift_size=[25, 32],
+cache_drop_size=0,
+last_channel_cache_size=56,
+valid_out_len=4,
+pre_encode_cache_size=[0, 9],
+drop_extra_pre_encoded=2,
+last_channel_num=0,
+last_time_num=0)
+```
+Notice that we have `[0, 9]` as the value for `pre_encode_cache_size`, which means
+that 0 is used for the first chunk and 9 for the following chunks.
 
 
 ### prompt
