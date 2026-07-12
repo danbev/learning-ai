@@ -21,7 +21,7 @@ In a Standard Transformer (MHA), the Attention block works like this:
 2. Expand: Multiplies h by three giant matrices (W_Q, W_K, W_V) to produce three
    huge vectors: Query (Q), Key (K), and Value (V).
 3. Cache: Stores the huge K and V vectors (after the have been projected by the
-   previous step, in the KV Cache.
+   previous step) in the KV Cache.
 4. Attend: Calculates attention scores using Q and the cached K.
 
 In MLA the Attention blocks work like this:
@@ -34,19 +34,79 @@ In MLA the Attention blocks work like this:
 
 Having to compress using a down project matrix multiplication and then later
 expand using an up project matrix multiplication does add some computational
-overhead. But it was shown that the uncompressing can actually be avoided.  If
-we imagine we have:
+overhead. But it was shown that the uncompressing can actually be avoided.
+
+What we do is we instead of projecting x_t into 2 separate vectors there is a
+single joint down projection matrix:
 ```console
-Query * (W_unzip* compressed_key)
+c_t^KV = x_t * W^DKV
+[    ]          [   ]
+compressed      Down projection matrix 
+latent vector
+```
+And what is stored in VRAM is just the c_t^KV vector. And there will be one for
+each token in the sequence but this just appends to the KV-cache. Now, to perform
+the attention we would need to up-project these two vectors back into the
+original Key and Value vectors, but that would be expensize and defeat the
+purpose of what we are trying to accomplish. We can avoid this by absorbing the
+up-projection matrix into the Query vector:
+```console
+score_t_i = q_i * k_t_i^T
+             |      +---------+
+             ↓                ↓
+          = (x_q W_i^Q) (c_t^KV W_i^UK)^T
+          = x_q W_i^Q   (W_i^UK)^T (c_t^KV)^T
+
+W_i^UK is the up projection matrix that can uncompress the compressed latent
+vectors.
+```
+Now what we can do is we can we can absorb the W_i^UK matrix into the Query
+vector so that we don't have to do the up projection at all.
+```console
+W_i^Q (W_i^UK)^T = W_i^Q_absorbed
+```
+Our score then becomes:
+```console
+score_t_i = (x_q W_i^Q_absorbed) (c_t^KV)^T
+```
+
+Just to clarify something that confused me a bit and that is why we are using
+the up-projection matrix and not a down-projection matrix which I felt would be
+more intuitive as we are compressing the Query vector down to the compressed
+latent vector space. But we have to notice/remember that the matrix is transposed!
+
+```console
+W_i^Q    has shape: (7168 x 128)
+W_i^UK   has shape: ( 576 x 128)
+W_i^UK^T has shape: ( 128 x 576)
+
+```
+Multiplying by (W_i^UK)^T reverses the direction, allowing the 128 dimensional
+head dimension to cancel out, projecting the Query from 7168 straight down into 
+576.
+```console
+(7168 x 128) x  (128 x 576) = (7168 x 576)
+
+x_q  has shape (1 x 7168)
+
+Shape: (1 x 7168) x (7168 x 576) = 1 x 576
+```
+So the actual computations will be performed in the compressed vector latent
+space.
+
+
+
+If we imagine we have:
+```console
+Query * (W_unzip * compressed_key)
+
+W_unzip is the matrix the uncompresses the compressed_key back into the original
+Key.
 ```
 Since multiplication is associative we can rearrange this to:
 ```console
 q_absorbed = (Query * W_unzip) * compressed_key
 ```
-And this means the same thing. And this called "absorbing" the unzip_matrix. We
-can do this as the W_unzip is fixed and known ahead of time.
-Because Q_absorbed already contains the "W_unzip" matrix inside it, multiplying
-it against the compressed key mathematically expands the key on the fly.
 
 But we also have to account for the position encoding like RoPE, which tells the
 model that "Dan" came before "loves".
@@ -64,8 +124,8 @@ score = Query * (W_down * (R_pos * Key))
 Now, like we mentioned earlier we want to use the absorption trick to avoid and
 that was possible because we could merge the W_unzip matrix into the Query matrix
 and then perform the multiplication with the compressed key. But now we have
-the rope information in R_pos which is position dependent, that is it is different
-for each token embedding in the sequence. So before we could use Query * W_unzip
+the rope information in R_pos which is position dependent, it is different for
+each token embedding in the sequence. So before we could use Query * W_unzip
 and then multiply by the compressed key because W_unzip was fixed. But now with
 R_pos it would mean that we would have to include this position information in
 the multiplication which would then have to be done for every token in the
