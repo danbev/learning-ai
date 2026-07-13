@@ -94,7 +94,29 @@ Shape: (1 x 7168) x (7168 x 576) = 1 x 576
 So the actual computations will be performed in the compressed vector latent
 space.
 
+So we have the attention scores and now we are going to "apply" them (thinking
+of transforming the vectors or moving them in the hidden vector space). So we
+have figured out the context and now we want to move the values according to
+this context. And we are using math tricks to avoid having to decompress the
+Value vectors from the KV-Cache which are in the compressed vector space. We
+perform a similar absobtion trick as before but this time we don't transpose the
+W_i^UV as we are actually performing an up projection, we are doing back into
+the models normal uncompressed hidden space.
 
+In the value path there is no dot product but we just have a chain of normal
+matrix multiplications:
+```
+head_i = Σ_t a_t_i * c_t^KV) * W_i^UV   * W_i^O
+             [  1x576      ]  [576x128]   [128x7168]
+             compressed latent  ↑              ↑
+             vector             |              |
+                               Up proj         Project head space to full embedding space
+                               from compressed
+                               space
+
+W_O_i^absorbed =   W_i^UV   .   W_i^O
+                (576 x 128) x (128 x7168) = (576 x 7168)
+```
 
 If we imagine we have:
 ```console
