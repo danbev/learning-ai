@@ -30,7 +30,7 @@ the selection process more hardware friendly.
 And we can find the implementation in src/models/kimi-linear.cpp.
 
 ### Kimi Delta Attention (KDA)
-This builds upon [mla](./mla.md) and the "Delta" part is what makes Kimi Linear
+This builds upon [mla](./attention/mla.md) and the "Delta" part is what makes Kimi Linear
 special. In older linear attention models, the memory matrix just kept adding
 new information until it became a "blurry" mess of data.
 
