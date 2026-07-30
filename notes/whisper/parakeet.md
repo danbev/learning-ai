@@ -1,7 +1,7 @@
 ### Parakeet TDT 0.6B V3 support
-This documentent contains on the Parakeet model with the goal being to convert
-it into a format that can be used with Whisper.cpp. The goal is to identify major
-differences which might effect the work.
+This documentent contains notes on the Parakeet model with the goal being to
+convert it into a format that can be used with Whisper.cpp. The goal is to
+identify major differences which might effect the work.
 
 ### Overview
 Parakeet offers three different models:
