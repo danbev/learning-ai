@@ -1166,3 +1166,266 @@ struct common_params_sampling {
 For this to work I think we need to order the samplers so that those that
 expect raw logits come first and those that expect probabilities come last.
 
+
+### Penalty sampling (backend)
+Now, just to recap a bit, llama_sampler_data look like this:
+```c++
+    struct llama_sampler_data {
+        struct ggml_tensor * logits;
+        struct ggml_tensor * probs;
+        struct ggml_tensor * sampled;
+        struct ggml_tensor * candidates;
+        int64_t              n_vocab;
+    };
+```
+The candidates tensor of I32 type and contains token id for samples that have
+selected/filtered the original logits, like top_k might just select the tokens
+with the 20 highest score in the vocab. And the logits would in this case just
+have the logits for those token ids as well.
+
+```c++
+    ggml_tensor * gathered = data->logits;
+    ggml_tensor * counts_f32 = ggml_cast(ctx, sctx->inp_counts, GGML_TYPE_F32);
+
+    if (sctx->has_candidates) {
+        const int32_t n_candidates = (int32_t) data->logits->ne[0];
+
+        ggml_tensor * counts_rows = ggml_fill(
+                ctx, ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, sctx->n_vocab), 0.0f);
+        ggml_tensor * scatter_rows = ggml_reshape_2d(ctx, counts_f32, 1, sctx->n_max);
+        counts_rows = ggml_set_rows(ctx, counts_rows, scatter_rows, sctx->inp_token_ids);
+        counts_f32 = ggml_get_rows(ctx, counts_rows, data->candidates);
+        counts_f32 = ggml_reshape_1d(ctx, counts_f32, n_candidates);
+```
+Here the inp_counts tensor which contains the count/frequency for past tokens.
+
+First we create a 2d tensor (1 entry for the token id per row) and the number of
+rows will be the full vocab size. This is initialized with 0.0f values:
+```c++
+ggml_tensor * counts_rows = ggml_fill(ctx, ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, sctx->n_vocab), 0.0f);
+```
+Next we reshape counts_f32 which is just 1D tensor at this point:
+```console
+(gdb) p counts_f32->ne
+$23 = {64, 1, 1, 1}
+```
+```c++
+ggml_tensor * scatter_rows = ggml_reshape_2d(ctx, counts_f32, 1, sctx->n_max);
+```
+Next we will use ggml_set_rows where counts_rows is the tensor that will get
+updated when this operation later executes, scatter_rows contains the rows to
+insert, and inp_token_ids contains the row indices.
+```c++
+counts_rows = ggml_set_rows(ctx, counts_rows, scatter_rows, sctx->inp_token_ids);
+```
+```c++
+counts_f32 = ggml_get_rows(ctx, counts_rows, data->candidates);
+```
+
+Lets say we have vocab size is 10, n_max is 5, and from previous token history
+we know token_2 appeared 3 times and token_7 appeared once:
+```console
+  inp_token_ids = [2,   7,   filler, filler, filler]
+  inp_counts    = [3,   1,   0,      0,      0     ]
+  counts_f32    = [3.0, 1.0, 0.0,    0.0,    0.0   ]
+```
+And top-k already narrowed the candidates down to 3 tokens: [2, 5, 7].
+
+Problem:
+we need to know the penalty count for each of those 3 candidates. But counts_f32
+is not indexed by token ID it's just a positional list of active counts/frequencies.
+
+Step 1: we create a zero-filled lookup table, one slot per vocab token:
+```console
+  counts_rows (indexed by token ID 0-9):
+  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+```
+Step 2/3 — ggml_set_rows writes each count into the slot matching its token ID:
+```console
+  inp_token_ids[0]=2, count=3.0  →  counts_rows[2] = 3.0
+  inp_token_ids[1]=7, count=1.0  →  counts_rows[7] = 1.0
+
+  counts_rows: [0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+```
+Now counts_rows[token_id] gives you the penalty count for any token. But
+counts_rows is now the full vocab length and not the candidates lenght of 3
+so we use ggml_get_rows(ctx, counts_rows, data->candidates):
+```console
+  ggml_get_rows(ctx, counts_rows, data->candidates):
+                        ↑               ↑
+                     source           indices
+  candidate 2 → counts_rows[2] = 3.0
+  candidate 5 → counts_rows[5] = 0.0                                                                               candidate 7 → counts_rows[7] = 1.0
+
+  counts_f32 = [3.0, 0.0, 1.0]
+```
+
+If we don't have candidates we have this in the else clause:
+```c++
+    else {
+        ggml_tensor * logits_rows = ggml_reshape_2d(ctx, data->logits, 1, ggml_nelements(data->logits));
+        gathered = ggml_get_rows(ctx, logits_rows, sctx->inp_token_ids);
+        gathered = ggml_reshape_1d(ctx, gathered, sctx->n_max);
+    }
+```
+```console
+data->logits = [0.5, -1.2, 2.3, 0.1, -0.8, 1.4, 0.9, -0.3, 0.7, 1.1]
+(token id idx)  0     1    2    3     4     5    6     7    8    9
+```
+We have to reshape to 2d so that ggml_get_rows can index into it [1, n_vocab].
+The we use ggml_get_rows:
+```
+gathered = ggml_get_rows(ctx, logits_rows, sctx->inp_token_ids);
+                      ↑                ↑
+                     source          indices
+
+inp_token_ids = [2, 7, filler, filler, filler]
+
+gathered = [2.3, -0.3, 0.0, 0.0, 0.0]
+            ↑     ↑
+            logits for 2 and 7
+```
+And then we flatten back to 1d.
+
+
+Next we have:
+```c++
+ggml_tensor * active_mask = ggml_step(ctx, counts_f32);
+```
+Step is operation that returns 1.0 if the value in a position is greater than
+0, and other wise sets it to 0.0.
+For example for presence penalty we only care if the token appeared and we don't
+care about how many times it appeared:
+```console
+active_mask = [1.0, 1.0, 0.0, 0.0, 0.0]
+```
+We also have an inactive_mask:
+```console
+ggml_tensor * inactive_mask = ggml_sub(ctx, ggml_fill(ctx, active_mask, 1.0f), active_mask);
+```
+So ggml_fill will create a new tensor and when it is executed it will set the
+values
+```console
+  active_mask   = [1.0, 1.0, 0.0, 0.0, 0.0]
+  fill          = [1.0, 1.0, 1.0, 1.0, 1.0]
+  1.0 - active  = [0.0, 0.0, 1.0, 1.0, 1.0]
+
+  inactive_mask = [0.0, 0.0, 1.0, 1.0, 1.0]
+```
+
+Next, we have:
+```console
+    ggml_tensor * penalized = gathered;
+
+    if (sctx->penalty_repeat != 1.0f) {
+        ggml_tensor * pos_mask = ggml_step(ctx, penalized);
+        ggml_tensor * neg_mask = ggml_sub(ctx, ggml_fill(ctx, pos_mask, 1.0f), pos_mask);
+
+        ggml_tensor * pos_scale = ggml_scale(ctx, pos_mask, 1.0f/sctx->penalty_repeat);
+        ggml_tensor * neg_scale = ggml_scale(ctx, neg_mask, sctx->penalty_repeat);
+        ggml_tensor * repeat_scale = ggml_add(ctx, pos_scale, neg_scale);
+
+        repeat_scale = ggml_mul(ctx, repeat_scale, active_mask);
+        repeat_scale = ggml_add(ctx, repeat_scale, inactive_mask);
+        penalized = ggml_mul(ctx, penalized, repeat_scale);
+    }
+```
+The goal is here is for each logit in penalized, we want to multiply it by a
+penalty scale factor. The scale factor depends on the sign of the logit:
+```console
+  if logit > 0:  scale = 1/penalty_repeat   (e.g. 1/1.1 = 0.909, makes it smaller)
+  if logit <= 0: scale = penalty_repeat     (e.g. 1.1,   makes it more negative)
+  if inactive:   scale = 1.0                (no change)
+```
+If the logit is positive we want to make it smaller as this is a penalty, we want
+this logit to not have as much "strength". And if the logit is already negative
+we want to make it more negative, also it become "weaker". And not change otherwise.
+
+```console
+penalized (gathered)            = [2.3, -0.3, 0.0, 0.0, 0.0]
+pos_mask = ggml_step(penalized) = [1.0,  0.0, 0.0, 0.0, 0.0]
+neg_mask = ggml_sub             = [0.0,  1.0, 1.0, 1.0, 1.0]
+```
+Then we have the positive scaling? 
+```console
+ggml_tensor * pos_scale = ggml_scale(ctx, pos_mask, 1.0f/sctx->penalty_repeat);
+
+pos_mask = [1.0, 0.0, 0.0, 0.0, 0.0]
+
+(gdb) p 1.0/sctx->penalty_repeat
+$29 = 0.90909088938689475
+pos_mask = ggml_step(penalized) = [0.909, 0.0, 0.0, 0.0, 0.0]
+
+
+neg_mask = [0.0, 1.0, 1.0, 1.0, 1.0]
+            1.1  1.1  1.1  1.1  1.1
+ggml_tensor * neg_scale = ggml_scale(ctx, neg_mask, sctx->penalty_repeat);
+neg_mask = [0.0, 1.1, 1.1, 1.1, 1.1]
+```
+So we have the positive and negative values and we then combine the two into
+one unified scale tensor:
+```console
+ggml_tensor * repeat_scale = ggml_add(ctx, pos_scale, neg_scale);
+repeat_scale * active_mask       [0.909, 1.1, 0.0, 0.0, 0.0]
+               + inactive_mask = [  0.0, 0.0, 1.0, 1.0, 1.0]
+                               = [0.909, 1.1, 1.0, 1.0, 1.0]
+```
+Then we multiple this scaling tensor with active mask, and add the inactive
+mask, and finally we scale the gathered tensors.
+
+Next we have:
+```console
+    if (sctx->penalty_freq != 0.0f) {
+        ggml_tensor * penalty_freq = ggml_scale(ctx, counts_f32, sctx->penalty_freq);
+        penalized = ggml_sub(ctx, penalized, penalty_freq);
+    }
+```
+If a token has occured multiple times in the history, it has a higher count then
+we penalize it more. A token that has appeared 3 times will be penalized 3 times
+as much as one that only appeared once. And recall the counts_f32 contains the
+count/frequency of each token:
+```console
+  counts_f32    = [3.0,  1.0,  0.0,  0.0,  0.0]   ← raw counts/frequency in history
+
+  penalty_freq  = counts_f32 * 0.5                ← scale counts by the penalty factor                                           = [1.5,  0.5,  0.0,  0.0,  0.0]
+  penalized     = penalized - penalty_freq        ← subtract from logits
+```
+Next we have:
+```console
+    if (sctx->penalty_present != 0.0f) {
+        ggml_tensor * penalty_present = ggml_scale(ctx, active_mask, sctx->penalty_present);
+        penalized = ggml_sub(ctx, penalized, penalty_present);
+    }
+```
+Penalize any token that appeared at least once in the history, regardless of how
+many times. A flat one-time penalty for showing up at all as opposed to frequency
+which keeps growing with each occurrence.
+
+Next we have:
+```c++
+    if (sctx->has_candidates) {
+        data->logits = penalized;
+    } else {
+        ggml_tensor * logits_rows = ggml_reshape_2d(ctx, data->logits, 1, ggml_nelements(data->logits));
+        ggml_tensor * scatter_rows = ggml_reshape_2d(ctx, penalized, 1, sctx->n_max);
+        logits_rows = ggml_set_rows(ctx, logits_rows, scatter_rows, sctx->inp_token_ids);
+        data->logits = ggml_reshape_1d(ctx, logits_rows, ggml_nelements(data->logits));
+    }
+```
+If has_candidates was true then we need to update the now penalized logits.
+The else clause is the reverse of what we went through before, we need to write
+the penalities back into the correct positions in the full vocab sized logits
+tensor.
+```console
+data->logits (full vocab): [0.5, -1.2, 2.3,  0.1, -0.8, 1.4, 0.9, -0.3, 0.7, 1.1]
+penalized (n_max):         [2.09, -0.33, 0.0, 0.0, 0.0]
+inp_token_ids:             [2,    7,     filler...]
+
+Reshape both to 2D, then ggml_set_rows scatters the penalized values back at the token ID positions:
+position 2 ← 2.09    (was 2.3)
+position 7 ← -0.33   (was -0.3)
+
+Result:
+data->logits: [0.5, -1.2, 2.09, 0.1, -0.8, 1.4, 0.9, -0.33, 0.7, 1.1]
+```
+
