@@ -99,8 +99,8 @@ of transforming the vectors or moving them in the hidden vector space). So we
 have figured out the context and now we want to move the values according to
 this context. And we are using math tricks to avoid having to decompress the
 Value vectors from the KV-Cache which are in the compressed vector space. We
-perform a similar absobtion trick as before but this time we don't transpose the
-W_i^UV as we are actually performing an up projection, we are doing back into
+perform a similar absorbtion trick as before but this time we don't transpose the
+W_i^UV as we are actually performing an up projection, we are going back into
 the models normal uncompressed hidden space.
 
 In the value path there is no dot product but we just have a chain of normal
