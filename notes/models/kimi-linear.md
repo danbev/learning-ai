@@ -39,7 +39,7 @@ to the memory, it calculates how much of the existing memory is already similar
 to the new input.
 
 This is what the state update looks like (keep in mind that since we don't use
-softmax the query is not involved at this stage. This is only the write part to
+softmax the query is not involved at this stage). This is only the write part to
 memory. The read part is where the query vector comes in):
 ```
 S_t = (Forget_Gate * S_{t-1}) + β_t(v_t - (S_{t-1} k_t)) ⊚ k_t^T
@@ -56,8 +56,7 @@ Where:
 ```
 
 The forget gate is a vector [128], and the state is a matrix [128, 128] and
-doing an element wise multiplication (hadamard) of these produces a [128, 128]
-matrix.
+doing an element wise multiplication of these produces a [128, 128] matrix.
 ```console
 F = [0.1]        S = [10 20 30]
     [0.5]            [40 50 60]
@@ -84,7 +83,7 @@ e ⊚ k^T = [2]            [(2*1) (2*0) (2*4)]   [2 0  8]
 So the overall picture is this:
 1) Read: S_{t-1} k_t  Read the state to see what we already know.
 2) Compare: (v_t - (S_{t-1} k_t))  Compare the read value with the actual value to get the error/surprise.
-3) Scale: Forget_gate * S_{t-1}  Earase the old state slightly.
+3) Scale: Forget_gate * S_{t-1}  Erase the old state slightly.
 4) Write: Error ⊚ k_t^T  Create a new matrix of the suprise/error.
 5) Merge: Add the scaled old state and the new write together to get the new state S_t.
 
@@ -132,7 +131,7 @@ v = concept of Red represented by a vector      : [5 0 0 0]
 ```
 
 In linear attention state a "key-value" pair is stored as an outer product of
-v X k^T.  So looking at the above equation:
+v X k^T. So looking at the above equation:
 ```
 S_t = S_{t-1} + beta_t(v_t - S_{t-1} k_t) k_t
 ```
