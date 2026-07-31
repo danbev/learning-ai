@@ -6,22 +6,24 @@
 * [Eagle](./eagle)
 
 ## Background/overview
-So if we consider the "normal" or first speculative decoding we have a draft
-model and the normal model. The draft model is much smaller and faster so it is
-not expensive to make predictions with it, though it might not be as "good". But
-many words don't require the prediction/model to be good either, filler words
-like "the", "and", "is" etc are all words that the main larger model has to
-predict one by one. If we can have the smaller model predict them, which are
-mostly certain to also be what the large model will also predict we save and
-utilize the main model better. But utilize I mean we can instead of predicting
-a single token be predicting a batch of tokens, similar to how prefill/prompt is
-done. Note that the base/normal/large model is not trained in a different way,
-which will become a factor when we later look at other alternatives.
+So if we consider the "normal", or first, speculative decoding we have a draft
+model and the normal/main/target model. The draft model is much smaller and
+faster so it is not expensive to make predictions with it, though it might not
+be as "good". But many words don't require the prediction/model to be good
+either, filler words like "the", "and", "is" etc are all words that the main
+larger model has to predict one by one. If we can have the smaller model predict
+them, which are mostly certain to also be what the large model will also predict
+we save and utilize the main model better. By utilize I mean we can instead of
+predicting a single token be predicting a batch of tokens, similar to how
+prefill/prompt is done. Note that the base/normal/large model is not trained in
+a different way, which will become a factor when we later look at other
+alternatives.
 
 Having this additional model which has to be trained, need to be managed, like we
 have a second model that has to be served and hooked up with the main large model,
 share tokenizers etc is also a cost in maintenance. Medusa was therefor invented
-to avoid the draft model and adds heads, MLPs, to the last layer of the model.
+to avoid the draft model and adds heads, MLPs, to the last layer of the model. I
+think MTP is also similar in this regard.
 
 ### Speculative decoding (standard)
 The basic idea here is to have a smaller/faster model that acts as a "draft"
@@ -32,7 +34,7 @@ Lets say we specify that we want the draft model to predict 5 tokens. It does
 so in a normal autoregressive manner, and when it has predicted the 5 tokens
 those tokens are passed to the target model including the original prompt tokens.
 
-So we have an initial prompt just like I normally would to start things off. This
+So we have an initial prompt just like we normally would to start things off. This
 is passed to the draft model and it is set to predict 5 tokens, which it actually
 samples and all.
 
@@ -71,13 +73,14 @@ and output X as the next predicted token from the target model:
 
 ### checkpoints
 In llama.cpp there are checkpoints that are saved which are related to speculative
-decoding. To understand why this is needed we need to consider that that when
-we perform speculative decoding we are updating the kv-cache for transformer
-models, and for recurrent models we are updatin the hidden states. If we have to
-reject a token we need to be able to rollback to the previous state. This is not
-difficult for a transformer model as it is possible to remove entries from the
-kv-cache. But for recurrent models it is more difficult, as the state cannot be
-rolled back. This is where checkpoints are used.
+decoding. To understand why this is needed we need to consider that when we
+perform speculative decoding we are updating the kv-cache for transformer
+models, and for recurrent models we are updating the hidden states.
+
+If we have to reject a token we need to be able to rollback to the previous state.
+This is not difficult for a transformer model as it is possible to remove entries
+from the kv-cache. But for recurrent models it is more difficult, as the state
+cannot be rolled back. This is where checkpoints are used.
 
 So we have a draft and a target model, and both might require checkpointing:
 * Transformer target + Transformer draft  -> no checkpointing required
@@ -141,5 +144,7 @@ For recurrent models, there's no alternative:
 For transformer models (no checkpointing), this doesn't happen:
 * We just delete the KV cache entry for token Z at its position.
 * No re-computation needed.
+
+I think these checkpoints are sometimes called snapshots as well.
 
 _wip_
