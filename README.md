@@ -48,7 +48,6 @@ understanding the fundamentals of large language models, inference engines, and 
   * [State Space Models (SSM)](./notes/architectures/state-space-models.md)
   * [Mamba / Mamba-2](./notes/architectures/mamba.md)
   * [RWKV](./notes/architectures/rwkv.md)
-  * [DeltaNet](./notes/architectures/delta-net.md)
   * [Linear Attention](./notes/architectures/linear-attention.md)
   * [MatFormer](./notes/architectures/matformer.md)
 * [Mixture of Experts (MoE)](./notes/moe.md)
