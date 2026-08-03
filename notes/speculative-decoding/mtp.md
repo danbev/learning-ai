@@ -7,6 +7,99 @@ we can use that to verify/check how the model is doing. In normal next-token
 prediction we predict one token at a time. In Multi-Token Prediction (MTP)
 we predict multiple tokens at a time.
 
+```console
+                       Input Token: t1
+                               │
+                   [ Main Transformer Trunk ]
+                               │
+               ┌───────────────┴───────────────┐
+               │                               │
+          [ lm_head ]                      State h⁰
+               │(logits)                       │
+        Predicts Draft t2 (argmax)       [ RMSNorm (hnorm) ]
+               │(token_id)                     │
+         Lookup Emb(t2)                        │
+               │(token embedding)              │
+         [ RMSNorm (enorm) ]                   │
+               │                               │
+               └───────────────┬───────────────┘
+                               │
+                   Concat [ enorm, hnorm ]
+                               │
+                          [ eh_proj ]
+                               │
+       ┌───────────────────────┴───────────────────────┐
+       │                 MTP MODULE 1                  │
+       │                                               │
+       │   ┌───────────────────┴───────────────────┐   │
+       │   │                                       │   │
+       │ (skip)                       [ RMSNorm (attn_norm) ]
+       │   │                                       │   │
+       │   │                            [ Self-Attention ]
+       │   │                                       │   │
+       │   └───────────────────┬───────────────────┘   │
+       │                       │                       │
+       │              [ Residual Add (+) ]             │
+       │                       │                       │
+       │   ┌───────────────────┴───────────────────┐   │
+       │   │                                       │   │
+       │ (skip)                     [ RMSNorm (post_attn_norm) ]
+       │   │                                       │   │
+       │   │                          [ MoE / FFN Block ]
+       │   │                                       │   │
+       │   └───────────────────┬───────────────────┘   │
+       │                       │                       │
+       │              [ Residual Add (+) ]             │
+       └───────────────────────┬───────────────────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              │                                 │
+         [ lm_head ]                        State h¹
+              │                                 │
+       Predicts Draft t3                 [ RMSNorm (hnorm) ]
+              │                                 │
+        Lookup Emb(t3)                          │
+              │                                 │
+        [ RMSNorm (enorm) ]                     │
+              │                                 │
+              └────────────────┬────────────────┘
+                               │
+                   Concat [ enorm, hnorm ]
+                               │
+                          [ eh_proj ]
+                               │
+       ┌───────────────────────┴───────────────────────┐
+       │                 MTP MODULE 2                  │
+       │                                               │
+       │   ┌───────────────────┴───────────────────┐   │
+       │   │                                       │   │
+       │ (skip)                       [ RMSNorm (attn_norm) ]
+       │   │                                       │   │
+       │   │                            [ Self-Attention ]
+       │   │                                       │   │
+       │   └───────────────────┬───────────────────┘   │
+       │                       │                       │
+       │              [ Residual Add (+) ]             │
+       │                       │                       │
+       │   ┌───────────────────┴───────────────────┐   │
+       │   │                                       │   │
+       │ (skip)                     [ RMSNorm (post_attn_norm) ]
+       │   │                                       │   │
+       │   │                          [ MoE / FFN Block ]
+       │   │                                       │   │
+       │   └───────────────────┬───────────────────┘   │
+       │                       │                       │
+       │              [ Residual Add (+) ]             │
+       └───────────────────────┬───────────────────────┘
+                               │
+                           State h²
+                               │
+                          [ lm_head ]
+                               │
+                        Predicts Draft t4
+
+```
+
 So if we have a sequence like "Dan loves ice", the next token predicted might be
 "cream" which would be the t+1 token.
 In MTP it will predict t+1, t+2, t+3, etc depending on how many tokens we want.
@@ -108,9 +201,9 @@ L_n = -∑ ∑ log P^i(x_t+i | x_t:1)
 ```
 
 Now, recall that the output of the transformer layers/blocks, what the paper
-calls trunk), is a single vector of floats often a size like 4096 or 8192 (the
+calls trunk, is a single vector of floats often a size like 4096 or 8192 (the
 hidden size). This is what the paper refers to as the latent representation z.
-This how the transformer layers has moved the input tokens around in the
+This is how the transformer layers has moved the input tokens around in the
 embedding space and we can think of this as a vector pointing to some location
 in that space.
 Next, we are going to multiply this vector by a matrix which has a shape of
@@ -133,7 +226,7 @@ And we are going to multiply that with the vector:
 
 32000 [0 ... 4095]
 ```
-So this will multiply the vector against each embedding vector in in the matrix
+So this will multiply the vector against each embedding vector in the matrix
 and produce a new vector of size [vocab_size] which are the logits for each token.
 And this is performing the dot product so the output is how similar is this
 vector to the vector for a given token in the vocabulary. If the vectors point
@@ -173,14 +266,39 @@ later in this document.
 ### Speculative Decoding with MTP
 With MTP we don't need a separate smaller draft model and a larger one for
 verifying it. Instead we can use the same model.
-Flwo:
+Flow:
 * Transformer blocks produce latent representation z
 * Head 1 says "cream"
 * Head 2 says "cone"
 * Head 3 says "and"
 We now have a draft sequence: "cream cone and".
 
+So the main transformer blocks will produce a hidden state h⁰ which would normally
+be passed to the 'lm_head' to project it into the language vocab space.
+
+```console
+           (t+1)         (t+2)         (t+3)         (t+4)
+             ^             ^             ^             ^
+             |             |             |             |
+           [Head 1]   [Head 2]      [Head 3]      [Head 4]
+             ^            ^             ^             ^
+             |____________|_____________|_____________|
+                               |
+                               |
+                  [ Transformer layers/blocks ]
+                               ^
+                               |
+                       Input: token embeddings for current token
+```
+
+Each head takes two distinct inputs:
+* The Hidden state from the previous head (for head_0 this is the output from the main trunk)
+* The input embedding for the future token it is trying to predict.
+
 The verification step is taking that whole sequence, "cream cone and", and feed
 it back into the model again. This time just using a single head to see if "cone"
 actually follows "cream", and "and" follows "cone", etc.
 
+
+### eh_proj
+This is a matrix that is used in mtp. The 

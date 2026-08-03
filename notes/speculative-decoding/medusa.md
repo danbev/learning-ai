@@ -14,11 +14,11 @@ Instead of running a whole new model, Medusa attaches several small MLP heads to
 that final hidden state h_t.
 
 Lets think about this a bit, normally we have a single lm_head which is a
-matrix-vector multiplication that take the hidden state and performs a dot
-product against each token embedding in the vocabulary. This gives a use a
+matrix-vector multiplication that takes the hidden state and performs a dot
+product against each token embedding in the vocabulary. This gives us a
 similarity score of the current hidden state to each token in the vocab. So we
 took an input token id, mapped it to an embedding vector which was then passed
-through the layers of the model to give it context and peform other operation.
+through the layers of the model to give it context and perform other operation.
 I imagine these operations as moving the vector around in the models hidden space
 and after the last layer is where we then compare it with each token embedding
 vector so see which are close to this hidden vector and the values are the

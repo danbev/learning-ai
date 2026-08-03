@@ -71,7 +71,7 @@ k = 2
  [sat] [ran]   [end] [sun] <-- Top-2 for x_{t+2}
 ```
 Instead of a single chain we now have an array with this tree. Now if the
-prediction is "cat->sat", but the real model wanted "cat-ran" then we would loose
+prediction is "cat->sat", but the real model wanted "cat->ran" then we would loose
 the second prediction. With a tree structure we can keep the "ran" prediction:
 ```
 [cat, dog, sat, ran, end, sun]
