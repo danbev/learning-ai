@@ -4,20 +4,20 @@ llama.cpp pull request: https://github.com/ggml-org/llama.cpp/pull/22105
 
 What block diffusion flash (D-Flash) addresses is the fact that when we have a
 draft model it is still an autoregressive model, like Medusa and Eagle, which
-processes one token at a time which means that there is a limit to have good
+processes one token at a time which means that there is a limit to how good
 these types of models can perform. The D in D-Flash stands for diffusion.
 
 So diffusion will generate all the "stuff" at once if for example we think of
 an image. But in an LLM we don't have a fixed size output to generate which is
-a requirement of a diffusion model (if I recall correctly). So what D-Flash does
-is it creates blocks of tokens of a fixed size and then it generates those
-blocks in one forward process or the diffusion model.
+a requirement of a diffusion model (I think). So what D-Flash does is it creates
+blocks of tokens of a fixed size and then it generates those blocks in one
+forward process or the diffusion model.
 
 So the flow is something like this, we first process the initial prompt using
-the target model just like any normal inference. But the model will extract a
+the target model, just like any normal inference. But the model will extract a
 number of layer's outputs as features, which it will then be merged and
 normalized to fit the dimension of the draft model. These features will then be
-used with the cross attention when drafting, stering the draft model towards good
+used with cross attention when drafting, stering the draft model towards good
 outputs. So the draft model is influenced, given context, by the target model
 and this should produce better draft predictions.
 
