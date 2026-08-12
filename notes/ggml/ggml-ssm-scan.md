@@ -59,8 +59,8 @@ Next we have a pointer to the data in the s tensor:
             const float * s0 = (const float *) ((const char *)
                 src0->data + ir0*(src0->nb[1]) + i3*(src0->nb[2]));
 ```
-Now, the const char cast is there to enable pointer arithmetic. `src0` is the s
-tensor which is the tensor after the input embeddings have been projected into
+Now, the const char cast is there to enable pointer arithmetic. `src0` is the `s`
+tensor, which is the tensor after the input embeddings have been projected into
 the inner state dimensions, gone through the convolution layer, and the Silu
 operation.
 The `s` tensor is the current state of the system.
@@ -90,7 +90,7 @@ this point:
 ```
 So for this iteration `s0` is simply a pointer to the beginning of s data.
 
-Next we have our x tensor, which is the input to the SSM block. This is the
+Next we have our `x` tensor, which is the input to the SSM block. This is the
 output of the input embeddings->projection layer->convolution layer->Silu:
 ```c
             const float * x  = (const float *) ((const char *)
