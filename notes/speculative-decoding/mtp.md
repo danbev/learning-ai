@@ -100,6 +100,9 @@ we predict multiple tokens at a time.
 
 ```
 
+`eh_proj` is a matrix and the `e` stands for embeddings and `h` stands for the
+hidden state (the output of a previous layer for a token (the token score).
+
 So if we have a sequence like "Dan loves ice", the next token predicted might be
 "cream" which would be the t+1 token.
 In MTP it will predict t+1, t+2, t+3, etc depending on how many tokens we want.
@@ -263,42 +266,4 @@ discared after training, or rather not included in the model used for inference.
 But they can be used for speculative decoding which I'll take a closer look at
 later in this document.
 
-### Speculative Decoding with MTP
-With MTP we don't need a separate smaller draft model and a larger one for
-verifying it. Instead we can use the same model.
-Flow:
-* Transformer blocks produce latent representation z
-* Head 1 says "cream"
-* Head 2 says "cone"
-* Head 3 says "and"
-We now have a draft sequence: "cream cone and".
 
-So the main transformer blocks will produce a hidden state h⁰ which would normally
-be passed to the 'lm_head' to project it into the language vocab space.
-
-```console
-           (t+1)         (t+2)         (t+3)         (t+4)
-             ^             ^             ^             ^
-             |             |             |             |
-           [Head 1]   [Head 2]      [Head 3]      [Head 4]
-             ^            ^             ^             ^
-             |____________|_____________|_____________|
-                               |
-                               |
-                  [ Transformer layers/blocks ]
-                               ^
-                               |
-                       Input: token embeddings for current token
-```
-
-Each head takes two distinct inputs:
-* The Hidden state from the previous head (for head_0 this is the output from the main trunk)
-* The input embedding for the future token it is trying to predict.
-
-The verification step is taking that whole sequence, "cream cone and", and feed
-it back into the model again. This time just using a single head to see if "cone"
-actually follows "cream", and "and" follows "cone", etc.
-
-
-### eh_proj
-This is a matrix that is used in mtp. The 
