@@ -26,8 +26,8 @@ Exploration code can be found in [npu/hailo](../../npu/hailo).
 ### Architecture
 This chip is different from a GPU which is a more general computation device. It
 is designed specifically for AI computations. The chip itself consists of
-computation unit with memory locations close by to them. A language model is
-first compiled into a hailo execution format (hef) which the used to configure a
+computation unit with memory locations close to them. A language model is first
+compiled into a hailo execution format (hef) which is then used to configure a
 device. The flow is that of a dataflow architecture where the chip maps the
 model layers of a neural network physically onto an internal fabric of
 interconnected compute blocks, compution units, and localized SRAM memory. There
