@@ -12,13 +12,13 @@ D-Spark is similar to [d-flash](./d-flash.md) in that it does a block of decodin
 in parallel, compared to Eagle which does autoregressive decoding (sequential
 one after the other).
 
-The is an issue with D-Flash which is inherent to the parallel processing which
+There is an issue with D-Flash which is inherent to the parallel processing which
 is when we do parallel decoding we are predicting the complete "sentence" in one
 go. There is no way for any token to know about the token prior to it or after
 it as they get generated at the same time. 
 A token generated at position 3 has no idea what token was just generated at
 position 2. This is called lack of "inter-token dependencies" and creates an issue
-called 'multi-modal collision'. This has nothing to do with multi-model models
+called 'multi-modal collision'. This has nothing to do with multi-modal models
 but it about the 'mode' or 'path' that the sequence of tokens could follow.
 A multi-modal collision happens because the parallel drafter is evaluating all
 of these possible paths simultaneously without coordinating between the token

@@ -27,8 +27,8 @@ to predict 4 tokens:
 slot :   0      1      2      3
 token: [MASK] [MASK] [MASK] [MASK]
 ```
-So this is like the noise in the diffusion process. The draft model will use
-the cross attention features to predict something better than random tokens.
+This is like the noise in the diffusion process. The draft model will use the
+cross attention features to predict something better than random tokens.
 Now, these are predicted in a single forward pass but there are usually a few
 steps (are these layers of actual full diffusion processes?).
 The draft model looks at all the slots simultaneously using bidirectional
