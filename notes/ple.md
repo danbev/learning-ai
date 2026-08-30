@@ -250,6 +250,50 @@ ggml_tensor * llama_model_qwen4exp::graph::build_inp_ple(
     return emb;
 }
 ```
+The size of emb will depend on the number of tokens in the current sequence(
+n_tokens)
+```console
+(gdb) p n_tokens
+$10 = 13
+
+(gdb) p rows->ne
+$11 = {208, 1, 1, 1}
+```
+So we have 13 tokens and each one has 16 indices (8 bigram, 8 trigram).
+And this means that emb will have the following shape:
+```console
+(gdb) p emb->ne
+$12 = {160, 208, 1, 1}
+  
+0   [0         159]   // first tokens first 160 values for its bigram
+          .
+7   [0         159]   // first tokens last 160 values for its bigram
+8   [0         159]   // first tokens first 160 values for its trigram
+          .
+15  [0         159]   // first tokens last 160 values for its trigram
+          .
+          .
+207 [0         159]
+```
+And this is then reshaped:
+```c++
+    emb = ggml_reshape_2d(ctx0, emb, hparams.ple_head_dim * n_heads, n_tokens);
+                                     [ 160 * 16 = 2560             ] [  13   ]
+```
+Which produces:
+
+```console
+(gdb) p emb->ne
+$15 = {2560, 13, 1, 1}
+```
+So for each token in this batch we have retrieved a vector embedding for the
+current token id and the past bigram and trigram. So this does depend on preceding
+tokens so it is not a "look up this token id in total isolation which one might
+think when just hearing a simplified description of this. The dependency is on
+raw token identity, the literal token ids are hashed together so there is no
+learned notion of context (yet). A bit later we will see how this information is
+gated with the hyper connection streams which do have context.
+
 Notice here that rows `ple_embd` is a tensor.
 ```c++
 void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
@@ -424,6 +468,124 @@ additional context from the past tokens, with the updated stream states.
 So we have the following values kern=4, dil=3, hist=9. So the convolution will
 be looking back 9 positions (which is why we need the persisted memory)
 
+```c++
+ggml_tensor * llama_model_qwen4exp::graph::build_conv_state_at(
+        llm_graph_input_rs * inp,
+        ggml_tensor *        conv_states_all,  // p_l
+        ggml_tensor *        x,                // reshaped normalized (gated lookuped info)
+        int64_t              state_cols,       // hist     (9)
+        int64_t              channels,         // hc_dim   (10240)
+        int                  il) {
+```
+```console
+(gdb) p x->ne
+$28 = {10240, 1, 1, 1}
+(gdb) p conv_states_all->ne
+$29 = {92160, 1, 1, 1}
+(gdb) p 10240 * 9
+$30 = 92160
+```
+
+Next we have (in `build_conv_state_at`):
+```c++
+    auto it = rs_rows.find(conv_states_all);
+    if (it == rs_rows.end()) {
+        it = rs_rows.emplace(conv_states_all, build_rs(inp, conv_states_all, row_total, n_seqs)).first;
+    }
+    ggml_tensor * rows = it->second;
+```
+This is doing a lookup to see if we have already added a copy operation to the
+graph for the tensor pointer conv_states_all, which is performed by calling
+build_rs. If we have we can just reuse it but otherwise we schedule a write back
+operation of the currently inactive rows. The rows tensor looks like this:
+```console
+(gdb) p rows->ne
+$36 = {92160, 1, 1, 1}
+```
+So this is storing the history for the past 9 tokens.This is reshaped into
+a state tensor:
+```c++
+    ggml_tensor * state = ggml_reshape_3d(ctx0, rows, state_cols, channels, n_seqs);
+```
+```console
+(gdb) p state->ne
+$37 = {9, 10240, 1, 1}
+```
+And the we concatenate the history with x, which recall is our normalized gated
+looked up information about (sourced from the bigrams/trigrams in the token sequence):
+```c++
+    ggml_tensor * conv_input = ggml_concat(ctx0, state, ggml_transpose(ctx0, x), 0);
+```
+```console
+    [ 9 tokens history | gated looked up info]
+```
+Then we have:
+```c++
+    // keep the last state_cols columns for the next ubatch
+    const size_t row_size = ggml_row_size(conv_states_all->type, row_total);
+
+    ggml_tensor * tail = ggml_view_3d(ctx0, conv_input,
+            state_cols, channels, n_seqs,
+            conv_input->nb[1], conv_input->nb[2],
+            ggml_row_size(conv_input->type, conv_input->ne[0] - state_cols));
+```
+So we have something like this:
+```console
+conv_input = {10, 10240, 1, 1}
+0     [0     9]
+.
+.
+.
+10239 [0     9]
+```
+And the above code is creating a few into this  using ne[0]=9, ne[1]=10240,
+ne[2]=1, and the final argument is the offset=1
+```console
+(gdb) p ggml_row_size(conv_input->type, conv_input->ne[0] - state_cols)
+/$50 = 4
+```
+So we have offset each row by 4 bytes, and since the type of ne[0] is GGML_TYPE_F32
+we are skipping one entry initially and then the strides will do the rest and
+naturally skip the first element, which on this case is the oldest token in the
+history which we are "evicting/filtering" from this view:
+```console
+0     [1    9]
+.
+.
+.
+10239 [1    9]
+```
+Think of conv_input as an array were we start by indexing 4 bytes in. Then the
+strides will use that offset.
+```console
+(gdb) p tail->ne
+$53 = {9, 10240, 1, 1}
+```
+
+The destination for this is the convolution state, which is what we want to update
+and we create a 2d view into it using the following:
+```c++
+    ggml_tensor * dst = ggml_view_2d(ctx0, conv_states_all,
+            state_cols * channels, n_seqs,
+            conv_states_all->nb[1],
+            kv_head * row_size);
+```
+So we are creating a tensor for the destination which is the conv_states_all
+tensor, followed by the actual copy operation before returning conv_inpu. So this
+will make sure that when the graph is executed we will store away the updated
+convolution history, bumping ut any old history.
+
+So that brings us back to:
+```c++
+    // [hist + n_seq_tokens, hc_dim, n_seqs], tokens on ne[0]
+    ggml_tensor * padded = build_conv_state_at(inp, inp->mctx->get_p_l(il),
+            ggml_reshape_3d(ctx0, normalized, hc_dim, n_seq_tokens, n_seqs),
+            hist, hc_dim, il);
+```
+The name paddes is referring to that this will be used in the convolution as
+padding, providing the history of past tokens for the convolution operation.
+For the very first token this will infact be a zero padding as build_rs zeros
+out a sequences cache row using ggml_scale_inplace(state_zero, 0) in llama-graph.
 __new_wip__
 
 
