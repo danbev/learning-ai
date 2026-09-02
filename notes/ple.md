@@ -450,13 +450,13 @@ $11 = 3
 $12 = 9
 ```
 Now, recall that `normalized` is the normalized gated state which has been
-updated. But we have not updated the res_hs tensor, not yet.
+updated. But we have not updated the `res_hc` tensor (not yet).
 ```console
 (gdb) p normalized->ne
 $22 = {10240, 1, 1, 1}
 ```
 So this tensor contains all 4 streams (2560 x 4 = 10240). This will be passed
-to `build_conv_state_at` (at layer?):
+to `build_conv_state_at`:
 ```c++
     ggml_tensor * padded = build_conv_state_at(inp, inp->mctx->get_p_l(il),
             ggml_reshape_3d(ctx0, normalized, hc_dim, n_seq_tokens, n_seqs),
@@ -464,10 +464,17 @@ to `build_conv_state_at` (at layer?):
 ```
 Notice that this is passing in the memory context's `p_l` tensor which stores
 the history for the convolution. So what we are about to do is to get some
-additional context from the past tokens, with the updated stream states.
-So we have the following values kern=4, dil=3, hist=9. So the convolution will
-be looking back 9 positions (which is why we need the persisted memory)
+additional context from the past tokens. And we area also passing in the
+normalized tensor from above.
 
+So we have the following values kern=4, dil=3, hist=9. So the convolution will
+be looking back 9 positions (which is why we need the persisted memory), that is
+we will read the current 9 positions from memory and also update the memory (
+adding an operation) with the lastest 9 positions. The only positions will be
+shifted out, or replaced entirely depending on how many token are in the current
+sequence.
+
+So lets take a closer look at `build_conv_state_at`:
 ```c++
 ggml_tensor * llama_model_qwen4exp::graph::build_conv_state_at(
         llm_graph_input_rs * inp,
@@ -477,16 +484,23 @@ ggml_tensor * llama_model_qwen4exp::graph::build_conv_state_at(
         int64_t              channels,         // hc_dim   (10240)
         int                  il) {
 ```
+
+Now, x will vary depending on the sequence length, just keep this in mind if you
+set a break point here and just run in the debugger, the first time it hits will
+be for reserve calls in `llama_context`'s constructor so the sequence length will
+be 1.
 ```console
 (gdb) p x->ne
 $28 = {10240, 1, 1, 1}
+
 (gdb) p conv_states_all->ne
 $29 = {92160, 1, 1, 1}
+
 (gdb) p 10240 * 9
 $30 = 92160
 ```
 
-Next we have (in `build_conv_state_at`):
+Next we have:
 ```c++
     auto it = rs_rows.find(conv_states_all);
     if (it == rs_rows.end()) {
@@ -495,15 +509,15 @@ Next we have (in `build_conv_state_at`):
     ggml_tensor * rows = it->second;
 ```
 This is doing a lookup to see if we have already added a copy operation to the
-graph for the tensor pointer conv_states_all, which is performed by calling
-build_rs. If we have we can just reuse it but otherwise we schedule a write back
-operation of the currently inactive rows. The rows tensor looks like this:
+graph for the tensor pointer `conv_states_all`, which is performed by calling
+`build_rs`. If we have, we can just reuse it but otherwise we schedule a write
+back operation of the currently inactive rows. The rows tensor looks like this:
 ```console
 (gdb) p rows->ne
 $36 = {92160, 1, 1, 1}
 ```
-So this is storing the history for the past 9 tokens.This is reshaped into
-a state tensor:
+So this is storing the history for the past 9 tokens. This is reshaped into a
+state tensor:
 ```c++
     ggml_tensor * state = ggml_reshape_3d(ctx0, rows, state_cols, channels, n_seqs);
 ```
@@ -538,13 +552,13 @@ conv_input = {10, 10240, 1, 1}
 .
 10239 [0     9]
 ```
-And the above code is creating a few into this  using ne[0]=9, ne[1]=10240,
-ne[2]=1, and the final argument is the offset=1
+And the above code is creating a view into this using ne[0]=9, ne[1]=10240,
+ne[2]=1, and the final argument is the offset=1.
 ```console
 (gdb) p ggml_row_size(conv_input->type, conv_input->ne[0] - state_cols)
 /$50 = 4
 ```
-So we have offset each row by 4 bytes, and since the type of ne[0] is GGML_TYPE_F32
+So we have offset each row by 4 bytes, and since the type of ne[0] is `GGML_TYPE_F32`
 we are skipping one entry initially and then the strides will do the rest and
 naturally skip the first element, which on this case is the oldest token in the
 history which we are "evicting/filtering" from this view:
@@ -555,7 +569,7 @@ history which we are "evicting/filtering" from this view:
 .
 10239 [1    9]
 ```
-Think of conv_input as an array were we start by indexing 4 bytes in. Then the
+Think of `conv_input` as an array were we start by indexing 4 bytes in. Then the
 strides will use that offset.
 ```console
 (gdb) p tail->ne
@@ -571,9 +585,14 @@ and we create a 2d view into it using the following:
             kv_head * row_size);
 ```
 So we are creating a tensor for the destination which is the conv_states_all
-tensor, followed by the actual copy operation before returning conv_inpu. So this
-will make sure that when the graph is executed we will store away the updated
-convolution history, bumping ut any old history.
+tensor, followed by the actual copy operation before returning conv_input:
+```c++
+    ggml_build_forward_expand(gf, ggml_cpy(ctx0, ggml_cont(ctx0, tail), dst));
+
+    return conv_input;
+```
+So this will make sure that when the graph is executed we will store away the
+updated convolution history, bumping out any old history.
 
 So that brings us back to:
 ```c++
@@ -582,10 +601,236 @@ So that brings us back to:
             ggml_reshape_3d(ctx0, normalized, hc_dim, n_seq_tokens, n_seqs),
             hist, hc_dim, il);
 ```
-The name paddes is referring to that this will be used in the convolution as
+The name padded is referring to that this will be used in the convolution as
 padding, providing the history of past tokens for the convolution operation.
-For the very first token this will infact be a zero padding as build_rs zeros
-out a sequences cache row using ggml_scale_inplace(state_zero, 0) in llama-graph.
+For the very first token this will infact be a zero padding as `build_rs` zeros
+out a sequences cache row using `ggml_scale_inplace(state_zero, 0)` in llama-graph.cpp
+
+And this will be used in the actual convolution operation below:
+```c++
+    ggml_tensor * conv_out = nullptr;
+
+    // kern = 4 in our case. So this will loop four times, once for each tap.
+    for (int64_t k = 0; k < kern; ++k) {
+        // tap k reads (kern-1-k)*dilation positions back, dil = 3
+        const int64_t start = hist - (kern - 1 - k) * dil;
+
+        ggml_tensor * shifted = ggml_cont(ctx0,
+                ggml_transpose(ctx0,
+                        ggml_view_3d(ctx0, padded, n_seq_tokens, hc_dim, n_seqs,
+                                padded->nb[1], padded->nb[2],
+                                ggml_row_size(padded->type, start))));
+
+        // column k of the [kern, hc_dim] kernel is one weight per channel
+        ggml_tensor * wk = ggml_cont(ctx0,
+                ggml_view_2d(ctx0, model.layers[il].ple_conv1d, 1, hc_dim,
+                        model.layers[il].ple_conv1d->nb[1],
+                        k * model.layers[il].ple_conv1d->nb[0]));
+        // this kernel keeps the file type, so cast it before it multiplies an f32 activation
+        wk = ggml_reshape_1d(ctx0, wk, hc_dim);
+        if (wk->type != GGML_TYPE_F32) {
+            wk = ggml_cast(ctx0, wk, GGML_TYPE_F32);
+        }
+
+        ggml_tensor * term = ggml_mul(ctx0, shifted, wk);
+        conv_out = conv_out ? ggml_add(ctx0, conv_out, term) : term;
+    }
+```
+So if we have n_tokens=42, this would mean that padded would be:
+```console
+(gdb) p padded->ne
+$19 = {51, 10240, 1, 1}
+
+(gdb) p model.layers[il].ple_conv1d->ne
+$11 = {4, 10240, 1, 1}
+
+(gdb) p shifted->ne
+$23 = {10240, 42, 1, 1}
+
+(gdb) p wk->ne
+$24 = {10240, 1, 1, 1}
+```
+```console
+         padded tensor
+
+0     [0        50]     channel 0
+1     [0        50]     channel 1
+2     [0        50]
+3     [0        50]
+4     [0        50]
+5     [0        50]
+6     [0        50]
+7     [0        50]
+8     [0        50]
+           .
+           .
+           .
+10239 [0        50]
+       ↑        ↑
+       t0       t50
+
+
+           shifted tensor
+0     [0                             10239]  token 0
+                  .
+                  .
+                  .
+41    [0                             10239]  token 42
+
+
+           wk tensor
+0     [0                             10239]
+
+```
+Lets look at the first row in padded, where we have the 9 history tokens first
+followed by the 42 new tokens (ple gated tokens):
+```console
+ 0  1  2  3  4  5  6  7  8| 9  10  11  12  13 ... 50
+[---------history (9)----]|[t0 t1  t2  t3  t4     t41]
+```
+So we will be looping over k which is 4 so the local variable `start` will take
+on the following values:
+```console
+        const int64_t start = hist - (kern - 1 - k) * dil;
+hist=9
+kern=4
+dil=3
+
+
+k=0, start=9 - (4 - 1 - 0) * 3=0: window=cols[0 ... 41]
+k=1, start=9 - (4 - 1 - 1) * 3=3: window=cols[3 ... 44]
+k=2, start=9 - (4 - 1 - 2) * 3=6: window=cols[6 ... 47]
+k=3, start=9 - (4 - 1 - 3) * 3=9: window=cols[9 ... 50]
+```
+Start is then used to create a view into the padded tensor, and notice that we
+are using start to get the byte offset (0, 12, 24, 36):
+```console
+(gdb) p ggml_view_3d(ctx0, padded, n_seq_tokens, hc_dim, n_seqs, padded->nb[1], padded->nb[2], ggml_row_size(padded->type, start))->ne
+$34 = {42, 10240, 1, 1}
+```
+This is then made contiguous by using `ggml_cont`.
+Next we have wk which I guess is the kernel weight for this k (the current tap):
+```c++
+        ggml_tensor * wk = ggml_cont(ctx0,
+                ggml_view_2d(ctx0, model.layers[il].ple_conv1d, 1, hc_dim,
+                        model.layers[il].ple_conv1d->nb[1], // 8 bytes stride
+                        k * model.layers[il].ple_conv1d->nb[0]));
+                        //offset: 0 * 2 = 0
+                                  1 * 2 = 2
+                                  2 * 2 = 4
+                                  3 * 2 = 6
+```
+```console
+(gdb) p model.layers[il].ple_conv1d->ne
+$58 = {4, 10240, 1, 1}
+
+0     [0     3]
+          .
+          .
+          .
+10239 [0     3]
+
+(gdb) p ggml_view_2d(ctx0, model.layers[il].ple_conv1d, 1, hc_dim, model.layers[il].ple_conv1d->nb[1], k * model.layers[il].ple_conv1d->nb[0])->ne
+$57 = {1, 10240, 1, 1}
+0    [0]
+      .
+      .
+      .
+10239[0]
+```
+So this is view of a column of `ple_conv1d`, which is also why the offset is
+0, 2, 4, 6 (the type of the tensor is `GGML_TYPE_F16` so two bytes per entry.
+So the shape of wk is initially [1, 10240, 1, 1] and this is then reshaped
+into [10240, 1, 1, 1]:
+```c++
+        wk = ggml_reshape_1d(ctx0, wk, hc_dim);
+```
+And there is also a cast to f32 if it is not already:
+```c++
+        if (wk->type != GGML_TYPE_F32) {
+            wk = ggml_cast(ctx0, wk, GGML_TYPE_F32);
+        }
+```
+Next we have the first part of the convolution, and keep in mind that since
+we have:
+```console
+(gdb) p shifted->ne
+$63 = {10240, 42, 1, 1}
+(gdb) p wk->ne
+$64 = {10240, 1, 1, 1}
+```
+The shapes don't match for second dimension, but in ggml the have to match, or
+if wk's size is 1, then ggml just repeats wk's single slice accross the whole
+dimension of shifted.
+
+```c++
+        ggml_tensor * term = ggml_mul(ctx0, shifted, wk);
+        shifted                     wk (broadcasted)
+0       [0          10239]       [0          10239] "real row"
+1       [0          10239]       [0          10239] broadcasted
+2       [0          10239]       [0          10239] broadcasted
+.              .                  .
+.              .                  .
+.              .                  .
+41      [0          10239]       [0          10239] broadcasted
+```
+So the same kernel is applied to each row in shifted.
+Now, I'm struggling to actually see how the kernel is applied so lets try a
+simplified example:
+```console
+kern=2,  dil=1, hist=1
+n_seq_tokens=4 [x0, x1, x2, x3]
+
+       one history
+          ↓
+padded = [h0, x0, x1, x2, x3]
+
+kernel: [w0, w1]
+
+Iterations:
+k=0 :
+shifted_0 = [h0, x0, x1, x2]
+shifted_0 * kernel_0
+[h0, x0, x1, x2] [w0]  broadcasted  = [h0*w0, x0*w0, x1*w0, x2*w0]
+                 [w0]      ↓
+                 [w0]      ↓
+                 [w0]      ↓
+
+term_0 = [h0*w0, x0*w0, x1*w0, x2*w0]
+
+k=1: 
+shifted_1 = [x0, x1, x2, x3]
+shifted_1 * kernel_1
+[x0, x1, x2, x3] [w1]  broadcasted  = [x0*w1, x1*w1, x2*w1, x3*w1]
+                 [w1]      ↓
+                 [w1]      ↓
+                 [w1]      ↓
+
+term_1 = [x0*w1, x1*w1, x2*w1, x3*w1]
+
+conv_out = term_0 + term_1
+         = [h0*w0 + x0*w1, x0*w0+x1*w1, x1*w0+x2*w1, x2*w0+x3*w1]
+               t0             t1           t2           t3
+```
+And look at t1:
+```
+ [h0  x0  x1  x2  x3]
+     [w0 w1]
+```
+This is just like sliding the kernel over one row! So this is one slice of the
+real operation that the real model actually does. In the real model it does
+10240 of these.
+
+So after the loop we have done the convolution, we have:
+```c++
+    conv_out = ggml_silu(ctx0, conv_out);
+    conv_out = ggml_reshape_3d(ctx0, ggml_cont(ctx0, conv_out), n_embd, hc, n_tokens);
+    cb(conv_out, "ple_conv_out", il);
+
+    return ggml_add(ctx0, hidden, ggml_add(ctx0, gated, conv_out));
+```
+And notice the last line is where `hidden`, that is `res_hc` is actually updated.
+
 __new_wip__
 
 
