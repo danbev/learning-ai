@@ -1,8 +1,7 @@
 ### Per-Layer Embeddings (PLE)
 This is a feature that enables lookup of recalled facts/information by using
-a lookup table instead of processing layers in the model. This works by taking
-bigrams, and trigrams from the sequence and 
-
+a lookup table instead of processing layers in the model. So this lookup table
+can live in CPU memory instead of GPU memory and be memory mapped.
 
 ### qwen4exp `set_input`
 
@@ -97,19 +96,20 @@ So this following will loop over all the tokens in the ubatch:
             // So first we multiple the current token id with a position multiplier
             // We do this to avoid an ordering issue when later using XOR as it
             // does not take order into account. Or rather the order does not matter
-            // for xor but for use it is important we preserve order of token ids
-            // or "not good" and "good not" would xor to the same value.
+            // for xor, but for us it is important as we want to preserve order
+            // of token ids or otherwise "not good" and "good not" would xor to
+            // the same value.
             uint64_t mixed = (uint64_t) ctx[0] * hp.ple_layer_multipliers[0];
 
             // The following loop will handle both bigram and trigram, notice
             // we are using n in this loop which will be 2 for bigrams but 3
             // for trigrams.
             for (int64_t j = 1; j < n; ++j) {
-                // where we xor with mixed (which is the first token id times the
+                // we xor with mixed (which is the first token id times the
                 // first position multiplier.
                 mixed ^= (uint64_t) ctx[j] * hp.ple_layer_multipliers[j];
             }
-            // mixed is now are hash for this pair.
+            // mixed is now a hash for this pair.
 
             // n = 2, per_gram = 8, so base will be 0 in the first iteration
             const int64_t base = (n - 2) * per_gram;
@@ -856,8 +856,7 @@ hyper-connection stream:
   key[:, 3, token] = PLE key for residual stream 3
 ```
 
-
-After the build_ple we have:
+After the `build_ple` we have the following:
 ```console
         ggml_tensor * inject = nullptr;
         ggml_tensor * cur = build_hc_mix(res_hc,
@@ -867,11 +866,235 @@ After the build_ple we have:
                 model.layers[il].hc_attn_inject,
                 &inject, il);
 ```
+And recall that we updated `res_hc` previously. Now what is going to happen here
+is that the this layer gets to "decide via learned weights how much to pull for
+each stream" which is the intuition but and we will see how this actually works
+in `build_hc_mix`. Just keep in mind that the tensor `cur` that is returned
+from this function is what will be passed to the linear-attention or
+full-attention.
+```c++
+ggml_tensor * llama_model_qwen4exp::graph::build_hc_mix(
+        ggml_tensor *  x,        // res_hc
+        ggml_tensor *  w_norm,   // hc_attn_norm
+        ggml_tensor *  w_down,   // hc_attn_down
+        ggml_tensor *  w_up,     // hc_attn_up
+        ggml_tensor *  w_inject, // hc_attn_inject
+        ggml_tensor ** inject,   // is initially nullptr but is a reference.
+        int            il) {
 
+    const int64_t hc     = hparams.dsv4_hc_mult;
+    const int64_t hc_dim = hc * n_embd;
+    const int64_t nt     = x->ne[2];  // number of tokens, why not n_tokens?
+```
+The prompt I used was "What is the capital of Sweden?" which is 42 tokens:
+```console
+(gdb) p hc
+$2 = 4
+(gdb) p hc_dim
+$3 = 10240
+(gdb) p nt
+$1 = 42
+
+(gdb) p x->ne
+$6 = {2560, 4, 42, 1}
+```
+Recall that x is `res_hc` the hyper streams and notice that we have 4 streams
+per token. This is different from a normal residual connection where just have
+one residual stream (per token as well) that gets updated (x = x + f(x)).
+```console
+Standard Transformer (per token t):
+  [2560] ──────────────────────────────────────────► (1 highway)
+
+Hyper-Connections (per token t):
+  Stream 0: [2560] ───┐
+  Stream 1: [2560] ───┼── (mixed by build_hc_mix) ──► (4 highways)
+  Stream 2: [2560] ───┤
+  Stream 3: [2560] ───┘
+```
+
+And we will first normalize the all of the hyper streams:
+```c++
+    // grouped RMSNorm: reduce over one stream, then scale all streams with the [hc_dim] gamma
+    // the converter folded each gamma to (1 + w)
+    ggml_tensor * xn = ggml_rms_norm(ctx0, x, hparams.f_norm_rms_eps);
+```
+Each stream is normalized against its own magnitude so they don't effect one
+another. This operation only does the division step of RMSNorm so it will do
+the x_i = x_i / RMS(x) part only.
+
+In the conversion script (qwen4exp.py) we have the following:
+```python
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        ...
+        # Gemma zero-centred gammas the inherited norm.weight rule misses
+        if name.endswith((".ple.norm_key.weight", ".ple.norm_query.weight", ".ple.norm_conv.weight",
+                          ".indexer.q_layernorm.weight", ".indexer.k_layernorm.weight")):
+            return [(self.map_tensor_name(name), data_torch + 1)]
+        ...
+```
+So this is where the + 1 happens as mentioned in the comment which is what the
+forward pass in the pytorch implementation does, but here we do it upfront at
+conversion time.
+
+And now that we have normalized each stream we can reshape into
+`[10240, 42]` (remember that this is `n_embd` * 4, 2560*4=10240):
+```c++
+    xn = ggml_reshape_2d(ctx0, xn, hc_dim, nt);
+```
+One thing to note is that because we are doing a reshape here before the
+multiplation (below) there will be another node in the compute graph and I think
+this will prevent this RMSNorm operation to be fused.
+```console
+(gdb) p xn->ne
+$10 = {10240, 42, 1, 1}
+```
+So for each token we now have the four streams in one row.
+
+Then we have gamma `hc_attn_norm/w_norm`:
+```console
+(gdb) p w_norm->ne
+$11 = {10240, 1, 1, 1}
+```
+```c++
+    xn = ggml_mul(ctx0, xn, w_norm);
+    cb(xn, "hc_norm", il);
+```
+
+
+After the RMS normalization we have have the down projection:
+```c++
+    ggml_tensor * lo = build_lora_mm(w_down, xn);
+```
+```console
+(gdb) p w_down->ne
+$14 = {10240, 320, 1, 1}
+(gdb) p xn->ne
+$15 = {10240, 42, 1, 1}
+
+             w_down
+0   [0                   10239]
+               .
+               .
+41  [0                   10239]
+
+
+              xn
+0   [0                   10239]
+               .
+               .
+               .
+319 [0                   10239]
+
+          lo
+ 0  [0          319]
+           .
+           .
+           ..
+ 41 [0          319]
+```
+So for each row we have performed a dot product over the 10240 dimenions so this
+has summed all four hyper connection streams for each token.
+```c++
+ggml_tensor * llm_graph_context::build_lora_mm(
+          ggml_tensor * w,             // w_down (hc_attn_down)
+          ggml_tensor * cur,           // xn
+          ggml_tensor * w_s) const {   // per tensor scaling
+    // so first the matrix multiplication is performed.
+    ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
+
+    // this has a default value of ggml_tensor * w_s = nullptr) and this is
+    // the per tensor scaling which is applied.
+    if (w_s) {
+        res = ggml_mul(ctx0, res, w_s);
+    }
+
+    for (const auto & lora : *loras) {
+        llama_adapter_lora_weight * lw = lora.first->get_weight(w);
+        if (lw == nullptr) {
+            continue;
+        }
+
+        const float adapter_scale = lora.second;
+        const float scale = lw->get_scale(lora.first->alpha, adapter_scale);
+
+        ggml_tensor * ab_cur = ggml_mul_mat(
+                ctx0, lw->b,
+                ggml_mul_mat(ctx0, lw->a, cur)
+                );
+
+        ab_cur = ggml_scale(ctx0, ab_cur, scale);
+        res = ggml_add(ctx0, res, ab_cur);
+    }
+
+    return res;
+}
+```
+So this is a down projection from 10240 to 320 dimensions, we don't have a per
+tensor scale so that is skipped and no loras:
+```console
+(gdb) p res->ne
+$19 = {320, 42, 1, 1}
+```
+Next we have the non-linear operation which is SiLU in this case:
+```c++
+    lo = ggml_silu(ctx0, ggml_scale(ctx0, lo, 1.0f / (float) hc));
+```
+To understand the scaling we are doing here, lets take a smaller example to try
+to understand this.
+```console
+n_embd = 1 (instead of 2560)
+hc     = 4
+w_down = [4, 1, 1, 1] (shape)
+
+xn     = [0.9 ,  0.9,  0.9   0.9]  (the values will actually be the same for layer 0)
+w_down = [0.40, 0.35, 0.50, 0.45]  (values as opposed to the shape above)
+
+ggml_mul_mat(w_down, xn):
+    
+    [0.40, 0.35, 0.50, 0.45]  [0.9] = 0.40*0.9 + 0.35*0.9 + 0.50*0.9 + 0.45*0.9
+                              [0.9] = 0.9 (0.40 + 0.35 + 0.50 + 0.45)
+                              [0.9] = 0.9 * 1.70
+                              [0.9] = 1.53
+```
+So that would be the dot product for this single token. Now imagin that we had
+a version of this model where the hyper parameter hc was 1 instead of 4.
+```console
+n_embd = 1 (instead of 2560)
+hc     = 1
+w_down = [1, 1, 1, 1] (shape)
+
+xn     = [0.9]
+w_down = [0.40]
+
+ggml_mul_mat(w_down, xn):
+      [0.40] [0.9] = 0.40 * 0.9 = 0.36
+```
+Notice that we had the same values but only difference is that the number of
+hyperconnections is now 1 instead of 4. But we get 0.36 instead of 1.53 which
+is more that 4x difference because hc=4 summed four comparable terms.
+Now, if we pass these to SiLU:
+```console
+silu(x) = x * sigmoid(x)
+
+silu(1.53) = 1.53 * sigmoid(1.53) = 1.53 * 0.822 ≈ 1.258
+silu(0.36) = 0.36 * sigmoid(0.36) = 0.35 * 0.589 ≈ 0.212
+```
+1.258 is way out in SiLU's saturation region and is almost like a pass through.
+0.212 is still down near the origin where SiLU is still curving hard.
+So we have the same underlying information but very different nonlinear output
+which is an artifact of hc and not something the model learned.
+Now, lets look what happed if we divide by hc:
+```console
+lo_scaled = 1.53 / 4 = 0.3825
+silu(0.3825) = 0.3825 * sigmoid(0.3825) = 0.3825 * 0.594 ≈ 0.227
+```
+Notice that this is much closer. So just keep this in mind we are scaling the
+values before we call `ggml_silu` to do just what we showed above, we are doing
+an elemenent wise scaling, dividing by hc, and the values are the dot product,
+and then passing that scaled tensor to silu:
+```c++
+    lo = ggml_silu(ctx0, ggml_scale(ctx0, lo, 1.0f / (float) hc));
+```
 
 _wip_
-
-```console
-(gdb) br qwen4exp.cpp:1029 if n==3
-```
 
