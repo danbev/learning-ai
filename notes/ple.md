@@ -831,9 +831,6 @@ So after the loop we have done the convolution, we have:
 ```
 And notice the last line is where `hidden`, that is `res_hc` is actually updated.
 
-__new_wip__
-
-
 ```console
 
 (gdb) p n_tokens
@@ -1094,6 +1091,167 @@ an elemenent wise scaling, dividing by hc, and the values are the dot product,
 and then passing that scaled tensor to silu:
 ```c++
     lo = ggml_silu(ctx0, ggml_scale(ctx0, lo, 1.0f / (float) hc));
+```
+To recap, we have taking the 4 hyper connection streams, down projected to them
+into a smaller dimension, which we as otherwise it would require a lot of memory
+and compute. We then scale those values like we just discussed and then pass
+them through SiLU. And SiLU will filter like this:
+```console
+                           z
+silu(z) = z * σ(z) =    --------
+                         1 + e^-z
+```
+So if we passed in 0.3825 we would get:
+```console
+                                        0.3825
+silu(0.3825) = 0.3825 * σ(0.3825) =  ------------- = 0.22738
+                                      1 + e^-0.3825
+```
+And lets say we have a negative value:
+```console
+
+                               -10
+silu(-10) = -10 * σ(-10) =  ----------------- = -0.0004539
+                               1 + e^-(-10)
+
+```
+So in our case this will act as a filter on all the 320 values features for each
+token to determine which to suppress and which to keep. So if the value is positive
+then it is kept, and if it is negative it is silenced and set to zero.
+
+Next, after the filtering we have an up projection back to the 10240 dimension,
+and a sigmoid activation operation:
+```c++
+    ggml_tensor * gate = ggml_sigmoid(ctx0, build_lora_mm(w_up, lo));
+```
+```console
+(gdb) p w_up->ne
+$31 = {320, 10240, 1, 1}
+(gdb) p lo->ne
+$32 = {320, 42, 1, 1}
+
+(gdb) p build_lora_mm(w_up, lo, 0x0)->ne
+$33 = {10240, 42, 1, 1}
+```
+So this brings us back to our "normal" shape with a dimension of 10240. Now, instead
+if SiLU we will just use sigmoid to bound each channel to a value between 0.0
+and 1.0. This will the act like a gate for each channel in a row of 10240. So
+for a single token, which has 4 hyperconnection streams, this is essentially
+allowing/rejecting information from all 4 hyperconnections streams when the gate
+is later used on the current input (xn).
+
+The gate is then used on the current input which is what uses the gate:
+```c++
+    ggml_tensor * gated = ggml_mul(ctx0, xn, gate);
+```
+```console
+(gdb) p gated->ne
+$34 = {10240, 42, 1, 1}
+```
+Then we reshaped this into a 3d tensor, spliting out the hyper connections:
+```c++
+    gated = ggml_reshape_3d(ctx0, gated, n_embd, hc, nt);
+```
+```console
+(gdb) p gated->ne
+$35 = {2560, 4, 42, 1}
+```
+If we think of this as just an array in memory:
+```console
+[0 ... 2559][2560 ... 5119][5120 ... 7679][7680 ... 10239][ ... ][ ... ] ...
+   t0 s0        t0 s1           t0 s2          t0 t3       t1 s0  t1 s1  ...
+|------------------------------------------------------->|
+              stride 40960
+```
+We then create a 2d view into the gated tensor of shape [2560, 42] with a stride 
+of stride of 40960 (10240 * 4 = 40960 bytes):
+```c++
+    // collapse the streams by their mean
+    ggml_tensor * mixed = ggml_view_2d(ctx0, gated, n_embd, nt,
+            ggml_row_size(gated->type, n_embd) * hc, 0);
+    mixed = ggml_cont(ctx0, mixed);
+```
+And we are making this first view contiguous so that the optimized path will
+be taken below.
+Next we have a loop from 1 up to hc (4) as mixed is already the first row:
+```c++
+    for (int64_t c = 1; c < hc; ++c) {
+        ggml_tensor * s = ggml_view_2d(ctx0, gated, n_embd, nt,
+                ggml_row_size(gated->type, n_embd) * hc,
+                ggml_row_size(gated->type, n_embd) * c);
+        mixed = ggml_add(ctx0, mixed, s);
+    }
+```
+The tensor returend by `ggml_add` is contiguous automatically so we don't need
+another `ggml_cont`, we only need that for the first slice. And mixed is what
+this function is going to return, it will be the input, the mixed input with
+the hyper connection streams and what will be passed to the linear-attention
+or full-attention.
+After that we scale once more:
+```c++
+    mixed = ggml_scale(ctx0, mixed, 1.0f / (float) hc);
+```
+And again this is to take into consideration a model what has a different hc,
+just like we discussed above.
+
+The last thing before mixed is returned is:
+```c++
+    if (inject) {
+        // w_inject is hc_attn_inject
+        *inject = build_lora_mm(w_inject, xn);
+        cb(*inject, "hc_inject", il);
+    }
+```
+gT
+```console
+(gdb) p w_inject->ne
+$48 = {10240, 4, 1, 1}
+
+(gdb) p xn->ne
+$49 = {10240, 42, 1, 1}
+
+(gdb) p (*inject)->ne
+$53 = {4, 42, 1, 1}
+
+0  [0 ... 3]
+       .
+       .
+       .
+41 [0 ... 3]
+```
+So for each hyper connection, which remember there are 4 streams, this produces
+a single scalar value for each stream. It value represents how relevant this
+block's output to each stream. So this is not related to the input for the
+rest of the current layer but if for the output to the next layer and determines
+how much of each stream should be passed along.
+Lets say we have the following values:
+```
+token 0 [0.23, -3.3, 0.93, 8.0]
+
+Stream 0: (w≈1.03) essentially like a normal residual connection (1.0 is neuaral)
+Stream 1: (w≈0.61) suppressed to about 61% of normal, so this will dampen how
+          much this block's (layer's) output reaches stream 1. So stream1 might
+          already be h olding a fact/result that should pass through mostly unchanged.
+Stream 2: (w≈1.12) mildly amplified.
+Stream 3: (w≈1.76) strongly amplified. This value is close to the ceiling of 2.0
+          This layers output is especially relevant to stream 3.
+```
+I'll return to this inject tensor later when it get used.
+
+And after that mixed is returned and we are finished with this function:
+```c++
+    return mixed;
+}
+```
+So back in `llama_model_qwen4exp::graph::graph` we have:
+```c++
+        ggml_build_forward_expand(gf, cur);
+
+        if (hparams.is_recr(il)) {
+            cur = build_layer_attn_linear(inp->get_recr(), cur, il);
+        } else {
+            cur = build_layer_attn(inp->get_attn(), mctx_hyb, cur, inp_pos, sections, il);
+        }
 ```
 
 _wip_
