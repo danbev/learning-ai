@@ -120,7 +120,7 @@ And in load_model we can see that the the llama_context is set:
         model = llama_init.model.get();
         ctx   = llama_init.context.get();
 ```
-So all slot in the server will share this single llama_context, model, vocab.
+So all slots in the server will share this single llama_context, model, vocab.
 
 ### samplers
 When a new request comes this will be handled by on_new_task:
@@ -190,7 +190,7 @@ which are set when the server starts.
 ### slots
 The concept of a slot is something that can be good to know up front.
 A slot is the server’s long-lived execution context for a single client request.
-The number slots created is determined by the --parallel command line argument 
+The number of slots created is determined by the --parallel command line argument 
 and this is done in ctx_server.init:
 ```c++
     void init() {
@@ -206,8 +206,8 @@ and this is done in ctx_server.init:
             slot.n_ctx = n_ctx_slot;
 ```
 The number of slots is determined by the --parallel command line argument and
-this becomes n_parallel. So if we only 1 slot this means that only one request
-will be processed at a time.
+this becomes n_parallel. So if we only have 1 slot this means that only one
+request will be processed at a time.
 The ctx is llama_context from the server_context (this).
 
 So even with n_parallel 1, we can still serve multiple clients/request, but they
@@ -843,3 +843,535 @@ the full probability distribution and transfer that to the host. And similar
 to the logits filtering, the CPU samplers can then operate on the full
 probability.
 
+
+### speculative decoding
+This section looks into speculative decoding in llama-server.
+Recall, that the overall processing of a request in llama-server looks something
+like this (simplified):
+* update_slots() 
+  * pre_decode()
+  * decode (calls llama_decodee)
+  * post_decode()
+
+Is we look in `pre_decode` we find the following related to speculative decoding:
+```c++
+        iterate(slots, [&](server_slot & slot) {
+            ...
+
+            generating.push_back(&slot);
+
+            if (spec) {
+                common_speculative_get_draft_params(spec.get(), slot.id).drafting = false;
+                ...
+```
+So this is resetting drafting to false.
+```console
+(gdb) p common_speculative_get_draft_params(spec.get(), slot.id)
+$3 = (common_speculative_draft_params &) @0xaaaabe613980: {
+    drafting = false,
+    n_max = -1,
+    n_past = 0,
+    id_last = 0,
+    prompt = 0x0,
+    result = 0x0,
+    result_q = 0x0,
+    sampling = 0x0}
+```
+Next we have:
+```c++
+    const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+    const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+```
+```console
+(gdb) p ctx_tgt_seq_rm_type
+$9 = COMMON_CONTEXT_SEQ_RM_TYPE_RS
+(gdb) p use_ckpt_tgt
+$11 = false
+
+
+(gdb) p ctx_dft_seq_rm_type
+$10 = COMMON_CONTEXT_SEQ_RM_TYPE_PART
+(gdb) p use_ckpt_dft
+$12 = false
+```
+Back in `load_model` we had the following:
+```c++
+        ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
+        ...
+
+        if (ctx_dft) {
+            ctx_dft_seq_rm_type = common_context_can_seq_rm(ctx_dft);
+        }
+```
+The function `common_context_can_seq_rm` will use the passed in llama_context's
+and decode two dummy tokens and then try to remove from memory to figure out what 
+type of memory the target and draft model use (a bit simplified).
+```c++
+                                seq_id
+                                  ↓
+    if (!llama_memory_seq_rm(mem, 0, 1, -1)) {
+                                     ↑   ↑
+                                     p0  p1
+        COM_TRC("%s", "the context does not support partial sequence removal\n");
+        res = COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+        goto done;
+    }
+```
+
+These are checkpoints for the target model and for the draft model.
+```c++
+enum common_context_seq_rm_type {
+    COMMON_CONTEXT_SEQ_RM_TYPE_NO           = 0, // seq_rm not supported (e.g. no memory module)
+    COMMON_CONTEXT_SEQ_RM_TYPE_PART         = 1, // can seq_rm partial sequences
+    COMMON_CONTEXT_SEQ_RM_TYPE_FULL         = 2, // can seq_rm full sequences only
+    COMMON_CONTEXT_SEQ_RM_TYPE_RS           = 3, // can seq_rm partial sequences, bounded by n_rs_seq
+};
+```
+
+These are needed depending on the type of model that is being used. If we have
+a recurrent model then we cannot simply remove processed tokens from its memory
+as the memory is a latent hidden memory which moved forward. With standard
+transformer models we can just remove processed tokens with out any such issues.
+So we need to store recurrent model memory states, called checkpoints so that if
+we need to reject tokens then we can restore the memory to a specific point.
+
+Next we have:
+```c++
+            const int n_draft_max = slot.get_n_draft_max();
+```
+```console
+(gdb) p n_draft_max
+$13 = 130693
+```
+This is how much room is left in the context window.
+Then if we have room we will:
+```c++
+                if (n_draft_max > 0) {
+                    GGML_ASSERT(slot.can_speculate());
+
+                    slot.spec_draft_q.clear();
+```
+This `spec_draft_q` hold draft candidates per token and this is just clearing
+the old entries.
+
+Next we have:
+```c++
+                    if (!slot.spec_draft.empty()) {
+                        // we have a previous (partial) draft to reuse
+                        if (use_ckpt_tgt) {
+                            GGML_ASSERT(!slot.spec_ckpt.empty());
+                        }
+                    } else {
+                        GGML_ASSERT(slot.spec_i_batch.empty());
+
+```
+`spec_draft` is a vector of llama_token's (token ids). In the else branch which
+is the path this session takes, the `spec_i_batch` vector asserted to be empty.
+This vector holds indices like row N of the targets decode output corresponds
+to the draft position N-1. More on this later.
+
+Next we will update the speculative decoding checkpoint with position information
+```
+                        slot.spec_ckpt.update_pos(
+                                slot.prompt.n_tokens(),
+                                llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id),
+                                llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id));
+```
+```console
+(gdb) p slot.spec_ckpt
+$19 = {n_tokens = 377, id_task = -1, pos_min = 376, pos_max = 376, data_tgt = std::vector of length 0, capacity 0,
+  data_dft = std::vector of length 0, capacity 0, data_spec = std::vector of length 0, capacity 0}
+```
+
+If we need to save check points for the draft model the following will be called:
+```c++
+                        if (use_ckpt_dft) {
+                            slot.spec_ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                        }
+```
+
+Next the current slots (sequence) prompt tokens are stored in spec_prompt:
+```c++
+                        slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
+```
+One thing to note here is that tokens_get_text_tokens only returns text tokens, 
+it has a check for `LLAMA_TOKEN_NULL`:
+```c++
+llama_tokens server_tokens::get_text_tokens() const {
+    llama_tokens res;
+    res.reserve(tokens.size());
+    for (llama_token t : tokens) {
+        if (t != LLAMA_TOKEN_NULL) {
+            res.push_back(t);
+        }
+    }
+    return res;
+}
+```
+And named return value optimization (NVRO) is in place here to the returned
+vector will be move-assigned into `slot.spec_prompt`.
+
+Next we have:
+```c++
+                        const bool spec_reject = slot.use_spec_rejection();
+```
+```c++
+    // at temp 0 both p and q are point masses, so rejection is the same as sample-and-match
+    bool use_spec_rejection() const {
+        return task && task->params.sampling.temp > 0.0f;
+    }
+```
+If temperature is 0 only one token gets probability 1.0 and the rest 0.0.  We
+say that that distribution has become a the point mass, a distribution
+that put 100% of its probability on a single value. Recall that rejection sampling
+exist to handle the case where the draft doesn't just take its argmax but samples
+probailistcially, so at temp 0 there is nothing for the rejection sampler to do
+that argmax matching doesn't already do.
+```console
+(gdb) p slot.task->params.sampling.temp
+$23 = 0.800000012
+```
+Next we have:
+```c++
+                        common_speculative_get_draft_params(spec.get(), slot.id) = {
+                            /* .drafting = */ true,
+                            /* .n_max    = */ n_draft_max,
+                            /* .n_past   = */ slot.prompt.n_tokens(),
+                            /* .id_last  = */ slot.sampled,
+                            /* .prompt   = */ &slot.spec_prompt,
+                            /* .result   = */ &slot.spec_draft,
+                            /* .result_q = */ spec_reject ? &slot.spec_draft_q : nullptr,
+                            /* .sampling = */ spec_reject ? &slot.task->params.sampling : nullptr,
+                        };
+
+                        drafting.push_back(&slot);
+```
+Notice that this is setting .sampling to the current tasks params.sampling when
+`spec_reject` is enabled. And `drafting` was created previously in this function:
+```c++
+        std::vector<server_slot *> drafting;
+```
+
+Then we have:
+```c++
+        // generate the actual drafts (if any)
+        if (!drafting.empty()) {
+            queue_tasks.yield_to_queue([&]() {
+                common_speculative_draft(spec.get());
+            });
+        }
+```
+```c++
+void common_speculative_draft(common_speculative * spec) {
+    ...
+    for (auto & impl : spec->impls) {
+        {
+            common_time_meas tm(impl->t_draft_us, !impl->gen_perf);
+            impl->draft(dparams);
+            impl->n_call_draft++;
+        }
+```
+We can inspect impl here which is:
+```console
+(gdb) p impl->type
+$34 = COMMON_SPECULATIVE_TYPE_DRAFT_MTP
+
+(gdb) p *(void**)impl
+$37 = (void *) 0xfffff3549b98 <vtable for common_speculative_impl_draft_mtp+16>
+
+(gdb) info vtbl *impl
+vtable for 'common_speculative_impl' @ 0xfffff3549b98 (subobject @ 0xaaaac12f7390):
+[0]: 0xfffff2f2f4dc <common_speculative_impl_draft_mtp::~common_speculative_impl_draft_mtp()>
+[1]: 0xfffff2f2f6a8 <common_speculative_impl_draft_mtp::~common_speculative_impl_draft_mtp()>
+[2]: 0xfffff2f2f6d0 <common_speculative_impl_draft_mtp::begin(int, std::vector<int, std::allocator<int> > const&)>
+[3]: 0xfffff2f2f818 <common_speculative_impl_draft_mtp::process(llama_batch const&)>
+[4]: 0xfffff2f310b0 <common_speculative_impl_draft_mtp::draft(std::vector<common_speculative_draft_params, std::allocator<common_speculative_draft_params> >&)>
+[5]: 0xfffff2f31ed8 <common_speculative_impl_draft_mtp::accept(int, unsigned short, bool)>
+[6]: 0xfffff2f28ce4 <common_speculative_impl::get_state(int, std::vector<unsigned char, std::allocator<unsigned char> >&) const>
+[7]: 0xfffff2f28d00 <common_speculative_impl::set_state(int, std::vector<unsigned char, std::allocator<unsigned char> > const&)>
+```
+So the call of the draft function will be the draft function in
+common_speculative_impl_draft_mtp:
+```c++
+struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+    ...
+
+    void draft(common_speculative_draft_params_vec & dparams) override {
+        auto & ctx_dft = params.ctx_dft;
+
+```
+```console
+(gdb) p params.mparams.path
+$43 = "/home/danbev/work/models/qwen/Qwen3.8-27B-GGUF/mtp-Qwen3.8-27B-Q4_0.gguf"
+```
+A little later we have:
+```c++
+        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+            auto & dp = dparams[seq_id];
+
+            if (!dp.drafting) {
+                continue;
+            }
+
+            n_drafting++;
+            drafting[seq_id] = true;
+
+            spec_retune(smpls, smpls_cfg, llama_get_model(ctx_dft), seq_id, dp, params.probabilistic);
+```
+So this will iterate over all the sequences and call `spec_retune`, notice that
+we can passing in the common_params_sampling, the draft model, the sequence id, 
+the 
+```console
+(gdb) p smpls
+$56 = std::vector of length 1, capacity 1 = {std::unique_ptr<common_sampler> = {get() = 0xaaaac1d00a90}}
+
+(gdb) p smpls_cfg
+$55 = std::vector of length 0, capacity 0
+
+(gdb) p llama_get_model(ctx_dft)->name
+$60 = "Qwen3.8-27B"
+
+(gdb) p seq_id
+$61 = 0
+
+(gdb) p dp
+$53 = (common_speculative_draft_params &) @0xaaaabe613980: {drafting = true, n_max = 130693, n_past = 377,
+  id_last = 760, prompt = 0xaaaac12f5730, result = 0xaaaac12f5700, result_q = 0xaaaac12f5718,
+  sampling = 0xaaaaabbbc448}
+
+(gdb) p params.probabilistic
+$62 = true
+```
+We can find `spec_retune` in speculative.cpp
+```c++
+static void spec_retune(
+        std::vector<common_sampler_ptr> & smpls,
+        std::vector<common_params_sampling> & cfg,
+        const llama_model * model,
+        llama_seq_id seq_id,
+        common_speculative_draft_params & dp,
+        bool probabilistic) {
+    // greedy drafting leaves no candidates behind, so the verifier falls back to sample-and-match
+    if (!probabilistic) {
+        dp.result_q = nullptr;
+    }
+
+
+    if (dp.result_q == nullptr || dp.sampling == nullptr) {
+        return;
+    }
+```
+Notice that `cfg` was an empty vector above, if it is not the same size as
+the samplers the it will be resized (to 1 in our case):
+```c++
+    if (cfg.size() != smpls.size()) {
+        cfg.resize(smpls.size());
+    }
+```
+Next we retrieve the sampler for this sequence:
+```c++
+    auto & cur = cfg[seq_id];
+```
+At this point since we just resized cfg the actual element will just be the 
+a default initialized `common_params_sampling`.
+
+Just to make this clear as there are samplers all over the places. The samplers
+that are passed into this function as smpls are the draft models samplers/configs
+all over the place and it can be hard to keep track of them:
+```c++
+struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+    common_params_speculative_draft params;
+
+    llama_batch batch;
+
+    std::vector<common_sampler_ptr> smpls;
+```
+So this is the draft models samplers.
+
+Now the `common_speculative_draft_params` also has sampler _configs_, not samplers:
+```c++
+struct common_speculative_draft_params {
+    ...
+
+    // the target's config; only temp and seed are read, to retune the draft sampler
+    const common_params_sampling * sampling = nullptr;
+};
+```
+So like the comment says this is the target models sampler configuration. If
+we look in server-context.cpp:
+
+Next we check the current sampling configuration against the target models
+sampling temperature, and the same thing for the seed.
+```c++
+    if (cur.temp == dp.sampling->temp && cur.seed == dp.sampling->seed) {
+        return;
+    }
+```
+Now recall that cfg was initially empty and that we resized it, and added a 
+default initialized `common_params_sampling`. So this is like caching the setting
+and the check here is to see if those caches settings are the same as the 
+target models sampling parameters. If they were the same then there is not need
+to "retune".
+
+Next, we will updated the "cache" sampling configuration and set it to the
+target models temperature and seed values:
+```c++
+    cur.temp = dp.sampling->temp;
+    cur.seed = dp.sampling->seed;
+```
+And then we will create a new sampling params instance to use to create/replace
+the current sequences sampler:
+```c++
+    common_params_sampling sparams;
+    sparams.no_perf  = false;
+    sparams.top_k    = 10;
+    sparams.temp     = cur.temp;
+    sparams.seed     = cur.seed; // must be explicit, the default reseeds at random
+    sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K, COMMON_SAMPLER_TYPE_TEMPERATURE };
+
+    smpls[seq_id].reset(common_sampler_init(model, sparams));
+```
+So after this the sequences sampler will have been updated (or not if the configuration
+was the same), and we have the current target models configuration stored in
+cfg.
+
+So back in the draft function we then how:
+```c++
+            common_sampler_reset(smpls[seq_id].get());
+```
+This will end up in common/samping.cpp, which will clear the ring buffer (prev)
+and the call the sampler chains reset functions:
+```c++
+    void reset() {
+        prev.clear();
+
+        llama_sampler_reset(chain);
+    }
+```
+After that we have:
+```c++
+            common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
+```
+This will updated the batch with the token `dp.id_last` with a pos of `dp.n_past`
+the sequence id array and that should output logits.
+```console
+(gdb) p this->params.ctx_tgt->model->vocab->pimpl->id_to_token[dp.id_last]
+$100 = {text = "The", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+Next we have the copying of the hidden state from the target models forward pass,
+so this batch will carry both tokens and embeddings.
+
+The following will write to dst which is batch.emb + (batch.n_tokens -1) * n_embd.
+And note that batch.n_tokens was incremented by common_batch_add above so it
+will be the same index. 
+```c++
+    std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, pending_h[seq_id].data(), row_bytes);
+```
+Next we have:
+```c++
+            if (chain_heads) {
+                chain_h[seq_id].assign(pending_h[seq_id].begin(), pending_h[seq_id].end());
+            }
+```
+Now, just to remind myself of where we are as I found I lost track here.
+```c++
+    void draft(common_speculative_draft_params_vec & dparams) override {
+        ...
+        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+            ...
+            if (chain_heads) {
+                chain_h[seq_id].assign(pending_h[seq_id].begin(), pending_h[seq_id].end());
+            }
+        }
+```
+So we are iterating over all the sequences, and we are just dealing with one token,
+per sequence which is that target model token that was predicted by the target
+models decode process, before this functions is called. This is setting up the
+seed/anchor token from the target model for the drafting process.
+
+There are models like Step3.5Flash that have multiple heads for drafting, for
+which chain_heads will be true. In which case this will put one hidden state to
+go with id_last. But is that not what we did above too when we added the 
+pending_h state to the batch embeddings?  Yes, but these models each drafted token
+get predicted by a different head/layer and a head has no memory of the tokens
+drafted before it, they need to be able to replay the whole sequence thus far
+through it. So they need not just the token id but also its paired hidden state.
+So at this point we actaully have the pending_h (hidden state or the target token)
+in two places, as the embedding in the batch and for chain_heads models also
+in chain_h. But the embedding in the batch is transient, it only exists for the
+next llama_decode. So only the first head (0) will see these embeddings. But
+chain_h is persistent and survives the entire drafting round, and adds to be
+each iteration. Alright lets look at the rest of this function and hopefully
+this will make more sense. 
+
+So after that "draft setup" loop we have another loop, n_drafting is a local
+variable and it is incremented for each sequence that we processed above, in our
+case we have 1:
+```c++
+        int i = 0;
+
+        while (n_drafting > 0) {
+```
+
+The first thing that happens is a chech for chain_heads and this:
+```c++
+            if (chain_heads) {
+                auto * mem_dft = llama_get_memory(ctx_dft);
+                for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                    if (drafting[seq_id]) {
+                        llama_memory_seq_rm(mem_dft, seq_id, dparams[seq_id].n_past, -1);
+                    }
+                }
+                llama_set_nextn_layer_offset(ctx_dft, i);
+            }
+```
+Now, we are above to run `llama_decode` which is doing to run the current draft
+models computation graph.  For our current model this will be the graph built
+by: (in src/models/qwen35.cpp)
+
+```c++
+std::unique_ptr<llm_graph_context> llama_model_qwen35::build_arch_graph(const llm_graph_params & params) const {
+    if (params.gtype == LLM_GRAPH_TYPE_DECODER_MTP) {
+        return std::make_unique<graph_mtp>(*this, params);
+    }
+    return std::make_unique<graph>(*this, params);
+}
+```
+
+
+```c++
+llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_params & params) :
+
+```
+
+
+```c++
+    void pre_decode() {
+
+        iterate(slots, [&](server_slot & slot) {
+            if (slot.state == SLOT_STATE_GENERATING && slot.prompt.n_tokens() + 1 >= slot.n_ctx) {
+                if (!params_base.ctx_shift) {
+                    // this check is redundant (for good)
+                    // we should never get here, because generation should already stopped in process_token()
+                    send_error(slot, "context shift is disabled", ERROR_TYPE_SERVER);
+                    slot.release();
+                    return;
+                }
+            ...
+        });
+```
+So this will call iterate, and notice that a lambda is passed as the second
+argument:
+```c++
+    void iterate(std::vector<server_slot> & slots, std::function<void(server_slot &)> callback) {
+        for (auto & slot : slots) {
+            try {
+                callback(slot);
+            } catch (const std::exception & e) {
+                SLT_ERR(slot, "got exception: %s\n", e.what());
+                send_error(slot, std::string("got exception: ") + e.what(), ERROR_TYPE_SERVER);
+                slot.release();
+            }
+        }
+    }
+```
