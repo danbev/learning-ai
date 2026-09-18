@@ -846,14 +846,27 @@ probability.
 
 ### speculative decoding
 This section looks into speculative decoding in llama-server.
-Recall, that the overall processing of a request in llama-server looks something
-like this (simplified):
+
+I used the following prompt: "What is the capital of Sweden?", and the target
+model produced "The" which llama-server displays in the UI.
+
+Now, to be clear on this and what will happen in the server is that it will
+process this request like any other request initially. So it will decode the
+prompt and produce a token by normal llama_decode and sampling and this sampled
+token will be displayed in the UI.
+What does differ for speculative decoding is that `pre_decode` does some work
+to prepare for speculative decoding. But the actual speculative decoding happens
+for token N+1 which is good to keep in mind when stepping through the code.
+
+The overall processing of a request in llama-server looks something like this
+(simplified):
 * update_slots() 
   * pre_decode()
-  * decode (calls llama_decodee)
+  * decode (calls llama_decode)
   * post_decode()
 
-Is we look in `pre_decode` we find the following related to speculative decoding:
+
+If we look in `pre_decode` we find the following related to speculative decoding:
 ```c++
         iterate(slots, [&](server_slot & slot) {
             ...
@@ -1119,7 +1132,7 @@ A little later we have:
             spec_retune(smpls, smpls_cfg, llama_get_model(ctx_dft), seq_id, dp, params.probabilistic);
 ```
 So this will iterate over all the sequences and call `spec_retune`, notice that
-we can passing in the common_params_sampling, the draft model, the sequence id, 
+we can passing in the `common_params_sampling`, the draft model, the sequence id, 
 the 
 ```console
 (gdb) p smpls
@@ -1162,7 +1175,7 @@ static void spec_retune(
     }
 ```
 Notice that `cfg` was an empty vector above, if it is not the same size as
-the samplers the it will be resized (to 1 in our case):
+the samplers then it will be resized (to 1 in our case):
 ```c++
     if (cfg.size() != smpls.size()) {
         cfg.resize(smpls.size());
@@ -1176,8 +1189,7 @@ At this point since we just resized cfg the actual element will just be the
 a default initialized `common_params_sampling`.
 
 Just to make this clear as there are samplers all over the places. The samplers
-that are passed into this function as smpls are the draft models samplers/configs
-all over the place and it can be hard to keep track of them:
+that are passed into this function as smpls are the draft models samplers/configs:
 ```c++
 struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     common_params_speculative_draft params;
@@ -1197,8 +1209,7 @@ struct common_speculative_draft_params {
     const common_params_sampling * sampling = nullptr;
 };
 ```
-So like the comment says this is the target models sampler configuration. If
-we look in server-context.cpp:
+So like the comment says this is the target models sampler configuration.
 
 Next we check the current sampling configuration against the target models
 sampling temperature, and the same thing for the seed.
@@ -1285,8 +1296,844 @@ Now, just to remind myself of where we are as I found I lost track here.
         }
 ```
 So we are iterating over all the sequences, and we are just dealing with one token,
-per sequence which is that target model token that was predicted by the target
-models decode process, before this functions is called. This is setting up the
+per sequence which is the target model token that was predicted by the target
+model's decode process, before this functions is called. This is setting up the
+seed/anchor token from the target model for the drafting process.
+
+There are models like Step3.5Flash that have multiple heads for drafting, for
+which chain_heads will be true. In which case this will put one hidden state to
+go with id_last. But is that not what we did above too when we added the 
+pending_h state to the batch embeddings?  Yes, but these models each drafted token
+get predicted by a different head/layer and a head has no memory of the tokens
+drafted before it, they need to be able to replay the whole sequence thus far
+through it. So they need not just the token id but also its paired hidden state.
+So at this point we actaully have the pending_h (hidden state or the target token)
+in two places, as the embedding in the batch and for chain_heads models also
+in chain_h. But the embedding in the batch is transient, it only exists for the
+next llama_decode. So only the first head (0) will see these embeddings. But
+chain_h is persistent and survives the entire drafting round, and adds to be
+each iteration. Alright lets look at the rest of this function and hopefully
+this will make more sense. 
+
+So after that "draft setup" loop we have another loop, n_drafting is a local
+variable and it is incremented for each sequence that we processed above, in our
+case we have 1:
+```c++
+        int i = 0;
+
+        while (n_drafting > 0) {
+```
+
+The first thing that happens is a chech for chain_heads and this:
+```c++
+            if (chain_heads) {
+                auto * mem_dft = llama_get_memory(ctx_dft);
+                for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                    if (drafting[seq_id]) {
+                        llama_memory_seq_rm(mem_dft, seq_id, dparams[seq_id].n_past, -1);
+                    }
+                }
+                llama_set_nextn_layer_offset(ctx_dft, i);
+            }
+```
+Now, we are above to run `llama_decode` which is doing to run the current draft
+models computation graph.  For our current model this will be the graph built
+by: (in src/models/qwen35.cpp)
+
+```c++
+std::unique_ptr<llm_graph_context> llama_model_qwen35::build_arch_graph(const llm_graph_params & params) const {
+    if (params.gtype == LLM_GRAPH_TYPE_DECODER_MTP) {
+        return std::make_unique<graph_mtp>(*this, params);
+    }
+    return std::make_unique<graph>(*this, params);
+}
+```
+
+
+```c++
+llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_params & params) :
+
+```
+
+
+```c++
+    void pre_decode() {
+
+        iterate(slots, [&](server_slot & slot) {
+            if (slot.state == SLOT_STATE_GENERATING && slot.prompt.n_tokens() + 1 >= slot.n_ctx) {
+                if (!params_base.ctx_shift) {
+                    // this check is redundant (for good)
+                    // we should never get here, because generation should already stopped in process_token()
+                    send_error(slot, "context shift is disabled", ERROR_TYPE_SERVER);
+                    slot.release();
+                    return;
+                }
+            ...
+        });
+```
+So this will call iterate, and notice that a lambda is passed as the second
+argument:
+```c++
+    void iterate(std::vector<server_slot> & slots, std::function<void(server_slot &)> callback) {
+        for (auto & slot : slots) {
+            try {
+                callback(slot);
+            } catch (const std::exception & e) {
+                SLT_ERR(slot, "got exception: %s\n", e.what());
+                send_error(slot, std::string("got exception: ") + e.what(), ERROR_TYPE_SERVER);
+                slot.release();
+            }
+        }
+    }
+```
+
+### probabalistic speculative decoding
+PR: https://github.com/ggml-org/llama.cpp/pull/27694
+
+In the previous section we walked through the normal speculative decoding process
+and here we are going to look at a new probablistic speculative decodeing
+implementation which will not just do a greedy/argmax sampling, but instead use
+probabablistic sampling to improve acceptance lenghts/rates and throughput.
+
+If we look in server-context.cpp and its `post_decode` function we have the following
+if statement where diffenent types of speculative drafting is chosen:
+```c++
+                std::vector<llama_token> accepted;
+                if (!synth_probs.empty()) {
+                    accepted = server_sample_and_accept_synth(
+                            slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft,
+                            synth_probs, slot.spec_synth_rng, slot.spec_is_replay);
+                } else if (use_rejection) {
+                    accepted = common_sampler_sample_and_accept_n_rejection(slot.smpl.get(),
+                        slot.ctx_tgt,
+                        slot.spec_i_batch,
+                        slot.spec_draft,
+                        slot.spec_draft_q,
+                        slot.spec_is_replay);
+```
+I used the following prompt: "What is the capital of Sweden?", and the target
+model produced "The" which llama-server displays in the UI.
+```console
+(gdb) p this->params.ctx_tgt->model->vocab->pimpl->id_to_token[dp.id_last]
+$100 = {text = "The", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p slot.spec.dparams[0].id_last
+$21 = 760
+(gdb) p slot.ctx_tgt->model->vocab->pimpl->id_to_token[760]
+$22 = {text = "The", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+
+```c++
+std::vector<llama_token> common_sampler_sample_and_accept_n_rejection(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft, const std::vector<std::vector<llama_token_data>> & draft_q, bool is_replay, bool grammar_first) {
+    GGML_ASSERT(idxs.size()    == draft.size() + 1 && "idxs.size() must be draft.size() + 1");
+    GGML_ASSERT((is_replay || draft_q.size() == draft.size()) && "draft_q must have one entry per draft token");
+
+    std::vector<llama_token> result;
+    result.reserve(idxs.size());
+
+    ...
+    size_t i = 0;
+    for (; i < draft.size(); i++) {
+```
+So the above will iterate over draft tokens, which are what the draft model
+predicted in the speculative draft function earlier. In this case it predicted
+the following draft tokens:
+```console
+(gdb) p draft
+$5 = std::vector of length 3, capacity 4 = {1156, 369, 9859}
+
+(gdb) p ctx->model->vocab->pimpl->id_to_token[draft[0]]
+$6 = {text = "Ġuser", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p ctx->model->vocab->pimpl->id_to_token[draft[1]]
+$7 = {text = "Ġis", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p ctx->model->vocab->pimpl->id_to_token[draft[2]]
+$8 = {text = "Ġasking", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p idxs.size()
+$13 = 4
+```
+Inside the loop which handles one of the above drafts we have:
+```c++
+        const llama_token id_tgt = common_sampler_sample(gsmpl, ctx, idxs[i], grammar_first);
+```
+And keep in mind that this is the acceptance/rejection part of the process so
+we already have the draft models output, we now need to compare this to the
+target models to decide which tokens are to be accepted/rejected.
+
+So this is going to start with idxs[i] which is 0, so we are asking the target
+model to sample a token for the first output logits that it has (the latest
+llama_decode which contained the draft "prefix/prompt".
+```console
+(gdb) p id_tgt
+$26 = 1156
+(gdb) p ctx->model->vocab->pimpl->id_to_token[1156]
+$27 = {text = "Ġuser", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+Next we have:
+```console
+        if (is_replay) {
+            common_sampler_accept(gsmpl, draft[i], true);
+            result.push_back(draft[i]);
+            continue;
+        }
+```
+If a previous draft verification round only partially accepted its draft we
+can't go throught the upcoming process as these tokens were already decided
+during the original attempt. If we don't the later code would consumer from
+gsmpl->rng which would move its stat forward, plus we risk that the outcome is
+different which is also incorrect. So if we are just replaying then we accept
+the token.
+
+Next we have:
+```c++
+        const auto * cur_p = common_sampler_get_candidates(gsmpl, true);
+        const auto & q     = draft_q[i];
+
+        const bool masked = !grammar_first && grammar_should_apply(gsmpl);
+```
+Recall that grammar is a way to define what tokens are syntactically allowed to
+come next. For example, if we have a json grammer we might know that certain
+tokens are not valid next tokens. Masking allows us to set this tokens .logit
+to -INFINITY as after any softmax it contributes 0 probability, we are masking
+out the token in question.
+```c++
+    std::vector<llama_token_data> cand; // candidate array masked by the grammar, if there is one
+    ...
+        if (masked) {
+            cand.assign(cur_p->data, cur_p->data + cur_p->size);
+
+            llama_token_data_array arr = { cand.data(), cand.size(), -1, false };
+            llama_sampler_apply(gsmpl->grmr, &arr);
+        }
+```
+So in our case what we got out of common_sampler_get_candidates), which is basically
+get data from the common_sampler_sample operation is:
+```console
+(gdb) p *cur_p
+$40 = {data = 0xaaaac406c000, size = 1, selected = 0, sorted = true}
+(gdb) p *cur_p->data
+$42 = {id = 1156, logit = 32.1972351, p = 1}
+```
+So whis sampled only one candidate with a large logit of 32.1972. But imagine
+that we had multiple candidated tokens, in that case they would be compied into
+`cand` and then a `llama_token_data_array` would be created to store them so
+that `llama_samper_apply can be applied, enabling it to check if the specific
+token keeps the grammar valid. If a token breaks the grammar it will gets its
+logits set to -INFINITY. Note that this updated only happends to the cand vector
+entries and not the cur_p.
+
+Next we have:
+```c++
+        // a candidate the grammar rejects carries no probability, whatever the target thinks
+        auto p_raw = [&](size_t k) {
+            return masked && cand[k].logit == -INFINITY ? 0.0f : cur_p->data[k].p;
+        };
+
+        // masking drops probability mass, so rescale what is left or the residual is over-weighted
+        float p_sum = 0.0f;
+        if (masked) {
+            for (size_t k = 0; k < cur_p->size; ++k) {
+                p_sum += p_raw(k);
+            }
+        }
+
+        const float p_norm = masked && p_sum > 0.0f ? 1.0f/p_sum : 1.0f;
+```
+If the grammar rules out any candidates the probs left no longer sum to 1 so we
+need to rescale them.
+We check each cand logit (in the masked copy cand that is) for -INIFITY and if
+so p_raw returns 0.0 for that candidate prob.
+
+```console
+{token_a: 0.6, token_b: 0.3, token_c: 0.1}           sum: 1.0
+                  ↑
+            grammar excluded
+                   
+{token_a: 0.6,               token_c: 0.1}           sum: 0.7
+```
+If we used 0.6 this would be incorrect now that token_b is not considered. Instead
+we need the following values:
+```console
+token_a = 0.6/0.7 ≈ 0.857
+token_c = 0.1/0.7 ≈ 0.143
+               ↑
+              p_sum
+```
+And this division by p_sum, is done using the reciprocl of p_sum:
+```c++
+        const float p_norm = masked && p_sum > 0.0f ? 1.0f/p_sum : 1.0f;
+```
+```console
+1/p_sum ≈ p_norm
+1/0.7   ≈ 1.4286
+
+0.6 * 1.4286 ≈ 0.857
+0.1 * 1.4286 ≈ 0.143
+```
+Next we have the draft models probability for the draft token:
+```c++
+        const float q_x = prob_of(q.data(), q.size(), draft[i]);
+```
+```console
+(gdb) p q
+$46 = std::vector of length 10, capacity 10 = {
+{id = 1156,  logit = 31.0534611, p = 0.999769628},
+{id = 3296,  logit = 22.3407536, p = 0.000164444413},
+{id = 4087,  logit = 21.0080185, p = 4.33730202e-05},
+{id = 4145,  logit = 19.3865623, p = 8.57097439e-06},
+{id = 3134,  logit = 18.725771,  p = 4.42641522e-06},
+{id = 1428,  logit = 18.5575294, p = 3.7409834e-06},
+{id = 43070, logit = 18.0778046, p = 2.31549529e-06},
+{id = 6511,  logit = 18.0051365, p = 2.15320097e-06},
+{id = 2570,  logit = 16.9828358, p = 7.74649095e-07},
+{id = 846,   logit = 16.6903572, p = 5.78206766e-07}}
+(gdb) p q.size()
+$47 = 10
+(gdb) p draft[i]
+$48 = 1156
+```
+And `prob_of` is static function so we will be passing in n=10, and id=1156:
+```c++
+static float prob_of(const llama_token_data * data, size_t n, llama_token id) {
+    for (size_t k = 0; k < n; ++k) {
+        if (data[k].id == id) {
+            return data[k].p;
+        }
+    }
+    return 0.0f;
+}
+```
+So the above will iterate over 0 to 10, and check each element in q to find
+the passed in token id. And if it cannot be found it returns 0;
+```console
+(gdb) p q_x
+$53 = 0.999769628
+```
+Then we have p_x which is the target models probability for this same token:
+```c++
+        float p_x = 0.0f;
+        for (size_t k = 0; k < cur_p->size; ++k) {
+            if (cur_p->data[k].id == draft[i]) {
+                p_x = p_of(k);
+                break;
+            }
+        }
+```
+This is very similar to what we did for the draft token but notice that in this
+case we also call p_of(k) to take into consideration grammar rejection and masking
+and also normalization like we disussed above.
+```console
+(gdb) p p_x
+$54 = 1
+```
+Next we have the following check. This is checking to see if the draft probability
+for the current draft token is greater than 0, and if so it will check if the
+targets probability is greater than or equal to the draft models probability.
+
+If the target probability is greater that the draft then this will be accepted
+unconditionally. The target is at least as confidant as the draft so its a keeper.
+
+But if the target models is less confidant we will sample from the uniform
+distribution and check if that sampled value is less than the target prob / draft prob:
+```c++
+        if (q_x > 0.0f && (p_x >= q_x || uni(gsmpl->rng) < p_x / q_x)) {
+            common_sampler_accept(gsmpl, draft[i], true);
+            result.push_back(draft[i]);
+            continue;
+        }
+```
+Lets say that p_x = 0.3 (target) and q_x = 0.6 (draft), this means that the draft
+is proposing this token twice as often as it should be, so we would only accept
+it half of the time, p/q, 0.3/0.6 = 0.5 to compensate/correct for that.
+So for our case q_x > 0.0f is true so we don't execute the right hand side of the
+&&, we accept this token, add the token to the result and continue with the
+next token.
+Next token is:
+```console
+(gdb) p id_tgt
+$58 = 369
+
+(gdb) p p_x
+$60 = 1
+(gdb) p q_x
+$61 = 0.981178284
+```
+All the draft tokens (3 of them) enter the above if statement and just continue
+so the following will look at the other case.
+
+First we clear the residual (whats left over) vector which is of type:
+```console
+(gdb) ptype residual
+type = std::vector<llama_token_data>
+(gdb) ptype llama_token_data
+type = struct llama_token_data {
+    llama_token id;
+    float logit;
+    float p;
+}
+```
+```c++
+        residual.clear();
+```
+To understand what this residual is we need to consider that when we reject a
+token we don't just throw it away and roll back to the previous token. We have
+to emit a replacement token right there where the rejected token's position.
+
+Lets say the initial prompt produced token T₀, and our draft model speculates
+3 tokens [d₁, d₂, d₃]. So the target model will process [d₁, d₂, d₃] as a prompt.
+
+Now, suppose d₀ is rejected, so we roll back to T₀.
+```console
+[t0, d₁, d₂, d₃]
+  ↑  ↑
+  | rejected
+rollback
+```
+So in this case we would have run the expensive large target model's forward
+pass and it would have produced 0 tokens, it is still at t0.
+
+This would never happen with a non-speculative decoding and would be worse than
+if we had just decoded a single token. We need to guarantee that speculative
+decoding is always at least as fast as standard decoding so every verification
+pass must emit at least one token.
+So if d₁ failes the target models discards d₂ and d₃, but it corrects and replaces
+d₁.
+```console
+[t0, d₁, d₂, d₃]
+     ↑
+    rejected
+    corrected
+    replaced
+
+And then generation keeps going but this time anchored by d₁ (the corrected
+token that is). How this is corrected/replaced is what the residual is all about.
+
+If we were not doing probabalistic sampling and instread greedy/argmax we would
+simply take argmax(p) = t₁, that is if the probability of d₁ != t₁ we would
+reject d₁ and output t₁ as the replacement and reject d₂ and d₃.
+
+But for a probabalistic model the model cannot just pick argmax, we need to
+sample a token so that the final stream of text has the exact same distribution
+as if the large target model had generated it alone without any speculative
+draft. We have logits from the target models forward pass. So what about just
+sampling a token from the targets distribution p(x) then?  
+Lets take tokens A, B, and C:
+```
+Target wants:   A (50%), B(30%), C(20%)
+Draft proposed: B
+```
+Target rolled the dice and rejected B. If we were to sample p(x), B still has a
+30% chance of being drawn! This is now what we want as the target model just
+rejected the draft models proposal (B). This would lead to the output distribution
+being corrupted, the model would generate B 42% of the time instead of 30%.
+
+The residual is the corrected distribution. The replacement token must be sampled
+from the left overs from the draft (A an C in our example):
+```console
+                   max(0, p(x) - q(x)) 
+P_residual(x) =  --------------------
+                 Σ max(0, p(z) - q(z)) 
+                 z
+```
+Lets start with the denominator:
+```console
+A: max(0, 0.5 - 0.2) = max(0, 0.3)  = 0.3
+B: max(0, 0.3 - 0.7) = max(0, -0.4) = 0.0
+C: max(0, 0.2 - 0.1) = max(0, 0.1)  = 0.1
+
+Sum: 0.3 + 0.0 + 0.1 = 0.4
+```
+This is what the following code is doing:
+```c++
+        float sum = 0.0f;
+        for (size_t k = 0; k < cur_p->size; ++k) {
+            const float r = p_of(k) - prob_of(q.data(), q.size(), cur_p->data[k].id);
+            if (r > 0.0f) {
+                residual.push_back({ cur_p->data[k].id, 0.0f, r });
+                sum += r;
+            }
+        }
+```
+`sum` is our denominator. And notice that if the probability is less than or 0.0
+then it is not inlcuded in the residuals (which would happen for B in our case)
+nor the sum.
+
+```console
+
+                   max(0, p(x) - q(x)) 
+P_residual(x) =  ---------------------
+                       0.4
+
+                  max(0, p(A) - q(A))    max(0, 0.5 - 0.2)   0.3
+P_residual(A) =  --------------------- = ----------------- = --- = 0.75 (75%)
+                       0.4                     0.4           0.4
+
+                  max(0, p(B) - q(B))    max(0, 0.3 - 0.7)   0.0
+P_residual(B) =  --------------------- = ----------------- = --- = 0.00 (0%)
+                       0.4                     0.4           0.4
+
+                  max(0, p(C) - q(C))    max(0, 0.2 - 0.1)   0.1
+P_residual(C) =  --------------------- = ----------------- = --- = 0.25 (25%)
+                       0.4                     0.4           0.4
+
+P_residual { A: 0.75, B: 0.00, C: 0.25 }
+```
+In our case the residual vector will only contain:
+```console
+residual { A: 0.75, C: 0.25 }
+```
+
+Lets take a look by forcing the residual path:
+```c++
+        //if (q_x > 0.0f && (p_x >= q_x || uni(gsmpl->rng) < p_x / q_x)) {
+        if (false) {
+            common_sampler_accept(gsmpl, draft[i], true);
+            result.push_back(draft[i]);
+            continue;
+        }
+```
+```c++
+        residual.clear();
+        float sum = 0.0f;
+        for (size_t k = 0; k < cur_p->size; ++k) {
+            const float r = p_of(k) - prob_of(q.data(), q.size(), cur_p->data[k].id);
+            if (r > 0.0f) {
+                residual.push_back({ cur_p->data[k].id, 0.0f, r });
+                sum += r;
+            }
+        }
+```
+```console
+(gdb) p residual
+$5 = std::vector of length 1, capacity 1 = {{id = 1156, logit = 0, p = 0.000230371952}}
+(gdb) p sum
+$8 = 0.000230371952
+```
+```c++
+        llama_token id = id_tgt;
+        if (sum > 0.0f) {
+            // sample from [0, 1) and scale to [0, sum)
+            float u = uni(gsmpl->rng) * sum;
+```
+uni picks a random fraction between 0.0 and 1.0. Multiplying by sum moves this
+sampled fraction to be in the sum range:
+```console
+0.0 -----------------------------------------------------------> sum
+    | token 0 (p0 | token 1 (p1) | token 2 (p2) | token 3 (p3) |
+                                   ↑
+                                   u
+```
+And lets say that u lands on the above point.
+```c++
+            // get the last residuals token id.
+            id = residual.back().id;
+
+            // iterate over all the residuals
+            for (const auto & e : residual) {
+                u -= e.p;
+                if (u <= 0.0f) {
+                    id = e.id;
+                    break;
+                }
+            }
+        }
+```
+The `u -= e.p` is subtracting from the point u above moving it in the range
+[0, sum).
+```console
+Iteration 0 (token 0):
+u -= p0
+Since u was past token 0, subtracting p0 leaves u > 0.0 so we move on to the next token.
+
+Iteration 1 (token 1)
+u -= p1
+Since u was past token 1, subtracting p1 leaves u > 0.0 so we move on to the next token.
+
+Iteration 2 (token 2)
+u -= p2
+Now subtraction overshoots and u drops below 0.0. And this confirms that the
+initial point landed inside tokens 2's segment. 
+So id = token 2 and we break.
+```
+
+```console
+residual = [
+    { id: A, p: 0.3 },
+    { id: C, p: 0.1 }
+]
+sum = 0.4
+
+0.0 ------------------------ 0.3 ------------- 0.4
+|       Token A (0.3)         | Token C (0.1)  |
+|<------- 75% of ruler ------>|< 25% of ruler >|
+
+float u = uni(gsmpl->rng) * sum;
+
+id = residual.back().id; // id is initialized to C
+
+Case 1: u langs between 0.0 and 0.3% (75%)
+uni = 0.5 (randomlly selected)
+u   = 0.5 * 0.4 = 0.20
+
+Iteration 1: (e = A, e.p = 0.3)
+u -= 0.3 -> u = 0.20 - 0.30 = -0.10
+u <= 0.0f is true
+id = A
+break
+
+Case 2: u lands between 0.3 and 0.4 (25%)
+uni = 0.9
+u   = 0.9 * 0.4 = 0.36
+
+Iteration 1: (e = A, e.p = 0.3)
+u -= 0.3 -> u = 0.36 - 0.30 = 0.06
+u <= 0.0f is false
+Token A is skipped
+
+Iteration 2: (e = B, e.p = 0.1)
+u -= 0.1 -> u = 0.06 - 0.10 = -0.04
+u <= 0.0f  is true
+id = C
+break
+
+Token C is selected
+```
+
+
+```console
+(gdb) p id
+$9 = 1156
+```
+
+Example draft tokens:
+```console
+token  |   p (target)    |     q (draft)
+----------------------------------------
+  A    |     0.5         |       0.2
+  B    |     0.3         |       0.7
+  C    |     0.2         |       0.1
+```
+Accepted:
+```console
+token  |     p/q         |     accept probability
+------------------------------------------------
+  A    | 0.5/0.2 = 2.5   |       1.0 (capped)
+  B    | 0.3/0.7 ≈ 0.43  |       0.43
+  C    | 0.2/0.1 = 2.0   |       1.0 (capped)
+```
+Residual:
+```console
+token  |     p - q       |     residual ?  (we only keep positive values)
+------------------------------------------------
+  A    | 0.5 - 0.2 = 0.3 |       yes
+  B    | 0.3 - 0.7 = -0.4|       no (excluded)
+  C    | 0.2 - 0.1 = 0.1 |       yes
+
+Sum of residuals: 0.3 + 0.1 = 0.4
+Normalized:
+A gets 75%
+B gets  0%
+C gets 25%
+```
+
+Now, lets say we make 100 runs:
+```console
+Target model wants:
+A: 50 runs (50%)
+B: 30 runs (30%)
+C: 20 runs (20%)
+
+The draft model is biased and proposes:
+A: 20 runs (20%)
+B: 70 runs (70%)
+C: 10 runs (10%)
+```
+
+The acceptance pass:
+```console
+Draft model proposes tokens according to its distribution:
+
+Token A (drafted 20 times)
+Target model want 50% but draft only gave 20%. p/q = 0.5/0.2 = 2.5 (capped at 100%)
+All 20 tokens are accepted.
+Sum of accepted tokens: 20
+
+Token B (drafted 70 times)
+Target model wants 30%, but draft gave 70%. p/q = 0.3/0.7 ≈ 42.86%
+Out of 70 proposed by the draft model 3/7 * 70 = 30 are accepted.
+The remaining 40 (of 70) are rejected.
+Sum of accepted tokens: 20 + 30 = 50
+
+Token C (drafted 10 times)
+Target model wants 20%, draft have 10%. p/q = 0.2/0.1 = 2.0 (capped at 100%)
+All 10 proposals of C are accepted.
+Sum of accepted tokens: 20 + 30 + 10 = 60
+```
+So out of 100 runs we can see that 60 tokens were accepted and 40 were rejected.
+
+The "quota" for the target for token B is already met so the 40 rejections can
+only be made up from token A and C:
+```console
+A gets 30/40 = 75%
+B gets 0/40  =  0%
+C gets 10/40 = 25%
+```
+So whenever we get a rejection we sample from this normalized distribution:
+```console
+A: 75% * 40 = 30 additional tokens. Total 20 + 30 = 50 (50%)
+B:  0% * 40 = 0  additional tokens. Total 30 + 0  = 30 (30%)
+C: 25% * 40 = 10 additional tokens. Total 10 + 10 = 20 (20%)
+```
+And notice that this matches the target distribution p(x) exactly.
+Now, look at the following code:
+```c++
+        float sum = 0.0f;
+        for (size_t k = 0; k < cur_p->size; ++k) {
+            // (target prob of token k) - (draft prob of token k)
+            const float r = p_of(k) - prob_of(q.data(), q.size(), cur_p->data[k].id);
+            if (r > 0.0f) {
+                residual.push_back({ cur_p->data[k].id, 0.0f, r });
+                sum += r;
+            }
+        }
+```
+```console
+Iteration 1 (k = A):
+
+p_of(A)       = 0.5
+prob_of(q, A) = 0.2
+
+r = 0.5 - 0.2 = 0.3
+0.3 > 0.0f == true
+residual.pushback({ id: A, p: 0.3})
+sum += 0.3     running total: 0.3
+
+Iteration 2 (k = B):
+
+p_of(B)       = 0.3
+prob_of(q, B) = 0.7
+
+r = 0.3 - 0.7 = -0.4
+-0.4 > 0.0f == false
+B is skipped.
+
+Iteration 3 (k = C):
+
+p_of(C)       = 0.2
+prob_of(q, C) = 0.1
+
+r = 0.2 - 0.1 = 0.1
+0.1 > 0.0f == true
+residual.pushback({ id: C, p: 0.1})
+sum += 0.3     running total: 0.4
+
+After the look finishes:
+residual = [ {id: A, p: 0.3}, {id: C, p: 0.1} ]
+sum      = 0.4
+```
+
+Next we initialize id to be the current target models id_tgt
+```c++
+        llama_token id = id_tgt;
+
+        if (sum > 0.0f) {
+            // uni(gsmpl->rng) random draw from [0.0, 1.0)
+            // * sum so that that value lands in the range [0.0, 0.4)
+            float u = uni(gsmpl->rng) * sum;
+            id = residual.back().id;
+
+            for (const auto & e : residual) {
+                u -= e.p;
+                if (u <= 0.0f) {
+                    id = e.id;
+                    break;
+                }
+            }
+        }
+```
+
+
+
+Lets say the draft proposes token B, it gets acccepted around 43% of the time
+and rejected the other 57% of the time. When it gets rejected we draw from the
+residual where we have a 75% chance of A, and a 25% chance of C, but never B.
+
+```console
+P(final = A) = (A proposed & accepted) +
+               (B proposed and rejected & residual picks A +
+               (c proposed & rejected & residual picks A (impossible as C is always accepted (1.0))
+             = (0.2 * 1.0) + (0.7 * 0.57 ) + 0
+             = 0.2 + 0.3
+             = 0.5                           p(A) from the table above
+
+P(final = B) = (B proposed & accepted)
+             = 0.7 * 0.43
+             = 0.3                           p(B) from the table above
+
+P(final = C) = (C proposed & accepted) + (B proposed & rejected & residual picks C)
+             = (0.1 * 1.0) + (0.7 * 0.57 * 0.25)
+             = 0.1 + 0.1
+             = 0.2                           p(C) from the table above
+```
+
+
+```c++
+
+        float sum = 0.0f;
+        // same loop that we have seen above
+        for (size_t k = 0; k < cur_p->size; ++k) {
+            const float r = p_of(k) - prob_of(q.data(), q.size(), cur_p->data[k].id);
+            if (r > 0.0f) {
+                residual.push_back({ cur_p->data[k].id, 0.0f, r });
+                sum += r;
+            }
+        }
+```
+
+
+
+_wip_
+
+
+So we have:
+```console
+row       input token      output logits
+0         "The"            what comes after "The"
+1         "Ġuser"          what comes after "Ġuser"
+3.        "Ġasking"        what comes after "Ġasking"
+
+
+Next we have the copying of the hidden state from the target models forward pass,
+so this batch will carry both tokens and embeddings.
+
+The following will write to dst which is batch.emb + (batch.n_tokens -1) * n_embd.
+And note that batch.n_tokens was incremented by common_batch_add above so it
+will be the same index. 
+```c++
+    std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, pending_h[seq_id].data(), row_bytes);
+```
+Next we have:
+```c++
+            if (chain_heads) {
+                chain_h[seq_id].assign(pending_h[seq_id].begin(), pending_h[seq_id].end());
+            }
+```
+Now, just to remind myself of where we are as I found I lost track here.
+```c++
+    void draft(common_speculative_draft_params_vec & dparams) override {
+        ...
+        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+            ...
+            if (chain_heads) {
+                chain_h[seq_id].assign(pending_h[seq_id].begin(), pending_h[seq_id].end());
+            }
+        }
+```
+So we are iterating over all the sequences, and we are just dealing with one token,
+per sequence which is the target model token that was predicted by the target
+model's decode process, before this functions is called. This is setting up the
 seed/anchor token from the target model for the drafting process.
 
 There are models like Step3.5Flash that have multiple heads for drafting, for
