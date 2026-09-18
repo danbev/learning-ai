@@ -69,3 +69,9 @@ What we will see is that linear attention addresses this by introducing gates:
 ```
 S_t = forget(g1) * S_{t-1} + β(error correction)
 ```
+
+So past key-value pairs are added into the state matrix by taking the outer
+product of each value and key like this:
+```console
+S_t-1 = v₁k₁^T + v
+```
