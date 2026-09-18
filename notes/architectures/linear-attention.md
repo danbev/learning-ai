@@ -73,5 +73,23 @@ S_t = forget(g1) * S_{t-1} + β(error correction)
 So past key-value pairs are added into the state matrix by taking the outer
 product of each value and key like this:
 ```console
-S_t-1 = v₁k₁^T + v
+S_t-1 = v₁k₁^T + v₂k₂^T + ... + v_tk_t^T
 ```
+If we multiple this state matrix by a new key vector k_t we get:
+```console
+v_hat = S_t-1 k_t = (∑ v_i k_i^T) k_t = ∑ v_i (k_i^T k_t)
+                                                  ↑
+```
+The term (k_i^T k_t) is a dot product measuring the similarity between past k_i
+and the current key k_t. So if k_t matches a past key, the result of the dot
+product is about 1, then that last term collapses to v_1 * 1 = v1.
+If k_t is unrelated (it is orthogonal) to past key about 0 then the last term
+collapses into v_1 * 0 = 0.
+
+So by multiplying S_t-1 by k_t, the matrix uses dot product similarity to filter
+out all irrelevant past memories and extracts only the value v_t previously
+associated with k_t.
+
+But note that this is not a descrete map, it is a continuous vector map.
+If k_t is 90% similar to key A and 20% similar to key B, the retrieved state v_t
+will be mostly value A with a slight blend of value B.
