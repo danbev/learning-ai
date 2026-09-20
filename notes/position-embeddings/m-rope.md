@@ -319,6 +319,24 @@ Height gets {θ₀, θ₂}. Width gets  {θ₁, θ₃}.
             float                 beta_fast,
             float                 beta_slow);
 ```
+The `sections` referred to above come from the original model, using
+Qwen3-VL-4B-Instruct as the example here:
+```console
+ "rope_scaling": {
+      "mrope_interleaved": true,
+      "mrope_section": [
+        24,
+        20,
+        20
+      ],
+      "rope_type": "default"
+    },
+```
+And this will be added to the main models metadata as:
+```console
+     23: [INT32]    |        4 | qwen3vl.rope.dimension_sections = [24, 20, 20, 0]
+ ```
+
 Normal layout which is what we have been using for our pairs in our examples
 group pairs next to each other in memory:
 ```console
