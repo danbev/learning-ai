@@ -13,26 +13,26 @@ int main(int argc, char **argv) {
     .mem_size   = 20000000,
     .mem_buffer = NULL,
   };
-  struct ggml_context* ctx = ggml_init(params);
+  struct ggml_context * ctx = ggml_init(params);
 
-  // Simulate a sequence of 6 tokens with en embedding size of 4096 and a
+  // Simulate a sequence of 6 tokens with an embedding size of 4096 and a
   // context length of 512. 
   int n_ctx_orig = 4096;
-  int embd_dim = 128;
-  int n_head = 32;
-  int n_tokens = 6;
+  int embd_dim   = 128;
+  int n_head     = 32;
+  int n_tokens   = 6;
 
   // The Query matrix in this case can hold 512 tokens each with a dimension
   // of 4096.
-  struct ggml_tensor* query = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_ctx_orig, n_tokens);
+  struct ggml_tensor * query = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_ctx_orig, n_tokens);
 
   // We reshape the query matrix embedding dimensions to account for the number
   // of heads (32) each which will have a dimension of 128 (128 * 32 = 4096).
-  struct ggml_tensor* a = ggml_reshape_3d(ctx, query, embd_dim, n_head, n_tokens);
+  struct ggml_tensor * a = ggml_reshape_3d(ctx, query, embd_dim, n_head, n_tokens);
   ggml_set_name(a, "a");
 
   // These are the positions 
-  struct ggml_tensor* pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
+  struct ggml_tensor * pos = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
   ggml_set_name(pos, "pos");
 
   // Set some made up values for the tensor to be rotated.
@@ -73,27 +73,30 @@ int main(int argc, char **argv) {
   // The RoPE frequency scale.
   float freq_scale = 1.0f;
 
-  // TODO: What is this? It looks like this is mscale (magnituce scale)
+  // TODO: What is this? It looks like this is mscale (magnitude scale)
   float attn_factor = 1.0f;
 
-  // Extrapolation factor. If this is 0.0 then the beta_fast and beta_slow
-  // are not used. 
+  // YaRN feature gate. Extrapolation factor. If this is 0.0 then all YaRN
+  // calculaltions are bypassed.
+  // If this is greater than 0.0 then it controls the extrapolation factor.
   float ext_factor = 1.0f;
 
   // This is a YaRN parameter is named α (alpha) in the YaRN paper. This
-  // specifies that hen the number of rotations is 32 this is the position
-  // embedding dimension that should be used for the for 
+  // specifies that when the number of rotations is less than 32 we just do
+  // extrapolation. For more details on this value see ../../notes/position-embeddings/rope.md
   float beta_fast = 32.0f;
 
-  // This is a YaRN parameter which I think is named β in the YaRN paper.
+  // This is a YaRN parameter which I think is named β in the YaRN paper. If the
+  // frequency is less than this values then we do interpolation.
+  // For more details on this value see ../../notes/position-embeddings/rope.md
   float beta_slow = 1.0f;
 
   // LongRope Frequency factors (freq_factors/rope_scaling) are used with
-  // certain models like Phi-3-mini-128k-instruct
+  // certain models like Phi-3-mini-128k-instruct.
   // (https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/blob/main/config.json#L27).
-  struct ggml_tensor* freq_factors = NULL;
+  struct ggml_tensor * freq_factors = NULL;
 
-  struct ggml_tensor* s = ggml_rope_ext(ctx,
+  struct ggml_tensor * s = ggml_rope_ext(ctx,
                                         a,
                                         pos,
                                         freq_factors,
@@ -107,7 +110,7 @@ int main(int argc, char **argv) {
                                         beta_fast,
                                         beta_slow);
 
-  struct ggml_cgraph* c_graph = ggml_new_graph(ctx);
+  struct ggml_cgraph * c_graph = ggml_new_graph(ctx);
   ggml_build_forward_expand(c_graph, s);
 
   int n_threads = 4;
