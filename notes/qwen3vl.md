@@ -17,7 +17,7 @@ This is used by the vision encoder, hence it is in the `vision_config` element.
 This specifies a number of layers that are extracted and stored to later be used
 in the target model, the text model.
 
-The the gguf this will be a metadata field:
+This will become a metadata field in the .gguf file:
 ```console
      27: [BOOL]     |       24 | clip.vision.is_deepstack_layers = [False, False, False, False, False, True, ...]
  ```
@@ -29,7 +29,7 @@ Each ViT (Vision Transformer) depth taps a different granularity:
 
 The ideas here is to capture these different levels of visual features and then
 make them available to the text model so that it can have more context, not just
-the file projection which is usually the case.
+the final projection which is usually the case.
 
 These layers are extracted in tools/mtmd/models/qwen3vl.cpp:
 ```c++
@@ -54,7 +54,7 @@ These layers are extracted in tools/mtmd/models/qwen3vl.cpp:
         }
 ```
 This might look like it is doing a lot more than just saving the layers but recall
-that the final layer is also projected into the main models vector space and
+that the final layer is also projected into the main models vector space, and
 this need to happen for these layers output as well. And they have weights that
 have been trained to do this for these specific layers.
 
