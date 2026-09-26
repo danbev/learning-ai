@@ -15,6 +15,7 @@ model = AutoModelForAudioFrameClassification.from_pretrained(
     device_map="auto",
     dtype=torch.float32  # or torch.float16 if running on GPU
 )
+print(model)
 
 # Load 16 kHz mono audio
 audio_path = "samples/conversation.wav"
