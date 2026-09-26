@@ -35,7 +35,7 @@ Row 0: Dan                  (but these would be embedding factors of some size)
 Row 1: loves
 Row 2: ice
 ```
-So lets say the the embedding matrix is `inp_emb`
+So lets say the embedding matrix is `inp_emb`.
 We multiply a learned weight matrix, `W_q`, to get the query matrix:
 ```
 query = wq * inp_emb
@@ -108,13 +108,12 @@ But we could also view this as:
 ```
 attention_score = (q_0 * k_0 + q_1 * k_1) + (q_2 * k_2 + q_3 * k_3)
 ```
-The total attention score is simply the score of Pair 1 plus the score of
-Pair 2.
+The total attention score is simply the score of Pair 1 plus the score of Pair 2.
 Lets look at one pair, for example the first pair:
 ```
 (q_0 * k_0 + q_1 * k_1)
 ```
-This what it looks like before RoPE, but after RoPE we treat these are complex
+This is what it looks like before RoPE, but after RoPE we treat these are complex
 numbers:
 ```
 pair score = Magnitude(q) * Magnitude(k) * cos(θpos_diff)
@@ -200,8 +199,8 @@ position.
 
 In RoPE each dimension is rotated by a different angle which is a function of
 both the position in the sequence and the dimension. So the angle encodes the
-position information. So the formula for the angle needs take the position
-index into account.
+position information. The formula for the angle needs take the position index
+into account.
 
 So a rotation is applied to each dimension of the query and key vectors. These
 are then used to calculate the attention scores. The attention scores now have
@@ -231,7 +230,7 @@ Let say we have the following sentence:
 ```
 The cat sat on the mat.
 ```
-And lets say we have two dimensions in our embedding space. We can then imaging
+And lets say we have two dimensions in our embedding space. We can then imagine
 `Cat` is a vector. And lets say we have the word `cat` somewhere in the vector
 space as well. Now, in our sentence the word `cat` is the second word so this
 would be a separate vector only rotated by a certain amount. If the word comes
@@ -249,7 +248,7 @@ to show how they have been rotated for this specific sentence.
 Now, even if we added words to the start of the sentence or to the end of the
 sentence, when we look at 'cat' and 'sat' they will still have the same angle
 theta between them. So the relative position of the words is still the same. So
-this gives us both positional endcoding and relative positional encoding in a
+this gives us both positional encoding and relative positional encoding in a
 single type of embedding technique instead two separate techniques.
 
 
@@ -670,7 +669,7 @@ dimension and each dimension has its own lambda value.
 
 #### NTK-by-parts:
 In PI and NTK-aware interpolation all RoPE demensions are scaled by the same
-factor. On thing that was observed is that for a given context lenght L there
+factor. One thing that was observed is that for a given context length L there
 were dimensions that end up with a wavelength greater than the max context
 length seen during training (lambda_d > L).
 
@@ -829,17 +828,123 @@ not produce good results.
 
 
 #### beta_fast and beta_slow (blending)
-Imagine a model trained up to a context length of 512 tokens, and you wish to
-extend its capabilities to handle up to 1024 tokens. A blending range might be
-set from 400 to 600 tokens. In this range:
+Recall that what we are rotating is the embedding features for a token a specific
+position in the sequence. We are grouping that tokens embeddings into pairs and
+rotating those pairs of values. How much each pair is rotated is determined by:
+```console
+rotaion angle = m          *      θ_i 
+                ↑
+            token position        dimension frequency
+            (variable)            (constant)
+```
+So `m` here will vary for each token in the sequencs, {0, 1, 2, 3 ...} but the
+frequency is constant for all each feature/channel pair. Pair 0 has a fixed
+high frequency θ_0 (perhaps 1.0 rad/token)
 
-Positions closer to 400 would use predominantly interpolated embeddings, as
-they're closer to the trained range. As positions move towards 600, there's an
-increasing reliance on extrapolated embeddings.
-Beyond 600 tokens, the model uses purely extrapolated embeddings for positional
-information.
-The parameters beta_fast and beta_slow control the blending of interpolated and
-extrapolated embeddings.
+Frequency here is measured in radians per token step. We have a wavelength which
+is how long it takes for the wave to complete one full cycle. So how many token
+steps do we need to take to complete one full cycle:
+```console
+λ_i = 2π / θ_i
+```
+For example:
+```console
+Channel Pair 0 : θ_0  = π/2   ≈ 1.57   rad/token
+Channel Pair 15: θ_15 = π/100 ≈ 0.0314 rad/token
+
+
+           Pair 0 Angle (m * 0_0)  Pair 15 Angle (m * 0_15)
+Token 0:   0 * π/2 = 0             0 * π/100 = 0
+Token 1:   1 * π/2 = 90            1 * π/100 = 1.8
+Token 2:   2 * π/2 = 180           2 * π/100 = 3.6
+Token 3:   3 * π/2 = 270           3 * π/100 = 5.4
+Token 4:   4 * π/2 = 360           4 * π/100 = 7.2
+...
+Token 200: 200 * π/2 = 50          200 * π/100 = 360 (full circle!)
+                       ↑
+                    full circles
+```
+Notice that Pair 0 completes a full cycle every 4 tokens. Its wavelength is 4
+(λ_0 = 4). And Pair 15 completes a full rotation every 200 tokens (λ_15 = 200).
+So wavelength is a property of the channel/feature pair.
+
+So lets say our model was trained with a context length of 128 tokens. The context
+length (L) determines whether a feature dimension pair ever completed a full
+360 degree circle during training or if it only saw a partial slice.
+What matters to the neural network is which angles it witnessed between token 0
+and token L during training.
+
+Every pair of features is a point(cos θ), (sin θ) in a 2D space moving around
+a 360 degrees circle.
+
+Look at the single frequency θ:
+```console
+One full rotation is 2π radians (360 degrees).
+Each token rotates by θ radians.
+```
+To find out how many tokens it takes to make a full rotation we divide the full
+circle by the step size which is what the wavelength is:
+```console
+    2π
+λ = --  (tokens per revolution)
+     θ
+
+
+    2π
+θ = --
+    λ
+```
+Revolutions formula:
+```console
+              L * θ
+Revolutions = -----
+               2π
+
+              L * (2π/λ)
+Revolutions = ----------
+               2π
+
+              L * 2π      L
+Revolutions = -------- =  -
+               2π * λ     λ
+```
+                  Total length          L   128
+Number of waves = ------------------ =  - = --- = 32 waves
+                  Length of one wave    λ    4
+```
+This value, "Number of waves" or Revolutions is the number of full rotations, and
+this exactly what a frequency is. Think about the frequency in sounds waves, we
+have the number of cycles over say one second which is what hertz is.
+
+So to see how using an larger context length than the model was trained on we
+can see that for the higher frequency dimensions the model will work just fine, 
+for token 128 it will complete 32 full rotations. But for the lower frequencies
+this will cause problems. Lets look at token 200:
+```console
+Token 0:   0 * 1.8°   = 0°
+Token 1:   1 * 1.8°   = 1.8°
+Token 50:  50 * 1.8°  = 90°
+Token 100: 100 * 1.8° = 180°
+Token 128: 128 * 1.8° = 230.4°  (end of training context)
+...
+Token 500: 500 * 1.8° = 900° = 2.5 full revolutions
+```
+Token 500 produces an angle that looks identical to token 100 (180). The model's
+sense of global sequence position is completely destroyed.
+What Yarn does is it looks at:
+```console
+                                   L
+Revolutions in training context = ---
+                                   λ_i
+```
+If the revolutions are greater than beta_fast (default 32) the model knows how
+to handle every angle on the circle so it does not need to interpolate and just
+keeps the scale 1.0, so just normal extrapolation.
+
+If the revolutions are less than beta_slow (default 1), so the don't complete
+a single full rotation, then we must interpolate, that is we divide the angle
+by the scale factor s. We are squeezing token 500's angle back down so that it
+stays within the familar 0...230 angle range that the model understands.
 
 
 ### LongRope (Long Range RoPE)
