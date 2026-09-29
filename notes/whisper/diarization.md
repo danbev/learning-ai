@@ -574,6 +574,114 @@ By using this we can there for determine which speakers are active during the
 frame by frame.
 
 ### cache
+This models uses self-attention but it does not have a kv-cache. This is as far
+as I understand the arch of Sortformer. It uses an Embedding-Level Prefix Cache.
+
+So above I simple traced through the first invocation where prefix was 0 and it
+dit not really consider the cache at that point. But it would have helped to
+actually work through this and understand the cache as after the graph has been
+computed the cache is updated and without this background it might not be clear
+as to what it is doing.
+
+So we have the `input` to the graph which is our log mel-spectrogram and this
+does not change. We also have positions as input, and then we have the third
+optional input which is `cache`. Now this is optional and we have a if statement
+in the build graph function:
+```c++
+    ggml_tensor * cache = nullptr;
+    if (prefix) {
+        cache = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 512, prefix);
+        ggml_set_input(cache);
+        ggml_set_name(cache, "cache");
+        cur = ggml_concat(ctx, cache, cur, 1);
+    }
+```
+So this will not always be added as a node in the graph, but also prefix can
+change which will cause a change in the graph and hence cause it to be reallocated
+which is something we want to avoid. For example the first call prefix will be
+zero and the second the prefix will be 13:
+```console
+(lldb) p cache->ne
+(int64_t[4])  ([0] = 512, [1] = 13, [2] = 1, [3] = 1)
+
+0   [0  ...      511]
+        .
+        .
+12  [0  ...      511]
+```
+This tensor is split into two logical regions:
+```console
+◄───────────────────────── prefix (l1 + l2)   ─────────────────────────►
+┌──────────────────────────────────────┬───────────────────────────────┐
+│            spkcache (l1)             │           fifo (l2)           │
+│       Long-Term Speaker History      │       Short-Term Context      │
+└──────────────────────────────────────┴───────────────────────────────┘
+```
+The short-term contex is hidden state saved before the model layers execute, so
+this is the log mel-spectrogram input projected to the models hidden vector space
+, from the previous graph execution. And recall that the shape of hidden is:
+```console
+(lldb) p hidden->ne
+(int64_t[4])  ([0] = 512, [1] = 14, [2] = 1, [3] = 1)
+```
+This is to help the model from cutoffs between chunks, so that the model has
+some backward context accross the chunk boundry.
+
+The first part of the cache is the speaker cache. Recall that we said that the
+first person to speak is identified as Speaker 0 and so on. Now lets say someone
+speaks for 5 seconds and then a second person speaks for 45 seconds. If we only
+had a rolling buffer then Speaker0 might be pushed out of the cache. This would
+mean that the next time that person speaks it will be considered a new speaker
+instead of the same speaker. So the cache is how the model keeps this state and
+is able to keep track of speakers and their acuoustic features.
+
+```console
+(lldb) p cache->ne
+(int64_t[4])  ([0] = 512, [1] = 13, [2] = 1, [3] = 1)
+
+(lldb) p cur->ne
+(int64_t[4])  ([0] = 512, [1] = 27, [2] = 1, [3] = 1)
+
+0   [0  ...      511]
+        .                    Cache
+        .
+12  [0  ...      511]
+13  [0  ...      511]
+        .                    cur
+        .
+27  [0  ...      511]
+```
+So this prefix will grow for each call, by 13 frames/rows.
+
+
+```console
+Input 1: New Chunk Audio            Input 2: Host Cache Buffer
+  (Log-mel Spectrogram)               (Raw float array in RAM)
+          │                                      │
+          ▼                                      ▼
+   [ mel_bins x frames ]                   [ 512 x prefix ]
+          │                                      │
+          ▼                                      │
+  ggml_mul_mat(enc_pre_w)                        │
+          │                                      │
+          ▼                                      │
+    hidden [ 512 x frames ]                      │
+          │                                      │
+          └──────────────────┬───────────────────┘
+                             ▼
+              ggml_concat(cache, cur, dim=1)
+                             │
+                             ▼
+                cur [ cache  | cur ]
+                             │
+                             ▼
+               LayerNorm (enc_norm)
+                             │
+                             ▼
+               Transformer Layer 0 ... 30
+```
+
+
 ```c++
     // project down into the model hidden vector space.
     ggml_tensor * hidden = ggml_mul_mat(ctx, model.enc_pre_w, input);
@@ -701,7 +809,7 @@ calculations that the caching has to do.
 
 Then we have the updating of the cache:
 ```c++
-    whisper_diar_cache_update(cache, h.data(), frames, probs_80ms.data(), 0, (right_mel + 7) / 8);
+    whisper_diar_cache_update(cache, h.data(), frames, probs_80ms.data(), (right_mel + 7) / 8);
 ```
 This is for streaming in a Sortformer which needs two things:
 1. The immediate past few seconds of audio so phonetic transitions across chunk boundaries don't glitch.
@@ -710,81 +818,20 @@ This is for streaming in a Sortformer which needs two things:
 * The fifo (short term buffer) is a rolling window of the recent 80ms audio frames.
 * spkcache (long term buffer) is anchor memory of historical speaker acoustic signatures.
 
-```console
-◄─────────────── prefix (l1 + l2) ───────────────► ◄──────────── frames ────────────►
-┌───────────────────────┬──────────────────────────┬────────┬─────────────┬──────────┐
-│    spkcache (l1)      │        fifo (l2)         │   lc   │ chunk_valid │    rc    │
-│  (Long-term memory)   │    (Short-term memory)   │ (past) │  (NEW AUDIO)│ (future) │
-└───────────────────────┴──────────────────────────┴────────┴─────────────┴──────────┘
-```
-l1 = state.n_spk_frames is the number of frames currently in the long term speaker cache.
-l2 = state.n_fifo_frames is the number of frames in the short term fifo queue.
-lc = left context is the overlapping context from the end of the previous chunk.
-rc = right context is a look ahead into future frames.
-
-Now the model evaluates the entire sequence and the output is as we saw above
-80ms token probabilites) which contains predictions for all of these regions
-concatenated.
-
-This is how we get to the fifo contents using l1 to skip the speaker cache which
-is first, times the number of speakers. 
-```c++
-const float * fifo_preds = probs + static_cast<size_t>(l1) * state.n_speakers;
-```
-So this will then point to the updated probabilites for the fifo.
-
-The we have chunk_preds which skips the l1, l2 and lc to get the current new audio:
-```c++
-const float * chunk_preds = probs + static_cast<size_t>(l1 + l2 + lc) * state.n_speakers;
-```
-
-Then we have chunk_valid_state we are using hidden (the hidden state saved before
-the models layers execute, and we only want the new values not the past (lc):
-```c++
-const float * chunk_valid_state = hidden + static_cast<size_t>(lc) * state.n_embd;
-```
-```console
-(gdb) p state.n_embd
-$11 = 512
-
-(gdb) p lc
-$12 = 0
-```
 
 ```c++
-    state.fifo.insert(state.fifo.end(),
-                      chunk_valid_state,
-                      chunk_valid_state + static_cast<size_t>(chunk_valid) * state.n_embd);
+static std::vector<float> whisper_diar_cache_update(whisper_diar_cache & state,
+        const float * hidden, int frames, const float * probs, int rc) {
 ```
-This is using iterator(const_iterator pos, InputIt first, InputIt last), so
-chunk_valid_state is a raw pointer it act like a standard random access iterator
-so this is saying that we will use a pointer to the start of chunk_valid_state
-and then a pointer to the end of the source data.
-```console
-(gdb) p state.fifo.size()
-$5 = 6656
-```
-Next we have:
-```c++
-    std::vector<float> fifo_preds_full(static_cast<size_t>(l2 + chunk_valid) * state.n_speakers);
-```
-```console
-(gdb) p fifo_preds_full
-$13 = std::vector of length 104, capacity 104 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-  0, 0, 0, 0, 0, 0}
-```
-Next we are doing to copy into that the above vector, from fifo_preds, that the
-number of elements will be 
-```c++
-    std::memcpy(fifo_preds_full.data(), fifo_preds, static_cast<size_t>(l2) * state.n_speakers * 4);
+So we have the hidden vector which as we mentioned is the just processed graphs
+input, projected to the models internal vector space. And then we have the number
+of frames that were processed (normally 14 if we are not at the end I think), 
+then we have probs_80ms which are the probabilities that the model just predicted
+and this is where I got things confused initially when not considering the cache
+being prepended to the projected input (hidden).
 
+```c++
+    const int chunk_valid = frames - rc;
 ```
 
-Notice that emitted is using std::vector's range constructor:
-```c++
-    // What we will actually return as the updated cache.
-    std::vector<float> emitted(chunk_preds, chunk_preds + static_cast<size_t>(chunk_valid) * state.n_speakers);
-```
 _wip_
