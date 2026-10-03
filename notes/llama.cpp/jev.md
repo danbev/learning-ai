@@ -1,4 +1,366 @@
-### Jev in llama.cpp
+## Jev in llama.cpp
+This document will go through the various Jev (systemone) type of models in
+llama.cpp.
+
+The first OpenJev will contain a walk through and some general background/overview
+of the process (including llama-server) and then I'll try to cover the specifics
+of other models in separate sections.
+
+The current models can found in [Decision models](https://huggingface.co/collections/ggml-org/decision-models)
+
+### Processing a request
+When a request is posted to llama-server the handler that will handle the request
+is `post_systemone`:
+```c++
+    this->post_systemone = [this](const server_http_req & req) {
+        auto res = create_response();
+        const auto & decision = ctx_server.decision;
+        if (decision.type == COMMON_DECISION_TYPE_NONE) {
+            res->error(format_error_response("This model is not a decision model", ERROR_TYPE_NOT_SUPPORTED));
+            return res;
+        }
+
+        const json body = json::parse(req.body);
+        const auto questions = decision.parse_questions(body);
+```
+So the complete body of the request will be parsed into a json object:
+```console
+(gdb) pjson body
+{
+    "state": {
+        "message": "Hi, I was charged twice for my order #4471 and I want a refund.",
+        "plan": "pro",
+        "order": {
+            "id": 4471,
+            "items": [
+                "phone case",
+                "charger"
+            ]
+        }
+    },
+    "questions": {
+        "intent": {
+            "type": "choice",
+            "instructions": "What does the customer want?",
+            "criteria": {
+                "refund": "wants money back",
+                "cancel": "wants to cancel an order",
+                "track": "wants to know where an order is",
+                "other": "anything else"
+            }
+        },
+        "urgent": {
+            "type": "noul",
+            "instructions": "Does this need a human within the hour?"
+        },
+        "frustration": {
+            "type": "score",
+            "instructions": "How frustrated is the customer?",
+            "criteria": [
+                "calm",
+                "mildly annoyed",
+                "annoyed",
+                "angry"
+            ]
+        },
+        "refund": {
+            "type": "noul",
+            "instructions": "Is a refund requested?",
+            "criteria": {
+                "true": "money back is asked",
+                "false": "no money back is asked"
+            }
+        },
+        "team": {
+            "type": "choice",
+            "instructions": "Which team?",
+            "criteria": {
+                "billing": null,
+                "shipping": null,
+                "technical": null,
+                "sales": null,
+                "legal": null,
+                "returns": null,
+                "fraud": null,
+                "accounts": null,
+                "retention": null,
+                "other": null
+            }
+        }
+    }
+}
+(gdb) ptype questions
+type = const std::vector<server_decision_question>
+
+(gdb) ptype server_decision_question
+type = struct server_decision_question {
+    std::string id;
+    server_decision_question_type type;
+    json instructions;
+    std::vector<server_decision_option> options;
+}
+
+(gdb) pfield questions id
+[0]: "intent"
+[1]: "urgent"
+[2]: "frustration"
+[3]: "refund"
+[4]: "team"
+
+``
+Then we will parse the state:
+```c++
+        std::vector<raw_buffer> files;
+        const json state = decision.parse_state(body, files);
+```
+```console
+(gdb) pjson state
+{
+    "message": "Hi, I was charged twice for my order #4471 and I want a refund.",
+    "plan": "pro",
+    "order": {
+        "id": 4471,
+        "items": [
+            "phone case",
+            "charger"
+        ]
+    }
+}
+```
+And files is an output parameter which could contains image files if any where
+used.
+```c++
+        auto & rd = res->rd;
+        {
+            std::vector<server_task> tasks;
+            if (decision.is_joint()) {
+                server_task task = server_task(SERVER_TASK_TYPE_DECISION);
+                task.id = rd.get_new_id();
+                decision.fill_task_joint(state, questions, task);
+                tasks.push_back(std::move(task));
+            } else {
+               ...
+```
+Is joint means that all questions in the request are evaluated together in one
+prompt and one task. Currently only Clef uses this:
+```console
+    bool is_joint() const {
+        return type == COMMON_DECISION_TYPE_CLEF;
+    }
+```
+```c++
+            } else {
+                for (const auto & question : questions) {
+                    for (size_t variant = 0; variant < decision.n_variants(question); variant++) {
+                        server_task task = server_task(SERVER_TASK_TYPE_DECISION);
+                        task.id = rd.get_new_id();
+                        decision.fill_task(state, questions, question, variant, files, ctx_server.mctx, ctx_server.init_opt, task);
+                        tasks.push_back(std::move(task));
+                    }
+                }
+            }
+```
+So in our case we will iterate over the 5 questions we have. We will create
+on server task per variant. Only Lev currently creates a second variant and I'll explain
+what this is later. And notice that decision.fill_task is called to fill the
+task.
+
+```c++
+void server_decision_context::fill_task(
+        const json & state,
+        const std::vector<server_decision_question> & questions,
+        const server_decision_question & question,
+        size_t variant,
+        const std::vector<raw_buffer> & files,
+        mtmd_context * mctx,
+        const mtmd_helper_init_opt & init_opt,
+        server_task & task) const {
+    const std::string prompt = render(state, questions, question, variant, files.size());
+```
+Render is what will "render" the prompt that will sent to the model for process
+and it is per task.
+```c++
+std::string server_decision_context::render(
+        const json & state,
+        const std::vector<server_decision_question> & questions,
+        const server_decision_question & question,
+        size_t variant,
+        size_t n_images) const {
+    // the template is given raw JSON values, it serializes the ones that are not strings
+    json inp = json{
+        {"id",           question.id},
+        {"type",         decision_question_type_name(question.type)},
+        {"instructions", question.instructions},
+        {"state",        state},
+        {"options",      render_options(question, variant)},
+    };
+```
+So we first have our ninja input json:
+```console
+(gdb) pjson inp
+{
+    "id": "intent",
+    "type": "choice",
+    "instructions": "What does the customer want?",
+    "state": {
+        "message": "Hi, I was charged twice for my order #4471 and I want a refund.",
+        "plan": "pro",
+        "order": {
+            "id": 4471,
+            "items": [
+                "phone case",
+                "charger"
+            ]
+        }
+    },
+    "options": [
+        {
+            "key": "refund",
+            "description": "wants money back",
+            "label": "A"
+        },
+        {
+            "key": "cancel",
+            "description": "wants to cancel an order",
+            "label": "B"
+        },
+        {
+            "key": "track",
+            "description": "wants to know where an order is",
+            "label": "C"
+        },
+        {
+            "key": "other",
+            "description": "anything else",
+            "label": "D"
+        }
+    ]
+}
+```
+This will be possibly be modified depending on the model type.
+```c++
+    jinja::context ctx(tmpl->source());
+```
+
+```console
+(gdb) p type
+$38 = COMMON_DECISION_TYPE_LEV
+
+(gdb) printf "%s\n", tmpl->source().c_str()
+<|im_start|>system
+You are a System One decision model. You read the Evidence and answer each Criterion by choosing exactly one of the listed options. You never explain. You answer with the single option label only.<|im_end|>
+<|im_start|>user
+# Evidence
+{{ state if state is string else state | tojson }}
+
+# Criterion
+{% if instructions %}{{ instructions if instructions is string else instructions | tojson }}{% else %}{{ id }}{% endif %}{{ '\n\n' }}{% if type == 'noul' %}{{ '# Scale\n0 = certainly no ... 8 = certainly yes\n' }}{% for o in options %}{% if o.key == 'true' and o.description %}yes: {{ o.description if o.description is string else o.description | tojson }}{{ '\n' }}{% endif %}{% endfor %}{% for o in options %}{% if o.key == 'false' and o.description %}no: {{ o.description if o.description is string else o.description | tojson }}{{ '\n' }}{% endif %}{% endfor %}{{ '\nRespond with only a digit from 0 to 8.' }}{% else %}{{ '# Options\n' }}{% for o in options %}{{ o.label }}. {% if type == 'score' %}(level {{ o.key }} of {{ options | length - 1 }}) {{ o.description if o.description is string else o.description | tojson }}{% else %}{{ o.key }}{% if o.description %}: {{ o.description if o.description is string else o.description | tojson }}{% endif %}{% endif %}{{ '\n' }}{% endfor %}{{ '\nRespond with only the letter of ' }}{% if type == 'score' %}the level that best matches.{% else %}the best option.{% endif %}{% endif %}{{ '\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n' }}
+```
+
+Next we use the ninja context and pass it the inp json from above which will
+create variables in the ninja context for the template parameters.
+```c++
+    jinja::global_from_json(ctx, inp, false);
+```
+Next we create a ninja runtime for the context and execute the template:
+```c++
+    jinja::runtime runtime(ctx);
+    const jinja::value results = runtime.execute(tmpl->prog);
+    return jinja::runtime::gather_string_parts(results)->as_string().str();
+}
+```
+So for the `intent` we will get the following prompt:
+```console
+(gdb) p jinja::runtime::gather_string_parts(results)->as_string().str()
+$48 = "<|im_start|>system\nYou are a System One decision model. You read the Evidence and answer each Criterion by choosing exactly one of the listed options. You never explain. You answer with the single option label only.<|im_end|>\n<|im_start|>user\n# Evidence\n{\"message\": \"Hi, I was charged twice for my order #4471 and I want a refund.\", \"order\": {\"id\": 4471, \"items\": [\"phone case\", \"charger\"]}, \"plan\": \"pro\"}\n\n# Criterion\nWhat does the customer want?\n\n# Options\nA. refund: wants money back\nB. cancel: wants to cancel an order\nC. track: wants to know where an order is\nD. other: anything else\n\nRespond with only the letter of the best option.\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+```
+This will return us back into fill_task:
+```c++
+    const std::string prompt = render(state, questions, question, variant, files.size());
+
+    if (type == COMMON_DECISION_TYPE_OPENJEV || type == COMMON_DECISION_TYPE_LEV || type == COMMON_DECISION_TYPE_NIMBLE) {
+        // lev reads the ratings of a noul question at its first labels, not at the digits
+        task.decision.labels.assign(labels.begin(), labels.begin() + n_outputs(question));
+        if (!files.empty()) {
+            task.tokens = process_mtmd_prompt(mctx, prompt, files, init_opt);
+            return;
+        }
+    }
+```
+The above will copy the first labels from the labels vector to the
+task.decision.labels for the number of output the specific question has. In our
+case this is 4:
+```console
+(gdb) p n_outputs(question)
+$56 = 4
+
+(gdb) p task.decision.labels
+$57 = std::vector of length 4, capacity 4 = {32, 33, 34, 35}
+```
+And we can use the vocab to see that these token ids map to:
+```console
+(gdb) p this->vocab->pimpl->id_to_token[task.decision.labels[0]]
+$64 = {text = "A", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p this->vocab->pimpl->id_to_token[task.decision.labels[1]]
+$65 = {text = "B", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p this->vocab->pimpl->id_to_token[task.decision.labels[2]]
+$66 = {text = "C", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p this->vocab->pimpl->id_to_token[task.decision.labels[3]]
+$67 = {text = "D", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+```
+After that the prompt will be tokenized:
+```c++
+    llama_tokens tokens = common_tokenize(vocab, prompt, false, true);
+```
+```console
+(gdb) p tokens.size()
+$68 = 173
+```
+And the last thing that happens in this function is where the boolean is for
+`has_mtmd`:
+```c++
+    task.tokens = server_tokens(tokens, false);
+```
+server_tokens is a struct that wraps llama_tokens and provides a lot of useful
+helper methods. It also provides support for images but that this not use in
+this particular case.
+After this function returns (fill_task) we will be back in post_systemone function
+where we are iterating over the questions:
+```c++
+                        decision.fill_task(state, questions, question, variant, files, ctx_server.mctx, ctx_server.init_opt, task);
+                        tasks.push_back(std::move(task));
+```
+And this will move the newly filled task the tasks vector. And this will happen
+for all the questions and variants.
+
+We then have:
+```c++
+            if (decision.can_share_prompt()) {
+                tasks = server_decision_group_tasks(std::move(tasks), params.n_parallel);
+            }
+            rd.post_tasks(std::move(tasks));
+```
+```c++
+    // true if the questions of a request start with the same tokens, and the model can continue from them
+    bool can_share_prompt() const {
+        switch (type) {
+            case COMMON_DECISION_TYPE_OPENJEV:
+            case COMMON_DECISION_TYPE_LEV:
+            case COMMON_DECISION_TYPE_KEV:
+            case COMMON_DECISION_TYPE_NIMBLE:
+                return true;
+            default:
+                return false;
+        }
+    }
+```
+
+_wip_
+
+## OpenJev
 
 ### Download the OpenJev model
 ```console
@@ -74,7 +436,6 @@ curl -s -X POST http://127.0.0.1:8080/v1/systemone \
 EOF
 ```
 
-### OpenJev
 ```c++
 void server_decision_context::fill_task(
         const json & state,
@@ -335,9 +696,135 @@ This is now end up in:
 ```
 
 ### lev
+Download the lev model:
+```console
+(venv) $ hf download ggml-org/lev-GGUF lev-Q4_K_M.gguf --local-dir models
+```
+We can inspect the model:
+```console
+(venv) $ gguf-dump models/lev-Q4_K_M.gguf
+...
+      4: STRING     |        1 | general.architecture = 'qwen35'
+      5: STRING     |        1 | general.type = 'model'
+      6: STRING     |        1 | general.name = 'lev'
+      ...
+     34: STRING     |        1 | qwen35.decision.type = 'lev'
+     35: FLOAT32    |        1 | qwen35.decision.temperature.noul = 2.3332931995391846
+     36: FLOAT32    |        1 | qwen35.decision.temperature.score = 2.803323745727539
+     37: FLOAT32    |        1 | qwen35.decision.temperature.choice = 1.7666659355163574
+     38: FLOAT32    |        1 | qwen35.decision.temperature.choice.small = 1.7897834777832031
+     39: FLOAT32    |        1 | qwen35.decision.temperature.choice.mid = 1.608568549156189
+     40: FLOAT32    |        1 | qwen35.decision.temperature.choice.large = 1.6641112565994263
+     ...
+```
+So lets set a break point in server_decision_context::fill_task and look at the
+prompt and what it looks like for this model:
+```console
+(gdb) printf "%s\n", prompt.c_str()
+<|im_start|>system
+You are a System One decision model. You read the Evidence and answer each Criterion by choosing exactly one of the listed options. You never explain. You answer with the single option label only.<|im_end|>
+<|im_start|>user
+# Evidence
+{"message": "Hi, I was charged twice for my order #4471 and I want a refund.", "order": {"id": 4471, "items": ["phone case", "charger"]}, "plan": "pro"}
+
+# Criterion
+What does the customer want?
+
+# Options
+A. refund: wants money back
+B. cancel: wants to cancel an order
+C. track: wants to know where an order is
+D. other: anything else
+
+Respond with only the letter of the best option.
+<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+```
+Lev, like OpenJev used labels like A, B, C and so on. And like OpenJev where
+we showed how it selects those labels and then performs a softmax on them, ignoring
+the other tokens in the vocab.
+
+
+```c++
+size_t server_decision_context::n_variants(const server_decision_question & question) const {
+    // lev shows the options of a choice in 2 orders, to cancel the preference for the first label
+    if (type == COMMON_DECISION_TYPE_LEV && question.type == SERVER_DECISION_QUESTION_CHOICE && question.options.size() > 1) {
+        return 2;
+    }
+    return 1;
+}
+```
+
+
+In server-context.cpp send_desision:
+```c++
+    void send_decision(const server_slot & slot, const common_batch & batch, int32_t i_batch) {
+        auto res = std::make_unique<server_task_result_decision>();
+        res->id       = slot.task->id;
+        res->index    = slot.task->index;
+        res->n_tokens = slot.task->n_tokens();
+
+        const auto & decision = slot.task->decision;
+```
+```console
+(gdb) p decision
+$4 = (const server_task::decision &) @0x5555558d2ea0: {
+labels = std::vector of length 4, capacity 4 = {32, 33, 34, 35},
+markers = std::vector of length 0, capacity 0, column = 0,
+pointer = -1, order = std::vector of length 0, capacity 0, n_scores = 0}
+```
+This will take the same path as OpenJev (which also uses labels):
+```c++
+        if (!decision.labels.empty()) {
+            const float * logits = llama_get_logits_ith(slot.ctx_tgt, i_batch);
+            if (logits == nullptr) {
+                send_error(slot, "failed to get logits", ERROR_TYPE_SERVER);
+                return;
+            }
+
+            const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+            for (const llama_token label : decision.labels) {
+                GGML_ASSERT(label >= 0 && label < n_vocab);
+                res->scores.push_back(logits[label]);
+            }
+```
+So the above will add the logits for the lables to res->scores.
+
+Later in format_answer:
+```c++
+json server_decision_context::format_answer(const server_decision_question & question, const std::vector<std::vector<float>> & scores) const {
+    const size_t n = n_outputs(question);
+    ...
+
+    // probabilities are calculated just like before
+
+    json answer = json{{"type", decision_question_type_name(question.type)}};
+
+    if (question.type == SERVER_DECISION_QUESTION_NOUL) {
+        if (type == COMMON_DECISION_TYPE_LEV) {
+            double expected = 0.0;
+            for (size_t i = 0; i < n; i++) {
+                expected += probs[i] * i / (n - 1);
+            }
+            answer["noul"] = expected;
+            return answer;
+        }
+```
 
 
 ### laya
+TODO:
+
+
+### nimble
+TODO:
+
+
+### clef
+TODO:
 
 
 
