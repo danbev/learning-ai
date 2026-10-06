@@ -239,8 +239,9 @@ $3 = {1024, 512, 1, 1}
 $5 = {512, 14, 1, 1}
 ```
 
-If we have a previous hidden state, called a prefix in the code we will add
-an input.
+If we have a prefix, that is a cache consisting of speaker cache and the content
+of the fifo vector, then it will get prepended to the current tensor and become
+the input to the model:
 ```c++
     ggml_tensor * cache = nullptr;
     if (prefix) {
@@ -250,6 +251,9 @@ an input.
         cur = ggml_concat(ctx, cache, cur, 1);
     }
 ```
+More on the cache in a separate section below.
+
+
 Then we have the positions (frames/time):
 ```c++
     auto * positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, time);
@@ -573,15 +577,15 @@ frame 0 (10-20ms): [p_spk0, p_spk1, p_spk2, p_spk3, p_spk4, p_spk5, p_spk6, p_sp
 By using this we can there for determine which speakers are active during the
 frame by frame.
 
-### cache
+### Cache
 This models uses self-attention but it does not have a kv-cache. This is as far
 as I understand the arch of Sortformer. It uses an Embedding-Level Prefix Cache.
 
-So above I simple traced through the first invocation where prefix was 0 and it
-dit not really consider the cache at that point. But it would have helped to
+So above I simply traced through the first invocation where prefix was 0 and I
+did not really consider the cache at that point. But it would have helped to
 actually work through this and understand the cache as after the graph has been
 computed the cache is updated and without this background it might not be clear
-as to what it is doing.
+as to what the code is doing.
 
 So we have the `input` to the graph which is our log mel-spectrogram and this
 does not change. We also have positions as input, and then we have the third
@@ -834,4 +838,807 @@ being prepended to the projected input (hidden).
     const int chunk_valid = frames - rc;
 ```
 
-_wip_
+```c++
+static void whisper_diar_cache_compress(whisper_diar_cache & state,
+                                        const std::vector<float> &  cache_preds) {
+    ...
+
+    std::vector<float> scores(static_cast<size_t>(n) * state.n_speakers);
+```
+
+```c++
+    for (int f = 0; f < n; ++f) {
+        // sum of 1 minus p ( log(1 -p))
+        float sum_log1p = 0.f;
+        // for each frame f we are doing to iterate over all speakers.
+        for (int s = 0; s < state.n_speakers; ++s) {
+            const float p = cache_preds[static_cast<size_t>(f) * state.n_speakers + s];
+            sum_log1p += std::log(std::max(1.f - p, state.scoring.pred_score_threshold));
+        }
+```
+Recall that p which is extracted from cache_preds is a probability that speaker
+s is talking. 1 - p is P(speaker is silent).
+
+```console
+            7
+sum_log1p = Σ  ln(1 - pj) = ln(1 - p0) + ln(1 - p1) + ln(1 - p2) + .. + ln(1 - p7)
+           j=0                  ↑            ↑
+                                |        P(speaker1 is silent)
+                            P(speaker0 is silent)
+```
+Notice that this sum includes the silence term for _every_ speaker including
+speaker s.
+
+This is then used in the next loop, where we again loop over all the speakers
+```c++
+        for (int s = 0; s < state.n_speakers; ++s) {
+            const float p     = cache_preds[static_cast<size_t>(f) * state.n_speakers + s];
+            const float logp  = std::log(std::max(p, state.scoring.pred_score_threshold));
+            const float log1p = std::log(std::max(1.f - p, state.scoring.pred_score_threshold));
+            scores[static_cast<size_t>(f) * state.n_speakers + s] = logp - log1p + sum_log1p - log_half;
+        }
+```
+Recall that sum_log1p includes the current speaker s which is why we calculate
+P(speaker s is silent), log1p, and then subtract that (logp - log1p) that as we
+want speaker s to be active so we need remove that speaker s is non-active.
+We then add the sum_log1p the silence probability of all speakers, and log_half
+it to center this at zero (recall that subtracting in log space is the same as
+division in linear space, just like addition is multiplication). So that last
+subtraction is:
+```console
+                       P
+ln(P) - ln(0.5) = ln (---)
+                      0.5
+```
+```console
+If P(only s talks) > 0.5, then P/0.5 > 1.0 providing a positive score.
+If P(only s talks) < 0.5, then P/0.5 < 1.0 providing a negative score.
+If P(only s talks) = 0.5, then the score will be exactly 0.0.
+```
+So a score > 0 means that this speaker was speaking with no cross
+talk and no background ambiuity.
+
+We have 280 speaker frames (80ms) (state.n_spk_frames) and we have 8 speakers,
+so in total score will be a vector of 280*8=2240:
+```console
+score[0] = frame0 speaker0: log-odds that only speaker 0 is speaking
+score[1] = frame0 speaker1: log-odds that only speaker 1 is speaking
+score[2] = frame0 speaker2: log-odds that only speaker 2 is speaking
+score[3] = frame0 speaker3: log-odds that only speaker 3 is speaking
+score[4] = frame0 speaker4: log-odds that only speaker 4 is speaking
+score[5] = frame0 speaker5: log-odds that only speaker 5 is speaking
+score[6] = frame0 speaker6: log-odds that only speaker 6 is speaking
+score[7] = frame0 speaker7: log-odds that only speaker 7 is speaking
+
+score[8] = frame1 speaker8: log-odds that only speaker 8 is speaking
+score[9] = frame1 speaker9: log-odds that only speaker 9 is speaking
+...
+score[2240] = frame279 speaker9: log-odds that only speaker 9 is speaking
+```
+
+After all the score have been calculated we will then proceed with:
+```c++
+    std::vector<int> pos_count(state.n_speakers, 0);
+    for (int f = 0; f < n; ++f) {
+        for (int s = 0; s < state.n_speakers; s++) {
+            const size_t i = static_cast<size_t>(f) * state.n_speakers + s;
+            const bool is_speech = cache_preds[i] > 0.5f;
+            if (!is_speech) {
+                // if the current speaker did not talk then set to -inf to avoid
+                // negative values in later operations.
+                scores[i] = WHISPER_DIAR_NEG_INF;
+            }
+            // If the current speaker was speaking with no cross talk and no
+            // background ambiguity the we increment that speakers count.
+            if (scores[i] > 0.f) {
+                pos_count[s]++;
+            }
+        }
+    }
+```
+If a speaker has zero as its count then we can't overwrite or change that speakers
+existing cache vectors.
+
+Then we have:
+```c++
+    for (int s = 0; s < state.n_speakers; s++) {
+        // If the count for a speaker is less that min_pos then skip it.
+        // Just one or two 80ms frames do not contain enough accoustic information
+        // to define human voice so if we have less that the defined min we
+        // skip this speaker. For example, the current min_pos is 16 which is
+        // about 1.28 seconds (16*80ms ≈ 1.28s).
+        if (pos_count[s] < min_pos) {
+            continue;
+        }
+
+        for (int f = 0; f < n; ++f) {
+            const size_t i = static_cast<size_t>(f) * state.n_speakers + s;
+            const bool is_speech = cache_preds[i] > 0.5f;
+            // If the probability of cache_pred[i] is greater than 0.5 we consider it
+            // that someone is talking. But we also want to make sure that the
+            // score for this index (speaker) is greater than 0, because if it
+            // is not then there is some kind of cross-talk or background noice
+            // and it is not a pure solo speaker.
+            if (is_speech && !(scores[i] > 0.f)) {
+                scores[i] = WHISPER_DIAR_NEG_INF;
+            }
+        }
+    }
+```
+
+Next we have:
+```c++
+    if (state.scoring.scores_boost_latest > 0.f) {
+        for (int f = cap; f < n; ++f) {
+            for (int s = 0; s < state.n_speakers; s++) {
+                scores[static_cast<size_t>(f) * state.n_speakers + s] += state.scoring.scores_boost_latest;
+            }
+        }
+    }
+```
+```console
+(gdb) p state.scoring.scores_boost_latest
+$53 = 0.0500000007
+(gdb) p cap
+$54 = 264
+(gdb) p n
+$55 = 280
+```
+So the above is looping from cap (264) to n (280) so in this case we have 16
+frames of 80ms and we have 8 speakers.
+```
+score[2212] = frame264 speaker0: log-odds that only speaker 0 is speaking
+score[2213] = frame264 speaker1: log-odds that only speaker 1 is speaking
+score[2214] = frame264 speaker2: log-odds that only speaker 2 is speaking
+score[2215] = frame264 speaker3: log-odds that only speaker 3 is speaking
+score[2216] = frame264 speaker4: log-odds that only speaker 4 is speaking
+score[2217] = frame264 speaker5: log-odds that only speaker 5 is speaking
+score[2218] = frame264 speaker6: log-odds that only speaker 6 is speaking
+score[2219] = frame264 speaker6: log-odds that only speaker 6 is speaking
+...
+```
+And we are increasing the score for these log-odds by adding a positive constant
+value. These are scores of more recent frames which is a way to avoid old audio
+from minutes ago. The motivation for doing this is that a persons acoustic profile
+is not completely static during a session, the speaker might turn their head,
+lean back in their chair, or anything else that changes their vocal tone, volume
+or pitch. If the cache only retained frames from the very beginning the models
+achor vectors would represent how the speaker sounded 10 mins ago under different
+acoustic conditions. This is a way of rotating in the current representations
+of the voice.
+
+Next we have:
+```c++
+    const int strong_k = static_cast<int>(std::floor(per_spk * state.scoring.strong_boost_rate));
+    for (int s = 0; s < state.n_speakers; ++s) {
+        for (int f : whisper_diar_topk_column(scores, n, state.n_speakers, s, strong_k)) {
+            scores[static_cast<size_t>(f) * state.n_speakers + s] -= 2.f * log_half;
+        }
+    }
+```
+So we have the following values:
+```console
+(gdb) p per_spk
+$1 = 32
+(gdb) p state.scoring.strong_boost_rate 
+$2 = 0.75
+
+(gdb) p n
+$7 = 280
+(gdb) p state.n_speakers
+$8 = 8
+
+(gdb) p strong_k
+$10 = 24
+```
+The above will iterate over all the 8 speakers and call whisper_diar_topk_column
+for each of them setting f to the result. 
+```c++
+static std::vector<int> whisper_diar_topk_column(const std::vector<float> & scores,
+        int n, int n_spk, int spk, int k) {
+    // create a vector with a size of 280.
+    std::vector<int> idx(n);
+    // fill with sequentially increasing values starting from 0.
+    std::iota(idx.begin(), idx.end(), 0);
+
+    // we can't pick top k from a collection if it contains fewer elements than
+    // k so we pick the smallest. If that is the case we would return all frames.
+    k = std::min(k, n);
+
+    // Next we sort the idx vector so that our top k entries are come first.
+    std::partial_sort(idx.begin(),      // start
+        idx.begin() + k,                // middle
+        idx.end(),                      // last
+        [&](int a, int b) {
+        const float sa = scores[static_cast<size_t>(a) * n_spk + spk];
+        const float sb = scores[static_cast<size_t>(b) * n_spk + spk];
+        if (sa != sb) {
+            return sa > sb;
+        }
+        return a < b;
+    });
+
+    idx.resize(k);
+
+    return idx;
+}
+```
+I've updated the code to use nth_element as we don't need the result to be 
+sorted.
+```c++
+    for (int s = 0; s < state.n_speakers; ++s) {
+        for (int f : whisper_diar_topk_column(scores, n, state.n_speakers, s, strong_k)) {
+            scores[static_cast<size_t>(f) * state.n_speakers + s] -= 2.f * log_half;
+        }
+    }
+```
+So this will call whisper_diar_topk_column for each speaker, and the inner for
+loop it iterating over the frame indices that we get back. And updating the
+scores for by subtracting (2.0 * log_half). This is in fact adding a positive
+constant:
+```console
+(gdb) p log_half
+$3 = -0.693147182
+
+(gdb) p std::log(0.5)
+$4 = -0.693147180559945309429
+
+(gdb) p -2.0 * log_half
+$5 = 1.3862943649291992
+```
+So this is adding a constant positive value to each or the top k scores for
+each speaker. And remember that we are in log space so adding 1.386 (log(4)
+is like multiplying by 4.
+
+To clarify this lets look at a simple example:
+```console
+Total cache capacity: 4 frames (80ms each)
+strong_k            : 2 (each speaker is guaranteed up to 2 protected slots)
+```
+We have 6 candidate frames in memory. 4 from speaker 0 which is a loud and sitting
+close to the microphone speaking confidantly. And 2 from speaker 1 who is talking
+quietly and setting a bit away from the microphone.
+
+Recall that score = ln(P/0.5):
+```console
+Speaker 0:
+Frame 0: P = 0.95 -> score = ln(0.95 / 0.5) = +0.64
+Frame 1: P = 0.92 -> score = ln(0.92 / 0.5) = +0.61
+Frame 2: P = 0.90 -> score = ln(0.90 / 0.5) = +0.59
+Frame 3: P = 0.88 -> score = ln(0.88 / 0.5) = +0.56
+
+Speaker 1:
+Frame 0: P = 0.60 -> score = ln(0.60 / 0.5) = +0.18
+Frame 1: P = 0.55 -> score = ln(0.55 / 0.5) = +0.10
+```
+If we just picked the top 4 frames by score we would get all the frames from
+speaker 0 and none from speaker 1. But with the strong_k boost:
+```console
+boost = -2.0 * ln(0.5) = +2.0 * 0.693 = +1.39
+
+Speaker 0:
+Frame 0: 0.64 + 1.39 = +2.03 (boosted)
+Frame 1: 0.61 + 1.39 = +2.00 (boosted)
+Frame 2: not boosted as it exceeds strong_k
+Frame 3: not boosted as it exceeds strong_k
+
+Speaker 0:
+Frame 0: 0.18 + 1.39 = +1.57 (boosted)
+Frame 0: 0.10 + 1.39 = +1.49 (boosted)
+```
+
+Then we have the following which will use the boosted scores that was updated
+just before this. And notice that this is using weak_k and not strong_k:
+```c++
+    const int weak_k = static_cast<int>(std::floor(per_spk * state.scoring.weak_boost_rate));
+    for (int s = 0; s < state.n_speakers; ++s) {
+        for (int f : whisper_diar_topk_column(scores, n, state.n_speakers, s, weak_k)) {
+            scores[static_cast<size_t>(f) * state.n_speakers + s] -= log_half;
+        }
+    }
+```
+```console
+(gdb) p state.scoring.weak_boost_rate
+$1 = 1.5
+(gdb) p weak_k
+$2 = 48
+```
+So this is getting the 48 top k values from scores (boosted remember), and for
+each one gets a boost of +0.69. So this is include more then the first boost
+and giving runner ups a boost too.
+
+Next we have:
+```c++
+    const int n_pad = n + state.scoring.sil_frames_per_spk;
+```
+```console
+(gdb) p n + state.scoring.sil_frames_per_spk
+$2 = 281
+(gdb) p state.scoring.sil_frames_per_spk
+$3 = 1
+```
+
+```c++
+    // create a vector of 281 * 8 = 2248
+    std::vector<int64_t> flat(static_cast<size_t>(state.n_speakers) * n_pad);
+    // generate sequential increasing values starting from 0.
+    std::iota(flat.begin(), flat.end(), 0);
+
+    auto flat_score = [&](int64_t i) -> float {
+        const int f = static_cast<int>(i % n_pad);
+        if (f >= n) {
+            return WHISPER_DIAR_POS_INF;
+        }
+        const int s = static_cast<int>(i / n_pad);
+        return scores[static_cast<size_t>(f) * state.n_speakers + s];
+    };
+
+    std::partial_sort(flat.begin(),
+                      flat.begin() + cap,    // cap=264
+                      flat.end(),
+                      [&](int64_t a, int64_t b) {
+        const float sa = flat_score(a), sb = flat_score(b);
+        if (sa != sb) {
+            return sa > sb;
+        }
+        return a < b;
+    });
+```
+Notice the indexing:
+```c++
+        const int f = static_cast<int>(i % n_pad);
+        const int s = static_cast<int>(i / n_pad);
+```
+So recall that our scores are in [frames, speakers] where we would index using
+```console
+idx = f * n_speakers + s
+idx = 1 * n_speakers + 1
+idx = 9
+    0  score[0] = frame0 speaker0: log-odds that only speaker 0 is speaking
+    1  score[1] = frame0 speaker1: log-odds that only speaker 1 is speaking
+    2  score[2] = frame0 speaker2: log-odds that only speaker 2 is speaking
+    3  score[3] = frame0 speaker3: log-odds that only speaker 3 is speaking
+    4  score[4] = frame0 speaker4: log-odds that only speaker 4 is speaking
+    5  score[5] = frame0 speaker5: log-odds that only speaker 5 is speaking
+    6  score[6] = frame0 speaker6: log-odds that only speaker 6 is speaking
+    7  score[7] = frame0 speaker7: log-odds that only speaker 7 is speaking
+
+    8  score[8] = frame1 speaker8: log-odds that only speaker 8 is speaking
+--> 9  score[9] = frame1 speaker9: log-odds that only speaker 9 is speaking
+    ...
+    2240 score[2240] = frame279 speaker9: log-odds that only speaker 9 is speaking
+```
+The flat vector is instead in [n_speakers, n_pad]:
+```console
+(gdb) p state.n_speakers
+$9 = 8
+
+    const int n_pad = n + state.scoring.sil_frames_per_spk;
+(gdb) p n_pad
+$8 = 281
+
+(gdb) p state.scoring.sil_frames_per_spk
+$10 = 1
+
+
+Speaker 0:  [ 0  ...  279 pad]
+Speaker 1:  [ 0  ...  279 pad]
+...
+Speaker 7:  [ 0  ...  279 pad]
+                        ↑  ↑  
+                        m  state.scoring.sil_frames_per_spk
+```
+Recall that flat just contains indices [0, 2248) and these encode speaker/frame
+pairs:
+```console
+(gdb) p n_pad
+$18 = (const int &) @0x7fffffffce10: 281
+
+(gdb) p flat.size()
+$19 = 2248
+
+    const int n_pad = n + state.scoring.sil_frames_per_spk;
+    std::vector<int64_t> flat(static_cast<size_t>(state.n_speakers) * n_pad);
+
+s = i/281
+f = i%281
+```
+So every value in flat is a compact representation of speaker s at frame f.
+So each speaker has 281 frames including one padding frame, so 280 real audio
+frames and one silence padding frame. The index that can be passed to the lambda
+is any of the 2248 depending on if the are part of the top cap selected ones.
+If we get an index into the first 381 then what would one for the first speaker:
+```console
+(gdb) p flat[7]/281
+$21 = 0  (speaker 0)
+(gdb) p flat[7]%281
+$22 = 7  (frame 7)
+
+(gdb) p flat[2240]/281
+$36 = 7   (speaker 7)
+gdb) p flat[2240]%281
+$35 = 273  (frame 273
+```
+```c++
+    auto flat_score = [&](int64_t i) -> float {
+        // mod with real audio frames plus padding (n_pad)
+        const int f = static_cast<int>(i % n_pad);
+        if (f >= n) {
+            // padding so set to positive inf
+            return WHISPER_DIAR_POS_INF;
+        }
+        // the index i is the index in the 
+        const int s = static_cast<int>(i / n_pad);
+        return scores[static_cast<size_t>(f) * state.n_speakers + s];
+    };
+```
+In the partial sort we we flat_score to 
+```c++
+    std::partial_sort(flat.begin(), flat.begin() + cap, flat.end(), [&](int64_t a, int64_t b) {
+        const float sa = flat_score(a);
+        const float sb = flat_score(b);
+        // highest score wins if the scores are not equal. Because we set
+        // the padding frames as positive infinity they are greater than any
+        // real score.
+        if (sa != sb) {
+            return sa > sb;
+        }
+        // if the are equal return the one with the lowest index.
+        return a < b;
+    });
+```
+
+```console
+$10 = std::vector of length 2248, capacity 2248 = {
+280,  speaker 0 silence (0 * 281 + 280)
+561,  speaker 1 silence (1 * 281 + 280)
+842,  speaker 2 silence (2 * 281 + 280)
+1123, speaker 3 silence (3 * 281 + 280)
+1404, speaker 4 silence (4 * 281 + 280)
+1685, speaker 5 silence (5 * 281 + 280)
+1966, speaker 6 silence (6 * 281 + 280)
+2247, speaker 7 silence (7 * 281 + 280)
+```
+So we can see that all the silence frames indices will be first in the flat
+vector. So what we have done here is to fullfill a requirement that Sortformer
+has:
+Sortformer requires a baseline silence anchor for every speaker channel
+(even inactive ones) so self-attention has a negative reference point
+and doesn't hallucinate speech during pauses. Setting virtual silence
+frames (f >= n) to +INF guarantees that exactly sil_frames_per_spk slots
+per speaker are locked in at the front of the cache (indices 0..7).
+
+Next we have:
+```c++
+    // Create a new vector with the contents of flat up to cap (264).
+    std::vector<int64_t> picked(flat.begin(), flat.begin() + cap);
+    // iterate over all the indices as modifiable reference so we are updating
+    // i that is.
+    for (auto & i : picked) {
+        if (flat_score(i) == WHISPER_DIAR_NEG_INF) {
+            // update the index to a sentinel id
+            i = WHISPER_DIAR_MAX_INDEX * static_cast<int64_t>(n_pad) + WHISPER_DIAR_MAX_INDEX;
+        }
+    }
+    std::sort(picked.begin(), picked.end());
+```
+
+```console
+(gdb) p picked
+$2 = std::vector of length 264, capacity 264 = {280, 561, 842, 1123, 1404, 1685, 1966, 2247, 68, 103, 104, 100, 
+  105, 101, 106, 156, 67, 102, 107, 111, 157, 69, 98, 99, 110, 155, 62, 159, 109, 108, 158, 66, 313, 314, 599, 315, 
+  746, 312, 598, 747, 600, 316, 97, 154, 55, 59, 60, 61, 63, 58, 56, 57, 81, 54, 65, 96, 153, 64, 82, 160, 161, 50, 
+  70, 112, 53, 51, 83, 52, 95, 49, 152, 84, 48, 21, 47, 162, 20, 19, 22, 17, 94, 18, 46, 151, 16, 71, 15, 45, 150, 
+  1, 73, 14, 44, 72, 149, 80, 93, 113, 74, 0, 148, 217, 121, 43, 122, 120, 123, 216, 124, 125, 218, 147, 114, 119, 
+  2, 13, 118, 115, 117, 42, 116, 215, 163, 12, 126, 229, 146, 23, 228, 127, 41, 11, 230, 128, 237, 238, 219, 191, 
+  192, 239, 164, 129, 168, 236, 85, 130, 227, 240, 214, 131, 165, 40, 167, 166, 10, 193, 241, 132, 3, 169, 75, 235, 
+  231, 242, 133, 190, 39, 134, 92, 24, 243, 220, 79, 135, 194, 4, 5, 6, 7, 8, 9, 25, 26, 27, 28, 29, 30, 31, 32, 
+  33, 34, 35, 36, 37, 38, 76, 77, 78, 86, 87, 88, 89, 90, 91, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 
+  170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 195, 196, 
+  197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 221, 222, 223, 224, 225, 
+  226, 232, 233, 234, 244, 245}
+
+before sort:
+(gdb) p picked
+$7 = std::vector of length 264, capacity 264 = {280, 561, 842, 1123, 1404, 1685, 1966, 2247, 68, 103, 104, 100, 
+  105, 101, 106, 156, 67, 102, 107, 111, 157, 69, 98, 99, 110, 155, 62, 159, 109, 108, 158, 66, 313, 314, 599, 315, 
+  746, 312, 598, 747, 600, 316, 97, 154, 55, 59, 60, 61, 63, 58, 56, 57, 81, 54, 65, 96, 153, 64, 82, 160, 161, 50, 
+  70, 112, 53, 51, 83, 52, 95, 49, 152, 84, 48, 21, 47, 162, 20, 19, 22, 17, 94, 18, 46, 151, 16, 71, 15, 45, 150, 
+  1, 73, 14, 44, 72, 149, 80, 93, 113, 74, 0, 148, 217, 121, 43, 122, 120, 123, 216, 124, 125, 218, 147, 114, 119, 
+  2, 13, 118, 115, 117, 42, 116, 215, 163, 12, 126, 229, 146, 23, 228, 127, 41, 11, 230, 128, 237, 238, 219, 191, 
+  192, 239, 164, 129, 168, 236, 85, 130, 227, 240, 214, 131, 165, 40, 167, 166, 10, 193, 241, 132, 3, 169, 75, 235, 
+  231, 242, 133, 190, 39, 134, 92, 24, 243, 220, 79, 135, 194, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718}
+
+after sort:
+(gdb) p picked
+$8 = std::vector of length 264, capacity 264 = {0, 1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+  24, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65,
+  66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 79, 80, 81, 82, 83, 84, 85, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101,
+  102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+  124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155,
+  156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 190, 191, 192, 193, 194, 214, 215, 216,
+  217, 218, 219, 220, 227, 228, 229, 230, 231, 235, 236, 237, 238, 239, 240, 241, 242, 243, 280, 312, 313, 314,
+  315, 316, 561, 598, 599, 600, 746, 747, 842, 1123, 1404, 1685, 1966, 2247, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718,
+  28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718, 28199718}
+```
+The winning frames are grouped by speaker and sequenced in time after this.
+
+
+Next we have:
+```c++
+    // one vector for the acuostic embeddings which is what feeds into the
+    // attention layer.
+    std::vector<float> new_cache;
+    new_cache.reserve(static_cast<size_t>(cap) * state.n_embd);
+
+    // Stores what models predicted for each speaker during each of those cached
+    // frames.
+    std::vector<float> new_preds;
+    new_preds.reserve(static_cast<size_t>(cap) * state.n_speakers);
+
+    for (int j = 0; j < cap; ++j) {
+        const int64_t i = picked[j];
+        const int f = static_cast<int>(i % n_pad);
+
+        bool silence_anchor = f >= n;
+        bool sentinel_id = i >= static_cast<int64_t>(state.n_speakers) * n_pad;
+        if (silence_anchor || sentiel_id) {
+            new_cache.insert(new_cache.end(), state.mean_sil_emb.begin(), state.mean_sil_emb.end());
+            new_preds.insert(new_preds.end(), state.n_speakers, 0.f);
+        } else {
+            const auto emb_begin = state.spkcache.begin() + static_cast<size_t>(f) * state.n_embd;
+            const auto pred_begin = cache_preds.begin() + static_cast<size_t>(f) * state.n_speakers;
+            new_cache.insert(new_cache.end(), emb_begin, emb_begin + state.n_embd);
+            new_preds.insert(new_preds.end(), pred_begin, pred_begin + state.n_speakers);
+        }
+    }
+```
+
+output from ami_en2002d_2132.wav:
+```console
+speaker 0: 0.00 -> 0.30
+speaker 0: 0.80 -> 1.97
+speaker 1: 2.48 -> 2.86
+speaker 2: 2.88 -> 3.13
+speaker 0: 3.11 -> 6.07
+speaker 0: 6.36 -> 6.88
+speaker 0: 7.39 -> 10.86
+speaker 0: 11.65 -> 13.60
+speaker 2: 14.68 -> 14.89
+speaker 0: 15.22 -> 15.56
+speaker 0: 17.08 -> 17.67
+speaker 0: 18.13 -> 18.55
+speaker 0: 18.81 -> 19.51
+speaker 1: 26.80 -> 27.06
+speaker 1: 28.01 -> 28.18
+speaker 1: 28.37 -> 28.72
+speaker 1: 29.23 -> 29.35
+speaker 1: 30.26 -> 31.16
+speaker 1: 32.32 -> 33.49
+speaker 1: 33.71 -> 35.71
+speaker 2: 33.88 -> 34.12
+speaker 1: 35.97 -> 36.36
+speaker 2: 36.93 -> 37.10
+speaker 1: 37.32 -> 39.54
+speaker 2: 40.45 -> 40.65
+speaker 1: 40.84 -> 41.41
+speaker 1: 41.59 -> 43.13
+speaker 2: 44.42 -> 44.67
+speaker 1: 45.39 -> 46.01
+speaker 2: 46.76 -> 47.07
+speaker 1: 47.37 -> 47.98
+speaker 0: 48.54 -> 50.89
+speaker 2: 51.23 -> 51.64
+speaker 2: 51.86 -> 53.29
+speaker 2: 53.94 -> 54.19
+speaker 2: 54.76 -> 55.02
+speaker 2: 55.42 -> 56.04
+speaker 2: 56.73 -> 57.34
+speaker 1: 57.63 -> 59.22
+speaker 0: 57.84 -> 58.20
+speaker 1: 59.50 -> 59.91
+speaker 2: 59.65 -> 59.90
+
+speaker 0: 0.00 -> 2.04
+speaker 1: 2.25 -> 2.94
+speaker 2: 2.66 -> 3.19
+speaker 0: 2.89 -> 10.91
+speaker 0: 11.42 -> 13.67
+speaker 0: 15.00 -> 15.63
+speaker 0: 16.86 -> 19.58
+speaker 1: 26.61 -> 27.14
+speaker 1: 27.80 -> 28.80
+speaker 1: 30.04 -> 31.23
+speaker 1: 32.09 -> 36.43
+speaker 2: 33.66 -> 34.19
+speaker 1: 37.10 -> 39.62
+speaker 1: 40.61 -> 43.20
+speaker 2: 44.20 -> 44.75
+speaker 1: 45.17 -> 46.09
+speaker 2: 46.53 -> 47.15
+speaker 1: 47.15 -> 48.06
+speaker 0: 48.32 -> 50.96
+speaker 2: 51.00 -> 53.36
+speaker 2: 53.71 -> 56.11
+speaker 2: 56.51 -> 57.42
+speaker 1: 57.41 -> 59.98
+speaker 0: 57.61 -> 58.27
+speaker 2: 59.42 -> 59.98
+```
+Python output for the same file:
+```console
+0.000 0.320 speaker_0
+0.800 1.960 speaker_0
+2.480 2.860 speaker_1
+2.870 3.130 speaker_2
+3.120 6.070 speaker_0
+6.360 6.880 speaker_0
+7.390 10.860 speaker_0
+11.650 13.600 speaker_0
+14.680 14.890 speaker_2
+15.220 15.570 speaker_0
+17.080 17.650 speaker_0
+18.130 18.550 speaker_0
+18.810 19.500 speaker_0
+26.770 27.070 speaker_1
+28.000 28.190 speaker_1
+28.350 28.730 speaker_1
+29.160 29.380 speaker_1
+30.260 31.150 speaker_1
+32.320 33.490 speaker_1
+33.700 35.710 speaker_1
+33.880 34.120 speaker_2
+35.970 36.370 speaker_1
+36.930 37.100 speaker_2
+37.320 39.540 speaker_1
+40.450 40.650 speaker_2
+40.840 41.410 speaker_1
+41.590 43.130 speaker_1
+44.420 44.670 speaker_2
+45.390 46.010 speaker_1
+46.750 47.070 speaker_2
+47.370 47.980 speaker_1
+48.540 50.900 speaker_0
+51.230 51.630 speaker_2
+51.860 53.300 speaker_2
+53.940 54.190 speaker_2
+54.750 55.020 speaker_2
+55.420 56.030 speaker_2
+56.730 57.340 speaker_2
+57.630 59.230 speaker_1
+57.840 58.200 speaker_0
+59.500 59.910 speaker_1
+59.650 59.900 speaker_2
+```
+Output from NeMo-Speech:
+```console
+./build/bin/diarize_file ~/work/ai/whisper-work/models/Nemotron-3-Diarization.q8_0.gguf ~/work/ai/whisper-work/samples/ami_en2002d_2132.wav  --gpu -1
+[diarize_file] 60.0s audio, 6001 frames (streaming), 25 segments
+  [   0.000s -    2.039s] speaker 1
+  [   2.251s -    2.939s] speaker 2
+  [   2.661s -    3.189s] speaker 3
+  [   2.891s -   10.909s] speaker 1
+  [  11.421s -   13.669s] speaker 1
+  [  15.001s -   15.629s] speaker 1
+  [  16.861s -   19.579s] speaker 1
+  [  26.611s -   27.139s] speaker 2
+  [  27.801s -   28.799s] speaker 2
+  [  30.041s -   31.229s] speaker 2
+  [  32.091s -   36.429s] speaker 2
+  [  33.661s -   34.199s] speaker 3
+  [  37.101s -   39.619s] speaker 2
+  [  40.611s -   43.209s] speaker 2
+  [  44.201s -   44.749s] speaker 3
+  [  45.171s -   46.089s] speaker 2
+  [  46.531s -   47.149s] speaker 3
+  [  47.151s -   48.059s] speaker 2
+  [  48.321s -   50.959s] speaker 1
+  [  51.001s -   53.359s] speaker 3
+  [  53.711s -   56.109s] speaker 3
+  [  56.511s -   57.419s] speaker 3
+  [  57.411s -   59.979s] speaker 2
+  [  57.611s -   58.269s] speaker 1
+  [  59.421s -   59.979s] speaker 3
+```
+
+### segments
+So after we have processed the audio file the model we will update the
+state.prob vector:
+```c++
+    state.buf_probs.resize(time * 8 * speakers);
+    ggml_backend_tensor_get(output, state.buf_probs.data(), 0, state.buf_probs.size() * sizeof(float));
+
+    // write probabilites to probs.
+    state.probs.insert(state.probs.end(),
+                       state.buf_probs.begin() + prefix * 8 * speakers,
+                       state.buf_probs.begin() + (prefix * 8 + valid_mel) * speakers);
+```
+And this just a flat vector with the size n_frames * n_speakers. For example aftr
+the first chunk we would have:
+```console
+(gdb) p state.probs.size()
+$15 = 832
+```
+And recall that the computation graph upsamples back to 10ms. So we would have
+10ms mel frames, and a chunk_len of 13, and 8 speakers:
+```console
+13 * 8 = 104
+104 * 8 = 832
+```
+This is a flat array in the shape of [n_frames, n_speakers].  So to access
+frame f, we do f * n_speakers + s
+```console
+    0 frame0 : speaker0
+    1 frame0 : speaker1
+    2 frame0 : speaker2
+        ...
+    7 frame0 : speaker7
+    8 frame1 : speaker0
+    9 frame1 : speaker1
+        ...
+```
+```c++
+        for (int s = 0; s < ctx->model.hparams.n_speakers; ++s) {
+            std::vector<whisper_diar_segment> segments;
+
+            // Find contigous frames where speaker s is active
+            int64_t start = -1;
+            for (int64_t f = 0; f <= n_frames; ++f) {
+                const float v = f < n_frames ? ctx->state.probs[f * ctx->model.hparams.n_speakers + s] : -1.0f;
+                if (start < 0 && f < n_frames && v >= p.start_threshold) {
+                    start = f;
+                }
+                if (start >= 0 && (f == n_frames || v < p.stop_threshold)) {
+                    segments.push_back({start, f, s});
+                    start = -1;
+                }
+            }
+```
+
+```c++
+            // by applying the padding above it is now possible that segments
+            // overlap. So we merge overlapping segments here.
+            std::vector<whisper_diar_segment> merged;
+            for (const auto & seg : segments) {
+                if (merged.empty()) {
+                    merged.push_back(seg);
+                    continue;
+                }
+
+                bool t0_overlap = seg.t0 <= merged.back().t1;
+                bool sil_to_short = (seg.t0 - merged.back().t1) * 10 < p.min_silence_duration_ms;
+
+                if (t0_overlap || sil_to_short) {
+                    merged.back().t1 = std::max(merged.back().t1, seg.t1);
+                } else {
+                    merged.push_back(seg);
+                }
+            }
+```
+After padding, this can happen:
+```console
+  seg1 original: [10, 20] -> padded: [0, 28]   (pushed to merged first)
+  seg2 original: [13, 18] -> padded: [0, 26]   (shorter after padding, fully inside seg1) 
+```
+```c++
+            for (const auto & seg : merged) {
+                if ((seg.t1 - seg.t0) * 10 >= p.min_speech_duration_ms) {
+                    result->data.push_back(seg);
+                }
+            }
+```
