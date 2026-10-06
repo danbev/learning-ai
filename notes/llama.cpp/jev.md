@@ -357,6 +357,141 @@ We then have:
         }
     }
 ```
+And server_decision_group_tasks looks like this:
+```c++
+std::vector<server_task> server_decision_group_tasks(std::vector<server_task> && tasks, size_t n_slots) {
+    n_slots = std::max(n_slots, (size_t) 1);
+
+    std::vector<server_task> groups;
+    for (size_t i = 0; i < tasks.size(); i += n_slots) {
+        // process groups of tasks. For our example of 7 tasks and n_slots=4
+        // i=0, end=4, -> tasks 0, 1, 2, 3
+        // i=4, end=7, -> tasks 4, 5, 6
+        const size_t end = std::min(tasks.size(), i + n_slots);
+        // use as parent task (reference not copy)
+        server_task & parent = tasks[i];
+
+        // every task must have at least one token of its own to evaluate
+        size_t n_shared = parent.tokens.size() - 1;
+        for (size_t j = i + 1; j < end; j++) {
+            // call parents get_common_prefix with task[j]'s tokens to figure out
+            // how many they have in common.
+            n_shared = std::min(n_shared, parent.tokens.get_common_prefix(tasks[j].tokens));
+            n_shared = std::min(n_shared, tasks[j].tokens.size() - 1);
+        }
+
+        // if there was only one task in the group end - i is less than 2 (so 1),
+        // or if there were no common tokens between tasks. If this is the case
+        // we just add the tasks as separate tasks.
+        if (end - i < 2 || n_shared == 0) {
+            for (size_t j = i; j < end; j++) {
+                groups.push_back(std::move(tasks[j]));
+            }
+            continue;
+        }
+
+        parent.n_tokens_shared = n_shared;
+        for (size_t j = i + 1; j < end; j++) {
+            tasks[j].id_parent = parent.id;
+            // notice that we are adding the task as a child task of the parent
+            // task. So later the parent processes the shared prefix first and
+            // the children wait until they can reuse that state.
+            parent.child_tasks.push_back(std::move(tasks[j]));
+        }
+        groups.push_back(std::move(parent));
+    }
+    return groups;
+}
+```
+Back in server-context we will then post the task to the server_response_reader
+(rd);
+```console
+            rd.post_tasks(std::move(tasks));
+```
+The response reader is own by the HTTP response object (res) and it connects
+the HTTP handler to the servers task/result queues. This call prepares to recieve
+the results and also submits the work (server-queue.cpp):
+```c++
+void server_response_reader::post_tasks(std::vector<server_task> && tasks, bool front) {
+    GGML_ASSERT(id_tasks.empty() && "post_tasks() can only be called once per reader");
+    // assign an id for each task (parent and child tasks)
+    id_tasks = server_task::get_list_id(tasks);
+
+    states.reserve(tasks.size());
+    // ordering is important so this sets the task.index so that the tasks are
+    // processed in order.
+    size_t index = 0;
+    for (auto & task : tasks) {
+        task.index = index++;
+        // create a state per task
+        states.push_back(task.create_state());
+
+        // for child tasks (index and state just like for the parent)
+        for (auto & child_task : task.child_tasks) {
+            child_task.index = index++;
+            states.push_back(child_task.create_state());
+        }
+    }
+    GGML_ASSERT(states.size() == id_tasks.size());
+ 
+    // register the ids as waiting for results of processing.
+    queue_results.add_waiting_task_ids(id_tasks);
+
+    queue_tasks.post(std::move(tasks), front);
+}
+```
+```c++
+int server_queue::post(server_task && task, bool front) {
+    // aquires the mutex_tasks lock.
+    std::unique_lock<std::mutex> lock(mutex_tasks);
+
+    // if this is cancel task make sure to clean up pending tasks
+    if (task.type == SERVER_TASK_TYPE_CANCEL) {
+        cleanup_pending_task(task.id_target);
+    }
+
+    const int  task_id     = task.id;
+    const bool reset_timer = task_resets_idle_timer(task.type);
+    QUE_DBG("new task, id = %d, front = %d\n", task_id, front);
+    if (front) {
+        queue_tasks.push_front(std::move(task));
+    } else {
+        queue_tasks.push_back(std::move(task));
+    }
+
+    if (reset_timer) {
+        time_last_task = ggml_time_ms();
+    }
+
+    // mutex_tasks lock is still held here.
+    condition_tasks.notify_one();
+
+    return task_id;
+}
+```
+Condition_tasks
+
+Previously in server_context_impl::init we have:
+```c++
+    bool init() {
+        ...
+
+        // wiring up server queues
+        queue_tasks.on_new_task([this](server_task && task, bool is_yielding) {
+            return process_single_task(std::move(task), is_yielding);
+        });
+
+        queue_tasks.on_update_slots([this]() {
+            update_slots();
+        });
+```
+
+So post_tasks is submitting tasks for processing.
+
+After that the response handler will wait for all of the task to complete: 
+```c++
+        auto all_results = rd.wait_for_all(req.should_stop);
+```
 
 _wip_
 
