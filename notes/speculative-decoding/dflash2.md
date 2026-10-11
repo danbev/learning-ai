@@ -555,3 +555,391 @@ $147 = std::vector of length 1, capacity 1 = {1156}
 ```
 We then continue and to the same for all of the remaining 7 blocks.
 
+So I know I've been sort of doing this by jumping back and forth and I need to
+revisit the order later but after having gone thought the above code inte the
+drafter lets revisit build_dflash2_selector and see if it makes more sense now.
+This function is called from llama_model_dflash::graph<false>::graph:
+```c++
+template <>
+llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+    ...
+
+    inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
+    ggml_set_input(inp->tokens);
+    res->t_inp_tokens = inp->tokens;
+
+    ggml_tensor * inp_tokens = inp->tokens;
+
+    ...
+
+    res->t_embd = cur;
+
+    ...
+
+    // DFlash2 feeds these logits to the selector, so they need the target's output
+    // transforms; DFlash1 and DSpark read them through the sampler instead
+    if (model.dflash_selector_hidden) {
+        if (hparams.f_logit_scale != 0.0f) {
+            cur = ggml_scale(ctx0, cur, hparams.f_logit_scale);
+        }
+        if (hparams.f_final_logit_softcapping > 0.0f) {
+            cur = ggml_scale(ctx0, cur, 1.0f / hparams.f_final_logit_softcapping);
+            cur = ggml_tanh(ctx0, cur);
+            cur = ggml_scale(ctx0, cur, hparams.f_final_logit_softcapping);
+        }
+    }
+
+    ...
+
+    cb(cur, "result_output", -1);
+    res->t_logits = cur;
+
+    ...
+
+    if (model.dflash_selector_hidden) {
+        build_dflash2_selector(*this, model, inp_tokens);
+    }
+}
+```
+Here are some of the local variables that will be used for reference later:
+```console
+```console
+(gdb) p tokens_per_block
+$155 = 8
+(gdb) p block_size
+$156 = 8
+(gdb) p row_used
+$157 = 272
+(gdb) p n_tokens
+$158 = 8
+(gdb) p n_embd
+$159 = 5120
+(gdb) p top_k
+$160 = 16
+(gdb) p rank
+$161 = 256
+(gdb) p n_blocks
+$162 = 1
+```
+
+```c++
+static void build_dflash2_selector(llm_graph_context & g, const llama_model & model, ggml_tensor * tokens) {
+    ...
+
+    ggml_tensor * candidates  = ggml_top_k(ctx0, res->t_logits, top_k);
+    ggml_tensor * logits_rows = ggml_reshape_3d(ctx0, res->t_logits, 1, res->t_logits->ne[0], n_tokens);
+    ggml_tensor * unary       = ggml_reshape_2d(ctx0,
+            ggml_get_rows(ctx0, logits_rows, candidates), top_k, n_tokens);
+```
+So candidates will be the top-16 indices of the logits. And we have logits_rows
+so that we can extract the values using those indices which will be in unary. And
+this is the score for the token position in isolation (unary).
+
+Next we have:
+```c++
+    ggml_tensor * gate        = g.build_lora_mm(model.dflash_selector_hidden, res->t_embd);
+```
+Notice that this is using a model weight and also res->t_embd which is the
+models hidden vector state before the output projection code. Simlilar to how
+the models hidden vector space is projected into the token-identity space using
+lm_head this is also projecting the same hidden vector space but trained to
+answer a different question and projects into a smaller space
+n_embd (5120) -> rank (256).
+
+We can think of rank as a learned compability axes between token which
+model.dflash_selector_prev and model.dflash_selector_next have backed into them.
+They contain information about things like "do these tokens agreee grammatically",
+"are these semantically related" etc. Each axis contributes one term to the
+eventual dot product between a predecessor and a successor vector. The gate is
+what decides at this specific position given everything  the model currently
+sees in its hidden state how much of each of those rank axes should matter.
+
+Next we create block shaped tensors for candidates, unary, and the gate tensors:
+```c++
+    ggml_tensor * cand_blk  = ggml_reshape_3d(ctx0, candidates, top_k, tokens_per_block, n_blocks);
+    ggml_tensor * unary_blk = ggml_reshape_3d(ctx0, unary,      top_k, tokens_per_block, n_blocks);
+    ggml_tensor * gate_blk  = ggml_reshape_3d(ctx0, gate,       rank,  tokens_per_block, n_blocks);
+```
+Which will be the same shape in this case as n_blocks is 1.
+
+Then we have the score_run lambda definition, but I'll show that when it is
+first used and when we step through it.
+
+Next we create a packed tensor which is filled with 0.0f:
+```c++
+    ggml_tensor * packed = ggml_fill(ctx0,
+            ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, n_embd, 1, n_blocks), 0.0f);
+```
+```console
+(gdb) p packed->ne
+$219 = {5120, 1, 1, 1}
+```
+And recall from above that a row looks like this:
+```console
+[0 ... 15 16 ...    271  ...  5119][ ...        ][...]
+[tok ids][16x16 scores][0 padding ]↑
+          
+        row 0                          row 1
+```
+
+
+```c++
+    if (block_size > 1) {
+        // Position 1 alone: its predecessor is the anchor token, one id per
+        // sequence rather than a candidate set.
+        ggml_tensor * anchor_ids = ggml_cont_1d(ctx0,
+                ggml_view_2d(ctx0, tokens, 1, n_blocks, tokens_per_block * tokens->nb[0], 0), n_blocks);
+```
+Now, tokens is from inp_tokens and this is the raw I32 input ids for the whole
+batch. Position 0 of each block is the real anchor token id. 
+
+Then we have:
+```c++
+        packed = ggml_concat(ctx0, packed, score_run(1, 1, anchor_ids), 1);
+    }
+```
+```c++
+    auto score_run = [&](int64_t beg_pos, int64_t n_pos, ggml_tensor * pred_ids) {
+        ggml_tensor * cand_run = ggml_cont(ctx0,ggml_view_3d(ctx0, cand_blk, top_k, n_pos, n_blocks,
+                    cand_blk->nb[1], cand_blk->nb[2], beg_pos * cand_blk->nb[1]));
+
+        ggml_tensor * unary_run = ggml_cont(ctx0, ggml_view_3d(ctx0, unary_blk, top_k, n_pos, n_blocks,
+                    unary_blk->nb[1], unary_blk->nb[2], beg_pos * unary_blk->nb[1]));
+
+        ggml_tensor * gate_run = ggml_cont(ctx0, ggml_view_3d(ctx0, gate_blk, rank, n_pos, n_blocks,
+                    gate_blk->nb[1], gate_blk->nb[2], beg_pos * gate_blk->nb[1]));
+
+        const int64_t n_pred = pred_ids->ne[0] / (n_pos * n_blocks);
+
+        ggml_tensor * successor = ggml_reshape_4d(ctx0,
+                ggml_get_rows(ctx0, model.dflash_selector_next, ggml_reshape_1d(ctx0, cand_run, top_k * n_pos * n_blocks)),
+                rank, top_k, n_pos, n_blocks);
+
+        ggml_tensor * predecessor = ggml_reshape_4d(ctx0,
+                ggml_get_rows(ctx0, model.dflash_selector_prev, pred_ids),
+                rank, n_pred, n_pos, n_blocks);
+
+        ggml_tensor * gate_bcast = ggml_reshape_4d(ctx0, gate_run, rank, 1, n_pos, n_blocks);
+        ggml_tensor * cond  = ggml_mul(ctx0, predecessor, ggml_repeat(ctx0, gate_bcast, predecessor));
+        ggml_tensor * score = ggml_mul_mat(ctx0, successor, cond);
+
+        if (n_pred == 1) {
+            score = ggml_repeat_4d(ctx0, score, top_k, top_k, n_pos, n_blocks);
+        }
+
+        ggml_tensor * unary_bcast = ggml_reshape_4d(ctx0, unary_run, top_k, 1, n_pos, n_blocks);
+        score = ggml_add(ctx0, score, ggml_repeat(ctx0, unary_bcast, score));
+
+        ggml_tensor * row = ggml_concat(ctx0,
+                ggml_cast(ctx0, cand_run, GGML_TYPE_F32),
+                ggml_reshape_3d(ctx0, score, top_k * top_k, n_pos, n_blocks), 0);
+
+        return ggml_pad(ctx0, row, n_embd - row_used, 0, 0, 0);
+    };
+```
+This is looks kind of complicated and I want to step back and take a look at
+the overall picture to understand what we are doing...I've sort of lost track
+stepping through the code and focusing on that.
+
+So at this point the graph that has been built the graph for the flash diffusion
+decoder. So we got here when llama_process was called in the the draft
+```console
+(gdb) up 8
+#8  0x0000fffff2b8990c in common_speculative_impl_draft_dflash::draft (this=0xaaaabadd6340,
+    dparams=std::vector of length 4, capacity 4 = {...}) at /home/danbev/work/llama.cpp/common/speculative.cpp:1277
+1277	        int ret = llama_process(ctx_dft, LLAMA_PROCESS_TYPE_DECODE, batch.get());
+
+(gdb) p batch.tokens[0].id
+$206 = 760
+(gdb) p batch.tokens[1].id
+$207 = 248070
+(gdb) p batch.tokens[2].id
+$208 = 248070
+
+(gdb) p ctx_dft->model->vocab->pimpl->id_to_token[760]
+$205 = {text = "The", score = 0, attr = LLAMA_TOKEN_ATTR_NORMAL}
+
+(gdb) p ctx_dft->model->vocab->pimpl->id_to_token[248070]
+$201 = {text = "<|audio_start|>", score = 0, attr = LLAMA_TOKEN_ATTR_CONTROL}
+
+(gdb) p mask_token_id
+$209 = 248070
+```
+Recall that this is block diffusion so we have our anchor token first and the
+rest are mask_token_id's. This looked strange to me that the mask token is
+audio_start. So that is what the input token ids will be for. So the draft
+decoding graph will later run and it will produce that output for the diffusion
+and the raw hidden internal vector spaces is what we have in res->t_embd. And
+the logits are the vocab space projected output. And candidates are our top-16.
+```console
+  inp_tokens:
+    0  [0 1 2 3 4 5 6 7 8]
+
+  candidates:
+    0  [0    ...                               15]
+    1  [0    ...                               15]
+    2  [0    ...                               15]
+    3  [0    ...                               15]
+    4  [0    ...                               15]
+    5  [0    ...                               15]
+    6  [0    ...                               15]
+    7  [0    ...                               15]
+
+
+  packed:
+    0  [0                              ...                                5119]
+
+  anchor_ids:
+    0  [0]
+```
+
+So lets look at this again now:
+```c++
+        packed = ggml_concat(ctx0, packed, score_run(1, 1, anchor_ids), 1);
+```
+We are using ggml_concat so we are taking the packed tensor and adding the
+result of score_run. We are passing in beg_pos 1, and n_pos 1, and pred_ids
+is the anchor tensor which is just one element.
+```c++
+    auto score_run = [&](int64_t beg_pos, int64_t n_pos, ggml_tensor * pred_ids) {
+
+        ggml_tensor * cand_run = ggml_cont(ctx0, ggml_view_3d(ctx0, cand_blk, top_k, n_pos, n_blocks,
+                    cand_blk->nb[1], cand_blk->nb[2], beg_pos * cand_blk->nb[1]));
+```
+This is creating a view into cand_blk
+```console
+(gdb) p cand_blk->ne
+$230 = {16, 8, 1, 1}
+
+(gdb) p ggml_view_3d(ctx0, cand_blk, top_k, n_pos, n_blocks, cand_blk->nb[1], cand_blk->nb[2], beg_pos * cand_blk->nb[1])->ne
+$229 = {16, 1, 1, 1}
+```
+And then we do the same for unary, and the gate tensors:
+```c++
+        ggml_tensor * unary_run = ggml_cont(ctx0, ggml_view_3d(ctx0, unary_blk, top_k, n_pos, n_blocks,
+                    unary_blk->nb[1], unary_blk->nb[2], beg_pos * unary_blk->nb[1]));
+
+        ggml_tensor * gate_run = ggml_cont(ctx0, ggml_view_3d(ctx0, gate_blk, rank, n_pos, n_blocks,
+                    gate_blk->nb[1], gate_blk->nb[2], beg_pos * gate_blk->nb[1]));
+```
+```console
+(gdb) p unary_run->ne
+$232 = {16, 1, 1, 1}
+(gdb) p gate_run->ne
+$233 = {256, 1, 1, 1}
+```
+Next, we have:
+```c++
+        const int64_t n_pred = pred_ids->ne[0] / (n_pos * n_blocks);
+```
+This will 1 for this current call.
+
+Then we have:
+```c++
+        ggml_tensor * successor = ggml_reshape_4d(ctx0,
+                ggml_get_rows(ctx0, model.dflash_selector_next, ggml_reshape_1d(ctx0, cand_run, top_k * n_pos * n_blocks)),
+                rank, top_k, n_pos, n_blocks);
+```
+```console
+(gdb) p model.dflash_selector_next->ne
+$238 = {256, 248320, 1, 1}
+```
+```console
+ 0      [0                  256]
+ 1      [0                  256]
+ .
+ .
+ .
+248320  [0                  256]
+```
+The shape of this tensor is [rank, vocab]
+
+```console
+gdb) p successor->ne
+$250 = {256, 16, 1, 1}
+
+ 0      [0                  256]
+ 1      [0                  256]
+ .
+ .
+ .
+ 15     [0                  256]
+```
+So each token id has a point in a 256 dimensional learned space.
+
+And we also have the dflash_selector_prev->ne which has the same shape:
+```console
+(gdb) p model.dflash_selector_prev->ne
+$251 = {256, 248320, 1, 1}
+```
+And here we are using pred_ids, which recall is our anchor token ids which is
+just 1 in this case:
+```c++
+        ggml_tensor * predecessor = ggml_reshape_4d(ctx0,
+                ggml_get_rows(ctx0, model.dflash_selector_prev, pred_ids),
+                rank, n_pred, n_pos, n_blocks);
+```
+```console
+(gdb) p predecessor->ne
+$252 = {256, 1, 1, 1}
+
+ 0      [0                  256]
+```
+
+Then we have a reshape of gate_run so that we can repeat gate:
+```c++
+        ggml_tensor * gate_bcast = ggml_reshape_4d(ctx0, gate_run, rank, 1, n_pos, n_blocks);
+        ggml_tensor * cond  = ggml_mul(ctx0, predecessor, ggml_repeat(ctx0, gate_bcast, predecessor));
+```
+Next we have the elementwise multiplication of predecessor and the gate, which
+we can think of applying the predecessor to the current state/gate.
+
+Then we perform a matrix multiplication using the succuessor matrix and the
+condition from above:
+```c++
+        ggml_tensor * score = ggml_mul_mat(ctx0, successor, cond);
+```
+```console
+(gdb) p score->ne
+$262 = {16, 1, 1, 1}
+```
+Notice that we only have one result here, but this is a special case:
+```c++
+        if (n_pred == 1) {
+            score = ggml_repeat_4d(ctx0, score, top_k, top_k, n_pos, n_blocks);
+        }
+```
+```console
+(gdb) p score->ne
+$264 = {16, 16, 1, 1}
+```
+Next we add the unary to the score:
+```c++
+        ggml_tensor * unary_bcast = ggml_reshape_4d(ctx0, unary_run, top_k, 1, n_pos, n_blocks);
+        score = ggml_add(ctx0, score, ggml_repeat(ctx0, unary_bcast, score));
+```
+```console
+(gdb) p unary_bcast->ne
+$265 = {16, 1, 1, 1}
+```
+And then we create a row, which recall will have the 16 token ids first, followed
+by the 16x16 (256) transition scores:
+```c++
+        ggml_tensor * row = ggml_concat(ctx0,
+                ggml_cast(ctx0, cand_run, GGML_TYPE_F32),
+                ggml_reshape_3d(ctx0, score, top_k * top_k, n_pos, n_blocks), 0);
+        return ggml_pad(ctx0, row, n_embd - row_used, 0, 0, 0);
+```
+```console
+(gdb) p cand_run->ne
+$267 = {16, 1, 1, 1}
+(gdb) p score->ne
+$268 = {16, 16, 1, 1}
+```
+And then we also have the padding of the rest of the tensor:
+```console
+(gdb) p ggml_pad(ctx0, row, n_embd - row_used, 0, 0, 0)->ne
+$273 = {5120, 1, 1, 1}
+```
+
+_wip_
