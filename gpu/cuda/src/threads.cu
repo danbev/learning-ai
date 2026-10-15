@@ -1,4 +1,4 @@
-#include <npp.h>
+#include <cuda_runtime.h>
 #include <stdio.h>
 
 // CUDA Kernel function to print "Hello World"

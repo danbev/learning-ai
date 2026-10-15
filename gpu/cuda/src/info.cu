@@ -58,7 +58,9 @@ int main() {
         printf("  Name: %s\n", prop.name);
         printf("  Compute Capability: %d.%d\n", prop.major, prop.minor);
         printf("  Multiprocessors: %d\n", prop.multiProcessorCount);
+#if CUDART_VERSION < 13000
         printf("  Clock Rate: %.0f MHz\n", prop.clockRate * 1e-3f);
+#endif
         printf("  Total Global Memory: %.2f GB\n", prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0));
         printf("  L2 Cache Size: %.2f MB\n", prop.l2CacheSize / (1024.0 * 1024.0));
     }

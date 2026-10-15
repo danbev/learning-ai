@@ -1,38 +1,44 @@
+NVCC ?= nvcc
+CUDA_ARCH ?= native
+NVCCFLAGS ?=
+
+# Use the local GPU by default; override with e.g. CUDA_ARCH=sm_89.
+CUDA_FLAGS = $(NVCCFLAGS) -arch=$(CUDA_ARCH)
+
 info: src/info.cu
-	nvcc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 wmma: src/wmma.cu
-# GeForce RTX 4070 has compute compatibility 8.6 (https://developer.nvidia.com/cuda-gpus)
-	nvcc -arch=sm_89 -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
-wmma-ptx:
-	nvcc --ptx --gpu-architecture=sm_89 src/wmma.cu
+wmma-ptx: src/wmma.cu
+	$(NVCC) $(CUDA_FLAGS) --ptx src/wmma.cu
 	@cat wmma.ptx
 
 hello-world-ptx: src/hello-world.cu
-	nvcc -ptx $<
+	$(NVCC) $(CUDA_FLAGS) -ptx $<
 	@cat hello-world.ptx
 
 threads: src/threads.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 inc: src/inc.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 array-add: src/array-add.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 streams: src/streams.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 graphs: src/graphs.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 matrix-mul: src/matrix-mul.cu
-	nvcc -lnppc -G -g -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -G -g -o $@ $<
 
 matrix-mul-tiled: src/matrix-mul-tiled.cu
-	nvcc -lnppc -G -g -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -G -g -o $@ $<
 
 debug-matrix-tiled: matrix-mul-tiled
 	cuda-gdb matrix-mul-tiled
@@ -40,21 +46,21 @@ debug-matrix-tiled: matrix-mul-tiled
 dump-array-add: array-add
 	cuobjdump $<
 
-array-add-ptx:
-	nvcc -ptx src/array-add.cu
+array-add-ptx: src/array-add.cu
+	$(NVCC) $(CUDA_FLAGS) -ptx src/array-add.cu
 	@cat array-add.ptx
 
 template: src/template.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 prefix-sum: src/prefix-sum.cu
-	nvcc -arch=sm_89 -ptx $< -o $@.ptx
-	nvcc -arch=sm_89 -cubin $< -o $@.cubin
+	$(NVCC) $(CUDA_FLAGS) -ptx $< -o $@.ptx
+	$(NVCC) $(CUDA_FLAGS) -cubin $< -o $@.cubin
 	cuobjdump -sass $@.cubin > $@.sass
-	nvcc -lnppc -G -g -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -G -g -o $@ $<
 
 pagable: src/pagable.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 run-pagable: pagable
 	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
@@ -63,22 +69,22 @@ run-pagable: pagable
 	#nsys-ui $<.nsys-rep
 
 pinned: src/pinned.cu
-	nvcc -lnppc -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 ldmatrix: src/ldmatrix.cu
-	nvcc -arch=sm_89 -o $@ $< -Xptxas -v
+	$(NVCC) $(CUDA_FLAGS) -o $@ $< -Xptxas -v
 
 dp4a: src/dp4a.cu
-	nvcc -arch=sm_89 -o $@ $< -Xptxas -v
+	$(NVCC) $(CUDA_FLAGS) -o $@ $< -Xptxas -v
 
 cp_async: src/cp_async.cu
-	nvcc -arch=sm_89 -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 fastmod: src/fastmod.cu
-	nvcc -arch=sm_89 -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 misalign: src/misalign.cu
-	nvcc -arch=sm_89 -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
 run-pinned: pinned
 	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
@@ -86,8 +92,14 @@ run-pinned: pinned
 	nsys analyze --rule cuda_memcpy_async --force-export=true $<.nsys-rep
 
 vmm: src/vmm.cu
-	nvcc -lnppc -lcuda -G -g -o $@ $<
+	$(NVCC) $(CUDA_FLAGS) -lcuda -G -g -o $@ $<
 
-.PHONY: clean
+EXAMPLES = info wmma threads inc array-add streams graphs matrix-mul \
+           matrix-mul-tiled template prefix-sum pagable pinned ldmatrix dp4a \
+           cp_async fastmod misalign vmm
+
+.PHONY: all clean wmma-ptx array-add-ptx
+all: $(EXAMPLES)
+
 clean:
-	@${RM} threads inc hello-world.ptx info wmma streams graphs array-add matrix-mul prefix-sum
+	$(RM) $(EXAMPLES) hello-world.ptx wmma.ptx array-add.ptx prefix-sum.ptx prefix-sum.cubin prefix-sum.sass

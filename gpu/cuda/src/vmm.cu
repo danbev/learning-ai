@@ -27,7 +27,11 @@ int main() {
     CHECK(cuDeviceGet(&dev, 0));
 
     CUcontext ctx;
+#if CUDA_VERSION >= 13000
+    CHECK(cuCtxCreate(&ctx, nullptr, 0, dev));
+#else
     CHECK(cuCtxCreate(&ctx, 0, dev));
+#endif
 
     CUmemAllocationProp prop{};
     prop.type          = CU_MEM_ALLOCATION_TYPE_PINNED;
