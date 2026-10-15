@@ -1,8 +1,7 @@
-VERSION=12.4
-export PATH=/usr/local/cuda-${VERSION}/bin:$PATH                                    
-export LD_LIBRARY_PATH=/usr/local/cuda-${VERSION}/lib64:$LD_LIBRARY_PATH 
-
-# Source Spack so that we can switch to use gcc@12.1.0
-#. ~/work/linux/spack/share/spack/setup-env.sh
-#spack load gcc@12.1.0
-#gcc --version
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+if [ ! -x "$CUDA_HOME/bin/nvcc" ]; then
+    printf 'CUDA compiler not found at %s/bin/nvcc; set CUDA_HOME to your toolkit directory.\n' "$CUDA_HOME" >&2
+    return 1 2>/dev/null || exit 1
+fi
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
