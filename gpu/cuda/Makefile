@@ -1,6 +1,6 @@
 NVCC ?= nvcc
 CUDA_ARCH ?= native
-NVCCFLAGS ?=
+NVCCFLAGS ?=-G -g
 
 # Use the local GPU by default; override with e.g. CUDA_ARCH=sm_89.
 CUDA_FLAGS = $(NVCCFLAGS) -arch=$(CUDA_ARCH)
@@ -85,6 +85,9 @@ fastmod: src/fastmod.cu
 
 misalign: src/misalign.cu
 	$(NVCC) $(CUDA_FLAGS) -o $@ $<
+
+nvfp4: src/nvfp4.cu
+	$(NVCC) $(CUDA_FLAGS) -o $@ $< -Xptxas -v
 
 run-pinned: pinned
 	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
