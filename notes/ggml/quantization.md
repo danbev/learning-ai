@@ -131,7 +131,7 @@ float_value = scale × quantized_value + offset
      ↑           ↑         ↑             ↑
    y-axis     slope      x-axis      y-intercept
 ```
-And this is called linear quantization. The offset is the zero point which is
+And this is called linear quantization.
 
 ### zero point
 ```
@@ -270,6 +270,226 @@ It uses that AMAX to generate the S_g (scale global) for the activations.
 * Epilog
 It applies both the Weight S_g (from the file) and the Activation S_g (it is just
 calculated) to the final result.
+
+
+### NVFP4 type
+NVIDIA’s proprietary microscaling 4-bit floating-point format introduced with
+the Blackwell (B100/B200/GB200) GPU architecture. It is accelerated natively by
+Blackwell’s 5th-generation Tensor Cores to deliver 2x the compute throughput and
+bandwidth efficiency of FP8.
+
+This has three "layers"
+* Element payload (E2M1 FP4)
+  Encoding 1 sign bit, 2 exponent bits, and 1 mantissa bit.
+```console
+Effective Exponent = E_stored - Bias
+```
+For normal numbers where E_stored > 0 the significand has an implicit leading 1:
+```console
+1.M
+```
+For subnormals where E_stored = 0 the significand has an implicit leading 0:
+```console
+0.M
+```
+
+Recall that in binary scientific notation every non-zero number is written with
+exactly one non-zero digit before the binary point:
+```console
+              1.b₀b₁b₂... * 2^k
+              ↑
+            only options of a single slot is 0 or 1 so 1 is the only
+            non-zero digit that exists (in comparision i base 10 we have 1-9)
+```
+Because a normalized binary number is guaranteed to start with this 1. the
+hardware does not spend an actual bit storing it.
+So while the while we only have a single bit for the mantissa the ALU will
+automatically prepend a hidden 1. before M0:
+```console
+significand = (1.M0)₂
+```
+So with one single bit we actually get two options:
+```console
+M₀ = 0 -> (1.0)₂ = 1.0
+M₁ = 1 -> (1.1)₂ = 1 + 1/2 = 1.5
+
+2^0 
+  1. 1/2  1/4   1/8   ...
+  1. 0.5  0.25  0.125 ...
+```
+There is an exceptions to this, when both E1 and E0 bits are 0 (00) then the
+hardware will flip the hidden bit from 1 to 0 so that we can represent zero.
+
+
+Now we have 2 bits for the exponent so that only gives us 00, 01, 10, 11 but
+we combine them with the single matissa bit:
+```console
+E1E0   M0      Interpretation  Calculation  Final Value   bin    dec
+--------------------------------------------------------------------
+00     0       Zero            ±0.0×2⁰      0.0           000     0
+00     1       Subnormal       ±0.5×2⁰      0.5           001     1
+01     0       Normal (2⁰)     ±1.0×2⁰      1.0           010     2
+01     1       Normal (2⁰)     ±1.5×2⁰      1.5           011     3
+10     0       Normal (2¹)     ±1.0×2¹      2.0           100     4
+10     1       Normal (2¹)     ±1.5×2¹      3.0           101     5
+11     0       Normal (2²)     ±1.0×2²      4.0           110     6
+11     1       Normal (2²)     ±1.5×2²      6.0           111     7
+
+And the sign bit can either be 1 or 0:
+
+0000      +0.0
+0001      +0.5
+0010      +1.0 
+0011      +1.5
+0100      +2.0
+0101      +3.0
+0110      +4.0
+0111      +6.0
+
+1000      -0.0
+1001      -0.5
+1010      -1.0 
+1011      -1.5
+1100      -2.0
+1101      -3.0
+1110      -4.0
+1111      -6.0
+
+Values: -6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, -0, +0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 
+```
+
+* Block scale. 8-bits E4M3 shared accross 8 bytes
+  So not just powers of two here.
+
+* Global scale/tensor scale. 32-bit float passed via kernel args.
+
+```console
+x_i = S_outer * S_inner * V_E2M1_i
+```
+```console
+                              8
+Effective bits/element = 4 + --- = 4.5 bits/element
+                             16
+```
+
+Global scale
+```console
+           max(|X|)   (amax, absolute max)
+S_outer = ----------
+           6 * 448    (range)
+           ↑    ↑
+        E2M1   E4M3
+
+|X|  absolute value of each element in X
+max  selects the largest absolue value
+```
+About the ranges:
+E4M3:
+```console
+1 sign bit      (S) 
+4 exponent bits (E)
+3 matissa bits  (M
+
+4 bit exponent: Bias = 2^(k-1) -1 = 2⁴⁻¹ - 1 = 8 - 1 = 7
+
+Effective exponent for values where E > 0:
+Effective exponent = E_stored - 7
+```
+In classical IEEE 754 an exponent of all 1s (E=1111) is reserved for +-INF and
+NaN. But in an 8-bit float E=15 is available for standard numbers except for
+when all the mantissa bits are also 1s (1111111 = NaN). The larges finite
+mantissa is therefor when E=15 is 110₂. So if we set all the bits to their max:
+```console
+Sign bit (S): 0     (+1)
+Exponent (E): 1111  (15 in dec)
+Mantissa (M): 110
+
+scale = 2^(E-Bias) = 2¹⁵⁻⁷ = 2⁸ = 256
+```
+And the hardware prepends the implicit leading bit (1.):
+```console
+Significand = (1.M₂M₁M₀)₂ = (1.110)₂
+Significand = 1 + (1 * 2⁻¹) + (1 * 2⁻²) + (0 * 2⁻³)
+
+2^0  2⁻¹  2⁻²   2⁻³
+  1. 1/2  1/4   1/8   
+  1. 0.5  0.25  0.125
+
+Significand = 1 + 0.5 + 0.25 + 0 = 1.75
+
+Max value = 1.75 * 256 = 448.0
+```
+
+One thing to keep in mind is that this causes a physical limit for the hardware
+regarding the maximum values we can store:
+```console
+ceiling = max(V_E2M1) * max(S_block) = 6.0 * 448.0 = 2688.0
+```
+Any tensor whose absolute max is larger than 2688.0 would physically overflow
+the FP8 block scales. And if an entire tensor has numbers clustered around
+10⁻⁴ they would completely underflow the smallest representable FP8 number(2⁻⁹
+≈  0.000195). By normalizing the entire matrix so that its largest absolute value
+lands exactly at the format's ceiling of 2866.0, which is why the do this.
+
+Inner/block scale:
+```console
+                           max_i_block(|x_i/S_outer)
+s_inner = quantize_to_fp8( ------------------------- )
+                                   6.0
+```
+S_outer already centered the the global magnitude so S_inner_b only has to
+resolve the local variance between the adjacent tokens.
+
+```console
+                              x_i
+V_E2M1_i = round_to_fp4( -------------------  )
+                          S_outer * S_inner_b
+```
+
+So lets say we have the following tenor and we want to store it in NVFP4:
+```console
+a = [...}
+```
+
+
+
+So to break this down a bit, one quantized value in NVFP4 consists of 4 bits
+in E2M1 of the actual quantized value, plus a 8 bit in E4M3 (inner scale), and
+then a global scale in FP32 (4-bytes, 32 bits). But since both the inner scale
+and global scale are shared, we are actually always working with 16 elements:
+```console
+byte 0 [0 1 2 3][4 5 6 7]         byte [0 1 2 3 4 5 6 7]
+byte 1 [0 1 2 3][4 5 6 7]                      ↑
+byte 2 [0 1 2 3][4 5 6 7]                     E4ME
+byte 3 [0 1 2 3][4 5 6 7]
+byte 4 [0 1 2 3][4 5 6 7]
+byte 5 [0 1 2 3][4 5 6 7]
+byte 6 [0 1 2 3][4 5 6 7]
+byte 7 [0 1 2 3][4 5 6 7]
+           ↑        ↑
+          E2M1     E2M1
+        
+global: [0 1 2 3 ..                                               31]
+```
+
+```console
+[Global Memory]
+  ├── Packed Weights (4-bit E2M1, 2 per byte)
+  ├── Block Scales   (8-bit E4M3, 1 per 8 bytes of weight)
+  └── Global Scale   (32-bit float, passed via kernel args)
+         │
+         ▼
+[Tensor Core / MMA Stage]
+  Tensor Core takes (Packed Weights + Block Scales) directly
+  Accumulates dot products into FP32 registers
+         │
+         ▼
+[Epilogue Stage]
+  Thread multiplies FP32 accumulator by (Global Scale A * Global Scale B)
+         │
+         ▼
+[Output to Global Memory] (FP16 / BF16 / FP32)
+```
 
 ### nvfp4 model conversion
 I'm not sure where to put this but I need to understand how these tensor are
