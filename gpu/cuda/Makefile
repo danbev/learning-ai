@@ -96,6 +96,9 @@ misalign: src/misalign.cu
 nvfp4: src/nvfp4.cu
 	$(NVCC) $(CUDA_FLAGS) -o $@ $< -Xptxas -v
 
+nvfp4-api: src/nvfp4-api.cu
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
+
 run-pinned: pinned
 	nsys profile --trace=cuda --cuda-memory-usage=true --force-overwrite=true -o $< $<
 	#nsys stats --report cuda_api_sum --force-overwrite true --force-export true $<.nsys-rep
@@ -104,9 +107,12 @@ run-pinned: pinned
 vmm: src/vmm.cu
 	$(NVCC) $(CUDA_FLAGS) -lcuda -G -g -o $@ $<
 
+mmvq: src/mmvq.cu
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
+
 EXAMPLES = info wmma threads inc array-add streams graphs matrix-mul \
            matrix-mul-tiled template prefix-sum pagable pinned ldmatrix dp4a \
-           cp_async fastmod misalign vmm
+           cp_async fastmod misalign vmm mmvq
 
 .PHONY: all clean wmma-ptx array-add-ptx
 all: $(EXAMPLES)
