@@ -110,9 +110,12 @@ vmm: src/vmm.cu
 mmvq: src/mmvq.cu
 	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
+pdl: src/pdl.cu
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
+
 EXAMPLES = info wmma threads inc array-add streams graphs matrix-mul \
            matrix-mul-tiled template prefix-sum pagable pinned ldmatrix dp4a \
-           cp_async fastmod misalign vmm mmvq
+           cp_async fastmod misalign vmm mmvq pdl
 
 .PHONY: all clean wmma-ptx array-add-ptx
 all: $(EXAMPLES)
