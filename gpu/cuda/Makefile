@@ -34,6 +34,13 @@ streams: src/streams.cu
 graphs: src/graphs.cu
 	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
+shuffle: src/shuffle.cu
+	$(NVCC) $(CUDA_FLAGS) -o $@ $<
+
+shuffle-sass: src/shuffle.cu
+	$(NVCC) -arch=$(CUDA_ARCH) -cubin $< -o shuffle.cubin
+	cuobjdump -sass shuffle.cubin | grep -E "SHFL|IADD|FUNC"
+
 matrix-mul: src/matrix-mul.cu
 	$(NVCC) $(CUDA_FLAGS) -G -g -o $@ $<
 
