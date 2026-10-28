@@ -16,7 +16,7 @@ and specify that it break only for a specific raw_text:
 If we don't do this there is call to tokenize in `llm_load_tokenizer` which
 will be hit before our break point which can cause some confusion at first.
 
-Lite SPM and BPE will will end up in the function `llama_tokenize_internal` and
+Like SPM and BPE will will end up in the function `llama_tokenize_internal` and
 this time in the case for `LLAMA_VOCAB_TYPE_UGM`.
 ```c++
         case LLAMA_VOCAB_TYPE_UGM:
