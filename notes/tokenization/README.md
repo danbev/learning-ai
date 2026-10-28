@@ -2,6 +2,50 @@
 The tokenization process involves splitting the input text into tokens, which
 are then looked up in the vocabulary to get the token IDs.
 
+```console
+Raw Text Input ("Hello world!")
+       │
+       ▼
+[Stage 1: Normalization]
+  • Unicode normalization (NFC, NFKC), accent stripping, lowercasing.
+       │
+       ▼
+[Stage 2: Chunking & Space/Byte Representation (Pre-tokenization)]
+  • Split string into isolated chunks (words, punctuation, whitespace).
+  • Represent spaces and bytes unambiguously (like " " → " " or "Ġ").
+       │
+       ▼
+[Stage 3: Subword Algorithm (The Model)]
+  • BPE merges or Unigram lattice search runs ONLY within each chunk.
+       │
+       ▼
+[Stage 4: Post-Processing & Token IDs]
+  • Map final pieces to integer IDs, inject BOS/EOS tokens.
+```
+
+### Stage 2
+Two main ways:
+
+#### Regex + Byte Mapping (GPT-4, Llama3, Tiktoken)
+Which chops the text into descrete segements, like contractions, number (limiting
+to max 3 digits per chunk so numbers don't merge into arbitary long single tokens).
+
+Every byte is mapped to a printable Unicode character. A space, 0x20 becomes Ġ.
+A newline 0x0A becomes Ċ. So " world" would become "Ġworld"
+
+#### SentencePiece stream (Llama 1 & 2, Mistral, T5)
+Does not uses a regex but instead does string replacement with the lower one
+eighth block U+2581 '_'. So "Hello world" becomes '["_Hello", "_world"]'
+This allows the text to be 100% reversible without tracking separate whitespace
+metadata.
+
+### Stage 3
+With the second stage done we have a list or chunks and this stage runs on each
+chunk individually.
+
+There are three main algorithms BPE, Unigram, WordPiece which make out the first
+"layer".
+
 Models include a vocabulary file, which is a list of all the tokens in the
 model. There might be a configuration file in addition to this that specifies
 the type of tokenizing that the model uses, like Byte-Pair Encoding (BPE),
