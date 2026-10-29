@@ -113,12 +113,29 @@ mmvq: src/mmvq.cu
 pdl: src/pdl.cu
 	$(NVCC) $(CUDA_FLAGS) -o $@ $<
 
+# Debug build (-G) where pretty much every variable lives in local memory.
+registers: src/registers.cu
+	$(NVCC) $(CUDA_FLAGS) -o $@ $< -Xptxas -v
+
+# Optimized build, -lineinfo still allows source level stepping in cuda-gdb.
+registers-opt: src/registers.cu
+	$(NVCC) -arch=$(CUDA_ARCH) -lineinfo -o $@ $< -Xptxas -v
+
+registers-ptx: src/registers.cu
+	$(NVCC) -arch=$(CUDA_ARCH) -ptx $< -o registers.ptx
+
+registers-sass: src/registers.cu
+	$(NVCC) -arch=$(CUDA_ARCH) -cubin $< -o registers.cubin
+	cuobjdump -sass registers.cubin > registers.sass
+	@grep -E "Function|STL|LDL" registers.sass
+
 EXAMPLES = info wmma threads inc array-add streams graphs matrix-mul \
            matrix-mul-tiled template prefix-sum pagable pinned ldmatrix dp4a \
-           cp_async fastmod misalign vmm mmvq pdl
+           cp_async fastmod misalign vmm mmvq pdl registers registers-opt
 
 .PHONY: all clean wmma-ptx array-add-ptx
 all: $(EXAMPLES)
 
 clean:
-	$(RM) $(EXAMPLES) hello-world.ptx wmma.ptx array-add.ptx prefix-sum.ptx prefix-sum.cubin prefix-sum.sass
+	$(RM) $(EXAMPLES) hello-world.ptx wmma.ptx array-add.ptx prefix-sum.ptx prefix-sum.cubin prefix-sum.sass \
+	      registers.ptx registers.cubin registers.sass

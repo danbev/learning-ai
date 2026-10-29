@@ -27,3 +27,5 @@ nvfp4
 shuffle
 mmvq
 pdl
+registers
+registers.ptx
