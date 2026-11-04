@@ -18,6 +18,7 @@ import copy
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 import modelopt.torch.quantization as mtq
 from modelopt.torch.export import ensure_local_checkpoint, export_hf_checkpoint
@@ -49,6 +50,8 @@ QFORMATS = {
 # collapsed into one top-level quant_algo and quantized_layers is dropped.
 FP8_TENSOR = {"num_bits": (4, 3), "axis": None}  # FP8 E4M3, per-tensor scale
 
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
 
 def with_overrides(base, overrides):
     cfg = copy.deepcopy(base)
@@ -72,12 +75,16 @@ QFORMATS["nvfp4_fp8_mixed"] = with_overrides(QFORMATS["nvfp4_mixed"], [
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
+    parser.add_argument("--model", default="models/Qwen2.5-0.5B-Instruct")
     parser.add_argument("--qformat", choices=QFORMATS, default="nvfp4")
     parser.add_argument("--out", default=None, help="default: models/<model>-<qformat>")
     parser.add_argument("--n-samples", type=int, default=128)
     parser.add_argument("--max-seq-len", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--ref-prompt", default="Hello, my name is",
+                        help="prompt used for the fake-quant reference logits")
+    parser.add_argument("--data-dir", default=str(DATA_DIR),
+                        help="where reference logits are written (default: <project>/data)")
     args = parser.parse_args()
 
     out = Path(args.out or f"models/{args.model.split('/')[-1]}-{args.qformat}")
@@ -86,28 +93,39 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(local_path)
     model = AutoModelForCausalLM.from_pretrained(local_path, dtype=torch.bfloat16, device_map="cuda")
+    # At this point we have just performed normal model loading, so it is a plain
+    # Qwen2ForCausalLM in bf16.
+    # set module.training = False.
     model.eval()
 
     calib = load_calibration(tokenizer, args.n_samples, args.max_seq_len)
 
-    def forward_loop(m):
+    def forward_loop(model):
         # ModelOpt only needs activations to flow through the model; the
         # quantizers observe amax during these forward passes.
         for i in range(0, len(calib), args.batch_size):
             batch = tokenizer(calib[i : i + args.batch_size], return_tensors="pt",
                               padding=True, truncation=True, max_length=args.max_seq_len)
-            m(**batch.to(m.device))
+            model(**batch.to(model.device))
 
     cfg = copy.deepcopy(QFORMATS[args.qformat])
     print("Quantizing model with config:")
     print(json.dumps(cfg, indent=2))
     with torch.no_grad():
+        # This will replace all nn.Linear with QuantLinear which adds 3 TensorQuantizers
+        # input_quantizer which is applied to x before matmul,
+        # weight_quantizer which is applied to W, and
+        # output_quantizer which is applied to the result.
         model = mtq.quantize(model, cfg, forward_loop)
 
     # Shows every TensorQuantizer, its format and calibrated amax.
     mtq.print_quant_summary(model)
 
     generate(model, tokenizer, "What is the capital of Sweden?")
+
+    # Logits from the fake-quant model are the reference for the converted GGUF:
+    # they contain the same quantization error, so only runtime differences remain.
+    save_reference_logits(model, tokenizer, args.ref_prompt, out.name, Path(args.data_dir))
 
     with torch.no_grad():
         export_hf_checkpoint(model, export_dir=out)
@@ -131,6 +149,38 @@ def generate(model, tokenizer, prompt):
         out = model.generate(**ids, max_new_tokens=32, do_sample=False)
     print(f"\n[fake-quant generate] {prompt!r} -> "
           f"{tokenizer.decode(out[0, ids.input_ids.shape[1]:], skip_special_tokens=True)!r}\n")
+
+
+def save_reference_logits(model, tokenizer, prompt, model_name, data_dir: Path):
+    """Save last-token logits in the same layout as llama.cpp's
+    examples/model-conversion save_output_data(), so the files can be used
+    directly with causal-compare-logits:
+
+      pytorch-<model_name>.bin           float32 logits
+      pytorch-<model_name>.txt           "<idx>: <logit>" per line
+      pytorch-<model_name>-tokens.bin    int32 token ids
+      pytorch-<model_name>-prompt.txt    prompt, n_tokens, token ids
+
+    The prompt is tokenized raw (no chat template), like run-org-model.py.
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    base = data_dir / f"pytorch-{model_name}"
+
+    ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+    with torch.no_grad():
+        logits = model(ids).logits[0, -1].float().cpu().numpy()
+    tokens = ids[0].cpu().numpy().astype(np.int32)
+
+    logits.astype(np.float32).tofile(f"{base}.bin")
+    with open(f"{base}.txt", "w") as f:
+        f.writelines(f"{i}: {v:.6f}\n" for i, v in enumerate(logits))
+    tokens.tofile(f"{base}-tokens.bin")
+    with open(f"{base}-prompt.txt", "w") as f:
+        f.write(f"prompt: {prompt}\n")
+        f.write(f"n_tokens: {len(tokens)}\n")
+        f.write(f"token ids: {', '.join(str(int(t)) for t in tokens)}\n")
+
+    print(f"\nreference logits ({prompt!r}, {len(tokens)} tokens) saved to {base}.bin")
 
 
 def show_result(out: Path):

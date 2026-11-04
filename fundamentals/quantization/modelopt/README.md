@@ -10,6 +10,10 @@ other formats.
 
 Model repos: https://github.com/NVIDIA/Model-Optimizer
 
+### Download orginal model
+```console
+(env) $ hf download Qwen/Qwen2.5-0.5B-Instruct --local-dir models/Qwen2.5-0.5B-Instruct
+```
 
 ### Install
 ```console
@@ -28,3 +32,64 @@ Model repos: https://github.com/NVIDIA/Model-Optimizer
 I'm using the `nvfp4_fp8_mixed` format, so that hf_quant_config.json will contain
 a `quantization_layers` dict as if the quant formats are not mixed there will be
 one such dict in the config.
+
+### Processing
+All nn.Linear with QuantLinear which adds 3 TensorQuantizers input_quantizer
+which is applied to x before matmul, weight_quantizer which is applied to W, and
+output_quantizer which is applied to the result.
+
+The quantization configuraiton is printed in the script, and this works as rules
+I think, so first we have more general rules. 
+```console
+{
+  "quant_cfg": [
+    {
+      "quantizer_name": "*",     // all are initially disabled
+      "enable": false
+    },
+    {
+      "quantizer_name": "*weight_quantizer",
+      "cfg": {
+        "num_bits": [
+          2,                      // exponents bits  (E2M1)
+          1                       // mantissa bits   (E2M1)
+        ],
+        "effective_bits": 4.5,
+        "block_sizes": {
+          "-1": 16,
+          "type": "dynamic",
+          "scale_bits": [
+            4,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "quantizer_name": "*input_quantizer",
+      "cfg": {
+        "num_bits": [
+          2,
+          1
+        ],
+        "effective_bits": 4.5,
+        "block_sizes": {
+          "-1": 16,
+          "type": "dynamic",
+          "scale_bits": [
+            4,
+            3
+          ]
+        }
+      }
+    },
+    ...
+```
+So a layer in the model would have had TensorQuantizers added to it, for example
+```console
+model.layers.0.self_attn_q_proj.weight_quantizer
+model.layers.0.self_attn_q_proj.input_quantizer
+model.layers.0.mlp.down_proj.input_quantizer
+lm_head.weight_quantizer
+```
+So all *weight_quantizers and *input_quantizers will get the NVFP format.
