@@ -22,7 +22,7 @@ Model repos: https://github.com/NVIDIA/Model-Optimizer
 
 ### Quantize a model
 ```console
-(venv) spark $ python src/quantize_modelopt.py --qformat nvfp4_fp8_mixed
+(venv) spark $ python src/quantize_modelopt.py --qformat nvfp4_mixed
 ...
 ```
 I'm using the `nvfp4_fp8_mixed` format, so that hf_quant_config.json will contain
