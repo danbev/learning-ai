@@ -99,6 +99,8 @@ def main():
             m(**batch.to(m.device))
 
     cfg = copy.deepcopy(QFORMATS[args.qformat])
+    print("Quantizing model with config:")
+    print(json.dumps(cfg, indent=2))
     with torch.no_grad():
         model = mtq.quantize(model, cfg, forward_loop)
 
