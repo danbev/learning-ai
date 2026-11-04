@@ -8,14 +8,14 @@ set -e
 llama_dir=/home/danbev/work/llama.cpp
 
 build_dir=${llama_dir}/build-dgx-spark-debug
-model=${PWD}/converted/Qwen2.5-0.5B-Instruct-nvfp4.gguf
+model=${PWD}/converted/Qwen2.5-0.5B-Instruct-nvfp4_mixed.gguf
 cmd=llama-completion
 
 pushd $llama_dir
 
 cmake --build ${build_dir} --target ${cmd}
 
-${build_dir}/bin/${cmd} -m ${model} \
+gdb --args ${build_dir}/bin/${cmd} -m ${model} \
 	--prompt "What is the capital of Sweden?" \
 	--verbose-prompt \
 	-n 20 --jinja -ngl 99 --no-warmup -no-cnv

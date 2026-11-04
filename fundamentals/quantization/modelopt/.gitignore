@@ -1,3 +1,5 @@
 models
 venv
 converted
+data
+__pycache__
