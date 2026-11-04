@@ -22,48 +22,9 @@ Model repos: https://github.com/NVIDIA/Model-Optimizer
 
 ### Quantize a model
 ```console
-(venv) spark $ python src/quantize_modelopt.py
+(venv) spark $ python src/quantize_modelopt.py --qformat nvfp4_fp8_mixed
 ...
-Writing model shards: 100%|████████████████████████████████████████████████| 1/1 [00:03<00:00,  3.87s/it]
-Copied 0 source checkpoint file(s) to models/Qwen2.5-0.5B-Instruct-nvfp4: []
-
-quantization_config:
-{
-  "config_groups": {
-    "group_0": {
-      "input_activations": {
-        "dynamic": false,
-        "num_bits": 4,
-        "type": "float",
-        "group_size": 16
-      },
-      "weights": {
-        "dynamic": false,
-        "num_bits": 4,
-        "type": "float",
-        "group_size": 16
-      },
-      "targets": [
-        "Linear"
-      ]
-    }
-  },
-  "ignore": [
-    "lm_head",
-    "model.embed_tokens"
-  ],
-  "quant_algo": "NVFP4",
-  "group_size": 16,
-  "producer": {
-    "name": "modelopt",
-    "version": "0.48.0"
-  },
-  "quant_method": "modelopt"
-}
-
-layer 0 down_proj tensors:
-  model.layers.0.mlp.down_proj.input_scale           F32      []
-  model.layers.0.mlp.down_proj.weight                U8       [896, 2432]
-  model.layers.0.mlp.down_proj.weight_scale          F8_E4M3  [896, 304]
-  model.layers.0.mlp.down_proj.weight_scale_2        F32      []
 ```
+I'm using the `nvfp4_fp8_mixed` format, so that hf_quant_config.json will contain
+a `quantization_layers` dict as if the quant formats are not mixed there will be
+one such dict in the config.

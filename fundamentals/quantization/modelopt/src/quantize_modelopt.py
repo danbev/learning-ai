@@ -35,6 +35,41 @@ QFORMATS = {
 }
 
 
+# Mixed precision recipes.
+#
+# A ModelOpt config's "quant_cfg" is an ordered list of
+# {quantizer_name: <wildcard>, cfg/enable: ...} entries, and later entries
+# override earlier ones. So a mixed recipe is a base config with extra entries
+# appended for some modules.
+#
+# At export, every quantized module gets its own quant_algo. If more than one
+# algo is found, hf_quant_config.json gets "quant_algo": "MIXED_PRECISION" and a
+# "quantized_layers" dict mapping module paths (e.g.
+# "model.layers.0.mlp.down_proj") to their algo. With a single algo it is
+# collapsed into one top-level quant_algo and quantized_layers is dropped.
+FP8_TENSOR = {"num_bits": (4, 3), "axis": None}  # FP8 E4M3, per-tensor scale
+
+
+def with_overrides(base, overrides):
+    cfg = copy.deepcopy(base)
+    cfg["quant_cfg"] = cfg["quant_cfg"] + overrides
+    return cfg
+
+
+# NVFP4 everywhere, but down_proj's input quantizer is disabled, so its
+# weights are NVFP4 and its activations stay bf16 -> W4A16_NVFP4.
+QFORMATS["nvfp4_mixed"] = with_overrides(mtq.NVFP4_DEFAULT_CFG, [
+    {"quantizer_name": "*mlp.down_proj.input_quantizer", "enable": False},
+])
+
+# As above, plus the attention projections in FP8 (W8A8), giving three algos:
+# NVFP4 (gate/up), W4A16_NVFP4 (down), FP8 (q/k/v/o).
+QFORMATS["nvfp4_fp8_mixed"] = with_overrides(QFORMATS["nvfp4_mixed"], [
+    {"quantizer_name": "*self_attn.*weight_quantizer", "cfg": FP8_TENSOR},
+    {"quantizer_name": "*self_attn.*input_quantizer", "cfg": FP8_TENSOR},
+])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
@@ -76,6 +111,7 @@ def main():
         export_hf_checkpoint(model, export_dir=out)
 
     show_result(out)
+    show_hf_quant_config(out)
 
 
 def load_calibration(tokenizer, n_samples, max_seq_len):
@@ -107,6 +143,18 @@ def show_result(out: Path):
                 if "layers.0.mlp.down_proj" in name:
                     s = f.get_slice(name)
                     print(f"  {name:50} {s.get_dtype():8} {s.get_shape()}")
+
+
+def show_hf_quant_config(out: Path):
+    quant = json.loads((out / "hf_quant_config.json").read_text()).get("quantization", {})
+    layers = quant.pop("quantized_layers", None)
+    print("\nhf_quant_config.json (quantization, without quantized_layers):")
+    print(json.dumps(quant, indent=2))
+    if layers:
+        print(f"\nquantized_layers: {len(layers)} entries, layer 0:")
+        for name, cfg in layers.items():
+            if name.startswith("model.layers.0."):
+                print(f"  {name:35} {cfg}")
 
 
 if __name__ == "__main__":
