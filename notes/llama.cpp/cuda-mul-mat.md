@@ -31,265 +31,319 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
 ```
 And we can find ggml_cuda_mul_mat in the same file:
 ```c++
-static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx,
-                              const ggml_tensor * src0,
-                              const ggml_tensor * src1,
-                              ggml_tensor * dst) {
-    const bool split = ggml_backend_buft_is_cuda_split(src0->buffer->buft);
+static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_TENSOR_BINARY_OP_LOCALS
 
+    if (ggml_cuda_op_mul_mat_use_fwht(dst) && ggml_cuda_op_fwht(ctx, src1, dst)) {
+        return;
+    }
+```
+The functions check if the current operation can be executed as a Fast
+Walsh-Hadamard Transform (FWHT):
+```c++
+bool ggml_cuda_op_mul_mat_use_fwht(const struct ggml_tensor * op) {
+    const struct ggml_tensor * a = op->src[0];
+    const struct ggml_tensor * b = op->src[1];
+
+    return op->op == GGML_OP_MUL_MAT && ggml_get_op_params_i32(op, 1) == GGML_HINT_SRC0_IS_HADAMARD &&
+           a->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
+           (b->type == GGML_TYPE_F32 || b->type == GGML_TYPE_F16) && ggml_is_contiguous(b) && ggml_is_contiguous(op) &&
+           ggml_are_same_shape(b, op);
+}
+```
+Quantized buffers allocate a bit more than the tensor needs and this needs to
+be cleared in that case.
+```c++
     const bool bad_padding_clear = ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_COMPUTE
-        && ggml_nbytes(src0) != ggml_backend_buffer_get_alloc_size(src0->buffer, src0) && src0->view_src;
-
-    bool use_mul_mat_vec_f = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16)
-        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
-    bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
-        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
-    bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
-        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
-        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
-    bool use_mul_mat_q     = ggml_is_quantized(src0->type) && !bad_padding_clear
-        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
 ```
-Depending on the src0 tensor type we will be calling different matrix
-multiplication.
-```console
-(cuda-gdb) p use_mul_mat_vec_f
-$2 = true
-(cuda-gdb) p use_mul_mat_f
-$3 = true
-```
-Next, depending on if we have split GPUs there are different path taken:
 ```c++
-    if (split) {
-        ggml_backend_cuda_split_buffer_type_context * buft_ctx = (ggml_backend_cuda_split_buffer_type_context *) src0->buffer->buft->context;
-        auto & tensor_split = buft_ctx->tensor_split;
-        for (int id = 0; id < ggml_backend_cuda_get_device_count(); ++id) {
-            // skip devices that are not going to do any work:
-            if (tensor_split[id] >= (id + 1 < ggml_backend_cuda_get_device_count() ? tensor_split[id + 1] : 1.0f)) {
-                continue;
-            }
+    const int cc        = ggml_cuda_info().devices[ctx.device].cc;
+    const int warp_size = ggml_cuda_info().devices[ctx.device].warp_size;
+```
+```console
+(gdb) p cc
+$44 = 1210
+(gdb) p warp_size
+$45 = 32
+```
+In common.cuh we can see the cc is for GB10 (DGX Spark):
+```c++
+#define GGML_CUDA_CC_DGX_SPARK       1210
+```
+And my RTX-4070 would be 890 ADA_LOVELACE.
 
-            const int cc            = ggml_cuda_info().devices[id].cc;
-            const int warp_size     = ggml_cuda_info().devices[id].warp_size;
-            use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1], /*n_experts=*/0);
-            use_mul_mat_f           = use_mul_mat_f             && ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, src1->ne[1], /*mul_mat_id=*/false);
-            use_mul_mat_vec_f       = use_mul_mat_vec_f         && ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]);
-            any_gpus_with_slow_fp16 = any_gpus_with_slow_fp16   || !fast_fp16_hardware_available(cc);
+Next we check if unquantized floating point (F32, F16, and BF16) matrix-vector
+can be performed with the current src0, which is the weight tensor. There is a
+also the counter part which is ggml_cuda_mul_mat_vec_f.
+```c++
+    if (ggml_cuda_should_use_mmvf(src0->type, cc, warp_size, src0->ne, src0->nb, ne11)) {
+        if (trace_q) {
+            GGML_LOG_INFO("mul_mat trace [%s]: MMVF, tokens = %lld, cc = %d\n", dst->name, (long long) ne11, cc);
         }
-    } else {
-        const int cc            = ggml_cuda_info().devices[ctx.device].cc;
-        const int warp_size     = ggml_cuda_info().devices[ctx.device].warp_size;
-        use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1], /*n_experts=*/0);
-        use_mul_mat_f           = use_mul_mat_f             && ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, src1->ne[1], /*mul_mat_id=*/false);
-        use_mul_mat_vec_f       = use_mul_mat_vec_f         && ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]);
-        any_gpus_with_slow_fp16 = any_gpus_with_slow_fp16   || !fast_fp16_hardware_available(cc);
-    }
-```
-The above is figuring out which multiplication kernel to use based on the GPU
-capabilities. MMQ is the matrix multiplication for quantized data, MMF is for
-floating point data, and MMVF is for vectorized floating point data.
-```console
-(cuda-gdb) p cc
-$7 = 890
-(cuda-gdb) p warp_size
-$8 = 32
-
-(cuda-gdb) p use_mul_mat_f
-$9 = true
-(cuda-gdb) p use_mul_mat_q
-$10 = false
-(cuda-gdb) p use_mul_mat_vec_f
-$11 = false
-```
-Notice that this has norrowed the options down to just use_mul_mat_f being true.
-Following that we have:
-```c++
-    const int cc                 = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
-    bool use_batched_cublas_f16  = src0->type == GGML_TYPE_F16 && (src1->type == GGML_TYPE_F16 || !any_gpus_with_slow_fp16);
-    bool use_batched_cublas_bf16 = src0->type == GGML_TYPE_BF16 && bf16_mma_hardware_available(cc);
-    bool use_batched_cublas_f32  = src0->type == GGML_TYPE_F32;
-
-    if (!split && use_mul_mat_vec_f) {
-        // the custom F16 vector kernel can be used over batched cuBLAS GEMM
-        // but this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
+        // The custom F16 vector kernel can be used over batched cuBLAS GEMM.
+        // But this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
         ggml_cuda_mul_mat_vec_f(ctx, src0, src1, nullptr, dst);
-    } else if (!split && use_mul_mat_f) {
-        ggml_cuda_mul_mat_f(ctx, src0, src1, nullptr, dst);
-    } else if (!split && use_mul_mat_vec_q) {
-        ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
-    } else if (!split && use_mul_mat_q) {
-        ggml_cuda_mul_mat_q(ctx, src0, src1, nullptr, dst);
-    } else if (!split && (use_batched_cublas_f16 || use_batched_cublas_bf16 || use_batched_cublas_f32)
-        && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
-        // general KQ + KQV multi-batch without FlashAttention
-        ggml_cuda_mul_mat_batched_cublas(ctx, src0, src1, dst);
-    } else if (use_mul_mat_vec_f) {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_f, nullptr);
-    } else if (use_mul_mat_vec_q) {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, quantize_row_q8_1_cuda);
-    } else if (use_mul_mat_q) {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_q, quantize_mmq_q8_1_cuda);
-    } else {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, nullptr);
+        return;
     }
 ```
-In this case we will be calling `ggml_cuda_mul_mat_f` which is defined in
-mmf.cu:
-```c++
-void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
-    GGML_ASSERT(        src1->type == GGML_TYPE_F32);
-    GGML_ASSERT(!ids ||  ids->type == GGML_TYPE_I32);
-    GGML_ASSERT(         dst->type == GGML_TYPE_F32);
-
-
-    GGML_TENSOR_BINARY_OP_LOCALS;
-
-    const size_t ts_src0 = ggml_type_size(src0->type);
-    const size_t ts_src1 = ggml_type_size(src1->type);
-    const size_t ts_dst  = ggml_type_size(dst->type);
-
-    ...
-
-    const float   * src1_d =       (const float   *) src1->data;
-    const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
-    float         *  dst_d =       (float         *)  dst->data;
-```
-And above we are just creating pointers to the data of the src1, ids, and dst
-tensors.
-Next we have:
-```c++
-    const int64_t s01 = src0->nb[1] / ts_src0;
-    const int64_t s11 = src1->nb[1] / ts_src1;
-    const int64_t s1  =  dst->nb[1] / ts_dst;
-    const int64_t s02 = src0->nb[2] / ts_src0;
-    const int64_t s12 = src1->nb[2] / ts_src1;
-    const int64_t s2  =  dst->nb[2] / ts_dst;
-    const int64_t s03 = src0->nb[3] / ts_src0;
-    const int64_t s13 = src1->nb[3] / ts_src1;
-    const int64_t s3  =  dst->nb[3] / ts_dst;
-
-    const int64_t ids_s0 = ids ? ids->nb[0] / ggml_type_size(ids->type) : 0;
-    const int64_t ids_s1 = ids ? ids->nb[1] / ggml_type_size(ids->type) : 0;
-```
-The `s` stands for stride and what this is doing is calculating the stride for
-each dimension of the tensors. While we could use the nb array this would lead
-to code like:
-```c++
-char data_bytes = (char )data;
-size_t offset_bytes = 2 * nb[1] + 1 * nb[0];
-float value = ((float )(data_bytes + offset_bytes));
-```
-But by using the approach in the code we can do:
-```c++
-size_t offset_elements = 2 * s1 + 1 * s0;
-float value = data[offset_elements];
-```
-Next we have:
-```c++
-    mmf_ids_data ids_info{};
-    mmf_ids_data * ids_info_ptr = nullptr;
-```
-The `mmf_ids_data` struct is defined in mmf.cu as:
-```c++
-struct mmf_ids_data {
-    const int32_t * ids_src_compact = nullptr;
-    const int32_t * ids_dst_compact = nullptr;
-    const int32_t * expert_bounds_dev = nullptr;
-    int n_experts = 0;
-    int sis1 = 0;
-};
-```
-And this is used for mixtures of experts to make the computation efficient. What
-is done is that we first shuffle the tokens assigned to each experts so that
-all tokens for expert 0 come first, then all tokens for expert 1, etc. With this
-data now contiguous in memory we can do a single matrix multiplication per expert.
-And the we unshuffle the results back to the original token order. This struct
-stores information needed to do this. The `experts_bounds_dev` specifies where
-the section for expoert 'i' starts in the shuffled data.
-`ids_src_compact` is a list that tells the kernal how to build the shuffled input.
-
-Next we have a few ggml_cuda_pool_allocators for the above data:
-```c++
-    ggml_cuda_pool_alloc<int32_t> ids_src_compact_dev;
-    ggml_cuda_pool_alloc<int32_t> ids_dst_compact_dev;
-    ggml_cuda_pool_alloc<int32_t> expert_bounds_dev;
-```
-This is a memory allocator for GPU device memory. So initially there is a large
-block of global device memory allocated and then smaller chunks are handed out
-by using an allocator.
-
-Next we have:
-```c++
-    // For MUL_MAT_ID the memory layout is different than for MUL_MAT:
-    const int64_t ncols_dst          = ids ? ne2  : ne1;
-    const int64_t nchannels_dst      = ids ? ne1 : ne2;
-
-    const int64_t stride_col_dst     = ids ? s2   : s1;
-    const int64_t stride_col_y       = ids ? s12  : s11;
-    const int64_t stride_channel_dst = ids ? s1 : s2;
-
-    int64_t stride_channel_y         = ids ? s11  : s12;
-    int64_t nchannels_y              = ids ? ne11 : ne12;
-```
-The term channel is a more general concept than row and represents and independant
-stream of computation. For example when we are processing a batched `MUL_MAT` we
-are processing a batch of matrices and each matrix in the batch is an independent
-stream (a channel).
-For example, lets say we have a batch of 4 matrices each has 16 rows and 512
-columns:
+Before taking a look at the check in use_mmvf, MMVF is (Mul Mat Vec Float) and
+is a custom kernel for unquantized floating point weights, like F16, BF16 or
+F32. 
 ```console
-batch = [512, 16, 4]
-```
-So the number of channels, `n_channels_dst`, is 4, the number of batches/channels.
-And the number of columns is 16, `n_cols_dst`.
+(cuda-gdb) p src0->type
+$5 = GGML_TYPE_Q8_0
 
-But for `MUL_MAT_ID` we have something different. In this case we are processing
-4 tokens, and for each of them we are producing an output vector of 512 features.
-But we still want to use the same kernel.
+(cuda-gdb) p src0->ne
+$9 = {4096, 18560, 1, 1}
 ```
-batch = [512, 4]
-
-nchannels_dst = 4
-ncols_dst = 1 (this is a 2d tensor so the second dimension is 1)
-```
-
 ```c++
-    switch (src0->type) {
-        ...
-        case GGML_TYPE_F16: {
-            const half2 * src0_d = (const half2 *) src0->data;
-            constexpr int vals_per_T = 2;
-            mul_mat_f_switch_cols_per_block(
-                src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, stride_col_y/vals_per_T, stride_col_dst,
-                ids_s0, ids_s1, ne02, nchannels_y, nchannels_dst, s02/vals_per_T, stride_channel_y, stride_channel_dst,
-                ne03, ne3, s03/vals_per_T, s13, s3, ctx.stream(), ids_info_ptr);
-        } break;
-```
-mul_mat_f_switch_cols_per_block can be found in mmf.cuf:
-```c++
-template <typename T>
-static void mul_mat_f_switch_cols_per_block(
-        const T * x, const float * y, const int32_t * ids, float * dst,
-        const int64_t ncols_x, const int64_t nrows_x, const int64_t ncols_dst,
-        const int64_t stride_row, const int64_t stride_col_y, const int64_t stride_col_dst,
-        const int64_t stride_col_id, const int stride_row_id,
-        const int64_t nchannels_x, const int64_t nchannels_y, const int64_t nchannels_dst,
-        const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
-        const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
-        cudaStream_t stream, const mmf_ids_data * ids_data) {
+bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc,
+    int warp_size, const int64_t * src0_ne, const size_t * src0_nb, int64_t ne11) {
+    if (src0_ne[0] % 2 != 0) {
+        return false;
+    }
 
-    const int ncols_case = (ids && ncols_dst > 16) ? 16 : ncols_dst;
-
-    GGML_ASSERT(ids || ncols_dst <= 16);
-
-    switch (ncols_case) {
+    const size_t ts = ggml_type_size(type);
+    if (src0_nb[0] != ts) {
+        return false;
+    }
     ...
-        case  7: {
-            mul_mat_f_cuda<T,  7>(x, y, ids, dst, ncols_x, nrows_x, ncols_dst, stride_row, stride_col_y, stride_col_dst,
-                stride_col_id, stride_row_id, nchannels_x, nchannels_y,  nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
-                nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream, ids_data);
-        } break;
+    switch (type) {
+        case GGML_TYPE_F32:
+            ...
+        case GGML_TYPE_F16:
+            ...
+        case GGML_TYPE_BF16:
+            ...
+        default:
+            return false;
 ```
+So we can see that for our type this will return false.
+
+```c++
+    if (ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, ne11, /*mul_mat_id =*/ false)) {
+        ggml_cuda_mul_mat_f(ctx, src0, src1, nullptr, dst);
+        return;
+    }
+```
+```c++
+bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const int64_t * src0_ne,
+        const size_t * src0_nb, const int src1_ncols, bool mul_mat_id) {
+    if (ggml_is_quantized(type)) {
+        return false;
+    }
+```
+So the type needs to unquantized for this.
+```c++
+    if (ggml_cuda_should_use_mmvq(src0->type, cc, ne11)) {
+        ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
+        return;
+    }
+```
+```c++
+bool ggml_cuda_should_use_mmvq(enum ggml_type type, int cc, int64_t ne11) {
+    if (!ggml_is_quantized(type)) {
+        return false;
+    }
+
+    // k-quants cost more to decode and mvq redoes that per column, so MMQ wins sooner.
+    // Only list quant-types MMQ supports, others would fall back to cuBLAS.
+    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc == GGML_CUDA_CC_ADA_LOVELACE) {
+        switch (type) { // tuned on RTX 4090
+            case GGML_TYPE_Q2_K:
+                return ne11 <= 4;
+            case GGML_TYPE_Q3_K:
+                return ne11 <= 6;
+            default:
+                return ne11 <= MMVQ_MAX_BATCH_SIZE;
+        }
+    }
+
+    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc == GGML_CUDA_CC_BLACKWELL) {
+        switch (type) { // tuned on RTX 5090
+            case GGML_TYPE_Q2_K:
+            case GGML_TYPE_Q3_K:
+            case GGML_TYPE_Q4_K:
+                return ne11 <= 5;
+            case GGML_TYPE_Q5_K:
+                return ne11 <= 6;
+            case GGML_TYPE_Q6_K:
+                return ne11 <= 7;
+            default:
+                return ne11 <= MMVQ_MAX_BATCH_SIZE;
+        }
+    }
+
+#define MMVQ_MAX_BATCH_SIZE  8
+
+    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc == GGML_CUDA_CC_DGX_SPARK) {
+        switch (type) { // tuned on DGX Spark GB10
+            case GGML_TYPE_Q2_K:
+                return ne11 <= 6;
+            default:
+                return ne11 <= MMVQ_MAX_BATCH_SIZE;
+        }
+    }
+```
+```console
+(cuda-gdb) p ne11 < 8
+$16 = true
+```
+So this will select MMVQ:
+```c++
+        ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
+                                                   ↑
+                                                 MoE ids
+```
+mmvq.cu
+```c++
+void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx,
+    const ggml_tensor * src0,
+    const ggml_tensor * src1,
+    const ggml_tensor * ids,
+    ggml_tensor * dst,
+    const ggml_cuda_mm_fusion_args_host * fusion) {
+
+    GGML_ASSERT(        src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(        dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(!ids || ids->type  == GGML_TYPE_I32); // Optional, used for batched GGML_MUL_MAT_ID.
+
+```
+Now, the naming of local variables is done by the macro
+`GGML_TENSOR_BINARY_OP_LOCALS` and recall (documented in ../../ggml.md) that
+each variable name has three parts:
+```console
+ne   1   2 
+↑    ↑   ↑
+|    |   |
+|    |   + dimension: 0..3
+|    + tensor : 0 = src0, 1 = src1, 2 = src2 etc.
++----- what: ne = number of elements, nb = number of bytes.
+```
+
+```
+    const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
+    ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1);
+    {
+        const int64_t s11 = src1->nb[1] / ts_src1;
+        const int64_t s12 = src1->nb[2] / ts_src1;
+        const int64_t s13 = src1->nb[3] / ts_src1;
+        quantize_row_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
+    }
+```
+Now, this quantization had me a little confused initially but just keep in mind
+that this is quantizing the activations, it is passing in src1's data pointer,
+only the type of the weights tensor (src0->type) is used from the src0.
+```console
+(cuda-gdb)
+1561	        quantize_row_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
+(cuda-gdb) p src1->name
+$1 = "attn_norm-0", '\000' <repeats 52 times>
+(cuda-gdb) p src1->type
+$2 = GGML_TYPE_F32
+```
+And this is done because when MMVQ computes the dot products it used dp4a (dot
+product 4 elements and accumulate) which multiplies 4 int8 values by 4 int8
+values and adds them into an int32. So both operanads have to be integers.
+So we currently have:
+```console
+src0 (weights)     Q4_K   already 4-bit values + scales
+src1 (activations) F32    quantize_row_q8_1_cuda -> Q8_1 (int8 + scales)
+```
+The activations are split into blocks of 32 values.
+
+And recall that a Blackwell has Tensor Cores units inside each SM on the GPU
+next to the normal CUDA cores. These use different instructions:
+```console
+GPU (GB10)
+  SM
+    CUDA cores        dp4a (dot product 4*int8 accumulate, mmvq)
+    Tensor cores      mma (whole-wrap matrix tile, mmq)
+```
+So small batches run on normal CUDA cores and larger batches on Tensor Cores. The
+mma instruction always computes a fixed-size tile, for example 16 weight rows *
+8 token columns * 32 deep and if we have fewer than 8 tokens the empty columns
+are padded and computed just the same. So there is extra work involved here in
+doing the padding, tiling and setup cost of copying tiles through shared memory.
+This is avoided when usin mmvq which just streams the weights once and does a
+simple dp4a per thread. And this is what the ne11=8 cutoff is for and this can
+vary depending on the actual GPU in use.
+
+Just to recap what we are doing here:
+```console
+(cuda-gdb) p dst->name
+$4 = "Qcur-0", '\000' <repeats 57 times>
+(cuda-gdb) p dst->op  
+$5 = GGML_OP_MUL_MAT
+(cuda-gdb) p dst->ne
+$8 = {4096, 2, 1, 1}
+
+(cuda-gdb) p src0->name
+$6 = "blk.0.attn_q.weight", '\000' <repeats 44 times>
+(cuda-gdb) p src0->ne
+$9 = {4096, 4096, 1, 1}
+
+(cuda-gdb) p src1->name
+$7 = "attn_norm-0", '\000' <repeats 52 times>
+(cuda-gdb) p src1->ne
+$10 = {4096, 2, 1, 1}
+```
+So we have the weights in src0, and the activations in src1, which is this case
+is the warmup and we have only two tokens. This is the tensor that will get
+quantized.
+```c++
+const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
+
+const int64_t s11 = src1->nb[1] / ts_src1;
+const int64_t s12 = src1->nb[2] / ts_src1;
+const int64_t s13 = src1->nb[3] / ts_src1;
+
+quantize_row_q8_1_cuda(
+    src1_d,            // x: pointer to activation data, _d means device pointer
+    nullptr,           // ids: ids pointer for expert routing MUL_MAT_ID unused here
+    src1_q8_1.get(),   // vy: cuda output buffer (device global memory) for Q8_1 blocks
+    src0->type,        // the type of the weights tensor
+    ne10,              // number of elements of src1, dim 0
+    s11,               // stride for src1, dim 1
+    s12,               // stride for src1, dim 2
+    s13,               // stride for src1, dim 3
+    ne10_padded,       // number of elements src1, dim 0 padded
+    ne11,              // number of elements src1, dim 1
+    ne12,              // number of elements src1, dim 2
+    ne13,              // number of elements src1, dim 3
+    stream);           // the cuda stream
+```
+
+ggml-cuda/quantize.cu:
+```c++
+void quantize_row_q8_1_cuda(
+        const float * x, const int32_t * ids, void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
+    GGML_ASSERT(!ids);
+    GGML_ASSERT(ne0 % QK8_1 == 0);
+
+    const uint3 ne2_fastdiv = init_fastdiv_values(ne2);
+
+    const int64_t block_num_x = (ne0 + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
+    const dim3 num_blocks(block_num_x, ne1, ne2*ne3);
+    const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
+    const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(num_blocks, block_size, 0, stream);
+    ggml_cuda_kernel_launch(quantize_q8_1, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
+    GGML_UNUSED(type_src0);
+}
+```
+So notice that this 
+
+That commit would also allow quantize_row_q8_1_cuda to remove its `ids`
+and `type_src0` parameters (which are not used) from the function
+signature. I'll open a follow up PR or include a commit for that which
+ever makes reviewing easiest.
+
+
+
+__wip__
+
 Just a note about the name `switch` in some of the function names. So the target
 function is `mul_mat_f_cuda` which is templatized on the number of columns per block.
 If we know the number of columns to process per block the kernel can be made to
@@ -1084,5 +1138,32 @@ The warp collectively executes this as a single Tensor Core operation:
 
 So thread 0 will contribute 4 half2 values (8 FP16 values) from tile A and 4
 half2 values from tile B.
+
+
+### Quantization
+So I initially had this backwards. If we have weights that are quantized, lets
+say as Q4_K and activation that are in F32, I thought we would dequantize the
+weighs to be able to perform the operation. But that is not the case and the
+type of quantization/dequantization is determined by the type of quantized
+weights. If we look in ggml-cuda.cu 
+```c++
+static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx,
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+```
+```console
+(cuda-gdb) p dst->ne
+$27 = {4096, 2, 1, 1}
+(cuda-gdb) p dst->name
+$28 = "Qcur-0", '\000' <repeats 57 times>
+(cuda-gdb) p dst->op  
+$29 = GGML_OP_MUL_MAT
+
+```
+
+the activation will be quantized to Q8_1 and then the matrix multiplication will
+be performed on those types.
+Hmm, but this might also depended on the type of batch. If we are doing prompt
+processing the operation might be MMQ instead. I need to understand this better.
+
 
 __wip__
