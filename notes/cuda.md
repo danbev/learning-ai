@@ -712,6 +712,147 @@ efficient because:
 * No Row Conflicts: All threads work within the same row, avoiding the penalty
   of switching between rows
 
+### Parallell Thread Execution (PTX)
+This is the arch independant virtual assembly language.
+
+```console
+   source.cu
+      ↓ (Clang / NVVM (LLVM-based frontend)
+   PTX intermediate virtual ISA (.ptx)
+      ↓ (ptxas)
+   SASS native hardware machine code (cubin/ELF)
+      ↓
+   Hardware execution on SM
+```
+
+### Streaming ASSembler (SASS)
+This is the low-level binary machine code that executes on nvidia gpu hardware.
+
+### Registers
+Registers are private to a thread and are the fastest storage on the GPU. I've
+written about registers in [gpu.md](./gpu.md) as really need to merge that
+document with this one but I found I'm lacking a deeper understanding of how
+registers work.
+
+```c++
+__global__ void registers_only(const int * in, int * out) {
+    int tid = threadIdx.x;
+    int x = in[tid];
+    int y = x * 2 + 1;
+    ...
+```
+This function in registers.ptx is:
+```console
+.visible .entry _Z14registers_onlyPKiPi(
+	.param .u64 .ptr .align 1 _Z14registers_onlyPKiPi_param_0,
+	.param .u64 .ptr .align 1 _Z14registers_onlyPKiPi_param_1
+)
+```
+So we have a C++ mangeled name as it starts with `_Z` and the identifier is
+14 characters (`registers_only`). The first P is for pointer, the K is const
+and i is for integer. And the second argument is a non-const pointer to int.
+
+```console
+(cuda-gdb) p d_in 
+$8 = (int *) 0x330400000
+
+(cuda-gdb) p in
+$9 = (const @generic int * @parameter) 0x330400000
+
+(cuda-gdb) print &in
+$7 = (const @generic int * @parameter *) 0x380 <local_dynamic_index(int const*, int const*, int*)+896>
+```
+Notice the @parameter, this indicates the address space where where the offset
+0x380, is an offset into that space. Other spaces are global, shared, local,
+constant, and generic. Normally if we have a pointer the pointer itself would
+be allocated on the stack. But in CUDA the pointer is allocated in generic
+memory
+
+```console
+.visible .entry _Z14registers_onlyPKiPi(
+	.param .u64 .ptr .align 1 _Z14registers_onlyPKiPi_param_0,
+	.param .u64 .ptr .align 1 _Z14registers_onlyPKiPi_param_1
+)
+```
+
+We can inspect the registers for a thread using cuda-gdb:
+```console
+(cuda-gdb) cuda thread 1
+(cuda-gdb) info registers
+pc             0x325b66bb0         0x325b66bb0 <registers_only(int const*, int*)+688>
+errorpc        <unavailable>
+R0             0x1                 1                 // tid
+R1             0xfffd80            16776576
+R2             0xe1fffd80          3791650176
+R3             0xfffd              65533
+R4             0x30400400          809501696
+R5             0x3                 3
+R6             0x1                 1
+...
+
+(cuda-gdb) info registers
+pc             0x325b66bb0         0x325b66bb0 <registers_only(int const*, int*)+688>
+errorpc        <unavailable>
+R0             0x2                 2                 // tid
+R1             0xfffd80            16776576
+R2             0xe1fffd80          3791650176
+R3             0xfffd              65533
+R4             0x30400400          809501696
+R5             0x3                 3
+R6             0x2                 2
+...
+```
+
+```console
+(cuda-gdb) disassemble 
+Dump of assembler code for function _Z14registers_onlyPKiPi:
+
+   0x0000000325b66900 <+0> :	LDC R1, c[0x0][0x37c]
+LoaD Constant: read 32 bits from constant bank 0 at offset 0x37c into R1.
+Bank c[0x0] is filled by the driver at launch. Our parameters in/out are at
+0x380 and 0x388. This the initial stack pointer, the top of this threads local memory.
+R1 is the stack pointer by convention.
+
+   0x0000000325b66910 <+16>:	IADD3 R1,PT,PT,R1,-0x40,RZ
+This is a three input int addition: R1 = R1 + (-0x40) + RZ
+PT are the outputs for carry/overflow predicates and PR is the always true predicate
+and writing to it means discard.
+This is allocating the 64-byte frame int arr[16] (16*4 bytes) (int arr[N]). The
+stack grows downwards like on a CPU.
+
+   0x0000000325b66920 <+32>:	S2R R0,SR_LMEMHIOFF
+Special register to Register: reads a hardware special register. I think SR_LMEMHIOFF
+is the lower limitr of the threads local-memory window.
+
+   0x0000000325b66930 <+48>:	ISETP.GE.U32.AND P0,PT,R1,R0,PT
+Integer SET Predicate: P0 = (R1 >= R0 as unsigned) AND PT
+
+   0x0000000325b66940 <+64>:	@P0 BRA 0x325b66960
+The predicate @P0 from above is used with the BRAnch instruction. If the stack
+fits we branch past the next instruction.
+   0x0000000325b66950 <+80>:	BPT.TRAP 0x1
+Raises a trap and the kernel fails with an error. So this and S2R are checks to
+prevent stack overflows.
+
+Branch destination:
+   0x0000000325b66960 <+96>:	LDC.64 R12,c[0x0][0x358]
+
+   0x0000000325b66970 <+112>:	IADD3 R0,PT,PT,R1,RZ,RZ
+   0x0000000325b66980 <+128>:	MOV R2,R0
+
+```
+
+### Local Memory
+Like Registers, local memory is also private to a thread, but it is not on-chip
+storage. It is a per-thread slice of device memory (DRAM, cached in L1/L2), that
+is it is actually part of the global memory (GDDR or HMB). The name 'local'
+refers to the scope (thread local), not to where it physically lives.
+
+When a kernel launches that requires the cuda driver will allocate a scratch pad
+buffer directly out of the GPU's physical device VRAM. But .local memory is
+private to each thread and specific instructions like LDL (load local) and STL
+(store local) are used.
+
 ### Shared Memory
 Before trying to understand shared memory and how it is useful I think it
 might help to understand a basic matrix multiplication example.
@@ -989,3 +1130,345 @@ $6 = GGML_OP_MUL_MAT
 ```
 [ Token A ]  x  [ Weight Matrix ]  =  [ Result ]
 ```
+
+### Compilation
+```console
+spark $ make info
+nvcc -G -g -v -arch=native -o info src/info.cu
+
+#$ PATH=/usr/local/cuda/bin:/home/danbev/work/danbev-configs/scripts:/home/danbev/.nvm/versions/node/v24.12.0/bin:/usr/local/cuda/bin:/opt/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/danbev/work/utils/ngc-cli:/home/danbev/.local/bin:/home/danbev/.local/bin
+#$ _NVVM_BRANCH_=nvvm
+#$ _SPACE_=
+#$ _CUDART_=cudart
+#$ _HERE_=/usr/local/cuda/bin
+#$ _THERE_=/usr/local/cuda/bin
+#$ _TARGET_SIZE_=
+#$ _TARGET_DIR_=
+#$ _TARGET_DIR_=targets/sbsa-linux
+#$ TOP=/usr/local/cuda/bin/..
+#$ CICC_PATH=/usr/local/cuda/bin/../nvvm/bin
+#$ NVVMIR_LIBRARY_DIR=/usr/local/cuda/bin/../nvvm/libdevice
+#$ LD_LIBRARY_PATH=/usr/local/cuda/bin/../lib:
+#$ PATH=/usr/local/cuda/bin/../nvvm/bin:/usr/local/cuda/bin:/usr/local/cuda/bin:/home/danbev/work/danbev-configs/scripts:/home/danbev/.nvm/versions/node/v24.12.0/bin:/usr/local/cuda/bin:/opt/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/danbev/work/utils/ngc-cli:/home/danbev/.local/bin:/home/danbev/.local/bin
+#$ INCLUDES="-I/usr/local/cuda/bin/../targets/sbsa-linux/include"
+#$ SYSTEM_INCLUDES="-isystem" "/usr/local/cuda/bin/../targets/sbsa-linux/include/cccl"
+#$ LIBRARIES=  "-L/usr/local/cuda/bin/../targets/sbsa-linux/lib/stubs" "-L/usr/local/cuda/bin/../targets/sbsa-linux/lib"
+#$ CUDAFE_FLAGS=
+#$ PTXAS_FLAGS=
+```
+First gcc is invoked, and notice -E is used so this will only be
+the pre-processor:
+```console
+#$ gcc -D__CUDA_ARCH_LIST__=1210
+    -E             // only pre-process then stop.
+    -x c++         // treat the .cu as c++ source code.
+    -D__CUDACC__ -D__NVCC__ 
+    -D__CUDACC_DEBUG__  "-I/usr/local/cuda/bin/../targets/sbsa-linux/include"
+    "-isystem" "/usr/local/cuda/bin/../targets/sbsa-linux/include/cccl"
+    -D__CUDACC_VER_MAJOR__=13
+    -D__CUDACC_VER_MINOR__=0
+    -D__CUDACC_VER_BUILD__=88
+    -D__CUDA_API_VER_MAJOR__=13
+    -D__CUDA_API_VER_MINOR__=0
+    -D__NVCC_DIAG_PRAGMA_SUPPORT__=1
+    -D__CUDACC_DEVICE_ATOMIC_BUILTINS__=1
+    -include "cuda_runtime.h"   // notice that cuda_runtime.h gets include even if we don't
+    -g "src/info.cu"
+    -o "/tmp/tmpxft_00188864_00000000-6_info.cpp4.ii"
+```
+Next we have cudafe++, which is CUDAs Front End (fe) for c++. It is NVIDIA own
+language parser. Its primary purpose is to split the single .cu into two:
+```console
+#$ cudafe++ --c++17 --static-host-stub --device-hidden-visibility
+    --gnu_version=130300 --display_error_number
+    --orig_src_file_name "src/info.cu"
+    --orig_src_path_name "/home/danbev/work/learning-ai/gpu/cuda/src/info.cu"
+    --allow_managed --debug_mode --unsigned_chars --unsigned_wchar_t
+    --m64 --parse_templates
+    --gen_c_file_name "/tmp/cuda_temps/info.cudafe1.cpp"
+    --stub_file_name "info.cudafe1.stub.c"
+    --gen_module_id_file
+    --module_id_file_name "/tmp/cuda_temps/info.module_id" "/tmp/cuda_temps/info.cpp4.ii"
+    "/tmp/cuda_temps/info.cpp4.ii"
+```
+This tool will parse the CUDA specific C++ syntax, and replace <<<...>>> with
+standard C++ runtime API calls so that gcc can later compile that without errors.
+It will emit a host source without the CUDA specific parts, in info.cudafe1.cpp.
+
+Then we have another gcc invokation also just the pre-processor but this time
+we pass in __CUDA_ARCH__:
+```console
+#$ gcc -D__CUDA_ARCH__=1210 -D__CUDA_ARCH_LIST__=1210
+    -E
+    -x c++
+    -DCUDA_DOUBLE_MATH_FUNCTIONS
+    -D__CUDACC__
+    -D__NVCC__
+    -D__CUDACC_DEBUG__ 
+    "-I/usr/local/cuda/bin/../targets/sbsa-linux/include"
+    "-isystem" "/usr/local/cuda/bin/../targets/sbsa-linux/include/cccl"
+    -D__CUDACC_VER_MAJOR__=13
+    -D__CUDACC_VER_MINOR__=0
+    -D__CUDACC_VER_BUILD__=88
+    -D__CUDA_API_VER_MAJOR__=13
+    -D__CUDA_API_VER_MINOR__=0
+    -D__NVCC_DIAG_PRAGMA_SUPPORT__=1
+    -D__CUDACC_DEVICE_ATOMIC_BUILTINS__=1
+    -include "cuda_runtime.h"
+    -g "src/info.cu"
+    -o "/tmp/cuda_temps/info.cpp1.ii"
+```
+And the target of the output is cicc below whereas the above was for gcc which
+is the host part, this is the device part.
+
+Next we have cicc which CUDA Intermediate Code Compiler. This is what will produce
+the PTX:
+```console
+#$ "$CICC_PATH/cicc" --c++17 --static-host-stub --device-hidden-visibility
+    --gnu_version=130300 --display_error_number
+    --orig_src_file_name "src/info.cu"
+    --orig_src_path_name "/home/danbev/work/learning-ai/gpu/cuda/src/info.cu"
+    --allow_managed --debug_mode --unsigned_chars --unsigned_wchar_t
+    -arch compute_121 -m64 --no-version-ident -ftz=0 -prec_div=1 -prec_sqrt=1
+    -fmad=1
+    --include_file_name "info.fatbin.c"
+    -g -O0 -tused
+    --module_id_file_name "/tmp/cuda_temps/info.module_id"
+    --gen_c_file_name "/tmp/cuda_temps/info.cudafe1.c"
+    --stub_file_name  "/tmp/cuda_temps/info.cudafe1.stub.c"
+    --gen_device_file_name "/tmp/cuda_temps/info.cudafe1.gpu"
+    "/tmp/cuda_temps/info.cpp1.ii"
+    -o "/tmp/cuda_temps/info.ptx"
+```
+The `info_fatbin.c` is what will be used to embed the compiled GPU binary, the
+contents of a .cubin file so that we don't have to ship separate .cubin files.
+This option just specifies what the name of this include will be in the stub:
+In /tmp/cuda_temps/info.cudafe1.stub.c:
+```c++
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wcast-qual"
+#define __NV_CUBIN_HANDLE_STORAGE__ static
+#if !defined(__CUDA_INCLUDE_COMPILER_INTERNAL_HEADERS__)
+#define __CUDA_INCLUDE_COMPILER_INTERNAL_HEADERS__
+#endif
+#include "crt/host_runtime.h"
+#include "info.fatbin.c"
+extern __attribute__((visibility("hidden"))) void __device_stub__Z8myKernelv(void);
+static void __nv_cudaEntityRegisterCallback(void **);
+
+// Notice that this is using __constructor__  which is a compiler extension. Any
+// C/C++ function marked with this attribute is placed into the ELF's .init_array
+// section. These function are called before the main() function.
+static void __sti____cudaRegisterAll(void) __attribute__((__constructor__));
+
+// And the implementation calls __cudaRegister_binary.
+static void __sti____cudaRegisterAll(void) {
+    __cudaRegisterBinary(__nv_cudaEntityRegisterCallback);
+}
+
+__attribute__((visibility("hidden"))) void __device_stub__Z8myKernelv(void){__cudaLaunchPrologue(1);__cudaLaunch(((char *)((void ( *)(void))myKernel)), 0U);}
+# 5 "src/info.cu"
+void myKernel(void)
+# 5 "src/info.cu"
+{__device_stub__Z8myKernelv(); }
+
+# 1 "/tmp/cuda_temps/info.cudafe1.stub.c"
+static void __nv_cudaEntityRegisterCallback( void **__T0) {
+    __nv_dummy_param_ref(__T0);
+    __nv_save_fatbinhandle_for_managed_rt(__T0);
+    __cudaRegisterEntry(__T0, ((void ( *)(void))myKernel), _Z8myKernelv, (-1));
+}
+
+
+#pragma GCC diagnostic pop
+```
+
+```console
+#ifndef __SKIP_INTERNAL_FATBINARY_HEADERS
+#include "fatbinary_section.h"
+#endif
+#define __CUDAFATBINSECTION  ".nvFatBinSegment"
+#define __CUDAFATBINDATASECTION  ".nv_fatbin"
+asm(
+".section .nv_fatbin, \"a\"\n"
+".align 8\n"
+"fatbinData:\n"
+".quad 0x00100001ba55ed50,0x00000000000014d8,0x0000008001010002,0x0000000000001458\n"
+...
+".quad 0x0000000015c7ac3b\n"
+".text\n");
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern const unsigned long long fatbinData[669];
+#ifdef __cplusplus
+}
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
+static const __fatBinC_Wrapper_t __fatDeviceText
+  __attribute__ ((aligned (8)))
+  __attribute__ ((section (__CUDAFATBINSECTION)))= {
+      0x466243b1,   // magic number
+      1,            // version
+      fatbinData,   // ptr to assembly label above
+      0
+  };
+#ifdef __cplusplus
+}
+#endif
+```
+Now, `__cudaRegisterBinary` which is called by `__sti____cudaRegisterAll` is
+defined in `/usr/local/cuda/bin/../targets/sbsa-linux/include/crt/host_runtime.h`:
+```c++
+
+#define __cudaRegisterBinary(X)                                                    \
+        __cudaFatCubinHandle = __cudaRegisterFatBinary((void*) &__fatDeviceText);   \
+        { void (*callback_fp)(void **) =  (void (*)(void **))(X); (*callback_fp)(__cudaFatCubinHandle); __cudaRegisterFatBinaryEnd(__cudaFatCubinHandle); }\
+        atexit(__cudaUnregisterBinaryUtil)
+```
+We are still operating in host memory and have not interacted with the GPU device
+itself yet. Remember this all runs before main even starts.
+
+```console
+[ Program Launch ]
+       │
+       ▼
+__cudaRegisterFatBinary()  <── Only records host pointers & metadata
+       │
+       ▼
+main() begins
+       │
+       ▼
+cudaSetDevice(i)           <── Sets active device (still no code uploaded)
+       │
+       ▼
+First Device Activity      <── ACTUAL GPU INTERACTION OCCURS HERE:
+(e.g., cudaMalloc, or           1. Driver creates CUcontext on Device i
+ myKernel<<<1,1>>>())           2. Driver queries Device i Compute Capability (SM 12.1)
+                                3. Driver matches registered sm_121 cubin
+                                4. Driver allocates GPU memory via PCIe/NVLink
+                                5. SASS bytes copied to GPU instruction memory
+                                6. GPU instruction cache invalidates & prepares launch
+```
+
+So that was `cicc`, next we have the SASS PTX Assembler:
+```console
+#$ ptxas -arch=sm_121 -m64  -g --dont-merge-basicblocks --return-at-end
+    "/tmp/cuda_temps/info.ptx"
+    -o "/tmp/cuda_temps/info.cubin"
+```
+And notice that it take the .ptx file as input and it outputs a info.cubin file.
+This is a hardware specifix things like physical register allocation.
+
+Next we  have:
+```console
+#$ fatbinary --create="/tmp/cuda_temps/info.fatbin" -64
+    --ident="src/info.cu"
+    --cmdline=" -g --dont-merge-basicblocks --return-at-end "
+    --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 "
+    -g
+    "--image3=kind=elf,sm=121,file=/tmp/cuda_temps/info.cubin"
+    --embedded-fatbin="/tmp/cuda_temps/info.fatbin.c"
+```
+This is what serializes into info.fatbin.c.
+
+We then compile with gcc now that the fatbin has been populated:
+```console
+#$ gcc -D__CUDA_ARCH__=1210
+    -D__CUDA_ARCH_LIST__=1210
+    -c
+    -x c++ 
+    -DCUDA_DOUBLE_MATH_FUNCTIONS -Wno-psabi
+    "-I/usr/local/cuda/bin/../targets/sbsa-linux/include"
+    "-isystem"
+    "/usr/local/cuda/bin/../targets/sbsa-linux/include/cccl"
+    -g
+    "/tmp/cuda_temps/info.cudafe1.cpp"
+    -o "/tmp/cuda_temps/info.o"
+```
+Next we have nvlink which I was not expecting. I thougth this was something used
+to connect GPUs. But that is a hardware component, a high speed interconnect bus.
+This is nvidias device linker (nv link), like ld or gold.
+```console
+#$ nvlink -m64 --arch=sm_121
+    --register-link-binaries="/tmp/cuda_temps/info_dlink.reg.c"
+    -g
+    "-L/usr/local/cuda/bin/../targets/sbsa-linux/lib/stubs"
+    "-L/usr/local/cuda/bin/../targets/sbsa-linux/lib"
+    -cpu-arch=AARCH64
+    "/tmp/cuda_temps/info.o"
+    -lcudadevrt
+    -o "/tmp/cuda_temps/info_dlink.cubin"
+    --host-ccbin "gcc"
+```
+```console
+#$ fatbinary
+    --create="/tmp/cuda_temps/info_dlink.fatbin"
+    -64
+    --ident="src/info.cu "
+    --cmdline=" -g --dont-merge-basicblocks --return-at-end "
+    --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 "
+    -g
+    -link
+    "--image3=kind=elf,sm=121,file=/tmp/cuda_temps/info_dlink.cubin"
+    --embedded-fatbin="/tmp/cuda_temps/info_dlink.fatbin.c"
+```
+```console
+#$ gcc
+    -D__CUDA_ARCH_LIST__=1210
+    -c
+    -x c++
+    -DFATBINFILE="\"/tmp/cuda_temps/info_dlink.fatbin.c\""
+    -DREGISTERLINKBINARYFILE="\"/tmp/cuda_temps/info_dlink.reg.c\""
+    -I.
+    -D__NV_EXTRA_INITIALIZATION=
+    -D__NV_EXTRA_FINALIZATION=
+    -D__CUDA_INCLUDE_COMPILER_INTERNAL_HEADERS__  -Wno-psabi
+    "-I/usr/local/cuda/bin/../targets/sbsa-linux/include"
+    "-isystem" "/usr/local/cuda/bin/../targets/sbsa-linux/include/cccl"
+    -D__CUDACC_VER_MAJOR__=13
+    -D__CUDACC_VER_MINOR__=0
+    -D__CUDACC_VER_BUILD__=88
+    -D__CUDA_API_VER_MAJOR__=13
+    -D__CUDA_API_VER_MINOR__=0
+    -D__NVCC_DIAG_PRAGMA_SUPPORT__=1
+    -D__CUDACC_DEVICE_ATOMIC_BUILTINS__=1
+    -g
+    "/usr/local/cuda/bin/crt/link.stub"
+    -o "/tmp/cuda_temps/info_dlink.o"
+```
+```console
+#$ g++
+    -D__CUDA_ARCH_LIST__=1210
+    -g
+    -Wl,--start-group "/tmp/cuda_temps/info_dlink.o"
+                      "/tmp/cuda_temps/info.o"
+                      "-L/usr/local/cuda/bin/../targets/sbsa-linux/lib/stubs"
+                      "-L/usr/local/cuda/bin/../targets/sbsa-linux/lib"
+                      -lcudadevrt
+                      -lcudart_static
+                      -lrt
+                      -lpthread
+                      -ldl
+                      -Wl,--end-group
+                      -o "info"
+```
+
+### Loading into GPU Memory (code)
+The driver (libcuda.so) is like an OS dynamic loader. It inspects the fatbinary
+in host RAM and it extracts and decompresses only the specific SASS binary
+needed for the current physical GPU and only uploades the machine instructions,
+the contents of .text into GPU memory.
+
+The driver reserves a dedicated region in GPU device memory for code and
+constant banks (like c[0x0], which stores kernel arguments and launch
+configuration parameters).
+
+The driver initiates a Direct Memory Access (DMA) transfer over PCIe or the
+NVLink chip interconnect to copy those raw SASS instructions into the GPU's
+memory. Once in GPU memory, the GPU's instruction cache (I-Cache) can fetch them
+directly.
+
