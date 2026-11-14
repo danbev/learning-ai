@@ -1,0 +1,83 @@
+.version 8.5
+.target sm_89
+.address_size 64
+
+.visible .entry vec_add(
+    .param .u64 param_a,
+    .param .u64 param_b,
+    .param .u64 param_c,
+    .param .u32 param_n
+)
+{
+    // register definitions
+    .reg .pred  %p<2>;     // 2 predicated registers, just 1 bit for each I think
+    .reg .b32   %r<5>;     // 5 b32, which can store any 32 bits we like (no specific type)
+    .reg .b64   %rd<8>;    // 8 b64
+    .reg .f32   %f<4>;     // 4 f32 registers.
+
+    ld.param.u64    %rd1, [param_a];  // load/copy the parameter value [deref] a into rd1
+    ld.param.u64    %rd2, [param_b];  // load/copy the parameter value b int rb2
+    ld.param.u64    %rd3, [param_c];
+    ld.param.u32    %r1,  [param_n];
+
+    // The following move instructions are required because PTX restricts special
+    // registers from appearing in arithmetic or comparision instructions so we
+    // have to first copy them to general purpose virtual registers.
+    mov.u32         %r2, %ctaid.x;    // Cooperative Thread Array (CTA) ID, is a builtin special register.
+                                      // A CTA is what PTX calls a thread block.
+    mov.u32         %r3, %ntid.x;     // Number of threads along x (also a builtin special reg.
+    mov.u32         %r4, %tid.x;      // Thread ID along x
+
+    mad.lo.u32      %r2, %r2, %r3, %r4; // Multiply-Add (mad) so d=a*b+c. This
+                                        // computes the 1D global thread index
+					// (blockIdx.x * blockDim.x + threadIdx.x)
+    // Multiplying two 32-bit integers produces a 64-bit intermediate product
+    // (32*32->64 bits). mad is a on integers and requires us to specify which
+    // part of the 64-bit product to keep before adding with %r4 (c). In this
+    // case we are saying we want the lower 32-bits. There is also .hi, and .wide.
+
+    setp.ge.u32     %p1, %r2, %r1;
+    // So this is setting the %p1 register with the result of comparing the
+    // values in registers %r2 and %r1. If the value if %r2 is greater than (ge)
+    // or equal to the value in %r1 the predicate register (bit) is set to 1 for
+    // true, otherwise it is 0 for false. The u32 says that the values we are
+    // comparing are unsigned 32-bit values. So r2 is where we stored the global
+    // thread index, and r1 is the last parameter, n. So this is checking that
+    // the current thread id has something to process. %p1 = (%r2 >= %r1)
+
+    @%p1 bra        DONE;
+    // @ is the guard prefix and this is checking the value of p1. If it is true
+    // (1) then the global thread id in r2 was greater than n and this thread
+    // will branch (bra) to the label DONE. And if p1 is 0 (false) the we fall
+    // through.
+
+    // Next we multiply the 32-bit unsigned global thread index in %r2 by 4:
+    mul.wide.u32    %rd4, %r2, 4;
+    // This is to get the distance/offset into a, b, and c. Using wide here as
+    // we have an addres_size of 64 and the array base pointers (rd1, rd2, rd3)
+    // are 64-bit addresses.
+
+    // Then we add the value in %rd1 which is a pointer, to this is pointer
+    // addition and it the offsetting we calculated above so that we the we
+    // have the correct offsets for a, b, and c.
+    add.s64         %rd5, %rd1, %rd4;
+    add.s64         %rd6, %rd2, %rd4;
+    add.s64         %rd7, %rd3, %rd4;
+
+    // Then we have a load of a global value, using the adress in rd5 which is
+    // our a array. Notice that we are dereferencing the value using []:
+    ld.global.f32   %f1, [%rd5];
+
+    // And then the same for our b array:
+    ld.global.f32   %f2, [%rd6];
+
+    // And then we add those two valued together
+    add.f32         %f3, %f1, %f2;
+
+    // Finally we store this back into global memory using the correct offset
+    // into c, so this is like *c = result.
+    st.global.f32   [%rd7], %f3;
+
+DONE:
+    ret;
+}

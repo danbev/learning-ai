@@ -1,6 +1,6 @@
 NVCC ?= nvcc
 CUDA_ARCH ?= native
-NVCCFLAGS ?=-G -g
+NVCCFLAGS ?=-G -g -v --keep --keep-dir /tmp/cuda_temps
 
 # Use the local GPU by default; override with e.g. CUDA_ARCH=sm_89.
 CUDA_FLAGS = $(NVCCFLAGS) -arch=$(CUDA_ARCH)
@@ -128,6 +128,14 @@ registers-sass: src/registers.cu
 	$(NVCC) -arch=$(CUDA_ARCH) -cubin $< -o registers.cubin
 	cuobjdump -sass registers.cubin > registers.sass
 	@grep -E "Function|STL|LDL" registers.sass
+
+vec_add: src/vec_add.ptx
+	ptxas -arch=sm_120 -v $< -o $@.cubin
+	cuobjdump --dump-sass $@.cubin > $@.sass
+
+launcher: src/launcher.cpp
+	g++ -O2 $< -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcuda -o $@
+
 
 EXAMPLES = info wmma threads inc array-add streams graphs matrix-mul \
            matrix-mul-tiled template prefix-sum pagable pinned ldmatrix dp4a \
