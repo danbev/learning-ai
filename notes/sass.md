@@ -105,6 +105,101 @@ $6 = 0xfffdc0
 ```
 Indeed we have the same SP for both of them.
 
+For the other values in constant memory we can inspect them using:
+```console
+(cuda-gdb) x/16wx $_cuda_const_bank(0x0, 0x360)
+0x324280360:	0x00000100	0x00000001	0x00000001	0x00000000
+0x324280370:	0x00000004	0x00000001	0x00000001	0x00fffdc0
+0x324280380:	0x30400000	0x00000003	0x30401000	0x00000003
+0x324280390:	0x30402000	0x00000003	0x00000400	0x00000000
+
+(cuda-gdb) p /d *$_cuda_const_bank(0x0, 0x360)   // blockDim.x
+$7 = 256
+
+(cuda-gdb) p /x *$_cuda_const_bank(0x0, 0x37c)   // Initial SP like we saw above
+$8 = 0xfffdc0
+
+(cuda-gdb) p /d *$_cuda_const_bank(0x0, 0x398)   // params_n
+$9 = 1024
+
+(cuda-gdb) p /d *(unsigned int @parameter *)0x398  // also params_n but using @parameter
+$10 = 1024
+```
+This also clarifies that how each thread sees the same arguments, they are the
+same.
+
+Now the constant memory is just a location in global memory and it passes through
+the L2 cache and then stored in a constant cache (which is separate from the L1
+cache).
+
+Next we have (including the first line for context:
+```assembly
+        /*0000*/                   LDC R1, c[0x0][0x37c] ;                 /* 0x0000df00ff017b82 */
+                                                                           /* 0x000fe20000000800 */
+        /*0010*/                   S2R R0, SR_TID.X ;                      /* 0x0000000000007919 */
+```
+The operation `S2R` stands for Special Register to Register, so this i reading
+from the special register `SR_TID` and storing into general purpose R0.
+There are hardware special registers per lane like the following:
+```
+SR_TID.X
+SR_TID.Y
+SR_TID.Z
+```
+There does not seem to be a away to see these registers in gdb, for example
+`info registers` or `info all-registers` does not show them.
+```console
+(cuda-gdb) cuda thread(2, 0, 0)
+[Switching focus to CUDA kernel 0, grid 1, block (0,0,0), thread (2,0,0), device 0, sm 0, warp 0, lane 2]
+0x0000000325b66930 in vec_add<<<(4,1,1),(256,1,1)>>> ()
+(cuda-gdb) p $R0
+$28 = 2
+```
+
+Lets move on, so just notice that the thread id is being stored in R0.
+```assembly
+        /*0020*/                   S2UR UR4, SR_CTAID.X ;                  /* 0x00000000000479c3 */
+                                                                           /* 0x000e220000002500 */
+```
+This is again a Special Register to register but this time the destination is
+UR4 and the command also has UR in it. This stands for Uniform Register which is
+a scalar 32-bit register shared accross all 32 threads in a warp. When ptxas
+performs static analysis if it can prove that a expression produces the exact
+same value for every thread in a warp it routes that value into the SMs uniform
+datapath instead of the main vector register file.
+
+Every SM sub-partition maintains to separate register files.
+
+The special register uses here is `SR_CTAID.x` so this is the 3D cluster coordinate
+in the grid. This is zero so nothing really to show here:
+```console
+(cuda-gdb) p $UR4
+$29 = 0
+```
+Next, we have:
+```assembly
+(cuda-gdb) x/3i $pc
+=> 0x325b66930 <vec_add+48>:	LDCU UR5,c[0x0][0x398]
+   0x325b66940 <vec_add+64>:	LDC R9,c[0x0][0x360]
+   0x325b66950 <vec_add+80>:	IMAD R9,R9,UR4,R0
+```
+We have a Load Constant operatation into Uniform register, and the destination
+is UR5, and we have a constant that we are referenceing. And from above we know
+how to inspect values in the constant bank:
+```console
+(cuda-gdb) p /d *$_cuda_const_bank(0x0, 0x398)
+$30 = 1024
+
+(cuda-gdb) p $UR5
+$31 = 1024
+```
+So this is our `param_n` argument.
+
+
+(Perhaps try `layout asm` to make debugging easier/faster)
+
+
+
 _wip_
 
 ```console
