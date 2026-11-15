@@ -134,7 +134,7 @@ vec_add: src/vec_add.ptx
 	cuobjdump --dump-sass $@.cubin > $@.sass
 
 launcher: src/launcher.cpp
-	g++ -O2 $< -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcuda -o $@
+	g++ -g -O0 $< -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lcuda -o $@
 
 
 EXAMPLES = info wmma threads inc array-add streams graphs matrix-mul \
