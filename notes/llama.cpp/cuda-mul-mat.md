@@ -244,7 +244,8 @@ $2 = GGML_TYPE_F32
 ```
 And this is done because when MMVQ computes the dot products it used dp4a (dot
 product 4 elements and accumulate) which multiplies 4 int8 values by 4 int8
-values and adds them into an int32. So both operanads have to be integers.
+values and adds them into an int32. So both operands have to be integers.
+
 So we currently have:
 ```console
 src0 (weights)     Q4_K   already 4-bit values + scales
@@ -265,7 +266,7 @@ mma instruction always computes a fixed-size tile, for example 16 weight rows *
 8 token columns * 32 deep and if we have fewer than 8 tokens the empty columns
 are padded and computed just the same. So there is extra work involved here in
 doing the padding, tiling and setup cost of copying tiles through shared memory.
-This is avoided when usin mmvq which just streams the weights once and does a
+This is avoided when using mmvq which just streams the weights once and does a
 simple dp4a per thread. And this is what the ne11=8 cutoff is for and this can
 vary depending on the actual GPU in use.
 
@@ -1427,6 +1428,10 @@ Recall that dst is our output (C matrix):
 $26 = {4096, 8, 1, 1}
 ```
 
+#### mmq_get_nbytes_shared
+TODO: link to this section of move it as I have this in multiple places at the
+moment.
+
 Next we check if this config will fit in share memory (shared memory per block,
 opt-in smpbo):
 ```c++
@@ -2128,12 +2133,164 @@ $8 = 32
 (cuda-gdb) p config
 $9 = {type = GGML_TYPE_Q4_K, nthreads = 256, occupancy = 1, I = 128, J = 8,
   sram_layout = GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1, K_vram = 256, stream_k = true, fallback = false}
-
 ```
+
 ```c++
     const int nwarps = config.nthreads / warp_size;
     const int nbytes_shared = mmq_get_nbytes_shared(config, cc);
 ```
+`nbytes_shared` is the shared memory for one tile, and recall that a tile is
+a tile of the weights, and a tile of the activations. This is calculating the
+size of shared memory needed which will be used to CUDA_SET_SHARED_MEMORY_LIMIT
+and also passed as the dynamic shared memory launch configuration parameter
+```c++
+mul_mat_q<type, J, fallback, prec_src1, has_fusion>
+    <<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>> (
+    ...
+}
+```
+If we look in `mmq_get_nbytes_shared` we find:
+```c++
+static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
+    const size_t nbs_ids = config.J*sizeof(int);
+    const size_t nbs_x = ggml_cuda_mmq_get_nbytes_shared_x(config, cc);
+    const size_t nbs_y = config.J * (sizeof(block_q8_1_mmq));
+    return nbs_ids + nbs_x + GGML_PAD(nbs_y, config.nthreads*sizeof(int));
+}
+```
+I and J represent the dst (C) output matrix:
+```console
+         J=8 colums (tokens)
+        c0 c1 c2 c3 c4 c5 c6 c7
+row 0   [. .  .  .  .  .  .  . ]
+row 1   [. .  .  .  .  .  .  . ]  I = 128 rows
+...
+row 127 [. .  .  .  .  .  .  . ]
+
+128*8 = 1024 output cells per block.
+```
+But the output cells is not what goes into shared memory, it holds the inputs
+the block needs to compute those cells. So shared memory will contain a tile
+of A (x/weights) and a tile of B (y/activations).
+
+And just to clarify this, before this point we have quantized the activations
+and stored them in global memory, they would never fit in shared memory. This
+was done by `quantize_mmq_q8_1_cuda`. This data is sitting in global memory, in
+the correct format/layout to just be copied into shared memory (one tile at a
+time to be processed by one thread block). And we also need a tile of the weights
+which are quantized. 
+
+`nbs_ids` will be 32 in our case which is in bytes. This having the name ids made
+me think it was perhaps for MoE but it is used for normal matmuls as well. Each
+block keeps a small table that maps "column j of my tile", to "column of dst to
+write to". I'll come back this when it is used later.
+
+Then we have 
+```c++
+    const size_t nbs_x = ggml_cuda_mmq_get_nbytes_shared_x(config, cc);
+```
+This is calculating the shared memory needed for the x tile matrix, the weights.
+```c++
+static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config & config, const int cc) {
+    if (config.use_mma_data_layout(cc)) {
+        return config.I * ggml_cuda_mmq_get_sram_stride(config.sram_layout) * 4;
+    }
+    ...
+}
+```
+In this case I is 128 and this is the rows of the output tile. My way of thinking
+about this is the following:
+```console
+         x             y              C
+                   ↓
+  → [       ]     [         ]     [o₀₀    ]
+    [       ]  x  [         ]  =  [       ]  (I)
+    [       ]     [         ]     [       ]
+    [       ]                     [       ]
+                                     (J)
+```
+So I will be the number of rows needed for the thread blocks tile of x, which
+is also the number of rows in the output tile. And J is the number of columns
+in the output tile and also the number of columns in y (the activations).
+
+And recall that we had our attention weights already in global memory and in the
+correct format just waiting to simply be copied into shared memory. We need 
+```console
+(cuda-gdb) p config.sram_layout
+$7 = GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1
+
+(cuda-gdb) down
+#0  ggml_cuda_mmq_get_sram_stride (sram_layout=GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1)
+    at /home/danbev/work/llama.cpp/ggml/src/ggml-cuda/template-instances/../mmq.cuh:140
+140	            return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_1 + 4;
+
+#define MMQ_TILE_NE_K 32
+#define QI8_1 (QK8_1 / (4 * QR8_1))
+#define QK8_1 32
+#define QR8_1 1
+
+                return 2 * MMQ_TILE_NE_K + 2 * MMQ_TILE_NE_K/QI8_1 + 4;
+                       2 *     32        + 2 * 32/(32/(4*1)        + 4;
+                       2 *     32        + 2 * 32/(32/(4*1)        + 4;
+                       2 *     32        + 2 * 32/8                + 4;
+                       2 *     32        + 2 * 4                   + 4;
+                       76
+```
+That is then multiplied by I and 4 to give:
+```console
+(cuda-gdb) p config.I * 76 * 4
+$12 = 38912
+```
+So for the x tile matix we need 38912 bytes.
+After that we have the bytes for the y tile matrix, the activations:
+```c++
+    const size_t nbs_y = config.J * (sizeof(block_q8_1_mmq));
+```
+And recall that we have already quantized the activations to Q8_1 and we need
+to have enough room for them. 
+```console
+(cuda-gdb) p sizeof(block_q8_1_mmq)
+$14 = 144
+
+(cuda-gdb) p config.J
+$15 = 8
+(cuda-gdb) p sizeof(block_q8_1_mmq) * 8
+$16 = 1152
+```
+Finally to calculate the total shared memory needed we have:
+```console
+    return nbs_ids + nbs_x + GGML_PAD(nbs_y, config.nthreads*sizeof(int));
+```
+The first two terms just the ids and the size of the x tile, but we also need
+to take the number of threads into account. We currently have 256 in our config.
+To understand the padding we need to take into consideration how `tile_y` is
+filled. This is done in mmq.cuh in `mat_q_process_tile` and I'll get back to this
+but my current understanding is that it is cheaper to allow all threads perform
+the same operation, even if that means some will copy nothing but we avoid a
+bounds check and having threads made in-active (or whatever the correct term is).
+So if we have 8 x 144 = 1152 bytes they will be padded to 2048 bytes, more on
+this later.
+
+Next we have:
+```c++
+    const dim3 block_dims(warp_size, nwarps, 1);
+```
+```console
+(cuda-gdb) p warp_size
+$34 = 32
+(cuda-gdb) p nwarps
+$35 = 8
+
+(cuda-gdb) p block_dims
+$36 = {x = 32, y = 8, z = 1}
+```
+
+And then we increase the shared memory limit which by default is limited to
+48 KB (49152)
+```
+    CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, J, fallback, prec_src1, has_fusion>), nbytes_shared);
+```
+
 ```console
 (cuda-gdb) p nwarps
 $10 = 8
@@ -2148,6 +2305,7 @@ $11 = 40992
 (cuda-gdb) p block_dims
 $12 = {x = 32, y = 8, z = 1}
 ```
+So we have a warp size of 32, and 8 warps in total.
 
 Next we have a macro to set the shared memory limit. Now, notice that we have
 two calls here. The first one is calling the macro with fallback set to false
@@ -2212,6 +2370,502 @@ chain but this code was just missed. My understanding of this that previously
 there were multiple kernels called by this function but after refactoring and
 the addition of template parameters it only calls a single specialized template
 and it only needs to set the shared memory limit for one and not both.
+
+I've opened: https://github.com/ggml-org/llama.cpp/pull/32392
+
+Next, we have:
+```c++
+    const int I_dst = has_fusion ? config.I/2 : config.I; // Rows of dst per tile, see mul_mat_q.
+```
+Fusion is false in our case so we will just use config.I which is 128 and is
+the number of rows of dst (just the one tile that the block operates on).
+```console
+         J
+    +-----------+
+    |           |
+I   |    dst    |
+    |           |
+    |           |
+    +-----------+
+```
+```c++
+    const int nti   = (args.nrows_x + I_dst - 1) / I_dst;
+```
+This is performing a ceiling division with:
+```console
+(cuda-gdb) p args.nrows_x
+$3 = 4096
+```
+
+Then we have:
+```c++
+    const dim3 block_dims(warp_size, nwarps, 1);
+```
+Each block then has the dimensions:
+```console
+(cuda-gdb) p block_dims
+$10 = {x = 32, y = 8, z = 1}
+```
+So one thread block has 256 threads, 32*8*1=256.
+And all these 256 threads work together on the whole 128x8 tile which is 1024:
+```console
+tile: 128x8
+    0 [0             127]
+    1 [0             127]
+    2 [0             127]
+    3 [0             127]
+    4 [0             127]
+    5 [0             127]
+    6 [0             127]
+    7 [0             127]
+128*8=1024
+```
+
+```c++
+    const int ntzw  = args.nchannels_y * args.nsamples_y;
+```
+
+These constants describe how many tiles the output has in each direction. nt is
+number of tiles. nti is the number of tiles in the i direction (rows?). Then we
+have ntzw which is the number of tiles in z (channels) and w (samples, dims 2
+and 3 (ne[2] and ne[3]). Just think about of this as we have matrix with x, y,
+then we can have a number of them which is the case when z is greater than 1,
+and we can have multiple of those if w is greater than 1.
+
+Our dst shape is:
+```console
+(cuda-gdb) p dst->ne
+$18 = {4096, 8, 1, 1}
+   0 [0                                 4095]
+   1 [0                                 4095]
+   2 [0                                 4095]
+   3 [0                                 4095]
+   4 [0                                 4095]
+   5 [0                                 4095]
+   6 [0                                 4095]
+   7 [0                                 4095]
+
+4096*8=32768
+```
+So in total we have 32768 output values in the output matrix dst (C).
+
+Then we have the grid dimension which is create as follows:
+```c++
+    const dim3 block_nums_xy_tiling = dim3(args.ntj, nti, ntzw);
+```
+```console
+(cuda-gdb) p block_nums_xy_tiling
+$9 = {x = 1, y = 32, z = 1}
+```
+So we will have a grid like the following:
+```console
+Grid 1 x 32 x 1 = 32 blocks
+
+Block x=0, y=0      ---> block0
+Block x=0, y=1      ---> block1             
+...
+Block x=0, y=31     ---> block31             
+```
+
+Next we have:
+```c++
+    const int channel_ratio = args.ids_dst ? 1 : args.nchannels_y / args.nchannels_x;
+    const int sample_ratio  =                    args.nsamples_y  / args.nsamples_x;
+```
+We don't have and ids, it is null, and args.nchannels_y and nchannelsx are both
+1. Keep in mind that nchannels_x = src0->ne[2] and nsamples_x = src0->ne[3], and
+nchannels_y = src1->ne[2] and nsamples_y = src1->ne[3].
+I'll revisit this with at later debugging session using a different test to
+see how this works. I think it is related to GQA attention but not sure yet.
+
+Following that we have:
+```c++
+    const uint3 blocks_per_ne00_fd = init_fastdiv_values(args.ncols_x / ggml_cuda_type_traits<type>::qk);
+    const uint3 ntj_fd             = init_fastdiv_values(args.ntj);
+    const uint3 nchannels_y_fd     = init_fastdiv_values(args.nchannels_y);
+    const uint3 nsamples_y_fd      = init_fastdiv_values(args.nsamples_y);
+    const uint3 channel_ratio_fd   = init_fastdiv_values(channel_ratio);
+    const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
+```
+So the above are precomputing divisors for fast integer division, fd stands for
+fast division. These will all be passed to the mul_mat_q kernel and we will see
+what they are used for when we step into it.
+
+The current session has `has_fusion=false` so we will end up a bit further down:
+```c++
+    const int ntiles_dst = args.ntj * nti * ntzw;
+    const int tiles_nwaves = (ntiles_dst + nsm - 1) / nsm;
+    const int tiles_efficiency_percent = 100 * ntiles_dst / (nsm*tiles_nwaves);
+    const int stream_k_blocks = GGML_CUDA_CC_IS_GCN(cc) ? nsm * config.occupancy : nsm;
+
+    const int k_chunks = (args.ncols_x + config.K_vram - 1) / config.K_vram;
+```
+```console
+(cuda-gdb) p ntiles_dst
+$59 = 32
+(cuda-gdb) p tiles_nwaves
+$60 = 1
+(cuda-gdb) p tiles_efficiency_percent
+$61 = 66
+(cuda-gdb) p stream_k_blocks
+$63 = 48
+(cuda-gdb) p k_chunks
+$64 = 16
+
+(cuda-gdb) p nsm
+$65 = 48
+````
+
+```c++
+    const bool force_tiling = GGML_CUDA_CC_IS_GCN(cc) &&
+        (tiles_efficiency_percent >= 90 || ntiles_dst >= 2*stream_k_blocks ||
+         k_chunks <= config.occupancy * tiles_nwaves);
+```
+Here is the GPU is an AMD (GCN means AMD), so on NVIDA which I'm on force_tiling
+will always be false.
+
+With plain tailing we get one block per output tile:
+```console
+ntiles_dst   = 32
+nsm          = 48
+tiles_nwaves = ceil(32/48) = 1   (32 + 48 -1) / 48
+efficiency   = 32 / (48*1) = 66%
+
+SM:   0   1   2  ...  31  | 32   33 ... 47
+      t0  t1  t2      t31  idle idle    idle
+```
+So one third of the GPU would be idle if we used plain tailing.
+Each tile has k_chunks=16 of K work:
+```console
+nwork = 32 tiles * 16 chunks = 512 unit
+```
+```c++
+    const int nwork = ntiles_dst * k_chunks; // Maximum number of CUDA blocks that can do useful work.
+```
+Stream-k launches stream_k_blocks = 48 and gives each one an equal contiguous
+splice, 512/48 ≈ 10.7 units:
+```console
+block 0: units  0..9  -> tile 0, chunks  0..9
+block 1: units 10..20 -> tile 0, chunks 10..15 + tile1, chunks 0..4
+block 2: units 21..31 -> tile 1, chunks  5..15
+...
+```
+So now every SM is busy. But also notice now tile 0 for example is summed by
+two different thread blocks. The partial sums go to `tmp_fixup` which is a
+`ggml_cuda_pool_alloc<float> tmp_fixup` that is passed to the kernel, and then
+we have an additional kernel launch of `mul_mat_q_stream_k_fixup` which handles
+this (more on this shortly). But there is an overhead of using stream-k is the
+point. We have the following check, which is part of the batch invariance work
+but so it might not look exactly like this in upstream/master but these changes
+was my main motivation to understand this code:
+```c++
+    const bool one_tile_per_block = (GGML_CUDA_CC_IS_NVIDIA(cc) &&
+        tiles_efficiency_percent >= 90) || ctx.batch_invariant;
+```
+If the `tiles_efficiency_percent`is less than or equal to 90 the tiles already
+fill the waves almost perfectly, so there is not very much tail for stream-k
+to recover, and we would get the fixup overhead so it is not worth it.
+And if batch invariant is set then we really want each tile to compute one
+tile as otherwise the summing might be done in a different order compared to
+a single token.
+So with 48 block over 512 units, tile 0 splits across 0 and 1 so we need the 
+fixup, but with the `batch_invariant` flag set we will have 32 block each
+running it tile's 16 chunks in order, no fixup.
+```console
+(cuda-gdb) n
+1567	    int nblocks_stream_k = one_tile_per_block ? ntiles_dst : std::min(stream_k_blocks, nwork);
+(cuda-gdb) p one_tile_per_block
+$71 = true
+```
+Next, we set the number of block for stream-k to ntiles_dst in this case which
+is 32, and otherwise it would use `stream_k_blocks` (48):
+```c++
+    int nblocks_stream_k = one_tile_per_block ? ntiles_dst : std::min(stream_k_blocks, nwork);
+```
+```console
+(cuda-gdb) p nblocks_stream_k
+$75 = 32
+```
+Next we have:
+```c++
+    if (!ctx.batch_invariant && GGML_CUDA_CC_IS_GCN(cc) && ntiles_dst < nsm) {
+        // Use a 512-thread budget per CU when the tiles do not fill the device.
+        nblocks_stream_k = std::min(nwork, nsm * std::max(1, 512 / config.nthreads));
+    }
+```
+That will be skipped in our case but I wanted to show it as it also deals with
+the batch_invariant flag.
+Then we have:
+```c++
+    const dim3 block_nums_stream_k(nblocks_stream_k, 1, 1);
+```
+```console
+(cuda-gdb) p block_nums_stream_k
+$76 = {x = 32, y = 1, z = 1}
+```
+Next:
+```c++
+    const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
+
+    ggml_cuda_pool & pool = ctx.pool(id);
+    ggml_cuda_pool_alloc<float> tmp_fixup(pool);
+    if (fixup_needed) {
+        tmp_fixup.alloc(block_nums_stream_k.x * config.J*config.I);
+    }
+
+    const dim3 block_nums_fixup(block_nums_stream_k.x, config.I/warp_size, 1);
+```
+Perhaps block_nums_fixup could be use to futher down as it might not be
+needed at all (like in this case).
+```console
+(cuda-gdb) br mmq.cuh:1588
+(cuda-gdb) br mmq.cuh:1153
+(cuda-gdb) r
+```
+
+Then we finally come to the kernel launch:
+```c++
+    mul_mat_q<type, J, fallback, prec_src1, has_fusion>
+       <<block_nums_stream_k, block_dims, nbytes_shared, stream>>>(
+           args.x,
+           (const char *) args.fusion.gate,
+           args.y,
+           args.ids_dst,
+           args.tile_spec,
+           args.dst,
+           tmp_fixup.ptr,
+           args.y_scale,
+           args.fusion.glu_op,
+           args.fusion.glu_limit,
+           (const float *) args.fusion.x_scale,
+           (const float *) args.fusion.gate_scale,
+           blocks_per_ne00_fd,
+           args.nrows_x,
+           args.ncols_dst,
+           args.stride_row_x,
+           args.ncols_y,
+           args.nrows_dst,
+           channel_ratio_fd,
+           nchannels_y_fd,
+           args.stride_channel_x,
+           args.stride_channel_y,
+           args.stride_channel_dst,
+           sample_ratio_fd,
+           nsamples_y_fd,
+           args.stride_sample_x,
+           args.stride_sample_y,
+           args.stride_sample_dst,
+           ntj_fd);
+```
+```console
+[Switching focus to CUDA kernel 0, grid 4, block (0,0,0), thread (0,0,0), device 0, sm 0, warp 0, lane 0]
+
+CUDA thread hit Breakpoint 2.2, mul_mat_q<(ggml_type)12, 8, false, (ggml_prec)30, false, false>
+   <<<(32,1,1),(32,8,1)>>> (x=0x330401000 "",
+    x_gate=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    y=0x340000000,
+    ids_dst=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    tile_spec=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    dst=0x330d43000,
+    tmp_fixup=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    y_scale=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    glu_op=GGML_GLU_OP_REGLU, glu_limit=0,
+    x_scale=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    gate_scale=0x0 <_INTERNAL_a1696bc1_11_quantize_cu_ba19f1fc::cudaTriggerProgrammaticLaunchCompletion()>,
+    blocks_per_ne00=..., nrows_x=4096, ncols_dst=1, stride_row_x=16, ncols_y=1, stride_col_dst=4096,
+    channel_ratio=..., nchannels_y=..., stride_channel_x=65536, stride_channel_y=1152, stride_channel_dst=4096,
+    sample_ratio=..., nsamples_y=..., stride_sample_x=65536, stride_sample_y=1152, stride_sample_dst=4096, ntj=...)
+    at /home/danbev/work/llama.cpp/ggml/src/ggml-cuda/template-instances/../mmq.cuh:1153
+1153	    int kbc      = int64_t(blockIdx.x)    *(nsamples_y.z*nchannels_y.z*ntj.z*nti*blocks_per_ne00.z) / gridDim.x;
+```
+So we have the following in the kernel code:
+```c++
+    // kbc == k block continuous, current index in continuous ijk space.
+    int kbc      = int64_t(blockIdx.x)    *(nsamples_y.z*nchannels_y.z*ntj.z*nti*blocks_per_ne00.z) / gridDim.x;
+    int kbc_stop = int64_t(blockIdx.x + 1)*(nsamples_y.z*nchannels_y.z*ntj.z*nti*blocks_per_ne00.z) / gridDim.x;
+```
+Lets switch to a different block so that it is bit more interesting than block
+0:
+```console
+(cuda-gdb) p kbc
+$1 = 0
+(cuda-gdb) cuda block (1, 0, 0)
+[Switching focus to CUDA kernel 0, grid 2, block (1,0,0), thread (0,6,0), device 0, sm 1, warp 4, lane 0]
+1153	    int kbc      = int64_t(blockIdx.x)    *(nsamples_y.z*nchannels_y.z*ntj.z*nti*blocks_per_ne00.z) / gridDim.x;
+(cuda-gdb) p kbc               
+$2 = 16
+
+(cuda-gdb) p kbc_stop
+$3 = 32
+```
+Recall that each block owns exactly one tile:
+```console
+total units = nsamples * nchannels * ntj * nti * blocks_per_ne00
+            =        1   1           1     32     16
+            = 512
+
+blocks_per_ne00 = K / qk = 4096 / 256 = 16 (q4_K superblocks per row).
+```
+```console
+(cuda-gdb) cuda block (31,0,0) 
+[Switching focus to CUDA kernel 0, grid 2, block (31,0,0), thread (0,6,0), device 0, sm 31, warp 7, lane 0]
+
+(cuda-gdb) p kbc              
+$24 = 496
+(cuda-gdb) p kbc + 16
+$25 = 512
+```
+
+__wip__
+
+And we are now going to perform the "unpacking" of kbc which is called
+mixed-radix decomposition. kbc the index into the blocks
+one:
+```console
+kbc = (((it * nsamples + wt) * nchannels + zt) * ntj + jt) blocks_per_ne00 + kb0
+```
+
+
+
+
+Next we have:
+```c++
+    // GCN wave64 already halves the warp count relative to NVIDIA warp32, so halving nwarps again would halve fixup parallelism.
+    const int nwarps_fixup = GGML_CUDA_CC_IS_GCN(cc) ? nwarps : nwarps/2;
+    const dim3 block_dims_fixup(block_dims.x, nwarps_fixup, block_dims.z);
+```
+I think these could be moved to after the kernel launch.
+
+That is all the threads in that block work together to compute one output value.
+
+```c++
+    const int channel_ratio = args.ids_dst ? 1 : args.nchannels_y / args.nchannels_x;
+    const int sample_ratio  =                    args.nsamples_y  / args.nsamples_x;
+
+    const uint3 blocks_per_ne00_fd = init_fastdiv_values(args.ncols_x / ggml_cuda_type_traits<type>::qk);
+    const uint3 ntj_fd             = init_fastdiv_values(args.ntj);
+    const uint3 nchannels_y_fd     = init_fastdiv_values(args.nchannels_y);
+    const uint3 nsamples_y_fd      = init_fastdiv_values(args.nsamples_y);
+    const uint3 channel_ratio_fd   = init_fastdiv_values(channel_ratio);
+    const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
+```
+Then we have:
+```c++
+    const int ntiles_dst = args.ntj * nti * ntzw;
+    const int tiles_nwaves = (ntiles_dst + nsm - 1) / nsm;
+    const int tiles_efficiency_percent = 100 * ntiles_dst / (nsm*tiles_nwaves);
+
+    const int nwork = ntiles_dst * ((args.ncols_x + config.K_vram - 1) / config.K_vram);
+    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : std::min(nsm, nwork), 1, 1);
+
+    const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
+
+    ggml_cuda_pool & pool = ctx.pool(id);
+    ggml_cuda_pool_alloc<float> tmp_fixup(pool);
+    if (fixup_needed) {
+        tmp_fixup.alloc(block_nums_stream_k.x * config.J*config.I);
+    }
+```
+Then we have:
+```c++
+    const dim3 block_nums_fixup(block_nums_stream_k.x, config.I/warp_size, 1);
+    const dim3 block_dims_fixup(block_dims.x, block_dims.y/2, block_dims.z);
+```
+I'm not sure why there are here in the code. They are not used until after
+the first kernel invocation which is the one that handles the "main" tiles
+and these dimensions are only for the fix up (if needed).
+
+Next, we have the actual kernal launch:
+```c++
+    mul_mat_q<type, J, fallback, prec_src1, has_fusion>
+        <<<block_nums_stream_k, block_dims, nbytes_shared, stream>>> (
+        args.x, (const char *) args.fusion.gate, args.y, args.ids_dst, args.tile_spec, args.dst, tmp_fixup.ptr,
+         args.y_scale, args.fusion.glu_op, args.fusion.glu_limit, (const float *) args.fusion.x_scale, (const float *) args.fusion.gate_scale,
+         blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+         channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+         sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+         ntj_fd);
+```
+```c++
+template <ggml_type type, int J, bool fallback, ggml_prec prec_src1, bool has_fusion>
+__launch_bounds__(
+    gml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1),
+    ggml_cuda_mmq_get_occupancy(type, J, fallback, prec_src1))
+static __global__ void mul_mat_q(
+        const char * __restrict__ x,
+        const char * __restrict__ x_gate,
+        const int * __restrict__ y,
+        const int32_t * __restrict__ ids_dst,
+        const ggml_cuda_mm_id_tile_spec * __restrict__ tile_spec,
+        float * __restrict__ dst,
+        float * __restrict__ tmp_fixup,
+        const float * __restrict__ y_scale,
+        const ggml_glu_op glu_op,
+        const float glu_limit,
+        const float * __restrict__ x_scale,
+        const float * __restrict__ gate_scale,
+        const uint3 blocks_per_ne00,
+        const int nrows_x,
+        const int ncols_dst,
+        const int stride_row_x,
+        const int ncols_y,
+        const int stride_col_dst,
+        const uint3 channel_ratio,
+        const uint3 nchannels_y,
+        const int stride_channel_x,
+        const int stride_channel_y,
+        const int stride_channel_dst,
+        const uint3 sample_ratio,
+        const uint3 nsamples_y,
+        const int stride_sample_x,
+        const int stride_sample_y,
+        const int stride_sample_dst,
+        const uint3 ntj) {
+```
+```c++
+    if (ggml_cuda_mmq_get_config(type, J, fallback, prec_src1).type == GGML_TYPE_COUNT ||
+            (has_fusion && (!fusion_available || (prec_src1 == GGML_PREC_Q4 && !native_fp4_available)))) {
+        NO_DEVICE_CODE;
+        return;
+    }
+```
+
+```c++
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1) / warp_size;
+    constexpr int qk        = ggml_cuda_type_traits<type>::qk;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback, prec_src1);
+
+    const uint32_t nti = (nrows_x + I - 1) / I; // Number of tiles in I direction
+```
+I thought we just computed nti above in the calling function:
+```console
+    const int nti   = (args.nrows_x + I_dst - 1) / I_dst;
+```
+Then we have:
+```c++
+    // Initialize the ids for writing back data with just the index.
+    // For regular matrix multiplications this is never changed.
+    // For MoE the correct indices are loaded from ids_dst.
+    extern __shared__ int ids_dst_shared[]; // Stored at beginning of shared memory.
+#pragma unroll
+    for (int j0 = 0; j0 < J; j0 += nwarps*warp_size) {
+        const int j = j0 + threadIdx.y*warp_size + threadIdx.x;
+
+        if (j0 + nwarps*warp_size > J && j >= J) {
+            break;
+        }
+
+        ids_dst_shared[j] = j;
+    }
+    __syncthreads();
+```
+
+```c++
+    kbc      -= fastmodulo(kbc,      blocks_per_ne00) % blocks_per_iter;
+    kbc_stop -= fastmodulo(kbc_stop, blocks_per_ne00) % blocks_per_iter;
+```
+kbc_start is where the current thread is within the current tile's K.
 
 _wip_
 
